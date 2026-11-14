@@ -4,6 +4,7 @@
 
 #include <ve/assets/AssetManager.hpp>
 #include <ve/core/Log.hpp>
+#include <ve/physics/Physics.hpp>
 #include <ve/render/Mesh.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/render/Texture.hpp>
@@ -174,6 +175,10 @@ void Terrain::buildMeshes()
             chunk.setParent(this, false);
         }
     }
+    // Physics: the same height samples as a heightfield collider.
+    addComponent<ve::Rigidbody>(ve::Collider::heightfield(m_heights, static_cast<uint32_t>(m_res), kCellSize,
+                                                          {-kHalfSize, 0.0f, -kHalfSize}),
+                                ve::BodyType::Static);
     ve::log::info("Terrain: {}x{} samples, {} chunks", m_res, m_res, chunks * chunks);
 }
 

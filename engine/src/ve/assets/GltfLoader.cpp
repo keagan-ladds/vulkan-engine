@@ -214,9 +214,11 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
         if (md.indices.empty()) {
             model->meshes.push_back(nullptr);
             model->meshMaterials.push_back({});
+            model->meshData.emplace_back();
             continue;
         }
         if (needTangents) md.computeTangents();
+        model->meshData.push_back(md);
         model->meshes.push_back(Mesh::create(renderer, md, submeshes, gm.name ? gm.name : model->name));
         model->meshMaterials.push_back(std::move(slots));
     }

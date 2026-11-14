@@ -3,12 +3,14 @@
 #include "DayNight.hpp"
 #include "Noise2D.hpp"
 #include "Player.hpp"
+#include "Terrain.hpp"
 
 #include <ve/assets/AssetManager.hpp>
 #include <ve/audio/Audio.hpp>
 #include <ve/core/Engine.hpp>
 #include <ve/core/Input.hpp>
 #include <ve/core/Time.hpp>
+#include <ve/physics/Physics.hpp>
 #include <ve/render/Mesh.hpp>
 #include <ve/render/Primitives.hpp>
 #include <ve/render/Renderer.hpp>
@@ -183,6 +185,8 @@ void Torch::start()
     flame.setParent(this, false);
     flame.transform().setLocalPosition({0.0f, 2.1f, 0.0f});
     flame.addComponent<vfx::ParticleEmitter>().settings = flameSettings(0.45f);
+    // A thin solid pole (static capsule standing on the ground).
+    addComponent<ve::Rigidbody>(ve::Collider::capsule(0.95f, 0.07f).offset({0.0f, 1.0f, 0.0f}), ve::BodyType::Static);
     m_light = &flame.addComponent<ve::PointLight>();
     m_light->color = {1.0f, 0.55f, 0.22f};
     m_light->range = 10.0f;
@@ -263,15 +267,75 @@ void AutoTest::update(float dt)
         log("sunstones in scene: " + std::to_string(stones.size()));
         if (!stones.empty()) static_cast<Sunstone*>(stones.front())->collect();
         ++m_step;
+        // Physics: ray straight down onto the terrain, player standing, crates resting.
+        const glm::vec3 above(Terrain::kCamp.x + 3.0f, 200.0f, Terrain::kCamp.y + 3.0f);
+        if (auto hit = physics().raycast(above, {0, -1, 0}, 400.0f)) {
+            log("raycast down hit '" + (hit->gameObject ? hit->gameObject->name() : std::string("?")) +
+                "' at y=" + std::to_string(hit->point.y) + " (terrain says " +
+                std::to_string(m_terrain->height(above.x, above.z)) + ")");
+        } else {
+            log("raycast down MISSED");
+        }
+        if (auto* p = static_cast<Player*>(scene().find("Player"))) {
+            log(std::string("player grounded: ") + (p->grounded() ? "yes" : "no") + ", feet y=" +
+                std::to_string(p->transform().position().y));
+            const auto look = physics().raycast(p->eyePosition(), p->lookDirection(), 25.0f);
+            log("eye raycast: " + (look ? (look->gameObject ? look->gameObject->name() : std::string("<no object>")) +
+                                               " at " + std::to_string(look->distance) + " m"
+                                        : std::string("nothing")));
+            p->throwRock();
+        }
+        auto crates = scene().findAllWithTag("crate");
+        float minY = 1e9f, maxY = -1e9f;
+        for (auto* c : crates) {
+            minY = std::min(minY, c->transform().position().y);
+            maxY = std::max(maxY, c->transform().position().y);
+        }
+        log("crates: " + std::to_string(crates.size()) + ", y range " + std::to_string(minY) + " .. " + std::to_string(maxY));
     } else if (m_step == 1 && m_t > 4.0f) {
         log("after pickup: " + std::to_string(scene().findAllWithTag("collectible").size()) + " left, collected " +
             std::to_string(gameState().collected) + "/" + std::to_string(gameState().total));
         if (auto* w = static_cast<vfx::Weather*>(scene().find("Weather"))) w->setWeather(vfx::Weather::Type::Rain, 2.0f);
+        // Throw a rock at the crate pyramid from 6 m away.
+        auto crates = scene().findAllWithTag("crate");
+        m_crateStart.clear();
+        glm::vec3 top(0.0f, -1e9f, 0.0f); // the top crate: nothing resting on it
+        for (auto* c : crates) {
+            m_crateStart.push_back(c->transform().position());
+            if (c->transform().position().y > top.y) top = c->transform().position();
+        }
+        if (auto* p = static_cast<Player*>(scene().find("Player"))) {
+            // Aim a little above it to allow for the drop over 6 m.
+            const glm::vec3 eye = top + glm::vec3(0.0f, 0.4f, 6.0f);
+            const glm::vec3 d = glm::normalize(top + glm::vec3(0.0f, 0.75f, 0.0f) - eye);
+            p->setPose(eye - glm::vec3(0.0f, p->eyeHeight, 0.0f), glm::degrees(std::atan2(-d.x, -d.z)),
+                       glm::degrees(std::asin(d.y)));
+            m_throwPending = true;
+        }
         ++m_step;
-    } else if (m_step == 2 && m_t > 7.0f) {
+    } else if (m_step == 2 && m_throwPending && m_t > 4.2f) {
+        // (one frame later, once the head transform follows the new pose)
+        if (auto* p = static_cast<Player*>(scene().find("Player"))) {
+            p->throwRock();
+        }
+        m_throwPending = false;
+    } else if (m_step == 2 && !m_throwPending && m_t > 7.0f) {
+        auto crates = scene().findAllWithTag("crate");
+        int moved = 0;
+        for (size_t i = 0; i < crates.size() && i < m_crateStart.size(); ++i) {
+            if (glm::length(crates[i]->transform().position() - m_crateStart[i]) > 0.2f) ++moved;
+        }
+        log("crates knocked by the thrown rock: " + std::to_string(moved) + " / " + std::to_string(crates.size()));
         if (auto* w = static_cast<vfx::Weather*>(scene().find("Weather"))) {
             log(std::string("weather now: ") + vfx::Weather::name(w->weather()) + ", rain=" + std::to_string(w->current().rain));
         }
+        for (auto* rock : scene().findAllWithTag("thrown")) {
+            auto* rb = rock->getComponent<ve::Rigidbody>();
+            const glm::vec3 p = rock->transform().position();
+            log("thrown rock at y=" + std::to_string(p.y) + " (ground " + std::to_string(m_terrain->height(p.x, p.z)) +
+                "), speed " + std::to_string(rb ? glm::length(rb->linearVelocity()) : -1.0f));
+        }
+        log("physics bodies: " + std::to_string(physics().bodyCount()) + ", step ms: " + std::to_string(physics().lastStepMs));
         log("objects: " + std::to_string(scene().objectCount()) + ", draw calls: " +
             std::to_string(renderer().stats().drawCalls) + ", gpu ms: " + std::to_string(renderer().gpuFrameTimeMs()));
         engine().quit();
@@ -350,6 +414,18 @@ void Hud::onGui()
     dl->AddRectFilled({p.x - 10, p.y - 6}, {p.x + size.x + 10, p.y + size.y + 6}, IM_COL32(20, 14, 8, 140), 6.0f);
     dl->AddText(p, IM_COL32(255, 235, 200, 255), buf);
 
+    // What are we looking at? A physics raycast from the eye (ignores the player's own capsule).
+    if (input().mouseCaptured()) {
+        if (auto hit = physics().raycast(m_player.eyePosition(), m_player.lookDirection(), 25.0f)) {
+            if (hit->gameObject && hit->gameObject->name() != "Terrain") {
+                char label[96];
+                std::snprintf(label, sizeof(label), "%s  (%.1f m)", hit->gameObject->name().c_str(), hit->distance);
+                const ImVec2 ls = ImGui::CalcTextSize(label);
+                dl->AddText({c.x - ls.x * 0.5f, c.y + 14.0f}, IM_COL32(255, 255, 255, 170), label);
+            }
+        }
+    }
+
     // Centre message (pickup prompt etc).
     if (gs.messageTimer > 0.0f && !gs.message.empty()) {
         const ImVec2 ms = ImGui::CalcTextSize(gs.message.c_str());
@@ -359,7 +435,7 @@ void Hud::onGui()
     }
 
     if (m_showHelp) {
-        const char* help = "WASD move  Shift sprint  Space jump  F fly  E pick up\n"
+        const char* help = "WASD move  Shift sprint  Space jump  F fly  E pick up  Q/RMB throw\n"
                            "T/G time +/-  R weather  Tab mouse  F1 debug  H hide help";
         const ImVec2 hs = ImGui::CalcTextSize(help);
         const ImVec2 hp(16.0f, io.DisplaySize.y - hs.y - 16.0f);

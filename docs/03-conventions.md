@@ -156,6 +156,37 @@ Put files under `<game>/assets/` (copied next to the exe on build), then
 `assets().loadTexture("textures/x.png", srgb)`, `loadModel("models/x.gltf")`
 followed by `scene.instantiate(*model)`, or `loadAudio("audio/x.wav")`.
 
+### Physics
+
+```cpp
+// Static scenery (shared shape, scaled by the object's Transform):
+static const ve::Collider trunk = ve::Collider::capsule(1.5f, 0.3f).offset({0, 1.5f, 0});
+tree.addComponent<ve::Rigidbody>(trunk, ve::BodyType::Static);
+
+// Dynamic prop:
+auto& rb = crate.addComponent<ve::Rigidbody>(ve::Collider::box({0.4f, 0.4f, 0.4f}));  // Dynamic
+rb.mass = 15.0f;
+rb.setLinearVelocity({0, 5, 0});          // fine before start(): applied on creation
+
+// Moving platform: kinematic, just move its Transform in update().
+platform.addComponent<ve::Rigidbody>(ve::Collider::box({2, 0.2f, 2}), ve::BodyType::Kinematic);
+
+// Character: add in the constructor, drive it from fixedUpdate().
+m_cc = &addComponent<ve::CharacterController>();
+void fixedUpdate(float dt) override { if (jumpPressed) m_cc->jump(5.5f); m_cc->move(wishVelocity, dt); }
+
+// Queries:
+if (auto hit = physics().raycast(eye, forward, 30.0f)) { /* hit->gameObject, hit->point, hit->normal */ }
+```
+
+Rules:
+- Bodies are created in `start()` from the Transform at that moment. After
+  that, move dynamic bodies with `teleport()`/forces (not the Transform), and
+  static ones with `syncFromTransform()`.
+- `Collider::mesh` and `heightfield` are static-only. Use `convexHull` for moving things.
+- Add physics components as their exact type (`addComponent<ve::Rigidbody>`).
+  The world finds them through the typed registry.
+
 ### Shadows configuration
 
 ```cpp

@@ -4,6 +4,7 @@
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Window.hpp"
+#include "ve/physics/Physics.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/ui/UiLayer.hpp"
@@ -24,6 +25,11 @@ Engine& Engine::get()
     return *g_engine;
 }
 
+bool Engine::exists()
+{
+    return g_engine != nullptr;
+}
+
 // EngineAccess shortcuts used by GameObject / Component.
 Engine& EngineAccess::engine() { return Engine::get(); }
 Input& EngineAccess::input() { return Engine::get().input(); }
@@ -31,6 +37,7 @@ const Time& EngineAccess::time() { return Engine::get().time(); }
 Renderer& EngineAccess::renderer() { return Engine::get().renderer(); }
 AssetManager& EngineAccess::assets() { return Engine::get().assets(); }
 AudioSystem& EngineAccess::audio() { return Engine::get().audio(); }
+PhysicsWorld& EngineAccess::physics() { return Engine::get().physics(); }
 
 Engine::Engine(const EngineConfig& config) : m_config(config)
 {
@@ -52,6 +59,8 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_renderer->init(*m_window, config.renderer, config.validation, shaderDirs);
     m_audio = std::make_unique<AudioSystem>();
     if (config.enableAudio) m_audio->init();
+    m_physics = std::make_unique<PhysicsWorld>();
+    m_physics->init();
     m_assets = std::make_unique<AssetManager>();
     m_assets->init(*m_renderer, assetDirs);
     m_ui = std::make_unique<UiLayer>();
@@ -70,6 +79,7 @@ Engine::~Engine()
     if (m_ui) m_ui->shutdown(); // no-op if run() already did it
     m_ui.reset();
     m_audio.reset();
+    m_physics.reset(); // after the scene: Rigidbodies remove themselves from the world
     m_renderer.reset();
     m_window.reset();
     g_engine = nullptr;
@@ -137,13 +147,19 @@ void Engine::tickFrame()
     // Fixed timestep: run as many fixed steps as the elapsed time requires.
     m_accumulator += m_time.deltaTime;
     int steps = 0;
+    // Each step: gameplay fixedUpdate() hooks (forces, character movement), then the physics world.
     while (m_accumulator >= m_time.fixedDeltaTime && steps < m_config.maxFixedStepsPerFrame) {
         m_scene->fixedUpdate(m_time.fixedDeltaTime);
+        const auto t0 = std::chrono::steady_clock::now();
+        m_physics->step(*m_scene, m_time.fixedDeltaTime);
+        m_physics->lastStepMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
         m_accumulator -= m_time.fixedDeltaTime;
         ++steps;
     }
     if (steps == m_config.maxFixedStepsPerFrame) m_accumulator = 0.0; // drop time we can't catch up on
     m_time.fixedAlpha = static_cast<float>(m_accumulator / m_time.fixedDeltaTime);
+    // Smooth motion: place physics objects between their last two fixed-step poses.
+    m_physics->interpolate(*m_scene, m_time.fixedAlpha);
 
     m_scene->update(m_time.deltaTime);
     m_scene->lateUpdate(m_time.deltaTime);

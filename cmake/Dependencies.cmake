@@ -48,6 +48,33 @@ FetchContent_Declare(miniaudio
 
 FetchContent_MakeAvailable(vma imgui cgltf stb miniaudio)
 
+# Jolt Physics: built with its own CMake (Build/ subfolder). Only engine .cpp
+# files include Jolt headers; games never see them. Jolt's SIMD flags are
+# PUBLIC (they propagate to ve_engine), so we stick to SSE4.2 (any x86-64 CPU
+# since ~2008) rather than AVX2, to keep the engine binary portable.
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+set(ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(FLOATING_POINT_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
+set(ENABLE_OBJECT_STREAM OFF CACHE BOOL "" FORCE)
+set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+foreach(opt USE_AVX USE_AVX2 USE_AVX512 USE_LZCNT USE_TZCNT USE_F16C USE_FMADD)
+    set(${opt} OFF CACHE BOOL "" FORCE)
+endforeach()
+FetchContent_Declare(jolt
+    URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.2.0.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR Build
+    SYSTEM)                       # treat Jolt headers as system headers (no warnings from them)
+FetchContent_MakeAvailable(jolt)
+
 add_library(ve_thirdparty STATIC
     ${CMAKE_CURRENT_LIST_DIR}/thirdparty/thirdparty_impl.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp

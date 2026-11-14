@@ -34,7 +34,7 @@ assets/     copied to build/bin/assets on every build; load with assets().loadTe
 
 | File | Feature |
 |---|---|
-| `src/main.cpp` | Engine setup, optional effects, sun coloured by the atmosphere, PBR `StandardMaterial` with a texture, a custom-shader material, point light with shadows, particles |
+| `src/main.cpp` | Engine setup, optional effects, sun coloured by the atmosphere, PBR `StandardMaterial` with a texture, a custom-shader material, point light with shadows, particles, physics (static ground/spheres, kinematic spinning cubes, falling dynamic boxes) |
 | `src/CameraController.*` | A `GameObject` with behaviour (`update`, `onGui`) and a `Camera` component |
 | `src/Spinner.hpp` | A reusable `Component` |
 | `shaders/mygame_toon.frag` | Custom (non-PBR) lighting using the engine's lights and shadows |

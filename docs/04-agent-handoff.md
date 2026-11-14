@@ -94,17 +94,25 @@ north (-Z), 90 looks west (-X).
   a game's CMakeLists (`ve_compile_shaders`, `ve_setup_game`) must use cache
   variables (`Vulkan_GLSLC_EXECUTABLE`, `VE_OUTPUT_DIR`, ...) instead. Re-run the
   template check above after touching `cmake/`.
+- **Jolt stays inside `ve/physics/Physics.cpp`.** Don't include Jolt headers
+  anywhere else: its SIMD flags/defines are only set up for `ve_engine`, and
+  keeping them private means games never depend on Jolt.
+- **Physics order per fixed step:** `Scene::fixedUpdate` (characters move,
+  forces applied) → `PhysicsWorld::step` → after all steps `interpolate()`. A
+  `CharacterController::move()` called from `update()` would run at the wrong rate.
+- **Testing aim:** a ray (or thrown rock) through the exact centre of the crate
+  pyramid passes through the 2 cm gap between crates. That cost a debugging
+  session; aim off-centre in tests.
 - **Effects need their order:** `VolumetricFogPass` needs `AtmospherePass`
   (SkyViewLUT and noise). `vfx::addDefaultEffects` adds them in the right order.
 
 ## 6. Where to start next
 
-1. **F1 Physics (Jolt)**: biggest unlock for gameplay. Add `ve/physics/`
-   (PhysicsSystem stepped in `Scene::fixedUpdate`, `Rigidbody`/`Collider`
-   components, raycast API), then switch `savanna::Player` to a Jolt
-   CharacterVirtual and give trees/huts colliders.
-2. **Cutout shadows** (Known issue 1): quick win; needed for foliage.
-3. **F2 Animation**: skinned glTF characters for enemies and bosses.
+1. **F2 Animation**: skinned glTF characters for enemies and bosses.
+2. **Physics follow-ups** (Phase 11 open items): collision/trigger callbacks
+   (contact listener → `Component::onCollisionEnter`), collider debug drawing,
+   shape casts for melee/building placement.
+3. **Cutout shadows** (Known issue 1): quick win; needed for foliage.
 4. **Temporal AA + reprojection** to clean up clouds/fog and allow fewer steps.
 
 When an item is done, update the **Status snapshot** date and numbers in the roadmap.

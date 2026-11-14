@@ -14,6 +14,7 @@ vulkan-engine/
 │   ├── src/ve/render/      Renderer, RenderGraph, RenderPass, Material, Shader, Mesh,
 │   │   └── passes/         built-in passes: Shadow, Opaque, Transparent, Composite, UI
 │   ├── src/ve/scene/       Scene, GameObject, Component, Transform, Camera, MeshRenderer, Lights
+│   ├── src/ve/physics/     Jolt-backed physics: PhysicsWorld, Collider, Rigidbody, CharacterController
 │   ├── src/ve/assets/      AssetManager, texture loading (stb), glTF loading (cgltf), Model
 │   ├── src/ve/audio/       AudioSystem, AudioClip, AudioSource (miniaudio)
 │   ├── src/ve/ui/          ImGui integration + engine debug overlay
@@ -43,7 +44,7 @@ itself uses `ve_setup_game`.
 **Dependencies**
 - System: Vulkan SDK/headers (1.3), SDL2, glm, `glslc`.
 - Fetched by CMake (pinned): Vulkan Memory Allocator, Dear ImGui, cgltf,
-  stb_image, miniaudio.
+  stb_image, miniaudio, Jolt Physics 5.2.0 (built with its own CMake, SSE4.2, private to `ve_engine`).
 
 ## 2. Module dependency rules
 
@@ -71,7 +72,9 @@ loop:
   UiLayer::beginFrame()              ImGui::NewFrame
   Scene::startPending()              start() on objects/components spawned since last frame
   while accumulator >= fixedDt:      fixed timestep (default 50 Hz, max 5 steps/frame)
-      Scene::fixedUpdate(fixedDt)
+      Scene::fixedUpdate(fixedDt)      gameplay forces, CharacterController::move()
+      PhysicsWorld::step(fixedDt)      kinematic bodies follow Transforms, Jolt update, record poses
+  PhysicsWorld::interpolate(alpha)   dynamic bodies/characters -> Transform, between last two steps
   Scene::update(dt)
   Scene::lateUpdate(dt)              cameras/followers go here
   Scene::onGui(); UiLayer::drawDebugOverlay()
@@ -245,7 +248,40 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
 - `PipelineBuilder`: fluent builder (from tinyvulkan) extended with depth,
   multiple attachments, blending presets, depth bias and custom vertex input.
 
-## 6. Assets
+## 6. Physics
+
+Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
+`ve/physics/Physics.cpp`, so engine headers and games never see Jolt types.
+
+- **`Collider`** is an immutable, shared shape handle: `box`, `sphere`,
+  `capsule`, `cylinder`, `convexHull(points|MeshData)`, `mesh(MeshData)`
+  (static only), `heightfield(...)`, and `.offset(t, r)`. Build once and share
+  (all crates use one box). The GameObject's world scale is applied when the
+  body is created (`ScaledShape`).
+- **`Rigidbody`** (component), created in `start()` from the Transform:
+  - **Static**: terrain, buildings, trees.
+  - **Kinematic**: follows its Transform every step and pushes dynamic bodies.
+  - **Dynamic**: simulated, written back to the Transform with interpolation.
+
+  It has mass, friction, restitution and damping, continuous collision for
+  projectiles, forces/impulses/velocity, `teleport()`, and `syncFromTransform()`
+  for moved static bodies.
+- **`CharacterController`** (component) wraps Jolt's `CharacterVirtual`: a capsule
+  moved by queries. It slides along walls, handles max slope and step height,
+  sticks to the floor going downhill, pushes dynamic bodies (`pushStrength`),
+  and has an inner body so thrown objects hit it. Its position is the feet.
+  Call `move(horizontalVelocity, dt)` from `fixedUpdate()`; gravity and
+  `jump(speed)` are handled for you.
+- **Layers:** `NonMoving` (static), `Moving` (kinematic + dynamic), `Character`.
+  Static vs static never collide, and characters are only hit by moving bodies.
+  Raycasts ignore characters unless asked.
+- **Queries:** `physics().raycast(origin, dir, maxDist, ignoreBody, hitCharacters)` →
+  point, normal, distance, `Rigidbody*`, `GameObject*` (via body user data).
+- `scene.instantiate(model, parent, /*staticColliders*/ true)` gives every glTF
+  mesh node a static triangle-mesh collider. `Model` keeps CPU `meshData` for this.
+- Threads: Jolt's job system with up to 4 workers. Per-step CPU time is shown in the F1 overlay.
+
+## 7. Assets
 
 - `AssetManager` resolves paths against search roots (`<exe>/assets`, plus any
   added), caches by path, and returns `shared_ptr`s.
@@ -259,14 +295,14 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
   `scene.instantiate(model)` spawns a GameObject hierarchy with MeshRenderers.
 - Audio: `AudioClip` = path + decode mode, played through miniaudio's resource manager.
 
-## 7. Audio
+## 8. Audio
 
 `AudioSystem` wraps `ma_engine`. `AudioSource` (component) owns an `ma_sound`, follows
 its transform (3D spatialization with min/max distance), and can loop and
 play on start. `audio.playOneShot(clip, volume, position?)` fires and forgets.
 The listener follows the main camera.
 
-## 8. UI
+## 9. UI
 
 Dear ImGui with the SDL2 and Vulkan (dynamic rendering) backends. It is drawn
 by `UiPass` directly onto the backbuffer. Games draw HUD/menus in `onGui()`
@@ -274,7 +310,7 @@ hooks. F1 toggles the engine debug overlay: FPS/frame time, draw counts,
 renderer settings (shadows, exposure), and every render pass with an
 enable toggle and its own `onGui()` settings.
 
-## 9. Effects module (ve_effects, namespace `vfx`)
+## 10. Effects module (ve_effects, namespace `vfx`)
 
 Optional add-ons built only on public engine APIs:
 
@@ -297,16 +333,16 @@ Optional add-ons built only on public engine APIs:
   z cloud coverage, w fog multiplier), `[2]` direction towards the sun + illuminance,
   `[3]` sun radiance after the atmosphere.
 
-## 10. Test scene (sandbox)
+## 11. Test scene (sandbox)
 
 | File | What it demonstrates |
 |---|---|
-| `Terrain.*` | Heightfield chunks, biome vertex colours, **custom shader** (`terrain.frag`), height queries |
-| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading), scattering, grass with a wind shader |
-| `Player.*` | `update` vs `fixedUpdate` split, input actions, interpolation with `Time::fixedAlpha`, child camera |
+| `Terrain.*` | Heightfield chunks, biome vertex colours, **custom shader** (`terrain.frag`), heightfield collider |
+| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading), scattering with shared colliders (trunk capsules, rock convex hulls), grass with a wind shader |
+| `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Props.*` | Campfire/torches (point shadows, particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
-| `main.cpp` | Wiring: effects, glTF instancing, weather, test hooks |
+| `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 
 Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..3`,
 `SAVANNA_DEBUG=1` (F1 overlay on), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly

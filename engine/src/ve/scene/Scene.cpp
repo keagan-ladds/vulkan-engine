@@ -1,6 +1,7 @@
 #include "ve/scene/Scene.hpp"
 
 #include "ve/assets/Model.hpp"
+#include "ve/physics/Physics.hpp"
 #include "ve/scene/Components.hpp"
 
 #include <glm/gtx/matrix_decompose.hpp>
@@ -179,7 +180,7 @@ void Scene::clear()
     m_registry.clear();
 }
 
-GameObject& Scene::instantiate(const Model& model, GameObject* parent)
+GameObject& Scene::instantiate(const Model& model, GameObject* parent, bool staticColliders)
 {
     GameObject& root = spawn(model.name.empty() ? std::string("Model") : model.name);
     if (parent) root.setParent(parent, false);
@@ -200,6 +201,12 @@ GameObject& Scene::instantiate(const Model& model, GameObject* parent)
 
         if (node.mesh >= 0) {
             go.addComponent<MeshRenderer>(model.meshes[node.mesh], model.meshMaterials[node.mesh]);
+            if (staticColliders) {
+                if (model.meshColliders.size() != model.meshes.size()) model.meshColliders.resize(model.meshes.size());
+                Collider& c = model.meshColliders[node.mesh];
+                if (!c.valid()) c = Collider::mesh(model.meshData[node.mesh]);
+                go.addComponent<Rigidbody>(c, BodyType::Static);
+            }
         }
         for (int child : node.children) build(child, go);
     };

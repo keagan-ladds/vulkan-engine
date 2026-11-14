@@ -32,6 +32,7 @@ class Scene;
 class AssetManager;
 class AudioSystem;
 class UiLayer;
+class PhysicsWorld;
 
 struct EngineConfig {
     std::string title = "vulkan-engine";
@@ -61,6 +62,7 @@ public:
     Engine& operator=(const Engine&) = delete;
 
     static Engine& get();
+    static bool exists();
 
     void run();  // returns when quit() is called or the window closes
     void quit();
@@ -72,6 +74,7 @@ public:
     Scene& scene() { return *m_scene; }
     AssetManager& assets() { return *m_assets; }
     AudioSystem& audio() { return *m_audio; }
+    PhysicsWorld& physics() { return *m_physics; }
     UiLayer& ui() { return *m_ui; }
     const EngineConfig& config() const { return m_config; }
 
@@ -85,6 +88,7 @@ private:
     std::unique_ptr<Window> m_window;
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<AudioSystem> m_audio;
+    std::unique_ptr<PhysicsWorld> m_physics;
     std::unique_ptr<AssetManager> m_assets;
     std::unique_ptr<UiLayer> m_ui;
     std::unique_ptr<Scene> m_scene;

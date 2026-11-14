@@ -162,12 +162,26 @@ PropLibrary buildPropLibrary(ve::Renderer& r)
     auto mat = r.createStandardMaterial();
     mat->setBaseColor(glm::vec4(1.0f)).setRoughness(0.85f).setVertexColorWeight(1.0f);
     lib.material = mat;
-    for (uint32_t i = 0; i < 5; ++i) lib.acacias.push_back(ve::Mesh::create(r, acacia(100 + i), {}, "acacia"));
-    for (uint32_t i = 0; i < 2; ++i) lib.baobabs.push_back(ve::Mesh::create(r, baobab(200 + i), {}, "baobab"));
-    for (uint32_t i = 0; i < 3; ++i) lib.feverTrees.push_back(ve::Mesh::create(r, feverTree(300 + i), {}, "fever tree"));
-    for (uint32_t i = 0; i < 4; ++i) lib.bushes.push_back(ve::Mesh::create(r, bush(400 + i, i % 2 == 0), {}, "bush"));
-    for (uint32_t i = 0; i < 4; ++i) lib.rocks.push_back(ve::Mesh::create(r, rock(500 + i, 0.75f), {}, "rock"));
-    for (uint32_t i = 0; i < 3; ++i) lib.boulders.push_back(ve::Mesh::create(r, rock(600 + i, 1.1f), {}, "boulder"));
+    for (uint32_t i = 0; i < 5; ++i) lib.acacias.meshes.push_back(ve::Mesh::create(r, acacia(100 + i), {}, "acacia"));
+    for (uint32_t i = 0; i < 2; ++i) lib.baobabs.meshes.push_back(ve::Mesh::create(r, baobab(200 + i), {}, "baobab"));
+    for (uint32_t i = 0; i < 3; ++i) lib.feverTrees.meshes.push_back(ve::Mesh::create(r, feverTree(300 + i), {}, "fever tree"));
+    for (uint32_t i = 0; i < 4; ++i) lib.bushes.meshes.push_back(ve::Mesh::create(r, bush(400 + i, i % 2 == 0), {}, "bush"));
+    // Rocks: the collider is the convex hull of the rock's own mesh.
+    for (uint32_t i = 0; i < 4; ++i) {
+        const MeshData md = rock(500 + i, 0.75f);
+        lib.rocks.meshes.push_back(ve::Mesh::create(r, md, {}, "rock"));
+        lib.rocks.colliders.push_back(ve::Collider::convexHull(md));
+    }
+    for (uint32_t i = 0; i < 3; ++i) {
+        const MeshData md = rock(600 + i, 1.1f);
+        lib.boulders.meshes.push_back(ve::Mesh::create(r, md, {}, "boulder"));
+        lib.boulders.colliders.push_back(ve::Collider::convexHull(md));
+    }
+    // Trees: only the trunk is solid (shapes stand on y = 0, like the meshes).
+    lib.acacias.colliders.push_back(ve::Collider::capsule(1.5f, 0.3f).offset({0.0f, 1.5f, 0.0f}));
+    lib.baobabs.colliders.push_back(ve::Collider::cylinder(3.3f, 1.45f).offset({0.0f, 3.3f, 0.0f}));
+    lib.feverTrees.colliders.push_back(ve::Collider::capsule(3.0f, 0.2f).offset({0.0f, 3.0f, 0.0f}));
+    // Bushes have no collider: you can walk through them.
     return lib;
 }
 
@@ -186,7 +200,7 @@ void scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& l
         return true;
     };
 
-    auto place = [&](const char* name, const std::vector<std::shared_ptr<ve::Mesh>>& meshes, int count, float spacing,
+    auto place = [&](const char* name, const PropSet& set, int count, float spacing,
                      float minScale, float maxScale, auto&& accept) {
         int done = 0;
         for (int attempt = 0; attempt < count * 40 && done < count; ++attempt) {
@@ -198,10 +212,14 @@ void scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& l
             const float s = rng.range(minScale, maxScale);
             auto& go = scene.spawn(name);
             go.tag = name;
-            go.addComponent<ve::MeshRenderer>(meshes[size_t(rng.next() * meshes.size()) % meshes.size()], lib.material);
+            const size_t variant = size_t(rng.next() * set.meshes.size()) % set.meshes.size();
+            go.addComponent<ve::MeshRenderer>(set.meshes[variant], lib.material);
             go.transform().setPosition({p.x, h - 0.15f * s, p.y});
             go.transform().setLocalRotation(glm::angleAxis(rng.range(0.0f, 6.28f), glm::vec3(0, 1, 0)));
-            go.transform().setLocalScale(s);
+            go.transform().setLocalScale(s); // the collider is scaled to match automatically
+            if (!set.colliders.empty()) {
+                go.addComponent<ve::Rigidbody>(set.colliders[set.colliders.size() == 1 ? 0 : variant], ve::BodyType::Static);
+            }
             ++done;
         }
         return done;

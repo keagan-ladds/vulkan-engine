@@ -7,6 +7,8 @@
 // uses its own shader (grass.vert/frag) that sways with the global wind.
 // =============================================================================
 
+#include <ve/physics/Physics.hpp>
+
 #include <memory>
 #include <vector>
 
@@ -21,8 +23,15 @@ namespace savanna {
 
 class Terrain;
 
+// Mesh variants of one kind of prop plus their physics shapes:
+// no colliders = walk through it, one = shared by all variants, else one per variant.
+struct PropSet {
+    std::vector<std::shared_ptr<ve::Mesh>> meshes;
+    std::vector<ve::Collider> colliders;
+};
+
 struct PropLibrary {
-    std::vector<std::shared_ptr<ve::Mesh>> acacias, baobabs, feverTrees, bushes, rocks, boulders;
+    PropSet acacias, baobabs, feverTrees, bushes, rocks, boulders;
     std::shared_ptr<ve::Material> material;
 };
 

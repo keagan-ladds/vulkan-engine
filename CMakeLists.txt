@@ -15,7 +15,7 @@
 #        ve_setup_game(mygame ASSETS assets SHADERS ${MY_SHADERS})
 #     The sandbox is not built in that case (VE_BUILD_SANDBOX defaults to OFF).
 # =============================================================================
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.25) # 3.25: FetchContent SYSTEM
 project(VulkanEngine VERSION 0.1.0 LANGUAGES C CXX)
 
 option(VE_BUILD_SANDBOX "Build the savanna test scene" ${PROJECT_IS_TOP_LEVEL})

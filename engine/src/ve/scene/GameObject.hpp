@@ -39,6 +39,7 @@ class Input;
 class Renderer;
 class AssetManager;
 class AudioSystem;
+class PhysicsWorld;
 struct Time;
 
 // Shortcuts to engine systems, available in both GameObject and Component.
@@ -50,6 +51,7 @@ public:
     static Renderer& renderer();
     static AssetManager& assets();
     static AudioSystem& audio();
+    static PhysicsWorld& physics();
 };
 
 class Component : public EngineAccess {

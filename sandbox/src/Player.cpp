@@ -23,7 +23,17 @@ Player::Player(const Terrain& terrain) : GameObject("Player"), m_terrain(terrain
     in.bindAction("Sprint", Key::LShift);
     in.bindAction("Use", Key::E);
     in.bindAction("Use", ve::MouseButton::Left);
+    in.bindAction("Throw", Key::Q);
+    in.bindAction("Throw", ve::MouseButton::Right);
     in.bindAction("ToggleFly", Key::F);
+
+    // Physics capsule that walks over terrain, rocks and steps, collides with
+    // trees and huts, and pushes crates. Its position is our feet.
+    m_controller = &addComponent<ve::CharacterController>();
+    m_controller->radius = 0.35f;
+    m_controller->height = 1.8f;
+    m_controller->maxSlopeDegrees = 48.0f;
+    m_controller->stepHeight = 0.45f;
 }
 
 void Player::start()
@@ -40,12 +50,18 @@ void Player::start()
     input().setMouseCaptured(true);
 }
 
+void Player::setThrowable(std::shared_ptr<ve::Mesh> mesh, std::shared_ptr<ve::Material> material, ve::Collider collider)
+{
+    m_rockMesh = std::move(mesh);
+    m_rockMaterial = std::move(material);
+    m_rockCollider = std::move(collider);
+}
+
 void Player::teleport(const glm::vec3& feet, float yaw)
 {
-    m_position = m_prevPosition = feet;
-    m_velocity = glm::vec3(0.0f);
     m_yaw = yaw;
     transform().setPosition(feet);
+    m_controller->teleport(feet);
 }
 
 void Player::setPose(const glm::vec3& feet, float yawDegrees, float pitchDegrees)
@@ -53,6 +69,11 @@ void Player::setPose(const glm::vec3& feet, float yawDegrees, float pitchDegrees
     teleport(feet, glm::radians(yawDegrees));
     m_pitch = glm::radians(pitchDegrees);
     m_fly = true;
+}
+
+bool Player::grounded() const
+{
+    return m_controller->grounded();
 }
 
 glm::vec3 Player::eyePosition() const
@@ -63,6 +84,32 @@ glm::vec3 Player::eyePosition() const
 glm::vec3 Player::lookDirection() const
 {
     return m_head ? m_head->transform().forward() : transform().forward();
+}
+
+void Player::throwRock()
+{
+    if (!m_rockMesh || !m_rockCollider.valid()) return;
+    // A small dynamic body launched along the view direction. The renderer
+    // and physics both pick it up automatically from its components.
+    auto& rock = scene().spawn("Thrown rock");
+    rock.tag = "thrown";
+    const glm::vec3 dir = lookDirection();
+    rock.transform().setPosition(eyePosition() + dir * 0.7f);
+    rock.transform().setLocalScale(0.22f);
+    rock.addComponent<ve::MeshRenderer>(m_rockMesh, m_rockMaterial);
+    auto& body = rock.addComponent<ve::Rigidbody>(m_rockCollider, ve::BodyType::Dynamic);
+    body.mass = 3.0f;
+    body.restitution = 0.25f;
+    body.friction = 0.8f;
+    body.continuousCollision = true; // fast + small: don't tunnel through things
+    body.setLinearVelocity(dir * throwSpeed + m_controller->velocity());
+
+    // Keep the world tidy: only the most recent rocks stay.
+    m_thrown.push_back(&rock);
+    if (m_thrown.size() > 30) {
+        m_thrown.front()->destroy();
+        m_thrown.erase(m_thrown.begin());
+    }
 }
 
 void Player::update(float)
@@ -85,80 +132,46 @@ void Player::update(float)
     if (in.actionPressed("Jump")) m_jumpRequested = true;
     if (in.actionPressed("ToggleFly")) {
         m_fly = !m_fly;
-        m_velocity = glm::vec3(0.0f);
+        if (!m_fly) m_controller->teleport(transform().position()); // land where we are
     }
     m_usePressed = in.actionPressed("Use");
+    if (in.actionPressed("Throw")) throwRock();
 
     if (m_fly) {
-        // Free flight is driven directly per frame (no physics).
+        // Free flight (noclip): move directly, dragging the physics capsule along.
         const float dt = time().unscaledDeltaTime;
         glm::vec3 move = lookDirection() * in.axis(Key::S, Key::W) + transform().right() * in.axis(Key::A, Key::D);
         move.y += in.axis(Key::LCtrl, Key::Space);
         const float speed = flySpeed * (in.actionDown("Sprint") ? 4.0f : 1.0f);
-        m_position += move * speed * dt;
-        const float ground = m_terrain.height(m_position.x, m_position.z);
-        m_position.y = std::max(m_position.y, ground);
-        m_prevPosition = m_position;
+        glm::vec3 p = transform().position() + move * speed * dt;
+        p.y = std::max(p.y, m_terrain.height(p.x, p.z));
+        m_controller->teleport(p);
     }
 }
 
-void Player::fixedUpdate(float dt)
+void Player::fixedUpdate(float)
 {
     if (m_fly) return;
     ve::Input& in = input();
-    m_prevPosition = m_position;
 
     // Desired horizontal velocity from WASD, relative to where we face.
     const glm::vec3 fwd = glm::vec3(-std::sin(m_yaw), 0.0f, -std::cos(m_yaw));
     const glm::vec3 right = glm::vec3(std::cos(m_yaw), 0.0f, -std::sin(m_yaw));
     glm::vec3 wish = fwd * in.axis(Key::S, Key::W) + right * in.axis(Key::A, Key::D);
     if (glm::length(wish) > 1.0f) wish = glm::normalize(wish);
-    const float groundH = m_terrain.height(m_position.x, m_position.z);
-    const bool wading = groundH < Terrain::kWaterLevel - 0.3f;
+    const glm::vec3 feet = transform().position();
+    const bool wading = m_terrain.height(feet.x, feet.z) < Terrain::kWaterLevel - 0.3f;
     float speed = in.actionDown("Sprint") ? sprintSpeed : walkSpeed;
     if (wading) speed *= 0.5f;
 
-    // Accelerate towards the wish velocity (snappy on ground, floaty in air).
-    const glm::vec3 target = wish * speed;
-    const float accel = m_grounded ? 12.0f : 2.0f;
-    m_velocity.x += (target.x - m_velocity.x) * std::min(1.0f, accel * dt);
-    m_velocity.z += (target.z - m_velocity.z) * std::min(1.0f, accel * dt);
+    // Smooth the horizontal velocity: snappy on the ground, floaty in the air.
+    const float accel = m_controller->grounded() ? 12.0f : 2.0f;
+    m_walkVelocity += (wish * speed - m_walkVelocity) * std::min(1.0f, accel * time().fixedDeltaTime);
 
-    if (m_grounded && m_jumpRequested) {
-        m_velocity.y = jumpSpeed;
-        m_grounded = false;
-    }
+    if (m_jumpRequested && m_controller->grounded()) m_controller->jump(jumpSpeed);
     m_jumpRequested = false;
-    m_velocity.y -= gravity * dt;
-
-    glm::vec3 next = m_position + m_velocity * dt;
-    // Stay inside the world and off cliffs that are too steep to climb.
-    next.x = std::clamp(next.x, -Terrain::kHalfSize + 30.0f, Terrain::kHalfSize - 30.0f);
-    next.z = std::clamp(next.z, -Terrain::kHalfSize + 30.0f, Terrain::kHalfSize - 30.0f);
-    const float nextGround = m_terrain.height(next.x, next.z);
-    if (m_grounded && nextGround - groundH > 0.8f * std::max(0.05f, glm::length(glm::vec2(next.x - m_position.x, next.z - m_position.z))) + 0.25f) {
-        next.x = m_position.x; // too steep: block horizontal movement
-        next.z = m_position.z;
-    }
-    const float ground = m_terrain.height(next.x, next.z);
-    if (next.y <= ground) {
-        next.y = ground;
-        m_velocity.y = 0.0f;
-        m_grounded = true;
-    } else if (m_grounded && next.y - ground < 0.3f && m_velocity.y <= 0.0f) {
-        next.y = ground; // stick to the ground when walking downhill
-        m_velocity.y = 0.0f;
-    } else {
-        m_grounded = false;
-    }
-    m_position = next;
-}
-
-void Player::lateUpdate(float)
-{
-    // Interpolate between the last two physics states for smooth rendering.
-    const float alpha = m_fly ? 1.0f : time().fixedAlpha;
-    transform().setPosition(glm::mix(m_prevPosition, m_position, alpha));
+    // The controller applies gravity, collides, climbs steps and pushes crates.
+    m_controller->move(m_walkVelocity, time().fixedDeltaTime);
 }
 
 } // namespace savanna

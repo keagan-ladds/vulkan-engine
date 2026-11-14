@@ -20,8 +20,11 @@ Phases 0–10 are implemented and verified on Linux with an Intel Iris Xe
   F1 overlay.
 - `SAVANNA_AUTOTEST=1` passes in both Debug and Release.
 
-Next up: the **Future phases** at the bottom, starting with F1 (physics) and
-F2 (animation), which a Valheim-like game needs next. Also see
+Physics (Phase 11, formerly future phase F1) is done too: Jolt rigid bodies, a
+character controller and raycasts, all used by the savanna scene and the game
+template. One physics step takes about 0.3–0.7 ms for roughly 410 bodies.
+
+Next up: **F2 (animation)**, then building/gameplay systems. Also see
 [Known issues](#known-issues--tech-debt).
 
 ---
@@ -147,6 +150,57 @@ F2 (animation), which a Valheim-like game needs next. Also see
 
 **Accept:** interactive frame rates on an Iris Xe-class integrated GPU at 1280×720, validation clean. ✅ (60 FPS vsync at 1600×900)
 
+## Phase 11 — Physics (Jolt)
+
+- [x] Jolt Physics 5.2.0 via FetchContent (own CMake, SSE4.2, private to `ve_engine`)
+- [x] `PhysicsWorld`: fixed-step update after `fixedUpdate`, gravity, layers (static / moving / character), broad-phase optimisation after bulk adds, raycasts with body/character filtering
+- [x] `Collider`: box, sphere, capsule, cylinder, convex hull, triangle mesh, heightfield, offset; shared handles; world scale applied
+- [x] `Rigidbody` component: static / kinematic / dynamic, mass/friction/restitution/damping, continuous collision, forces, impulses, velocities, teleport; interpolated Transforms
+- [x] `CharacterController` component (Jolt CharacterVirtual): slopes, steps, floor sticking, pushing bodies, inner body, jump
+- [x] `scene.instantiate(model, parent, staticColliders)` mesh colliders from glTF
+- [x] Savanna: terrain heightfield, tree trunks, rock hulls, huts (mesh), torches; player uses the controller; throw rocks (Q/RMB); crate pyramid; HUD look-at label via raycast; autotest physics checks
+- [x] Game template: static/kinematic/dynamic example
+
+**Still to do for physics** (roughly in priority order for the game):
+- [ ] **Collision & trigger events**: Jolt `ContactListener` → queued and
+  dispatched on the main thread as `Component::onCollisionEnter/Stay/Exit(other, contact)`.
+  Sensor bodies (`Rigidbody::isTrigger`) → `onTriggerEnter/Exit`. Needed for
+  pickups, damage zones, water volumes and doors.
+- [ ] **Shape casts & overlap queries**: `sphereCast`, `boxCast` and
+  `overlapSphere/Box` (with layer masks). Needed for melee hit detection, AI
+  senses and building placement validity.
+- [ ] **Collider debug drawing**: implement Jolt's `DebugRenderer` on top of a
+  new engine line/wireframe renderer (also useful for AI paths, nav, bounds).
+  F1 toggle.
+- [ ] **User-configurable collision layers/masks**: currently fixed at
+  static / moving / character. Games need e.g. projectiles, triggers,
+  enemies, debris and "ignore player".
+- [ ] **Joints / constraints**: hinge (doors, gates), fixed (breakable
+  building pieces), distance/rope, plus a constraint component API.
+- [ ] **Vehicles**: the concept art has trucks. Wrap Jolt's
+  `VehicleConstraint` (wheeled vehicle, suspension, engine/transmission) as a component.
+- [ ] **Water/buoyancy**: Jolt `ApplyBuoyancyImpulse` for floating debris,
+  plus swim/wade volumes for the character.
+- [ ] **Ragdolls** (needs F2 animation skeletons): Jolt `Ragdoll` from a skeleton.
+- [ ] **Collider streaming for large worlds**: only create bodies for
+  trees/rocks near the player (ties into the foliage system). Thousands of
+  static bodies across a huge map are a waste.
+- [ ] **Character improvements**: character-vs-character collision
+  (`CharacterVsCharacterCollisionSimple`), climbing onto dynamic crates,
+  crouch (shape swap), being pushed by moving kinematic platforms, and fall
+  damage hooks (landing velocity).
+- [ ] **Interpolation of kinematic bodies** (they currently follow their
+  Transform, which is already smooth; only matters if driven by physics velocity).
+- [ ] **Physics materials**: per-shape friction/restitution + surface type
+  (footstep sounds, impact particles).
+- [ ] **Determinism / save-state** (later): body state serialisation for save games.
+- [ ] Known issue: the heightfield collider triangulates differently from the
+  render mesh (a few cm on steep slopes), and Jolt quantises heights to 8 bits per block.
+
+**Accept:** player walks on terrain and can't walk through trees, rocks or huts;
+thrown rocks collide and come to rest; crates topple when hit; raycasts report
+the right object; validation clean; template builds outside the repo. ✅
+
 ---
 
 ## Known issues / tech debt
@@ -169,8 +223,11 @@ Ordered roughly by how much they'll bite while building a game.
 6. **Shader hot-reload missing.** Changing a shader means restarting the app.
 7. Sky-view LUT assumes a viewer near y = 0 and a flat ground; very high
    cameras get an approximate sky.
-8. Physics is just "stand on the heightfield", so the player walks through
-   trees and huts.
+8. Physics: the heightfield collider's triangle diagonals can differ from the
+   render mesh, so feet may float or sink up to a few cm on steep slopes.
+   Jolt also quantises heights to 8 bits per 2×2 block. Characters can't
+   climb up onto dynamic crates reliably (a CharacterVirtual limitation unless
+   you tune `mMaxStrength` and the supporting volume).
 9. `Scene::forEach<T>()` only finds components registered under exactly `T`
    (a `class MyLight : public PointLight` added as `MyLight` is not seen by the
    renderer). Add as `addComponent<PointLight>` or extend the registry.
@@ -178,11 +235,6 @@ Ordered roughly by how much they'll bite while building a game.
 ---
 
 ## Future phases (not started; ordered by usefulness for a Valheim-like game)
-
-### F1 — Physics & character
-- [ ] Integrate Jolt Physics: rigid bodies, static mesh/heightfield colliders, raycasts
-- [ ] `Rigidbody`, `Collider` components; physics in `fixedUpdate` with interpolation
-- [ ] Character controller (Jolt CharacterVirtual), replace terrain-height sampling in `Player`
 
 ### F2 — Animation
 - [ ] Skinned meshes from glTF (joints/weights in a second vertex stream so `Vertex` stays fixed)
@@ -201,7 +253,7 @@ Ordered roughly by how much they'll bite while building a game.
 ### F4 — Building & gameplay systems
 - [ ] Grid/snap building system (pieces, sockets, structural stability)
 - [ ] Inventory/crafting data model (data files)
-- [ ] Interaction system (raycast "use" with prompts) — generalise `Sunstone`
+- [ ] Interaction system (raycast "use" with prompts) — generalise `Sunstone` (raycasts now available)
 - [ ] AI (state machines / behaviour trees), navmesh (Recast/Detour)
 - [ ] Combat (hitboxes, damage, stamina), boss encounters
 

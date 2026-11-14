@@ -43,8 +43,10 @@ public:
     }
 
     // Spawns the node hierarchy of an imported model (glTF) as GameObjects
-    // with MeshRenderers. Returns the root.
-    GameObject& instantiate(const Model& model, GameObject* parent = nullptr);
+    // with MeshRenderers. With staticColliders, every mesh node also gets a
+    // static Rigidbody using the exact triangle mesh (buildings, ruins...).
+    // Returns the root.
+    GameObject& instantiate(const Model& model, GameObject* parent = nullptr, bool staticColliders = false);
 
     GameObject* find(const std::string& name) const;
     std::vector<GameObject*> findAllWithTag(const std::string& tag) const;

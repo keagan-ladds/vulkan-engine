@@ -84,3 +84,14 @@ calls `ve_setup_game()`. Outputs land in the game's build folder.
 game rebuilds it, with no install step. FetchContent from a git URL works the
 same way once the engine has a remote; switching to it is a one-line change in
 the template.
+
+### D13. Jolt Physics, hidden behind an engine API
+**Chosen:** Jolt 5.2.0 (fetched, built with its own CMake), linked privately.
+The engine exposes its own `Collider`/`Rigidbody`/`CharacterController`/`PhysicsWorld`.
+**Alternatives:** PhysX (heavy SDK), Bullet (older and slower), or exposing Jolt types directly.
+**Why:** Jolt is modern, fast, MIT-licensed, and has a proper virtual character
+controller (stairs, slopes, pushing), which a Valheim-like game needs. Hiding it
+keeps games simple and makes the backend swappable. Its SIMD flags propagate to
+`ve_engine`, so it's pinned to SSE4.2 to keep binaries portable.
+**Unity-like split:** physics steps after `fixedUpdate`, and Transforms are
+interpolated between steps.

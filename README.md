@@ -6,7 +6,8 @@ savannah/swamp setting with a Valheim-like look.
 
 ```
 engine/    ve_engine   core: loop, input, audio, assets, scene (GameObject/Component),
-                       renderer (render graph, materials, CSM + point shadows), ImGui UI
+                       renderer (render graph, materials, CSM + point shadows), ImGui UI,
+                       physics (Jolt: rigid bodies, character controller, raycasts)
 effects/   ve_effects  optional add-ons: sky + volumetric clouds, volumetric fog,
                        bloom, particles, weather
 sandbox/   savanna     the test game
@@ -43,6 +44,7 @@ Or in VS Code press **F5** (Debug / Release / Debug autotest).
 | Shift / Space | sprint / jump |
 | F | toggle fly mode (Space/Ctrl = up/down) |
 | E or left click | pick up sunstone |
+| Q or right click | throw a rock (physics) |
 | T / G (hold) | fast-forward / rewind time of day |
 | R | next weather (clear → hazy → overcast → rain) |
 | Tab | release/capture mouse |

@@ -70,7 +70,9 @@ void buildWorld(ve::Engine& engine)
     for (int i = 0; i < 3; ++i) {
         const float a = glm::radians(200.0f + 65.0f * static_cast<float>(i));
         const glm::vec2 p = camp + glm::vec2(std::cos(a), std::sin(a)) * 11.0f;
-        ve::GameObject& h = scene.instantiate(*hut);
+        // staticColliders: every hut mesh also becomes a static triangle-mesh
+        // collider, so walls block you but the doorway shape is respected.
+        ve::GameObject& h = scene.instantiate(*hut, nullptr, /*staticColliders*/ true);
         const float hy = terrain.height(p.x, p.y) - 0.05f;
         h.transform().setPosition({p.x, hy, p.y});
         // Turn the doorway (+Z in the model) towards the fire.
@@ -83,8 +85,27 @@ void buildWorld(ve::Engine& engine)
         torch.transform().setPosition({tp.x, terrain.height(tp.x, tp.y), tp.y});
     }
 
+    // --- Crates: a pyramid of dynamic boxes to knock over -----------------------------
+    auto crateMat = r.createStandardMaterial();
+    crateMat->setAlbedoTexture(assets.loadTexture("textures/thatch.png")).setBaseColor({0.75f, 0.55f, 0.38f, 1.0f}).setRoughness(0.8f);
+    auto crateMesh = ve::Mesh::create(r, ve::primitives::cube(glm::vec3(0.8f)), {}, "crate");
+    const ve::Collider crateShape = ve::Collider::box(glm::vec3(0.4f)); // one shape shared by all crates
+    const glm::vec2 cratesAt = camp + glm::vec2(4.0f, -9.0f);
+    const float groundY = terrain.height(cratesAt.x, cratesAt.y);
+    for (int row = 0; row < 4; ++row) {
+        for (int i = 0; i < 4 - row; ++i) {
+            auto& crate = scene.spawn("Crate");
+            crate.tag = "crate";
+            crate.addComponent<ve::MeshRenderer>(crateMesh, crateMat);
+            const float x = (static_cast<float>(i) - (3.0f - static_cast<float>(row)) * 0.5f) * 0.82f;
+            crate.transform().setPosition({cratesAt.x + x, groundY + 0.41f + static_cast<float>(row) * 0.81f, cratesAt.y});
+            crate.addComponent<ve::Rigidbody>(crateShape, ve::BodyType::Dynamic).mass = 15.0f;
+        }
+    }
+
     // --- Player ---------------------------------------------------------------------------
     auto& player = scene.spawn<Player>(terrain);
+    player.setThrowable(props.rocks.meshes[0], props.material, props.rocks.colliders[0]);
     const glm::vec2 start = camp + glm::vec2(9.0f, 5.0f);
     // Face west, towards the setting sun and the swamp.
     player.teleport({start.x, terrain.height(start.x, start.y), start.y}, glm::radians(78.0f));
@@ -124,7 +145,7 @@ void buildWorld(ve::Engine& engine)
         weather.setWeather(static_cast<vfx::Weather::Type>(std::atoi(w) % int(vfx::Weather::Type::Count)), 0.01f);
     }
     if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
-    if (std::getenv("SAVANNA_AUTOTEST")) scene.spawn<AutoTest>();
+    if (std::getenv("SAVANNA_AUTOTEST")) scene.spawn<AutoTest>(terrain);
     if (const char* f = std::getenv("SAVANNA_POSE")) {
         float x, y, z, yaw, pitch;
         if (std::sscanf(f, "%f,%f,%f,%f,%f", &x, &y, &z, &yaw, &pitch) == 5) player.setPose({x, y, z}, yaw, pitch);

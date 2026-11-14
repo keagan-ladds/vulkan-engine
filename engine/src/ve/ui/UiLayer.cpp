@@ -3,6 +3,7 @@
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Window.hpp"
+#include "ve/physics/Physics.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
@@ -137,7 +138,8 @@ void UiLayer::drawDebugOverlay()
         ImGui::Text("Triangles: %u", s.triangles);
         ImGui::Text("Visible: %u / %u submeshes", s.visibleObjects, s.totalObjects);
         ImGui::Text("Lights: %u dir, %u point, %u shadow views", s.directionalLights, s.pointLights, s.shadowViews);
-        ImGui::Text("Objects: %zu", m_engine->scene().objectCount());
+        ImGui::Text("Objects: %zu   Physics bodies: %u (%.2f ms)", m_engine->scene().objectCount(),
+                    m_engine->physics().bodyCount(), m_engine->physics().lastStepMs);
         ImGui::Text("Camera: %.1f %.1f %.1f", f.camera.position.x, f.camera.position.y, f.camera.position.z);
     }
 

@@ -8,6 +8,7 @@
 //   - a custom shader/material (shaders/mygame_toon.frag)
 //   - GameObjects with behaviour (CameraController) and a reusable Component (Spinner)
 //   - a point light with shadows + a particle emitter
+//   - physics: static, kinematic and dynamic Rigidbodies
 //
 // Engine docs: <engine>/docs (architecture, recipes in 03-conventions.md).
 // =============================================================================
@@ -60,9 +61,13 @@ int main()
             .setRoughness(0.95f);
         auto& ground = scene.spawn("Ground");
         ground.addComponent<ve::MeshRenderer>(ve::Mesh::create(renderer, ve::primitives::plane(200, 200)), groundMat);
+        // Physics: a static box whose top face is the ground plane.
+        ground.addComponent<ve::Rigidbody>(ve::Collider::box({100.0f, 0.5f, 100.0f}).offset({0.0f, -0.5f, 0.0f}),
+                                           ve::BodyType::Static);
 
         // --- A row of PBR spheres: roughness left to right, metal on the second row --------
         auto sphere = ve::Mesh::create(renderer, ve::primitives::sphere(0.5f));
+        const ve::Collider sphereShape = ve::Collider::sphere(0.5f); // shapes can be shared
         for (int row = 0; row < 2; ++row) {
             for (int i = 0; i < 5; ++i) {
                 auto mat = renderer.createStandardMaterial();
@@ -71,6 +76,7 @@ int main()
                     .setMetallic(static_cast<float>(row));
                 auto& go = scene.spawn("Sphere");
                 go.addComponent<ve::MeshRenderer>(sphere, mat);
+                go.addComponent<ve::Rigidbody>(sphereShape, ve::BodyType::Static);
                 go.transform().setPosition({-4.0f + 2.0f * static_cast<float>(i), 0.5f + 1.2f * static_cast<float>(row), -6.0f});
             }
         }
@@ -90,6 +96,8 @@ int main()
             auto& go = scene.spawn("ToonCube");
             go.addComponent<ve::MeshRenderer>(cube, mat);
             go.addComponent<Spinner>().speed = 0.5f + 0.4f * static_cast<float>(i);
+            // Kinematic: moved by code (the Spinner), and shoves dynamic bodies out of the way.
+            go.addComponent<ve::Rigidbody>(ve::Collider::box(glm::vec3(0.5f)), ve::BodyType::Kinematic);
             go.transform().setPosition({-3.0f + 3.0f * static_cast<float>(i), 1.0f, -1.0f});
         }
 
@@ -113,6 +121,18 @@ int main()
         flames.colorStart = {5.0f, 2.0f, 0.5f, 1.0f}; // HDR > 1 => glows with bloom
         flames.colorMid = {3.0f, 0.8f, 0.1f, 0.7f};
         flames.colorEnd = {0.5f, 0.1f, 0.0f, 0.0f};
+
+        // --- Dynamic bodies: boxes dropped onto the spinning cubes ------------------------
+        auto smallBox = ve::Mesh::create(renderer, ve::primitives::cube(glm::vec3(0.4f)));
+        const ve::Collider smallBoxShape = ve::Collider::box(glm::vec3(0.2f));
+        auto boxMat = renderer.createStandardMaterial();
+        boxMat->setBaseColor({0.9f, 0.9f, 0.85f, 1.0f}).setRoughness(0.6f);
+        for (int i = 0; i < 12; ++i) {
+            auto& box = scene.spawn("Box");
+            box.addComponent<ve::MeshRenderer>(smallBox, boxMat);
+            box.transform().setPosition({-3.0f + 0.55f * static_cast<float>(i), 4.0f + 0.7f * static_cast<float>(i % 3), -1.0f});
+            box.addComponent<ve::Rigidbody>(smallBoxShape); // dynamic by default
+        }
 
         // --- Camera ------------------------------------------------------------------------
         auto& camera = scene.spawn<CameraController>();

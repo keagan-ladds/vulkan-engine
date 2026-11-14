@@ -12,7 +12,7 @@
 # The engine is built as part of your game (no install step); you never need
 # to edit anything inside the engine folder.
 # =============================================================================
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.25)
 project(MyGame LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON) # IntelliSense / clangd

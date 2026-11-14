@@ -9,6 +9,7 @@
 #include "ve/core/Log.hpp"
 #include "ve/core/Time.hpp"
 #include "ve/core/Window.hpp"
+#include "ve/physics/Physics.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Primitives.hpp"

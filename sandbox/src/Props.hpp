@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace ve {
 class Material;
@@ -93,10 +94,13 @@ public:
 // (deferred destroy, one-shot audio, weather transitions) without input.
 class AutoTest : public ve::GameObject {
 public:
-    AutoTest() : GameObject("AutoTest") {}
+    explicit AutoTest(const class Terrain& terrain) : GameObject("AutoTest"), m_terrain(&terrain) {}
     void update(float dt) override;
 
 private:
+    const class Terrain* m_terrain;
+    std::vector<glm::vec3> m_crateStart;
+    bool m_throwPending = false;
     float m_t = 0.0f;
     int m_step = 0;
 };
