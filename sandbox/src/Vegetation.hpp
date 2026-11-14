@@ -8,6 +8,7 @@
 // =============================================================================
 
 #include <ve/physics/Physics.hpp>
+#include <ve/render/Instancing.hpp>
 #include <ve/scene/GameObject.hpp>
 
 #include <memory>
@@ -28,9 +29,9 @@ class Terrain;
 // Mesh variants of one kind of prop plus their physics shapes:
 // no colliders = walk through it, one = shared by all variants, else one per variant.
 struct PropSet {
-    std::vector<std::shared_ptr<ve::Mesh>> meshes;                // LOD 0 per variant
-    std::vector<std::vector<std::shared_ptr<ve::Mesh>>> lods;     // LOD 1.. per variant (simplified)
-    std::vector<float> screenSizes;                               // LOD switch thresholds (InstanceLod::screenSize)
+    // Per variant: its LOD chain (meshes + materials + switch thresholds):
+    // full mesh, simplified meshes, and for trees an octahedral impostor last.
+    std::vector<std::vector<ve::InstanceLod>> variants;
     std::vector<ve::Collider> colliders;
 };
 

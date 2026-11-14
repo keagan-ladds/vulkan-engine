@@ -8,6 +8,7 @@
 #include <ve/render/Mesh.hpp>
 #include <ve/render/Primitives.hpp>
 #include <ve/physics/Physics.hpp>
+#include <ve/render/Impostor.hpp>
 #include <ve/render/Instancing.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
@@ -168,48 +169,48 @@ PropLibrary buildPropLibrary(ve::Renderer& r)
     auto mat = r.createStandardMaterial();
     mat->setBaseColor(glm::vec4(1.0f)).setRoughness(0.85f).setVertexColorWeight(1.0f);
     lib.material = mat;
-    // Each variant: LOD 0 = the generated mesh, then simplified levels
-    // (meshoptimizer). Faceted = keep the low-poly flat shading on every LOD.
+    // Each variant gets a LOD chain: the generated mesh, simplified levels
+    // (meshoptimizer; faceted keeps the low-poly flat shading) switched by
+    // screen size, and for trees an octahedral impostor as the last level.
     using SO = ve::SimplifyOptions;
-    auto addVariant = [&](PropSet& set, const MeshData& md, const char* name, std::initializer_list<SO> lodOptions) {
+    auto addVariant = [&](PropSet& set, const MeshData& md, const char* name, std::vector<std::pair<SO, float>> levels,
+                          float lod0ScreenSize, bool impostor) {
         MeshData lod0 = md;
         lod0.optimize();
-        set.meshes.push_back(ve::Mesh::create(r, lod0, {}, name));
-        std::vector<std::shared_ptr<ve::Mesh>> extra;
+        auto mesh0 = ve::Mesh::create(r, lod0, {}, name);
+        std::vector<ve::InstanceLod> chain{{mesh0, {lib.material}, lod0ScreenSize}};
         std::string tris = std::to_string(lod0.triangleCount());
-        for (const SO& o : lodOptions) {
-            MeshData lod = md.simplified(o);
+        for (const auto& [options, screenSize] : levels) {
+            MeshData lod = md.simplified(options);
             lod.optimize();
             tris += " / " + std::to_string(lod.triangleCount());
-            extra.push_back(ve::Mesh::create(r, lod, {}, name));
+            chain.push_back({ve::Mesh::create(r, lod, {}, name), {lib.material}, screenSize});
         }
-        set.lods.push_back(std::move(extra));
-        if (set.meshes.size() == 1) ve::log::info("LODs {}: {} triangles", name, tris);
+        if (impostor) {
+            chain.push_back(ve::Impostor::bake(r, *mesh0, {lib.material})->lod());
+            tris += " / impostor";
+        }
+        if (set.variants.empty()) ve::log::info("LODs {}: {} triangles", name, tris);
+        set.variants.push_back(std::move(chain));
     };
+    // Screen size = fraction of half the screen height the bounding radius covers.
     const SO treeMid{.ratio = 0.35f, .maxError = 0.08f, .faceted = true};
-    const SO treeFar{.ratio = 0.10f, .maxError = 0.3f, .sloppy = true, .faceted = true};
     const SO smallFar{.ratio = 0.25f, .maxError = 0.3f, .sloppy = true, .faceted = true};
-    for (uint32_t i = 0; i < 5; ++i) addVariant(lib.acacias, acacia(100 + i), "acacia", {treeMid, treeFar});
-    for (uint32_t i = 0; i < 2; ++i) addVariant(lib.baobabs, baobab(200 + i), "baobab", {treeMid, treeFar});
-    for (uint32_t i = 0; i < 3; ++i) addVariant(lib.feverTrees, feverTree(300 + i), "fever tree", {treeMid, treeFar});
-    for (uint32_t i = 0; i < 4; ++i) addVariant(lib.bushes, bush(400 + i, i % 2 == 0), "bush", {smallFar});
+    for (uint32_t i = 0; i < 5; ++i) addVariant(lib.acacias, acacia(100 + i), "acacia", {{treeMid, 0.035f}}, 0.10f, true);
+    for (uint32_t i = 0; i < 2; ++i) addVariant(lib.baobabs, baobab(200 + i), "baobab", {{treeMid, 0.035f}}, 0.10f, true);
+    for (uint32_t i = 0; i < 3; ++i) addVariant(lib.feverTrees, feverTree(300 + i), "fever tree", {{treeMid, 0.035f}}, 0.10f, true);
+    for (uint32_t i = 0; i < 4; ++i) addVariant(lib.bushes, bush(400 + i, i % 2 == 0), "bush", {{smallFar, 0.0f}}, 0.08f, false);
     // Rocks: the collider is the convex hull of the rock's own (full detail) mesh.
     for (uint32_t i = 0; i < 4; ++i) {
         const MeshData md = rock(500 + i, 0.75f);
-        addVariant(lib.rocks, md, "rock", {smallFar});
+        addVariant(lib.rocks, md, "rock", {{smallFar, 0.0f}}, 0.06f, false);
         lib.rocks.colliders.push_back(ve::Collider::convexHull(md));
     }
     for (uint32_t i = 0; i < 3; ++i) {
         const MeshData md = rock(600 + i, 1.1f);
-        addVariant(lib.boulders, md, "boulder", {SO{.ratio = 0.3f, .maxError = 0.1f, .faceted = true}});
+        addVariant(lib.boulders, md, "boulder", {{SO{.ratio = 0.3f, .maxError = 0.1f, .faceted = true}, 0.0f}}, 0.06f, false);
         lib.boulders.colliders.push_back(ve::Collider::convexHull(md));
     }
-    // LOD switch points: fraction of half the screen height covered by the
-    // instance's bounding radius (so bigger/closer things keep detail longer).
-    lib.acacias.screenSizes = lib.baobabs.screenSizes = lib.feverTrees.screenSizes = {0.10f, 0.035f};
-    lib.bushes.screenSizes = {0.08f};
-    lib.rocks.screenSizes = {0.06f};
-    lib.boulders.screenSizes = {0.06f};
     // Trees: only the trunk is solid (shapes stand on y = 0, like the meshes).
     lib.acacias.colliders.push_back(ve::Collider::capsule(1.5f, 0.3f).offset({0.0f, 1.5f, 0.0f}));
     lib.baobabs.colliders.push_back(ve::Collider::cylinder(3.3f, 1.45f).offset({0.0f, 3.3f, 0.0f}));
@@ -267,16 +268,11 @@ void scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& l
                      float cullDistance, float shadowDistance, auto&& accept) {
         // One instance group per mesh variant.
         std::vector<std::shared_ptr<ve::InstanceGroup>> groups;
-        const uint32_t perVariant = uint32_t(count) / uint32_t(set.meshes.size()) + 64;
-        for (size_t v = 0; v < set.meshes.size(); ++v) {
+        const uint32_t perVariant = uint32_t(count) / uint32_t(set.variants.size()) + 64;
+        for (const auto& chain : set.variants) {
             ve::InstanceGroupDesc desc;
             desc.name = propName(kind);
-            // LOD chain: full mesh, then the simplified levels, switched by screen size.
-            desc.lods.push_back({set.meshes[v], {lib.material}, set.screenSizes.empty() ? 0.0f : set.screenSizes[0]});
-            for (size_t l = 0; l < set.lods[v].size(); ++l) {
-                const float next = l + 1 < set.screenSizes.size() ? set.screenSizes[l + 1] : 0.0f;
-                desc.lods.push_back({set.lods[v][l], {lib.material}, next});
-            }
+            desc.lods = chain;
             desc.cullDistance = cullDistance;
             desc.shadowDistance = shadowDistance;
             groups.push_back(ve::Engine::get().renderer().createInstanceGroup(desc, perVariant));
@@ -287,7 +283,7 @@ void scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& l
                               rng.range(-Terrain::kHalfSize + 45.0f, Terrain::kHalfSize - 45.0f));
             const float h = terrain.height(p.x, p.y);
             if (glm::length(p - Terrain::kCamp) < 26.0f || !accept(p, h) || !free(p, spacing * 0.5f)) continue;
-            const size_t variant = size_t(rng.next() * set.meshes.size()) % set.meshes.size();
+            const size_t variant = size_t(rng.next() * set.variants.size()) % set.variants.size();
             if (groups[variant]->count() >= groups[variant]->capacity()) continue;
             grid[key(int(std::floor(p.x / kCell)), int(std::floor(p.y / kCell)))].push_back({p, spacing * 0.5f});
 

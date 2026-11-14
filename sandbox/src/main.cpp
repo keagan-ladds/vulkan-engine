@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <string>
 
 using namespace savanna;
 
@@ -123,7 +124,7 @@ void buildWorld(ve::Engine& engine)
 
     // --- Player ---------------------------------------------------------------------------
     auto& player = scene.spawn<Player>(terrain);
-    player.setThrowable(props.rocks.meshes[0], props.material, props.rocks.colliders[0]);
+    player.setThrowable(props.rocks.variants[0][0].mesh, props.material, props.rocks.colliders[0]);
     const glm::vec2 start = camp + glm::vec2(9.0f, 5.0f);
     // Face west, towards the setting sun and the swamp.
     player.teleport({start.x, terrain.height(start.x, start.y), start.y}, glm::radians(78.0f));
@@ -163,6 +164,7 @@ void buildWorld(ve::Engine& engine)
         weather.setWeather(static_cast<vfx::Weather::Type>(std::atoi(w) % int(vfx::Weather::Type::Count)), 0.01f);
     }
     if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
+    if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser
     if (std::getenv("SAVANNA_AUTOTEST")) scene.spawn<AutoTest>(terrain);
     if (const char* f = std::getenv("SAVANNA_POSE")) {
         float x, y, z, yaw, pitch;

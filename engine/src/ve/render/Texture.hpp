@@ -30,6 +30,10 @@ public:
     static std::shared_ptr<Texture> create3D(Renderer& renderer, uint32_t width, uint32_t height, uint32_t depth,
                                              VkFormat format, const void* pixels, size_t byteSize,
                                              SamplerType sampler = SamplerType::LinearRepeat, std::string name = {});
+    // Takes ownership of an image that's already in READ_ONLY_OPTIMAL layout
+    // (e.g. rendered on the GPU, like impostor atlases).
+    static std::shared_ptr<Texture> adopt(Renderer& renderer, const Image& image, SamplerType sampler,
+                                          std::string name = {});
     // Single-colour 1x1 texture.
     static std::shared_ptr<Texture> solid(Renderer& renderer, uint8_t r, uint8_t g, uint8_t b, uint8_t a,
                                           bool srgb, std::string name = {});

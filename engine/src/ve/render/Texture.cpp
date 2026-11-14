@@ -51,6 +51,16 @@ std::shared_ptr<Texture> Texture::create3D(Renderer& renderer, uint32_t width, u
     return createImpl(renderer, desc, pixels, byteSize, false, sampler, std::move(name));
 }
 
+std::shared_ptr<Texture> Texture::adopt(Renderer& renderer, const Image& image, SamplerType sampler, std::string name)
+{
+    std::shared_ptr<Texture> tex(new Texture());
+    tex->m_renderer = &renderer;
+    tex->m_name = std::move(name);
+    tex->m_image = image;
+    tex->m_index = renderer.bindless().addTexture(image.view, renderer.samplers().get(sampler));
+    return tex;
+}
+
 std::shared_ptr<Texture> Texture::solid(Renderer& renderer, uint8_t r, uint8_t g, uint8_t b, uint8_t a, bool srgb,
                                         std::string name)
 {

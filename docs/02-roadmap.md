@@ -238,10 +238,13 @@ million grass blades), scaling up on discrete GPUs.
   need per-part simplification). Custom material shaders must forward `veInstanceLodFade()` and call
   `veLodDither()` to crossfade; otherwise they pop. Depth-only shadows never crossfade.
 
-### 12c — Impostors
-- [ ] Octahedral impostor baking (render N×N views of a mesh into albedo/normal/depth atlas, at load, cached on disk)
-- [ ] Impostor rendering as the last LOD (camera-facing quad, blend of the 3 nearest views, depth/normal-correct lighting)
-- [ ] Impostor shadows (cascades 2+)
+### 12c — Impostors ✅
+- [x] Octahedral impostor baking (`Impostor::bake`): N×N hemi-octahedral views (default 12×12 × 128 px) rendered on the GPU into an albedo atlas (sRGB) + object-space normal atlas, mip chain (stops at 8 px frames), at load time (a few ms per mesh; StandardMaterial layout)
+- [x] Impostor rendering as the last LOD: camera-facing quad, 3-frame barycentric blend with per-frame ray/plane intersection (parallax-correct), alpha-weighted blending, normal-mapped engine lighting (receives shadows, day/night), per-instance tint, LOD crossfade
+- [x] Impostor shadows: quad faces the light (from the shadow view-projection rows), nearest frame alpha test
+- [x] Savanna: acacia/baobab/fever trees use mesh → simplified mesh → impostor; `SAVANNA_LODBIAS` test hook
+- **Result:** impostors are visually equivalent to the meshes at distance (colour, faceting, shadows); aerial view with every prop visible at 60 FPS (GPU about 14 ms, Iris Xe)
+- Not done: disk cache for baked atlases (baking is fast enough for now), depth/pixel-depth-offset for impostor intersections, full-sphere (looking from below) variant
 
 ### 12d — Foliage system
 - [ ] World cells streamed around the camera (worker-thread generation, GPU upload budget per frame)

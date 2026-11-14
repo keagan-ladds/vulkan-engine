@@ -316,6 +316,16 @@ void Renderer::createDefaults()
     unlit.castShadows = false;
     m_builtinShaders[size_t(BuiltinShader::Unlit)] = createShader(unlit);
 
+    ShaderDesc impostor = standard;
+    impostor.name = "Impostor";
+    impostor.vertex = "impostor.vert";
+    impostor.fragment = "impostor.frag";
+    impostor.shadowVertex = "impostor_shadow.vert";
+    impostor.shadowFragment = "impostor_shadow.frag";
+    impostor.cull = CullMode::None;
+    impostor.queue = RenderQueue::AlphaTest;
+    m_builtinShaders[size_t(BuiltinShader::Impostor)] = createShader(impostor);
+
     m_fallbackMaterial = createStandardMaterial();
     m_fallbackMaterial->setBaseColor({0.8f, 0.8f, 0.8f, 1.0f});
 }
@@ -481,6 +491,13 @@ void Renderer::freeMaterialSlot(uint32_t index)
 {
     // In-flight frames may still read this slot: recycle it later.
     m_device.deferDestroy([this, index] { m_freeMaterials.push_back(index); });
+}
+
+void Renderer::uploadMaterialsNow()
+{
+    for (FrameSlot& s : m_slots) {
+        std::memcpy(s.materials.mapped, m_materials.data(), sizeof(GpuMaterial) * m_materialHighWater);
+    }
 }
 
 void Renderer::bindGlobalSets(VkCommandBuffer cmd)

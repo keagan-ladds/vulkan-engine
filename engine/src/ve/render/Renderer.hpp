@@ -74,7 +74,7 @@ struct Environment {
     float ambientIntensity = 1.0f;
 };
 
-enum class BuiltinShader { Standard, StandardCutout, StandardTransparent, Unlit, Count };
+enum class BuiltinShader { Standard, StandardCutout, StandardTransparent, Unlit, Impostor, Count };
 
 class Renderer {
 public:
@@ -163,6 +163,9 @@ public:
     void freeMaterialSlot(uint32_t index);
     GpuMaterial& materialData(uint32_t index) { return m_materials[index]; }
     void bindGlobalSets(VkCommandBuffer cmd);
+    // Copies all material parameters to the GPU now (normally done per frame);
+    // for GPU work at load time that reads materials, e.g. impostor baking.
+    void uploadMaterialsNow();
     uint64_t frameNumber() const { return m_frameNumber; }
 
     // Built-in graph textures.

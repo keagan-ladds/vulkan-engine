@@ -263,6 +263,12 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
   (8 bits) and an incoming/outgoing flag, and the fragment shader discards
   complementary 4×4 ordered-dither pixels (`veLodDither`) for a pop-free
   crossfade. LOD meshes come from `MeshData::simplified()` (meshoptimizer).
+- **Impostors** (`render/Impostor.hpp`): `Impostor::bake(renderer, mesh, materials)`
+  renders N×N hemi-octahedral views into albedo + normal atlases, and `impostor->lod()`
+  is an `InstanceLod` (quad mesh + impostor material) used as the last level. The
+  impostor shaders (`impostor.vert/frag`, `impostor_shadow.vert/frag`) share their math
+  with the baker through `ve_impostor.glsl`. The bake projection has no Y flip, so
+  its pipeline uses clockwise front faces (otherwise normals bake inverted).
 - Draw batches are (group × LOD × submesh). Opaque and shadow passes call
   `instances().draw(ctx, cullView, kind, shadowViewIndex)`, which issues one
   `vkCmdDrawIndexedIndirect` per batch with `DrawPush::flags = INSTANCED`. In

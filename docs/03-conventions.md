@@ -178,6 +178,13 @@ desc.lods = {{mesh0, {mat}, /*screenSize*/ 0.10f},   // full detail while radius
              {mesh2, {mat}}};                         // last LOD: threshold ignored
 ```
 
+Far LOD as an impostor (StandardMaterial meshes):
+
+```cpp
+auto imp = ve::Impostor::bake(renderer, *mesh0, {material});   // load time, a few ms
+desc.lods.push_back(imp->lod());                                // last LOD
+```
+
 Custom material shaders: forward `veInstanceLodFade()` in a `flat` varying and
 call `veLodDither(fade)` at the start of the fragment shader to get crossfades
 (see `standard.vert/frag`).
