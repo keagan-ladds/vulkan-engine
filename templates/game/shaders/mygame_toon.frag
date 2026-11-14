@@ -18,6 +18,7 @@ layout(location = 3) in vec4 inTangent;
 layout(location = 4) in vec4 inColor;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outGBuffer; // thin G-buffer for screen-space effects (see ve.glsl)
 
 void main()
 {
@@ -51,4 +52,5 @@ void main()
     float rim = 1.0 - max(dot(N, V), 0.0);
     color *= mix(1.0, 0.35, smoothstep(0.75, 0.95, rim));
     outColor = vec4(color, 1.0);
+    outGBuffer = veGBuffer(N, 0.9);
 }

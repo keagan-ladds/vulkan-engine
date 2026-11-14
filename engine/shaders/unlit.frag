@@ -10,6 +10,7 @@ layout(location = 3) in vec4 inTangent;
 layout(location = 4) in vec4 inColor;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outGBuffer; // thin G-buffer (see ve.glsl)
 
 void main()
 {
@@ -17,4 +18,5 @@ void main()
     vec2 uv = inUV * m.params[3].xy;
     vec4 c = m.params[0] * veSampleOr(m.textures[0], uv, vec4(1.0)) * mix(vec4(1.0), inColor, m.params[3].z);
     outColor = vec4(c.rgb + m.params[2].rgb * m.params[2].w, c.a);
+    outGBuffer = veGBuffer(gl_FrontFacing ? inNormal : -inNormal, 1.0);
 }

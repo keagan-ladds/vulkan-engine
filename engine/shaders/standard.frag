@@ -10,6 +10,7 @@ layout(location = 4) in vec4 inColor;
 layout(location = 5) flat in float inLodFade;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outGBuffer; // thin G-buffer (see ve.glsl)
 
 void main()
 {
@@ -50,4 +51,5 @@ void main()
     s.emissive = m.params[2].rgb * m.params[2].w * veSampleOr(m.textures[3], uv, vec4(1.0)).rgb;
 
     outColor = vec4(veEvaluateLighting(s), base.a);
+    outGBuffer = veGBuffer(s.normal, s.roughness);
 }

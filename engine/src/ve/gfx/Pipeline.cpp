@@ -83,7 +83,7 @@ PipelineBuilder& PipelineBuilder::cull(CullMode mode, VkFrontFace front)
     return *this;
 }
 
-PipelineBuilder& PipelineBuilder::colorAttachment(VkFormat format, BlendMode blend)
+PipelineBuilder& PipelineBuilder::colorAttachment(VkFormat format, BlendMode blend, bool write)
 {
     VkPipelineColorBlendAttachmentState s{};
     s.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -130,6 +130,7 @@ PipelineBuilder& PipelineBuilder::colorAttachment(VkFormat format, BlendMode ble
         s.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         break;
     }
+    if (!write) s.colorWriteMask = 0;
     m_colorFormats.push_back(format);
     m_blends.push_back(s);
     return *this;

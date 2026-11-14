@@ -86,7 +86,8 @@ bool supportsRequired(const FeatureChain& f)
            f.v12.descriptorBindingUpdateUnusedWhilePending &&
            f.v12.shaderSampledImageArrayNonUniformIndexing &&
            f.core.features.imageCubeArray && // point shadow cube arrays
-           f.core.features.drawIndirectFirstInstance; // GPU-driven instancing
+           f.core.features.drawIndirectFirstInstance && // GPU-driven instancing
+           f.core.features.independentBlend; // SceneColor blends while SceneNormal doesn't
 }
 
 } // namespace
@@ -271,6 +272,7 @@ void Device::createLogicalDevice()
     enable.core.features.fillModeNonSolid = m_features.fillModeNonSolid;
     enable.core.features.imageCubeArray = VK_TRUE;
     enable.core.features.drawIndirectFirstInstance = VK_TRUE;
+    enable.core.features.independentBlend = VK_TRUE;
     enable.core.features.shaderStorageImageWriteWithoutFormat =
         supported.core.features.shaderStorageImageWriteWithoutFormat;
     // Descriptor indexing = "bindless" textures (see gfx/Bindless.hpp).

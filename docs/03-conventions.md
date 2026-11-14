@@ -90,6 +90,9 @@ go.addComponent<Spin>().speed = 3.0f;
    that want lighting `#include "ve_lighting.glsl"`, build a `VeSurface` and
    call `veEvaluateLighting(s)`. Read parameters from `veMaterial().params[i]`
    and textures with `veSample(veMaterial().textures[i], uv)`.
+   **Opaque shaders also write the thin G-buffer** (used by SSGI/SSR):
+   `layout(location = 1) out vec4 outGBuffer;` … `outGBuffer = veGBuffer(N, roughness);`.
+   If you leave it out, the shader still works, but SSGI/SSR see garbage for those pixels.
 2. Document the parameter layout at the top of the shader.
 3. In C++:
    ```cpp
@@ -134,6 +137,24 @@ declares a matching `layout(push_constant)` block and reads the input with
 `veSample(pc.src, inUV)`. You cannot read and write the same texture in one
 pass. Either write a new texture and have later passes use it, or blend onto
 the target (`Desc::blend`) as `VolumetricFogPass` does.
+
+### Optional screen-space effects (SSGI, SSR, depth of field)
+
+They're opt-in passes in `ve_effects`. Add the ones you want after `addDefaultEffects`:
+```cpp
+#include <vfx/ScreenSpaceGI.hpp>            // bounce light + AO
+#include <vfx/ScreenSpaceReflections.hpp>   // wet ground, polished surfaces
+#include <vfx/DepthOfField.hpp>
+renderer.graph().addPass<vfx::ScreenSpaceGIPass>().intensity = 1.0f;
+renderer.graph().addPass<vfx::ScreenSpaceReflectionsPass>();
+auto& dof = renderer.graph().addPass<vfx::DepthOfFieldPass>();
+dof.enabled = false;              // e.g. turn on while aiming / in menus
+dof.autoFocus = false; dof.focusDistance = 2.0f; dof.aperture = 4.0f;
+```
+Each one is listed in the F1 overlay with a checkbox and its sliders. SSGI/SSR
+need opaque shaders to write the thin G-buffer (see the custom-material recipe).
+SSR reflects only smooth surfaces (`maxRoughness`), so lower a material's
+roughness (e.g. wet terrain) to make it reflective.
 
 ### Add a custom (non-full-screen) render pass
 

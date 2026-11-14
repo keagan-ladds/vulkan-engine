@@ -18,7 +18,10 @@
 #include <ve/ve.hpp>
 #include <vfx/Atmosphere.hpp>
 #include <vfx/Bloom.hpp>
+#include <vfx/DepthOfField.hpp>
 #include <vfx/Particles.hpp>
+#include <vfx/ScreenSpaceGI.hpp>
+#include <vfx/ScreenSpaceReflections.hpp>
 #include <vfx/Vfx.hpp>
 #include <vfx/VolumetricFog.hpp>
 #include <vfx/Weather.hpp>
@@ -46,6 +49,12 @@ void buildWorld(ve::Engine& engine)
     fx.fog->density = 0.005f;
     fx.fog->heightFalloff = 0.06f;
     fx.bloom->intensity = 0.05f;
+    // Optional screen-space passes (toggle each in the F1 render-pass list).
+    // SAVANNA_SSFX=0 starts with SSGI/SSR off; SAVANNA_DOF=1 starts with depth of field on.
+    const bool ssfx = !std::getenv("SAVANNA_SSFX") || std::string(std::getenv("SAVANNA_SSFX")) != "0";
+    r.graph().addPass<vfx::ScreenSpaceGIPass>().enabled = ssfx;
+    r.graph().addPass<vfx::ScreenSpaceReflectionsPass>().enabled = ssfx;
+    r.graph().addPass<vfx::DepthOfFieldPass>().enabled = std::getenv("SAVANNA_DOF") != nullptr;
 
     // --- World ---------------------------------------------------------------------
     auto& terrain = scene.spawn<Terrain>();

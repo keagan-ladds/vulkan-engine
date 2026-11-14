@@ -10,6 +10,7 @@ layout(location = 6) flat in vec4 inTint;
 layout(location = 7) flat in float inLodFade;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outGBuffer; // thin G-buffer (see ve.glsl)
 
 void main()
 {
@@ -48,4 +49,5 @@ void main()
     VeSurface s = veDefaultSurface(inWorldPos, normalize(inRotation * normalize(normal + vec3(0, 1e-4, 0))), rgb);
     s.roughness = 0.85;
     outColor = vec4(veEvaluateLighting(s), 1.0);
+    outGBuffer = veGBuffer(s.normal, s.roughness);
 }

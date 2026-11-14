@@ -42,7 +42,8 @@ public:
     PipelineBuilder& topology(VkPrimitiveTopology topology);
     PipelineBuilder& polygonMode(VkPolygonMode mode);
     PipelineBuilder& cull(CullMode mode, VkFrontFace front = VK_FRONT_FACE_COUNTER_CLOCKWISE);
-    PipelineBuilder& colorAttachment(VkFormat format, BlendMode blend = BlendMode::Opaque);
+    // write = false: the attachment is bound but this pipeline doesn't touch it.
+    PipelineBuilder& colorAttachment(VkFormat format, BlendMode blend = BlendMode::Opaque, bool write = true);
     PipelineBuilder& depthAttachment(VkFormat format);
     PipelineBuilder& depthTest(bool test, bool write, VkCompareOp op);
     PipelineBuilder& dynamicDepthBias(bool enable);

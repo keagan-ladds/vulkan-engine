@@ -12,6 +12,7 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec4 inColor;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outGBuffer; // thin G-buffer (see ve.glsl)
 
 void main()
 {
@@ -37,4 +38,5 @@ void main()
     s.roughness = mix(0.95, 0.35, wet);
     s.ao = mix(0.75, 1.0, d2);
     outColor = vec4(veEvaluateLighting(s), 1.0);
+    outGBuffer = veGBuffer(N, s.roughness);
 }

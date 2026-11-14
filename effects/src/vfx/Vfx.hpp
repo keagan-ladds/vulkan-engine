@@ -9,6 +9,9 @@
 //
 // Nothing in the engine depends on this module; every effect is just a
 // RenderPass (or Component) you can add, remove, replace or copy.
+//
+// Opt-in passes (not added by addDefaultEffects; add with graph().addPass<T>()):
+// ScreenSpaceGIPass, ScreenSpaceReflectionsPass, DepthOfFieldPass.
 // =============================================================================
 
 #include <cstdint>

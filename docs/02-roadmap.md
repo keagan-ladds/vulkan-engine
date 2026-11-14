@@ -246,6 +246,15 @@ million grass blades), scaling up on discrete GPUs.
 - **Result:** impostors are visually equivalent to the meshes at distance (colour, faceting, shadows); aerial view with every prop visible at 60 FPS (GPU about 14 ms, Iris Xe)
 - Not done: disk cache for baked atlases (baking is fast enough for now), depth/pixel-depth-offset for impostor intersections, full-sphere (looking from below) variant
 
+### 12e — Screen-space effects ✅ (requested alongside 12c)
+- [x] Thin G-buffer: `SceneNormal` (world normal + roughness) as a second Forward target; `veGBuffer()`; engine, sandbox and template shaders write it; `independentBlend` required
+- [x] `vfx::ScreenSpaceGIPass`: half-res 1-bounce diffuse GI + AO, Bayer-rotated rays + 4×4 box upsample
+- [x] `vfx::ScreenSpaceReflectionsPass`: half-res view-space march + binary refine, Fresnel/roughness/edge fades
+- [x] `vfx::DepthOfFieldPass`: thin-lens CoC, auto focus, half-res golden-angle gather with background clamping
+- [x] Savanna: SSGI + SSR on (`SAVANNA_SSFX=0` disables), DOF off (`SAVANNA_DOF=1` enables); all toggle in F1
+- **Result:** SSGI about 1.3 ms, SSR about 0.3 ms, DOF about 1.2 ms (1600×900, Iris Xe); validation clean
+- Not done: temporal accumulation (would allow fewer rays and less noise), SSR roughness blur (glossy reflections are sharp), SSR fallback to the sky probe on miss, an albedo target for more accurate GI, bokeh highlights in DOF
+
 ### 12d — Foliage system
 - [ ] World cells streamed around the camera (worker-thread generation, GPU upload budget per frame)
 - [ ] Biome rule sets (density textures/noise, slope/height/water constraints, spacing, scale/tint variation) for savannah, jungle and swamp

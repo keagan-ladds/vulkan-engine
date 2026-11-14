@@ -21,7 +21,8 @@ vulkan-engine/
 │   └── shaders/            engine shaders + include/ve.glsl (the shared shader interface)
 ├── effects/                ve_effects  – OPTIONAL static library (namespace vfx)
 │   ├── src/vfx/            Atmosphere (sky + volumetric clouds), VolumetricFog, Bloom,
-│   │                       Particles (component + pass), Weather
+│   │                       Particles (component + pass), Weather,
+│   │                       ScreenSpaceGI, ScreenSpaceReflections, DepthOfField (opt-in)
 │   └── shaders/
 ├── templates/game/         starter project for a game that lives outside this repo
 ├── sandbox/                savanna     – the test game executable
@@ -152,6 +153,12 @@ material slot) and a local AABB.
 - `Material` = `shared_ptr<Shader>` + a `MaterialData` block (`setVector(slot)`,
   `setTexture(slot)`). The renderer assigns each material a slot in the
   MaterialBuffer and uploads all live materials each frame.
+- **Forward pipelines have two colour targets:** SceneColor, plus SceneNormal
+  (the thin G-buffer). Opaque/AlphaTest shaders write
+  `layout(location = 1) out vec4 outGBuffer = veGBuffer(N, roughness)`.
+  Transparent pipelines get write mask 0 on the second target, so they don't
+  need the output. This uses `independentBlend`, which is a required device
+  feature.
 - `StandardMaterial` wraps the built-in PBR shader (`standard.vert/frag`):
   base colour, roughness, metallic, emissive, albedo/normal/MR/emissive textures,
   alpha cutoff, and vertex-colour multiplication.
@@ -168,7 +175,8 @@ no aliasing and no async compute.
   `graph.texture(name)`. Each texture is registered in the bindless table
   (`sampledIndex`) so shaders can read it.
 - Built-in resources: `SceneColor` (RGBA16F HDR), `SceneDepth` (D32F, reversed-Z),
-  `DirShadowMap` (D32F 2D array), `PointShadowMap` (D32F cube array),
+  `SceneNormal` (RGBA16F thin G-buffer: xyz world normal, w roughness, 0 = nothing
+  drawn; `frame.builtinTextures.z`), `DirShadowMap` (D32F 2D array), `PointShadowMap` (D32F cube array),
   `Backbuffer` (the swapchain image, imported each frame).
 - A pass has a **stage** (`Shadow 100, Opaque 200, Sky 300, AfterOpaque 400,
   Transparent 500, PostProcess 600, Composite 700, Overlay 800`) plus an
@@ -194,9 +202,12 @@ Default pass list:
 | Shadow | `ShadowPass` (cascades + point cubes; instanced draws in cascades) | engine |
 | Opaque | `OpaquePass` (clears, draws Opaque/AlphaTest queues) | engine |
 | Sky | `AtmospherePass` (sky LUT → half-res clouds → sky where depth == far) | effects |
+| AfterOpaque (0) | `ScreenSpaceGIPass` *(opt-in)*: half-res bounce + AO → `scene * ao + bounce` | effects |
+| AfterOpaque (10) | `ScreenSpaceReflectionsPass` *(opt-in)*: half-res trace → premultiplied blend | effects |
 | Transparent (0) | `TransparentPass` (sorted back-to-front; water) | engine |
 | Transparent (10) | `ParticlePass` | effects |
 | Transparent (50) | `VolumetricFogPass` (half-res raymarch → upsample+blend), placed after transparents so water/particles are fogged | effects |
+| PostProcess (-10) | `DepthOfFieldPass` *(opt-in)*: half-res prep → gather → blend by CoC | effects |
 | PostProcess | `BloomPass` | effects |
 | Composite | `CompositePass` (exposure + ACES tonemap + grading → Backbuffer) | engine |
 | Overlay | `UiPass` (ImGui) | engine |
@@ -377,6 +388,24 @@ Optional add-ons built only on public engine APIs:
   whose sphere the ray actually crosses. A 4×4 ordered (Bayer) jitter is used,
   and a matching 4-tap box upsample blends the result over SceneColor.
 - `BloomPass`: threshold + progressive downsample/upsample chain added back into SceneColor.
+- **Screen-space passes (opt-in; not added by `addDefaultEffects`).** They read
+  the thin G-buffer `SceneNormal` (§5.4):
+  - `ScreenSpaceGIPass`: 4 cosine rays × 8 steps per half-res pixel, marched
+    through SceneDepth. Hits gather the lit SceneColor (one diffuse bounce) and
+    count as occlusion. The ray rotation is a 4×4 Bayer pattern, and the fog's
+    4×4 box upsample (`fog_apply.frag`) averages it. The bounce is tinted by the
+    receiver's own colour chroma, because there is no albedo buffer.
+  - `ScreenSpaceReflectionsPass`: a view-space ray march (quadratic step
+    distribution, binary refinement) for surfaces below `maxRoughness`. It is
+    weighted by Fresnel, edge/distance/roughness fades and back-face rejection.
+    Transparent geometry and particles are not in SceneColor yet, so they are
+    not reflected.
+  - `DepthOfFieldPass`: thin-lens CoC = `aperture · |1/focus − 1/depth|`
+    (outside a sharp `focusRange`), with auto focus from centre-screen depth.
+    Half-res prep packs colour + linear depth; a golden-angle gather where
+    background taps are clamped to the centre's CoC; full-res composite with
+    alpha = CoC. Cost at 1600×900 on Iris Xe: SSGI about 1.3 ms, SSR about
+    0.3 ms, DOF about 1.2 ms.
 - `ParticleEmitter` component (CPU simulation) and `ParticlePass`
   (instanced camera-facing or velocity-stretched quads, alpha/additive).
 - `Weather`: a GameObject that blends presets (clear/overcast/rain) by driving

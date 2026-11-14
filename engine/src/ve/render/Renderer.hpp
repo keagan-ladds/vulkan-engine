@@ -115,6 +115,9 @@ public:
 
     // --- Formats used by the built-in targets ----------------------------------
     static constexpr VkFormat kSceneColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    // Thin G-buffer written by opaque geometry: xyz = world normal, w = roughness
+    // (all zero where nothing was drawn). Used by screen-space effects (SSR, SSGI).
+    static constexpr VkFormat kSceneNormalFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
     static constexpr VkFormat kShadowFormat = VK_FORMAT_D32_SFLOAT;
 
@@ -171,6 +174,7 @@ public:
     // Built-in graph textures.
     TextureId sceneColor() const { return m_sceneColor; }
     TextureId sceneDepth() const { return m_sceneDepth; }
+    TextureId sceneNormal() const { return m_sceneNormal; }
     TextureId dirShadowMap() const { return m_dirShadowMap; }
     TextureId pointShadowMap() const { return m_pointShadowMap; }
     TextureId backbuffer() const { return m_backbuffer; }
@@ -229,6 +233,7 @@ private:
     std::unique_ptr<RenderGraph> m_graph;
     TextureId m_sceneColor = kNoTexture;
     TextureId m_sceneDepth = kNoTexture;
+    TextureId m_sceneNormal = kNoTexture;
     TextureId m_dirShadowMap = kNoTexture;
     TextureId m_pointShadowMap = kNoTexture;
     TextureId m_backbuffer = kNoTexture;

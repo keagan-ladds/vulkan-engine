@@ -49,6 +49,7 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
     m_graph->resize(m_swapchain.extent());
     m_sceneColor = m_graph->createTexture("SceneColor", {.format = kSceneColorFormat});
     m_sceneDepth = m_graph->createTexture("SceneDepth", {.format = kDepthFormat, .sampler = SamplerType::NearestClamp});
+    m_sceneNormal = m_graph->createTexture("SceneNormal", {.format = kSceneNormalFormat, .sampler = SamplerType::NearestClamp});
     m_backbuffer = m_graph->importTexture("Backbuffer");
     createShadowMaps();
     writeShadowDescriptors();
@@ -422,6 +423,8 @@ VkPipeline Renderer::buildMeshPipeline(const ShaderDesc& desc, PassKind kind)
             .cull(desc.cull)
             .polygonMode(wire ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL)
             .colorAttachment(kSceneColorFormat, desc.blend)
+            // Opaque shaders also write the thin G-buffer; transparent ones leave it alone.
+            .colorAttachment(kSceneNormalFormat, BlendMode::Opaque, desc.queue < RenderQueue::Transparent)
             .depthAttachment(kDepthFormat)
             .depthTest(desc.depthTest, desc.depthWrite, VK_COMPARE_OP_GREATER_OR_EQUAL);
     } else {
@@ -819,7 +822,8 @@ void Renderer::fillGlobals(const Time& time)
     g.lightCounts.w = m_settings.debugCascades ? 1u : 0u;
     g.shadowParams = glm::vec4(m_settings.shadowNormalBias, m_settings.shadowPcfRadius,
                                float(m_settings.directionalShadowResolution), float(m_settings.pointShadowResolution));
-    g.builtinTextures = glm::uvec4(m_graph->get(m_sceneDepth).sampledIndex, m_graph->get(m_sceneColor).sampledIndex, 0, 0);
+    g.builtinTextures = glm::uvec4(m_graph->get(m_sceneDepth).sampledIndex, m_graph->get(m_sceneColor).sampledIndex,
+                                   m_graph->get(m_sceneNormal).sampledIndex, 0);
     for (uint32_t i = 0; i < kGlobalParamCount; ++i) g.globalParams[i] = m_globalParams[i];
 }
 

@@ -41,7 +41,7 @@ layout(set = 0, binding = 0, std140) uniform VeFrameGlobals {
     vec4 ambientGround;
     uvec4 lightCounts;     // dir, point, cascades, debug flags
     vec4 shadowParams;     // normal bias (texels), pcf radius (texels), dir res, point res
-    uvec4 builtinTextures; // SceneDepth, SceneColor
+    uvec4 builtinTextures; // SceneDepth, SceneColor, SceneNormal
     vec4 globalParams[8];
 } frame;
 
@@ -144,6 +144,18 @@ float veInstanceLodFade()
 #endif // VE_VERTEX_STAGE
 
 #ifdef VE_FRAGMENT_STAGE
+// ---- Thin G-buffer --------------------------------------------------------------
+// Opaque mesh shaders render to two targets: location 0 = lit colour,
+// location 1 = SceneNormal. Declare
+//     layout(location = 1) out vec4 outGBuffer;
+// and write  outGBuffer = veGBuffer(worldNormal, roughness);
+// Screen-space effects (SSR, SSGI) read it. Shaders that don't write it leave
+// undefined values there (those pixels then look wrong in SSR/SSGI).
+vec4 veGBuffer(vec3 worldNormal, float roughness)
+{
+    return vec4(normalize(worldNormal), clamp(roughness, 0.02, 1.0));
+}
+
 // LOD crossfade: the outgoing and incoming LOD copies discard complementary
 // pixels of a 4x4 ordered dither, so together they cover the surface exactly
 // once while the mix shifts smoothly from one LOD to the other.

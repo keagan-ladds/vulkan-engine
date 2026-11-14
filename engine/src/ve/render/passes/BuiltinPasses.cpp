@@ -119,6 +119,7 @@ void OpaquePass::declare(PassBuilder& b)
     b.use(r.dirShadowMap(), Access::Sampled);
     b.use(r.pointShadowMap(), Access::Sampled);
     b.use(r.sceneColor(), Access::ColorAttachment);
+    b.use(r.sceneNormal(), Access::ColorAttachment);
     b.use(r.sceneDepth(), Access::DepthAttachment);
 }
 
@@ -126,7 +127,9 @@ void OpaquePass::execute(RenderContext& ctx)
 {
     Renderer& r = renderer();
     // Reversed-Z: clear depth to 0 (= infinitely far).
-    ctx.beginRendering({{r.sceneColor(), true, clearColor}}, {r.sceneDepth(), true, 0.0f});
+    // Mesh pipelines render to SceneColor + SceneNormal (cleared to 0 = "no surface").
+    ctx.beginRendering({{r.sceneColor(), true, clearColor}, {r.sceneNormal(), true, glm::vec4(0.0f)}},
+                       {r.sceneDepth(), true, 0.0f});
     r.drawItems(ctx, ctx.frame->opaque, PassKind::Forward);
     r.instances().draw(ctx, /*camera view*/ 0, PassKind::Forward, 0);
     ctx.endRendering();
@@ -142,6 +145,7 @@ void TransparentPass::declare(PassBuilder& b)
     b.use(r.dirShadowMap(), Access::Sampled);
     b.use(r.pointShadowMap(), Access::Sampled);
     b.use(r.sceneColor(), Access::ColorAttachment);
+    b.use(r.sceneNormal(), Access::ColorAttachment); // bound (mesh pipelines have 2 targets) but not written
     // Depth is tested but not written, and can be sampled (frame.builtinTextures.x)
     // at the same time, e.g. for soft water edges.
     b.use(r.sceneDepth(), Access::DepthRead);
@@ -153,7 +157,7 @@ void TransparentPass::execute(RenderContext& ctx)
     if (ctx.frame->transparent.empty()) return;
     Renderer& r = renderer();
     DepthTarget depth{r.sceneDepth(), false, 0.0f, -1, true};
-    ctx.beginRendering({{r.sceneColor()}}, depth);
+    ctx.beginRendering({{r.sceneColor()}, {r.sceneNormal()}}, depth);
     r.drawItems(ctx, ctx.frame->transparent, PassKind::Forward);
     ctx.endRendering();
 }

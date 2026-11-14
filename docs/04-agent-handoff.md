@@ -84,6 +84,10 @@ north (-Z), 90 looks west (-X).
   deletions *before* destroying the bindless set. Keep that order.
 - **Fixed vertex format:** shaders that ignore attributes are fine. The
   validation layer's `Shader-OutputNotConsumed` perf warning is filtered on purpose.
+- **Mesh pipelines have 2 colour attachments** (SceneColor + SceneNormal). Any
+  pass that draws scene materials must bind both (`TransparentPass` does, and
+  leaves the normal target unwritten). Otherwise pipeline/rendering attachment
+  counts mismatch. Full-screen passes are unaffected.
 - **Components are registered by their exact type** (see Known issue 9).
 - **glm + GCC "most vexing parse":** `glm::mat3 m(glm::vec3(x[0]) / s, ...)` can
   parse as a declaration. Use brace initialisation.

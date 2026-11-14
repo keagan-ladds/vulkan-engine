@@ -41,7 +41,7 @@ struct FrameGlobals {
     glm::vec4 ambientGround;  // rgb, w unused
     glm::uvec4 lightCounts;   // x = directional, y = point, z = cascade count, w = debug flags
     glm::vec4 shadowParams;   // x = normal bias (texels), y = PCF radius (texels), z = dir shadow map size, w = point shadow map size
-    glm::uvec4 builtinTextures; // x = SceneDepth bindless index, y = SceneColor (previous pass copy if any), zw = reserved
+    glm::uvec4 builtinTextures; // x = SceneDepth, y = SceneColor, z = SceneNormal (bindless indices), w = reserved
     glm::vec4 globalParams[kGlobalParamCount]; // free-form game/effect globals (see vfx.glsl for the effects convention)
 };
 
