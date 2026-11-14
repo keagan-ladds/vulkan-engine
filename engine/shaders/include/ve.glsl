@@ -1,0 +1,169 @@
+// =============================================================================
+// ve.glsl - the shared shader interface. #include "ve.glsl" in every shader.
+//
+// Declares everything bound by the engine (see docs/01-architecture.md §5.1):
+//   frame.*            per-frame globals (camera, time, ambient, globalParams...)
+//   lights.*           directional + point lights, shadow view matrices
+//   materials[]        all material parameter blocks
+//   veDirShadowMap     directional cascades (sampler2DArrayShadow)
+//   vePointShadowMap   point light cubes (samplerCubeArrayShadow)
+//   veTextures[]       bindless textures (+ veTextures3D[] / veTexturesCube[] aliases)
+//   draw.*             default per-draw push constants (unless VE_CUSTOM_PUSH_CONSTANTS)
+//
+// !!! Keep in sync with engine/src/ve/render/GpuTypes.hpp !!!
+// =============================================================================
+#ifndef VE_GLSL
+#define VE_GLSL
+
+#extension GL_EXT_nonuniform_qualifier : require
+
+#define VE_MAX_DIRECTIONAL_LIGHTS 4
+#define VE_MAX_POINT_LIGHTS 256
+#define VE_MAX_SHADOW_VIEWS 128
+#define VE_INVALID 0xFFFFFFFFu
+#define VE_DRAW_FLAG_POINT_SHADOW 1u
+#define VE_PI 3.14159265359
+
+layout(set = 0, binding = 0, std140) uniform VeFrameGlobals {
+    mat4 view;
+    mat4 proj;
+    mat4 viewProj;
+    mat4 invView;
+    mat4 invProj;
+    mat4 invViewProj;
+    mat4 prevViewProj;
+    vec4 cameraPosition;   // xyz, w = near
+    vec4 cameraForward;    // xyz, w = far
+    vec4 screenSize;       // w, h, 1/w, 1/h
+    vec4 time;             // time, dt, frame, realTime
+    vec4 ambientSky;
+    vec4 ambientGround;
+    uvec4 lightCounts;     // dir, point, cascades, debug flags
+    vec4 shadowParams;     // normal bias (texels), pcf radius (texels), dir res, point res
+    uvec4 builtinTextures; // SceneDepth, SceneColor
+    vec4 globalParams[8];
+} frame;
+
+struct VeDirectionalLight {
+    vec4 direction;     // direction the light travels
+    vec4 color;         // rgb * intensity
+    ivec4 shadow;       // first view, cascade count, first layer
+    vec4 cascadeSplits; // view depth at the end of each cascade
+    vec4 cascadeTexel;  // world size of a shadow texel per cascade
+};
+
+struct VePointLight {
+    vec4 positionRange;
+    vec4 color;
+    ivec4 shadow;       // cube index (-1 none), first view
+    vec4 params;        // x = shadow bias
+};
+
+layout(set = 0, binding = 1, std430) readonly buffer VeLightBuffer {
+    VeDirectionalLight directional[VE_MAX_DIRECTIONAL_LIGHTS];
+    VePointLight point[VE_MAX_POINT_LIGHTS];
+    mat4 shadowViews[VE_MAX_SHADOW_VIEWS];
+} lights;
+
+struct VeMaterial {
+    vec4 params[12];
+    uint textures[16];
+};
+
+layout(set = 0, binding = 2, std430) readonly buffer VeMaterialBuffer {
+    VeMaterial materials[];
+};
+
+layout(set = 0, binding = 3) uniform sampler2DArrayShadow veDirShadowMap;
+layout(set = 0, binding = 4) uniform samplerCubeArrayShadow vePointShadowMap;
+
+// Bindless textures. The same descriptor array is visible through several
+// sampler types; use the one that matches the texture you stored.
+layout(set = 1, binding = 1) uniform sampler2D veTextures[];
+layout(set = 1, binding = 1) uniform sampler3D veTextures3D[];
+layout(set = 1, binding = 1) uniform samplerCube veTexturesCube[];
+
+#ifndef VE_CUSTOM_PUSH_CONSTANTS
+layout(push_constant) uniform VeDrawPush {
+    mat4 model;
+    uint materialIndex;
+    uint viewIndex;
+    uint lightIndex;
+    uint flags;
+    vec4 custom;
+} draw;
+
+VeMaterial veMaterial() { return materials[draw.materialIndex]; }
+#endif
+
+// ---- Helpers -----------------------------------------------------------------
+
+vec4 veSample(uint index, vec2 uv) { return texture(veTextures[nonuniformEXT(index)], uv); }
+vec4 veSampleLod(uint index, vec2 uv, float lod) { return textureLod(veTextures[nonuniformEXT(index)], uv, lod); }
+vec4 veSample3D(uint index, vec3 uvw) { return texture(veTextures3D[nonuniformEXT(index)], uvw); }
+vec4 veSample3DLod(uint index, vec3 uvw, float lod) { return textureLod(veTextures3D[nonuniformEXT(index)], uvw, lod); }
+
+// Samples `index` if valid, otherwise returns `fallback`.
+vec4 veSampleOr(uint index, vec2 uv, vec4 fallback)
+{
+    return index == VE_INVALID ? fallback : veSample(index, uv);
+}
+
+// World position from a screen UV (0..1, top-left origin) and a depth buffer value.
+vec3 veWorldFromDepth(vec2 uv, float depth)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = frame.invViewProj * clip;
+    return world.xyz / world.w;
+}
+
+// Distance along the view direction for a (reversed-Z) depth value.
+float veLinearDepth(float depth)
+{
+    vec4 v = frame.invProj * vec4(0.0, 0.0, depth, 1.0);
+    return -v.z / v.w;
+}
+
+// World-space view ray through a screen UV.
+vec3 veViewRay(vec2 uv)
+{
+    return normalize(veWorldFromDepth(uv, 0.5) - frame.cameraPosition.xyz);
+}
+
+float veLuminance(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+// Cheap per-pixel noise in [0,1) (Jimenez interleaved gradient noise), handy to dither raymarches.
+float veInterleavedGradientNoise(vec2 pixel)
+{
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
+
+// Hash functions (Dave Hoskins).
+float veHash12(vec2 p)
+{
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+float veHash13(vec3 p3)
+{
+    p3 = fract(p3 * 0.1031);
+    p3 += dot(p3, p3.zyx + 31.32);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+// Smooth value noise.
+float veValueNoise(vec3 p)
+{
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n000 = veHash13(i), n100 = veHash13(i + vec3(1, 0, 0));
+    float n010 = veHash13(i + vec3(0, 1, 0)), n110 = veHash13(i + vec3(1, 1, 0));
+    float n001 = veHash13(i + vec3(0, 0, 1)), n101 = veHash13(i + vec3(1, 0, 1));
+    float n011 = veHash13(i + vec3(0, 1, 1)), n111 = veHash13(i + vec3(1, 1, 1));
+    return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+               mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
+}
+
+#endif // VE_GLSL

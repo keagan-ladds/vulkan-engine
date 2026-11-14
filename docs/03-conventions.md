@@ -1,0 +1,168 @@
+# Conventions & Recipes
+
+## Code conventions
+
+- **C++20**, namespaces `ve` (engine), `vfx` (effects), `savanna` (sandbox).
+- Files: `PascalCase.hpp/.cpp`, one main class per file. Headers start with a
+  comment block explaining *what* and *why*, and short usage examples.
+- Members `m_camelCase`, constants `kPascalCase`, public settings plain
+  `camelCase` fields (no getters/setters for simple tunables).
+- Includes: engine headers use `"ve/..."` inside the engine and `<ve/...>` from
+  effects/games.
+- Errors: throw `std::runtime_error` for unrecoverable setup errors. `VK_CHECK`
+  wraps every Vulkan call that returns `VkResult`. Log with `ve::log::info/warn/error`.
+- No warnings: targets use `-Wall -Wextra -Wpedantic` (`ve_set_warnings`).
+  Keep the build warning-free.
+- GPU objects are **never destroyed directly while frames may be in flight**.
+  Use `device.deferDestroy(...)`, `renderer.destroyPipeline(...)`, or let the
+  owning class (Mesh/Texture/Material/Shader) do it in its destructor.
+- Comments explain intent and Vulkan "why". This codebase doubles as a
+  learning resource.
+
+## Coordinate & rendering conventions
+
+| Thing | Convention |
+|---|---|
+| World | Right-handed, **+Y up**, meters. Objects face **-Z** (`Transform::forward()`) |
+| Angles | Radians in code (`GLM_FORCE_RADIANS`); `*Degrees` suffix where degrees are used |
+| Main camera depth | **Reversed-Z**: near = 1, far = 0, compare `GREATER_OR_EQUAL`, clear 0 |
+| Shadow depth | Standard: near = 0, far = 1, compare `LESS_OR_EQUAL`, clear 1 |
+| Clip space | Vulkan (Y down): projection has `proj[1][1] *= -1` |
+| Screen UV | (0,0) top-left |
+| Front faces | Counter-clockwise (glTF convention) |
+| Colour | Linear HDR in `SceneColor`. Textures that hold colour are `*_SRGB`; data textures (normal, roughness) are `*_UNORM` |
+| Light units | Arbitrary but consistent: sun intensity ≈ 3, exposure 1 |
+
+## Recipes
+
+### Start a new game (without touching the engine)
+
+Copy `templates/game` out of the repo and build it with
+`-DVE_ENGINE_DIR=/path/to/vulkan-engine` (details in `templates/game/README.md`).
+Its CMakeLists is just:
+
+```cmake
+add_subdirectory(${VE_ENGINE_DIR} vulkan-engine)
+add_executable(mygame ${GAME_SOURCES})
+ve_setup_game(mygame ASSETS ${CMAKE_CURRENT_SOURCE_DIR}/assets SHADERS ${GAME_SHADERS})  # [NO_EFFECTS]
+```
+
+Prefix your shader file names (e.g. `mygame_toon.frag`). Shaders are looked
+up by file name and must not clash with the engine's.
+
+### Write gameplay: a GameObject with behaviour
+
+```cpp
+class Crate : public ve::GameObject {
+public:
+    explicit Crate(std::shared_ptr<ve::Mesh> mesh, std::shared_ptr<ve::Material> mat) : GameObject("Crate") {
+        addComponent<ve::MeshRenderer>(mesh, mat);      // components can be added in the constructor
+    }
+    void start() override { m_spawn = transform().position(); }
+    void update(float dt) override { transform().rotate({0, 1, 0}, dt); }
+    void fixedUpdate(float dt) override { /* physics-like logic at 50 Hz */ }
+    void onGui() override { /* ImGui HUD bits */ }
+private:
+    glm::vec3 m_spawn{};
+};
+auto& crate = engine.scene().spawn<Crate>(mesh, mat);
+crate.transform().setPosition({0, 1, 0});
+```
+
+Read one-shot inputs (`keyPressed`, `actionPressed`) in `update()`. If physics
+in `fixedUpdate()` needs them, pass them over as a flag (see `Player`).
+
+### Write a reusable Component
+
+```cpp
+class Spin : public ve::Component {
+public:
+    float speed = 1.0f;
+    void update(float dt) override { transform().rotate({0, 1, 0}, speed * dt); }
+};
+go.addComponent<Spin>().speed = 3.0f;
+```
+
+### Custom material with its own shader
+
+1. Write `mything.vert` and `mything.frag` in your game's `shaders/` folder.
+   Copy `engine/shaders/standard.vert` as a starting point. Fragment shaders
+   that want lighting `#include "ve_lighting.glsl"`, build a `VeSurface` and
+   call `veEvaluateLighting(s)`. Read parameters from `veMaterial().params[i]`
+   and textures with `veSample(veMaterial().textures[i], uv)`.
+2. Document the parameter layout at the top of the shader.
+3. In C++:
+   ```cpp
+   ve::ShaderDesc d;
+   d.name = "MyThing"; d.vertex = "mything.vert"; d.fragment = "mything.frag";
+   d.cull = ve::CullMode::None;                // optional state
+   auto mat = renderer.createMaterial(renderer.createShader(d));
+   mat->setVector(0, {1, 0.5f, 0.2f, 1});
+   mat->setTexture(0, assets.loadTexture("textures/foo.png"));
+   go.addComponent<ve::MeshRenderer>(mesh, mat);
+   ```
+4. If the vertex shader moves vertices (wind etc.), also write a shadow vertex
+   shader following the contract in `engine/shaders/shadow.vert` and set
+   `d.shadowVertex`. Otherwise set `d.castShadows = false`.
+5. Transparent? Set `d.blend = AlphaBlend; d.queue = RenderQueue::Transparent; d.depthWrite = false;`.
+   Transparent shaders may sample scene depth via `frame.builtinTextures.x` (see `water.frag`).
+
+The CMake glob picks up new shader files automatically. Re-run CMake when you
+add a file (`cmake -B build`); the VS Code build task does this every time.
+
+### Add a full-screen post-process effect
+
+```cpp
+struct TintPush { uint32_t src; float strength; };
+class TintPass : public ve::FullscreenPass {
+public:
+    TintPass() : FullscreenPass("Tint", ve::RenderStage::PostProcess, 10,
+                  {.fragment = "tint.frag", .output = "TintOut", .inputs = {"SceneColor"}}) {}
+    void setup(ve::RenderGraph& g) override {
+        g.createTexture("TintOut", {.format = VK_FORMAT_R16G16B16A16_SFLOAT}); // screen-sized, auto-resized
+        FullscreenPass::setup(g);
+    }
+    void prepare(ve::FrameData&) override { setPush(TintPush{inputIndex(0), strength}); }
+    void onGui() override { ImGui::SliderFloat("Strength", &strength, 0, 1); }
+    float strength = 0.5f;
+};
+renderer.graph().addPass<TintPass>();
+```
+
+`tint.frag` starts with `#define VE_CUSTOM_PUSH_CONSTANTS`, includes `ve.glsl`,
+declares a matching `layout(push_constant)` block and reads the input with
+`veSample(pc.src, inUV)`. You cannot read and write the same texture in one
+pass. Either write a new texture and have later passes use it, or blend onto
+the target (`Desc::blend`) as `VolumetricFogPass` does.
+
+### Add a custom (non-full-screen) render pass
+
+Derive from `ve::RenderPass`. In `declare()` list every texture you touch with
+its `Access`. In `execute()` use `ctx.beginRendering(...)`, bind pipelines
+built with `ve::PipelineBuilder` (always `.layout(renderer.pipelineLayout())`),
+push constants, and draw. You can reuse `renderer.drawItems(ctx, indices, PassKind::Forward)`
+to draw scene meshes. If you need to switch a texture from writing to
+sampling inside one pass, call `graph().transition(ctx.cmd, tex, Access::Sampled)`.
+
+### Global shader parameters
+
+`renderer.setGlobalParam(i, vec4)` appears as `frame.globalParams[i]` in every
+shader. Slots 0–3 are used by `ve_effects` (wind, weather, sun, sun colour;
+see `vfx.glsl`). Games should use 4–7.
+
+### Import assets
+
+Put files under `<game>/assets/` (copied next to the exe on build), then
+`assets().loadTexture("textures/x.png", srgb)`, `loadModel("models/x.gltf")`
+followed by `scene.instantiate(*model)`, or `loadAudio("audio/x.wav")`.
+
+### Shadows configuration
+
+```cpp
+config.renderer.maxShadowedDirectionalLights = 2; // e.g. sun + moon
+config.renderer.cascadeCount = 4;
+config.renderer.maxShadowedPointLights = 4;
+config.renderer.maxShadowDistance = 180.0f;
+// at runtime: renderer.settings().cascadeCount = 3; renderer.applySettings();
+```
+Set `castShadows = true` on the `DirectionalLight` / `PointLight` components.

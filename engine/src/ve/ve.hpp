@@ -1,0 +1,23 @@
+#pragma once
+
+// Convenience header: everything a game typically needs.
+#include "ve/assets/AssetManager.hpp"
+#include "ve/assets/Model.hpp"
+#include "ve/audio/Audio.hpp"
+#include "ve/core/Engine.hpp"
+#include "ve/core/Input.hpp"
+#include "ve/core/Log.hpp"
+#include "ve/core/Time.hpp"
+#include "ve/core/Window.hpp"
+#include "ve/render/Material.hpp"
+#include "ve/render/Mesh.hpp"
+#include "ve/render/Primitives.hpp"
+#include "ve/render/RenderGraph.hpp"
+#include "ve/render/Renderer.hpp"
+#include "ve/render/Texture.hpp"
+#include "ve/render/passes/BuiltinPasses.hpp"
+#include "ve/render/passes/FullscreenPass.hpp"
+#include "ve/scene/Components.hpp"
+#include "ve/scene/GameObject.hpp"
+#include "ve/scene/Scene.hpp"
+#include "ve/ui/UiLayer.hpp"

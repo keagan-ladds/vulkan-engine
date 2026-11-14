@@ -1,0 +1,4 @@
+{
+    // GLSL files use #include; treat .glsl as GLSL for syntax highlighting extensions.
+    "files.associations": { "*.glsl": "glsl", "*.vert": "glsl", "*.frag": "glsl", "*.comp": "glsl" }
+}

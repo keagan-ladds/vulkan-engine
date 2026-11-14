@@ -1,0 +1,45 @@
+# =============================================================================
+# Uses the glslc path cached by find_package(Vulkan) rather than the
+# Vulkan::glslc imported target: imported targets are only visible in the
+# directory that created them, and games call this from their own directory.
+#
+# ve_compile_shaders(<target>
+#     SOURCES      <glsl files...>        (.vert .frag .comp ...)
+#     INCLUDE_DIRS <dirs...>              (searched by #include "...")
+# )
+#
+# Compiles each GLSL file to <bin>/shaders/<filename>.spv (e.g. standard.frag
+# -> standard.frag.spv) and makes <target> depend on the results. Shader file
+# names must therefore be unique across the engine, effects and game.
+#
+# glslc writes a depfile (-MD) listing every #included file, so editing
+# ve.glsl correctly rebuilds every shader that includes it.
+# =============================================================================
+function(ve_compile_shaders TARGET)
+    cmake_parse_arguments(ARG "" "" "SOURCES;INCLUDE_DIRS" ${ARGN})
+
+    set(INCLUDE_FLAGS "")
+    foreach(DIR ${ARG_INCLUDE_DIRS})
+        list(APPEND INCLUDE_FLAGS "-I${DIR}")
+    endforeach()
+
+    set(OUTPUTS "")
+    foreach(SRC ${ARG_SOURCES})
+        get_filename_component(SRC_ABS "${SRC}" ABSOLUTE)
+        get_filename_component(NAME "${SRC}" NAME)
+        set(OUT "${VE_SHADER_OUTPUT_DIR}/${NAME}.spv")
+        add_custom_command(
+            OUTPUT  "${OUT}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${VE_SHADER_OUTPUT_DIR}"
+            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -g ${INCLUDE_FLAGS}
+                    -MD -MF "${OUT}.d" "${SRC_ABS}" -o "${OUT}"
+            DEPENDS "${SRC_ABS}"
+            DEPFILE "${OUT}.d"
+            COMMENT "glslc ${NAME}"
+            VERBATIM)
+        list(APPEND OUTPUTS "${OUT}")
+    endforeach()
+
+    add_custom_target(${TARGET}_shaders DEPENDS ${OUTPUTS})
+    add_dependencies(${TARGET} ${TARGET}_shaders)
+endfunction()

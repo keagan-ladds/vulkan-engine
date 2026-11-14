@@ -1,0 +1,30 @@
+{
+    // Build tasks used by launch.json (preLaunchTask) and Ctrl+Shift+B (Debug).
+    // Each configures CMake (re-globbing new source/shader files) then builds.
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Debug",
+            "type": "shell",
+            "command": "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake --build build",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": { "kind": "build", "isDefault": true },
+            "problemMatcher": { "base": "$gcc", "fileLocation": ["autoDetect", "${workspaceFolder}/build"] }
+        },
+        {
+            "label": "Build Release",
+            "type": "shell",
+            "command": "cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build-release",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "build",
+            "problemMatcher": { "base": "$gcc", "fileLocation": ["autoDetect", "${workspaceFolder}/build-release"] }
+        },
+        {
+            "label": "Regenerate sandbox assets",
+            "type": "shell",
+            "command": "python3 tools/generate_assets.py",
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        }
+    ]
+}

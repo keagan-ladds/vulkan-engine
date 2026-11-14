@@ -1,0 +1,45 @@
+{
+    // F5 configurations. Each builds first, then runs the savanna test scene under gdb.
+    //  - Debug:          no optimisation, Vulkan validation ON (watch the terminal for [vulkan] messages)
+    //  - Release:        optimised, validation OFF
+    //  - Debug autotest: scripted smoke test that exits by itself (SAVANNA_AUTOTEST=1)
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/savanna",
+            "cwd": "${workspaceFolder}/build/bin",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
+            "preLaunchTask": "Build Debug"
+        },
+        {
+            "name": "Release",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-release/bin/savanna",
+            "cwd": "${workspaceFolder}/build-release/bin",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
+            "preLaunchTask": "Build Release"
+        },
+        {
+            "name": "Debug autotest",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/savanna",
+            "cwd": "${workspaceFolder}/build/bin",
+            "environment": [{ "name": "SAVANNA_AUTOTEST", "value": "1" }],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
+            "preLaunchTask": "Build Debug"
+        }
+    ]
+}

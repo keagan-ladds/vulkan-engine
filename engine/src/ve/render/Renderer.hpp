@@ -1,0 +1,232 @@
+#pragma once
+
+// =============================================================================
+// Renderer - turns a Scene into pixels.
+//
+// Owns the GPU (Device), swapchain, bindless table, samplers, the global
+// descriptor set + pipeline layout shared by all shaders, per-frame buffers,
+// built-in shaders and the RenderGraph. Each frame (render()):
+//
+//   1. wait for the frame slot, acquire a swapchain image
+//   2. gather camera / draw items / lights from the scene, cull, sort
+//   3. assign shadow maps and compute cascade + cube face matrices
+//   4. let passes prepare(), upload FrameGlobals/LightBuffer/MaterialBuffer
+//   5. record the RenderGraph, submit, present
+//
+// See docs/01-architecture.md §5 for the full picture.
+// =============================================================================
+
+#include "ve/gfx/Bindless.hpp"
+#include "ve/gfx/Device.hpp"
+#include "ve/gfx/Samplers.hpp"
+#include "ve/gfx/Swapchain.hpp"
+#include "ve/render/FrameData.hpp"
+#include "ve/render/Material.hpp"
+#include "ve/render/RenderGraph.hpp"
+
+#include <array>
+#include <filesystem>
+#include <memory>
+#include <vector>
+
+namespace ve {
+
+class Window;
+class Scene;
+class Texture;
+class Mesh;
+struct Time;
+
+struct RendererSettings {
+    bool vsync = true;
+    // --- Directional (sun/moon) shadows: cascaded shadow maps ---
+    uint32_t maxShadowedDirectionalLights = 2; // 0..kMaxDirectionalLights
+    uint32_t cascadeCount = 4;                 // 1..kMaxCascades
+    uint32_t directionalShadowResolution = 2048;
+    float cascadeSplitLambda = 0.8f; // 0 = uniform splits, 1 = logarithmic
+    float maxShadowDistance = 200.0f;
+    // --- Point light shadows: cube maps ---
+    uint32_t maxShadowedPointLights = 4;
+    uint32_t pointShadowResolution = 512;
+    // --- Bias (tweak in the F1 overlay) ---
+    float shadowNormalBias = 1.5f;   // in shadow texels
+    float shadowDepthBiasConstant = 1.0f;
+    float shadowDepthBiasSlope = 2.0f;
+    float shadowPcfRadius = 1.0f;    // in texels
+    bool debugCascades = false;
+};
+
+// Hemispherical ambient light. Effects (e.g. vfx::AtmospherePass) usually
+// drive this each frame from the sky.
+struct Environment {
+    glm::vec3 ambientSky{0.35f, 0.42f, 0.55f};
+    glm::vec3 ambientGround{0.18f, 0.15f, 0.12f};
+    float ambientIntensity = 1.0f;
+};
+
+enum class BuiltinShader { Standard, StandardCutout, StandardTransparent, Unlit, Count };
+
+class Renderer {
+public:
+    Renderer() = default;
+    ~Renderer();
+
+    Renderer(const Renderer&) = delete;
+    Renderer& operator=(const Renderer&) = delete;
+
+    void init(Window& window, const RendererSettings& settings, bool validation,
+              std::vector<std::filesystem::path> shaderDirectories);
+    void shutdown();
+
+    // Renders one frame of `scene` (returns false if nothing was drawn, e.g. minimized).
+    bool render(Scene& scene, const Time& time);
+    void onResize() { m_swapchainDirty = true; }
+
+    // --- Access ---------------------------------------------------------------
+    Device& device() { return m_device; }
+    Bindless& bindless() { return m_bindless; }
+    const Samplers& samplers() const { return m_samplers; }
+    RenderGraph& graph() { return *m_graph; }
+    const Swapchain& swapchain() const { return m_swapchain; }
+    VkPipelineLayout pipelineLayout() const { return m_pipelineLayout; }
+    const FrameData& frameData() const { return m_frame; }
+    const RenderStats& stats() const { return m_frame.stats; }
+    float gpuFrameTimeMs() const { return m_gpuFrameMs; }
+    Window& window() { return *m_window; }
+
+    RendererSettings& settings() { return m_settings; }
+    // Call after changing shadow counts/resolutions/vsync in settings().
+    void applySettings();
+
+    Environment& environment() { return m_environment; }
+    // Free-form vec4 globals visible to every shader as frame.globalParams[i].
+    void setGlobalParam(uint32_t index, const glm::vec4& value);
+    glm::vec4 globalParam(uint32_t index) const;
+
+    // --- Formats used by the built-in targets ----------------------------------
+    static constexpr VkFormat kSceneColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+    static constexpr VkFormat kShadowFormat = VK_FORMAT_D32_SFLOAT;
+
+    // --- Resources ----------------------------------------------------------------
+    std::shared_ptr<Shader> createShader(const ShaderDesc& desc);
+    std::shared_ptr<Shader> builtinShader(BuiltinShader which) const { return m_builtinShaders[size_t(which)]; }
+    std::shared_ptr<Material> createMaterial(std::shared_ptr<Shader> shader);
+    std::shared_ptr<StandardMaterial> createStandardMaterial(StandardMaterial::Mode mode = StandardMaterial::Mode::Opaque);
+    const std::shared_ptr<Texture>& whiteTexture() const { return m_white; }
+    const std::shared_ptr<Texture>& blackTexture() const { return m_black; }
+    const std::shared_ptr<Texture>& flatNormalTexture() const { return m_flatNormal; }
+
+    // Finds `<name>.spv` in the shader directories and creates a module.
+    // The caller destroys it (vkDestroyShaderModule) after building pipelines.
+    VkShaderModule loadShader(const std::string& name);
+    std::filesystem::path findShader(const std::string& name) const;
+
+    // Builds a pipeline that draws a full-screen triangle with `fragment`
+    // (uses the built-in fullscreen.vert). Optional depth test against a
+    // read-only depth attachment (e.g. sky drawn only where depth == far).
+    struct FullscreenPipelineDesc {
+        std::string fragment;
+        std::vector<VkFormat> colorFormats;
+        BlendMode blend = BlendMode::Opaque;
+        VkFormat depthFormat = VK_FORMAT_UNDEFINED;
+        VkCompareOp depthCompare = VK_COMPARE_OP_ALWAYS;
+    };
+    VkPipeline createFullscreenPipeline(const FullscreenPipelineDesc& desc);
+    // Compute pipeline using the global layout.
+    VkPipeline createComputePipeline(const std::string& shaderName);
+    // Destroys a pipeline once the GPU is done with it.
+    void destroyPipeline(VkPipeline pipeline);
+
+    // Draws `items[indices]` with each material's pipeline for `kind`.
+    // Used by the built-in passes; handy for custom geometry passes too.
+    void drawItems(RenderContext& ctx, const std::vector<uint32_t>& indices, PassKind kind,
+                   uint32_t viewIndex = 0, uint32_t lightIndex = 0, uint32_t flags = 0);
+
+    // --- Engine internal ------------------------------------------------------------
+    VkPipeline buildMeshPipeline(const ShaderDesc& desc, PassKind kind);
+    uint32_t allocateMaterialSlot();
+    void freeMaterialSlot(uint32_t index);
+    GpuMaterial& materialData(uint32_t index) { return m_materials[index]; }
+    void bindGlobalSets(VkCommandBuffer cmd);
+    uint64_t frameNumber() const { return m_frameNumber; }
+
+    // Built-in graph textures.
+    TextureId sceneColor() const { return m_sceneColor; }
+    TextureId sceneDepth() const { return m_sceneDepth; }
+    TextureId dirShadowMap() const { return m_dirShadowMap; }
+    TextureId pointShadowMap() const { return m_pointShadowMap; }
+    TextureId backbuffer() const { return m_backbuffer; }
+
+private:
+    struct FrameSlot {
+        VkCommandPool pool = VK_NULL_HANDLE;
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        VkSemaphore imageAvailable = VK_NULL_HANDLE;
+        VkFence inFlight = VK_NULL_HANDLE;
+        Buffer globals;   // FrameGlobals (UBO)
+        Buffer lights;    // LightBuffer (SSBO)
+        Buffer materials; // GpuMaterial[kMaxMaterials] (SSBO)
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        VkQueryPool timestamps = VK_NULL_HANDLE;   // GPU pass timing
+        std::vector<RenderPass*> timedPasses;      // which pass each query pair belongs to
+        bool timestampsWritten = false;
+    };
+    static constexpr uint32_t kMaxTimestamps = 128;
+    float m_timestampPeriodNs = 0.0f;
+
+    void createGlobalLayout();
+    void createFrameSlots();
+    void createShadowMaps();
+    void writeShadowDescriptors();
+    void createDefaults();
+    void createDefaultPasses();
+    bool recreateSwapchain();
+
+    void gatherScene(Scene& scene);
+    void setupCamera(Scene& scene);
+    void gatherLights(Scene& scene);
+    void buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uint32_t shadowSlot, GpuDirectionalLight& gpu);
+    void fillGlobals(const Time& time);
+
+    Window* m_window = nullptr;
+    RendererSettings m_settings;
+    Environment m_environment;
+    std::array<glm::vec4, kGlobalParamCount> m_globalParams{};
+    std::vector<std::filesystem::path> m_shaderDirs;
+
+    Device m_device;
+    Swapchain m_swapchain;
+    Samplers m_samplers;
+    Bindless m_bindless;
+    bool m_initialized = false;
+    bool m_swapchainDirty = false;
+
+    VkDescriptorSetLayout m_globalSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool m_globalPool = VK_NULL_HANDLE;
+    VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
+    std::array<FrameSlot, Device::kFramesInFlight> m_slots{};
+    uint64_t m_frameNumber = 0;
+
+    std::unique_ptr<RenderGraph> m_graph;
+    TextureId m_sceneColor = kNoTexture;
+    TextureId m_sceneDepth = kNoTexture;
+    TextureId m_dirShadowMap = kNoTexture;
+    TextureId m_pointShadowMap = kNoTexture;
+    TextureId m_backbuffer = kNoTexture;
+
+    std::vector<GpuMaterial> m_materials; // CPU copy, uploaded every frame
+    std::vector<uint32_t> m_freeMaterials;
+    uint32_t m_materialHighWater = 0;
+
+    std::unique_ptr<LightBuffer> m_lights; // ~30 KB, heap allocated
+    FrameData m_frame;
+    glm::mat4 m_prevViewProj{1.0f};
+    float m_gpuFrameMs = 0.0f;
+
+    std::array<std::shared_ptr<Shader>, size_t(BuiltinShader::Count)> m_builtinShaders;
+    std::shared_ptr<Texture> m_white, m_black, m_flatNormal;
+    std::shared_ptr<StandardMaterial> m_fallbackMaterial; // used when a MeshRenderer has no material
+};
+
+} // namespace ve
