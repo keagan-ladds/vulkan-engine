@@ -8,6 +8,7 @@
 // =============================================================================
 
 #include <ve/physics/Physics.hpp>
+#include <ve/scene/GameObject.hpp>
 
 #include <memory>
 #include <vector>
@@ -15,6 +16,7 @@
 namespace ve {
 class Mesh;
 class Material;
+class InstanceGroup;
 class Renderer;
 class Scene;
 } // namespace ve
@@ -34,6 +36,19 @@ struct PropLibrary {
     PropSet acacias, baobabs, feverTrees, bushes, rocks, boulders;
     std::shared_ptr<ve::Material> material;
 };
+
+// Owns the instanced props (GPU instance groups + static physics bodies) so
+// they live and die with the scene.
+class PropField : public ve::GameObject {
+public:
+    PropField() : GameObject("Props") {}
+    ~PropField() override;
+    std::vector<std::shared_ptr<ve::InstanceGroup>> groups;
+    std::vector<uint32_t> bodies;
+};
+
+// Display name for RaycastHit::userValue of a prop collider.
+const char* propName(uint32_t userValue);
 
 PropLibrary buildPropLibrary(ve::Renderer& renderer);
 void scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& lib);

@@ -103,6 +103,13 @@ north (-Z), 90 looks west (-X).
 - **Testing aim:** a ray (or thrown rock) through the exact centre of the crate
   pyramid passes through the 2 cm gap between crates. That cost a debugging
   session; aim off-centre in tests.
+- **Vertex shaders must use `veModelMatrix()`**, never `draw.model`, or
+  instanced draws render every instance at the origin. The helper only
+  exists in `.vert` files (`VE_VERTEX_STAGE`, set by CMake).
+- **Instancing buffers are shared across frames in flight**; ordering
+  comes from the memory barriers in `InstanceSystem::recordCulling` (previous
+  frame's indirect/vertex reads → this frame's transfer/compute writes).
+  Keep those barriers if you change the pass order.
 - **Effects need their order:** `VolumetricFogPass` needs `AtmospherePass`
   (SkyViewLUT and noise). `vfx::addDefaultEffects` adds them in the right order.
 

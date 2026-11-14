@@ -24,7 +24,7 @@ Physics (Phase 11, formerly future phase F1) is done too: Jolt rigid bodies, a
 character controller and raycasts, all used by the savanna scene and the game
 template. One physics step takes about 0.3–0.7 ms for roughly 410 bodies.
 
-Next up: **F2 (animation)**, then building/gameplay systems. Also see
+Next up: **Phase 12 (dense worlds)**, then F2 (animation) and building/gameplay systems. Also see
 [Known issues](#known-issues--tech-debt).
 
 ---
@@ -201,6 +201,51 @@ Next up: **F2 (animation)**, then building/gameplay systems. Also see
 thrown rocks collide and come to rest; crates topple when hit; raycasts report
 the right object; validation clean; template builds outside the repo. ✅
 
+## Phase 12 — Dense worlds: instancing, LOD, impostors, foliage
+
+Goal: expansive Valheim × Far Cry 2 vistas (see the concept art): forest and
+savannah to the horizon, dense grass, jungle, at 60 FPS on Iris Xe-class
+hardware (target roughly 50k+ visible tree instances/impostors and a few
+million grass blades), scaling up on discrete GPUs.
+
+### 12a — GPU-driven instancing ✅
+- [x] `InstanceGroup` API: up to 4 LODs × materials, per-instance transform + custom vec4 (tint), add/set/remove with stable handles
+- [x] Global instance buffer (device-local, sub-allocated per group), dirty-range uploads via per-frame staging
+- [x] Compute culling (`instance_cull.comp`): distance, frustum, min caster size per cascade, per view (camera + every directional shadow cascade), LOD pick by distance, compacted visible lists, indirect draws
+- [x] Instanced path in shaders: `veModelMatrix()` / `veInstanceCustom()` (stage macros from CMake)
+- [x] Instanced draws in OpaquePass + ShadowPass (directional), GPU visible-count readback for stats
+- [x] Cutout (alpha-tested) shadow shaders for directional + point shadows
+- [x] Physics: `PhysicsWorld::createStaticBody` (no GameObject), `RaycastHit::userValue`
+- [x] Savanna: all trees, rocks and bushes are instance groups (~10.3k props vs ~800 before), reed screens test cutout shadows
+- **Result:** GameObjects 976 → 331, CPU draw calls 312 → 109 (plus about 21 groups × views indirect draws), culling
+  0.12–0.16 ms of GPU time, 3.3k static bodies at 0.2–0.5 ms per physics step. GPU frame time is 19.5 ms
+  (Iris Xe, 1600×900) with 10× the props, versus 11 ms before. The cost is now full-detail vertex work
+  (opaque about 6 ms, shadows about 6.4 ms); **12b LOD and 12c impostors are what bring this down.**
+  Not measured on a discrete GPU yet.
+- Open: visible-list memory scales with views × group capacity (per-view compaction later); point-light shadows skip instances.
+
+### 12b — LOD
+- [ ] meshoptimizer dependency: `MeshData::simplify()` / automatic LOD chain generation (+ vertex cache optimisation)
+- [ ] Screen-size-based LOD selection in the cull shader (distance fallback)
+- [ ] Dithered LOD crossfade (no popping)
+- [ ] Shadow LOD bias (shadows use a coarser LOD)
+
+### 12c — Impostors
+- [ ] Octahedral impostor baking (render N×N views of a mesh into albedo/normal/depth atlas, at load, cached on disk)
+- [ ] Impostor rendering as the last LOD (camera-facing quad, blend of the 3 nearest views, depth/normal-correct lighting)
+- [ ] Impostor shadows (cascades 2+)
+
+### 12d — Foliage system
+- [ ] World cells streamed around the camera (worker-thread generation, GPU upload budget per frame)
+- [ ] Biome rule sets (density textures/noise, slope/height/water constraints, spacing, scale/tint variation) for savannah, jungle and swamp
+- [ ] Collider streaming (static bodies only near the player)
+- [ ] GPU grass: compute-generated blades around the camera (no storage), wind, distance fade, player interaction later
+- [ ] Hi-Z occlusion culling (optional; mostly for jungle)
+
+### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds)
+- [ ] Engine terrain module: chunked heightfield streaming, LOD (geomorphing or clipmaps), splat materials
+- [ ] Physics heightfield tiles streamed with the terrain
+
 ---
 
 ## Known issues / tech debt
@@ -242,12 +287,8 @@ Ordered roughly by how much they'll bite while building a game.
 - [ ] GPU skinning (compute pre-pass writing skinned vertices, or vertex shader)
 
 ### F3 — World & performance
-- [ ] Engine-level terrain module (streaming chunks, LOD, splat maps) — promote `sandbox/Terrain`
-- [ ] GPU instancing for foliage/rocks (`InstancedMeshRenderer`), indirect draws
 - [ ] Clustered/tiled light culling for many point lights
-- [ ] Mesh LODs and distance culling; shadow caster LOD
 - [ ] Temporal AA (+ temporal reprojection for fog/clouds)
-- [ ] Alpha-tested foliage shadows (cutout shadow shader)
 - [ ] Multithreaded scene gathering / command recording
 
 ### F4 — Building & gameplay systems

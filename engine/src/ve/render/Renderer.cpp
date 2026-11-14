@@ -54,6 +54,10 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
     writeShadowDescriptors();
 
     createDefaults();
+    m_instances = std::make_unique<InstanceSystem>();
+    m_instances->init(*this, m_settings.maxInstances, m_settings.maxVisibleInstancesPerView,
+                      1 + m_settings.maxShadowedDirectionalLights * m_settings.cascadeCount);
+    writeInstanceDescriptors();
     createDefaultPasses();
     m_initialized = true;
 }
@@ -68,6 +72,7 @@ void Renderer::shutdown()
     // about to be destroyed itself, so stop doing that.
     m_bindless.setFallback(VK_NULL_HANDLE, VK_NULL_HANDLE);
     m_graph.reset();
+    if (m_instances) m_instances->shutdown();
     m_fallbackMaterial.reset();
     m_builtinShaders = {};
     m_white.reset();
@@ -101,21 +106,23 @@ void Renderer::createGlobalLayout()
     VkDevice dev = m_device.handle();
 
     // set 0: per-frame data shared by every shader (see ve.glsl).
-    VkDescriptorSetLayoutBinding b[5]{};
+    VkDescriptorSetLayoutBinding b[10]{};
     b[0] = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     b[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     b[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     b[3] = {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL, nullptr};
     b[4] = {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL, nullptr};
+    // GPU instancing: instances, visible lists, indirect commands, groups, cull views.
+    for (uint32_t i = 5; i < 10; ++i) b[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutInfo.bindingCount = 5;
+    layoutInfo.bindingCount = 10;
     layoutInfo.pBindings = b;
     VK_CHECK(vkCreateDescriptorSetLayout(dev, &layoutInfo, nullptr, &m_globalSetLayout));
 
     const uint32_t n = Device::kFramesInFlight;
     VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, n},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * n},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7 * n},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * n},
     };
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -248,6 +255,34 @@ void Renderer::writeShadowDescriptors()
     }
 }
 
+void Renderer::writeInstanceDescriptors()
+{
+    for (uint32_t slot = 0; slot < Device::kFramesInFlight; ++slot) {
+        const VkDescriptorBufferInfo bufs[5] = {
+            {m_instances->instanceBuffer(), 0, VK_WHOLE_SIZE},
+            {m_instances->visibleBuffer(), 0, VK_WHOLE_SIZE},
+            {m_instances->commandBuffer(), 0, VK_WHOLE_SIZE},
+            {m_instances->groupBuffer(slot), 0, VK_WHOLE_SIZE},
+            {m_instances->viewBuffer(slot), 0, VK_WHOLE_SIZE},
+        };
+        VkWriteDescriptorSet writes[5]{};
+        for (uint32_t i = 0; i < 5; ++i) {
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = m_slots[slot].set;
+            writes[i].dstBinding = 5 + i;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[i].pBufferInfo = &bufs[i];
+        }
+        vkUpdateDescriptorSets(m_device.handle(), 5, writes, 0, nullptr);
+    }
+}
+
+std::shared_ptr<InstanceGroup> Renderer::createInstanceGroup(InstanceGroupDesc desc, uint32_t capacity)
+{
+    return m_instances->createGroup(std::move(desc), capacity);
+}
+
 void Renderer::createDefaults()
 {
     m_white = Texture::solid(*this, 255, 255, 255, 255, true, "white");
@@ -263,6 +298,8 @@ void Renderer::createDefaults()
     cutout.name = "StandardCutout";
     cutout.cull = CullMode::None;
     cutout.queue = RenderQueue::AlphaTest;
+    cutout.shadowFragment = "shadow_cutout.frag"; // shadows with holes (leaves, fences)
+    cutout.shadowPointFragment = "shadow_point_cutout.frag";
     m_builtinShaders[size_t(BuiltinShader::StandardCutout)] = createShader(cutout);
 
     ShaderDesc transparent = standard;
@@ -285,6 +322,7 @@ void Renderer::createDefaults()
 
 void Renderer::createDefaultPasses()
 {
+    m_graph->addPass<InstanceCullPass>();
     m_graph->addPass<ShadowPass>();
     m_graph->addPass<OpaquePass>();
     m_graph->addPass<TransparentPass>();
@@ -381,10 +419,9 @@ VkPipeline Renderer::buildMeshPipeline(const ShaderDesc& desc, PassKind kind)
         // (leaves, open meshes) must still cast shadows from both sides.
         vert = loadShader(desc.shadowVertex);
         if (kind == PassKind::ShadowPoint) frag = loadShader(desc.shadowPointFragment);
-        // Default shadow shaders only read the position; custom ones may need more.
-        const bool positionOnly = desc.shadowVertex == "shadow.vert";
+        else if (!desc.shadowFragment.empty()) frag = loadShader(desc.shadowFragment); // e.g. alpha cutout
         b.shaders(vert, frag)
-            .vertexInput({&binding, 1}, positionOnly ? std::span(attributes).first(1) : std::span(attributes))
+            .vertexInput({&binding, 1}, attributes)
             .cull(CullMode::None)
             .depthAttachment(kShadowFormat)
             .depthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
@@ -648,6 +685,7 @@ void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uin
         sv.viewIndex = viewIndex;
         sv.layer = baseLayer + c;
         sv.lightIndex = lightIndex;
+        sv.texelSize = 2.0f * radius / res;
         m_frame.shadowViews.push_back(sv);
 
         gpu.cascadeSplits[c] = split;
@@ -785,6 +823,7 @@ bool Renderer::render(Scene& scene, const Time& time)
 
     VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
     m_device.collectGarbage(m_frameNumber);
+    m_instances->collectStats(slotIndex);
 
     // This slot's previous frame is finished: read back its pass timings.
     if (slot.timestamps && slot.timestampsWritten && !slot.timedPasses.empty()) {
@@ -815,6 +854,7 @@ bool Renderer::render(Scene& scene, const Time& time)
     m_frame.frameNumber = m_frameNumber;
     gatherScene(scene);
     fillGlobals(time);
+    m_instances->prepare(slotIndex, m_frame); // also assigns ShadowView::cullView
     m_graph->prepare(m_frame);
 
     std::memcpy(slot.globals.mapped, &m_frame.globals, sizeof(FrameGlobals));
@@ -845,6 +885,7 @@ bool Renderer::render(Scene& scene, const Time& time)
     ctx.frameSlot = slotIndex;
     m_graph->execute(ctx);
     slot.timedPasses = m_graph->lastExecuted();
+    m_instances->recordReadback(slot.cmd, slotIndex);
     slot.timestampsWritten = slot.timestamps != VK_NULL_HANDLE;
     m_graph->transition(slot.cmd, m_backbuffer, Access::Present);
     VK_CHECK(vkEndCommandBuffer(slot.cmd));

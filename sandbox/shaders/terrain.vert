@@ -14,9 +14,9 @@ layout(location = 2) out vec4 outColor;
 
 void main()
 {
-    vec4 world = draw.model * vec4(inPosition, 1.0);
+    vec4 world = veModelMatrix() * vec4(inPosition, 1.0);
     outWorldPos = world.xyz;
-    outNormal = normalize(mat3(draw.model) * inNormal);
+    outNormal = normalize(mat3(veModelMatrix()) * inNormal);
     outColor = inColor;
     gl_Position = frame.viewProj * world;
 }

@@ -16,7 +16,7 @@ layout(location = 2) out float outTip;
 
 void main()
 {
-    vec4 world = draw.model * vec4(inPosition, 1.0);
+    vec4 world = veModelMatrix() * vec4(inPosition, 1.0);
     float w = inUV.y * inUV.y;
     vec2 dir = VFX_WIND.xy;
     float strength = VFX_WIND.z;

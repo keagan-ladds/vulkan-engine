@@ -85,7 +85,8 @@ bool supportsRequired(const FeatureChain& f)
            f.v12.descriptorBindingStorageImageUpdateAfterBind &&
            f.v12.descriptorBindingUpdateUnusedWhilePending &&
            f.v12.shaderSampledImageArrayNonUniformIndexing &&
-           f.core.features.imageCubeArray; // point shadow cube arrays
+           f.core.features.imageCubeArray && // point shadow cube arrays
+           f.core.features.drawIndirectFirstInstance; // GPU-driven instancing
 }
 
 } // namespace
@@ -269,6 +270,7 @@ void Device::createLogicalDevice()
     enable.core.features.depthClamp = m_features.depthClamp;
     enable.core.features.fillModeNonSolid = m_features.fillModeNonSolid;
     enable.core.features.imageCubeArray = VK_TRUE;
+    enable.core.features.drawIndirectFirstInstance = VK_TRUE;
     enable.core.features.shaderStorageImageWriteWithoutFormat =
         supported.core.features.shaderStorageImageWriteWithoutFormat;
     // Descriptor indexing = "bindless" textures (see gfx/Bindless.hpp).
@@ -368,6 +370,9 @@ Buffer Device::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, MemoryU
     } else if (memory == MemoryUsage::GpuToCpu) {
         alloc.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
     }
+    // Coherent memory: CPU writes are visible to the GPU without explicit
+    // flushes (we memcpy into mapped buffers every frame).
+    if (memory != MemoryUsage::GpuOnly) alloc.requiredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
     Buffer buffer;
     buffer.size = size;

@@ -21,6 +21,7 @@
 #include "ve/gfx/Samplers.hpp"
 #include "ve/gfx/Swapchain.hpp"
 #include "ve/render/FrameData.hpp"
+#include "ve/render/Instancing.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/RenderGraph.hpp"
 
@@ -54,6 +55,10 @@ struct RendererSettings {
     float shadowDepthBiasSlope = 2.0f;
     float shadowPcfRadius = 1.0f;    // in texels
     bool debugCascades = false;
+    // --- GPU instancing (InstanceGroup) ---
+    float shadowMinCasterTexels = 2.0f;           // instances smaller than this (in cascade texels) cast no shadow there
+    uint32_t maxInstances = 262144;               // total across all groups (64 B each)
+    uint32_t maxVisibleInstancesPerView = 1u << 20; // sum over batches of group capacity (4 B each, per cull view)
 };
 
 // Hemispherical ambient light. Effects (e.g. vfx::AtmospherePass) usually
@@ -112,6 +117,10 @@ public:
     std::shared_ptr<Shader> createShader(const ShaderDesc& desc);
     std::shared_ptr<Shader> builtinShader(BuiltinShader which) const { return m_builtinShaders[size_t(which)]; }
     std::shared_ptr<Material> createMaterial(std::shared_ptr<Shader> shader);
+    // Thousands of copies of a mesh, culled and drawn on the GPU (see Instancing.hpp).
+    std::shared_ptr<InstanceGroup> createInstanceGroup(InstanceGroupDesc desc, uint32_t capacity);
+    InstanceSystem& instances() { return *m_instances; }
+    Material* fallbackMaterial() const { return m_fallbackMaterial.get(); }
     std::shared_ptr<StandardMaterial> createStandardMaterial(StandardMaterial::Mode mode = StandardMaterial::Mode::Opaque);
     const std::shared_ptr<Texture>& whiteTexture() const { return m_white; }
     const std::shared_ptr<Texture>& blackTexture() const { return m_black; }
@@ -179,6 +188,7 @@ private:
     void createFrameSlots();
     void createShadowMaps();
     void writeShadowDescriptors();
+    void writeInstanceDescriptors();
     void createDefaults();
     void createDefaultPasses();
     bool recreateSwapchain();
@@ -227,6 +237,7 @@ private:
     std::array<std::shared_ptr<Shader>, size_t(BuiltinShader::Count)> m_builtinShaders;
     std::shared_ptr<Texture> m_white, m_black, m_flatNormal;
     std::shared_ptr<StandardMaterial> m_fallbackMaterial; // used when a MeshRenderer has no material
+    std::unique_ptr<InstanceSystem> m_instances;
 };
 
 } // namespace ve

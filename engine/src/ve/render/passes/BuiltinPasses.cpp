@@ -7,6 +7,23 @@
 namespace ve {
 
 // -----------------------------------------------------------------------------
+// InstanceCullPass
+// -----------------------------------------------------------------------------
+
+void InstanceCullPass::execute(RenderContext& ctx)
+{
+    renderer().instances().recordCulling(ctx.cmd, ctx.frameSlot);
+}
+
+void InstanceCullPass::onGui()
+{
+    const InstanceStats& s = renderer().instances().stats();
+    ImGui::Text("Groups: %u   Batches: %u   Instances: %u", s.groups, s.batches, s.instances);
+    ImGui::Text("Visible: %u camera, %u shadow (instance draws)", s.visibleCamera, s.visibleShadow);
+    ImGui::Text("Indirect draws: %u", s.drawCalls);
+}
+
+// -----------------------------------------------------------------------------
 // ShadowPass
 // -----------------------------------------------------------------------------
 
@@ -54,6 +71,9 @@ void ShadowPass::execute(RenderContext& ctx)
         else vkCmdSetDepthBias(ctx.cmd, s.shadowDepthBiasConstant, 0.0f, s.shadowDepthBiasSlope);
         r.drawItems(ctx, m_scratch, sv.point ? PassKind::ShadowPoint : PassKind::ShadowDirectional, sv.viewIndex,
                     sv.lightIndex, sv.point ? kDrawFlagPointShadow : 0);
+        if (!sv.point && sv.cullView != kInvalidIndex) {
+            r.instances().draw(ctx, sv.cullView, PassKind::ShadowDirectional, sv.viewIndex);
+        }
         ctx.endRendering();
     }
 }
@@ -101,6 +121,7 @@ void OpaquePass::execute(RenderContext& ctx)
     // Reversed-Z: clear depth to 0 (= infinitely far).
     ctx.beginRendering({{r.sceneColor(), true, clearColor}}, {r.sceneDepth(), true, 0.0f});
     r.drawItems(ctx, ctx.frame->opaque, PassKind::Forward);
+    r.instances().draw(ctx, /*camera view*/ 0, PassKind::Forward, 0);
     ctx.endRendering();
 }
 

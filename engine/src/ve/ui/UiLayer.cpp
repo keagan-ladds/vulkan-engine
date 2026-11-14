@@ -137,6 +137,9 @@ void UiLayer::drawDebugOverlay()
         ImGui::Text("Draw calls: %u   Shadow draws: %u", s.drawCalls, s.shadowDrawCalls);
         ImGui::Text("Triangles: %u", s.triangles);
         ImGui::Text("Visible: %u / %u submeshes", s.visibleObjects, s.totalObjects);
+        const InstanceStats& is = r.instances().stats();
+        ImGui::Text("Instances: %u (%u camera / %u shadow draws), %u indirect draws", is.instances, is.visibleCamera,
+                    is.visibleShadow, is.drawCalls);
         ImGui::Text("Lights: %u dir, %u point, %u shadow views", s.directionalLights, s.pointLights, s.shadowViews);
         ImGui::Text("Objects: %zu   Physics bodies: %u (%.2f ms)", m_engine->scene().objectCount(),
                     m_engine->physics().bodyCount(), m_engine->physics().lastStepMs);

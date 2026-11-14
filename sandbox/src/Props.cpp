@@ -4,6 +4,7 @@
 #include "Noise2D.hpp"
 #include "Player.hpp"
 #include "Terrain.hpp"
+#include "Vegetation.hpp"
 
 #include <ve/assets/AssetManager.hpp>
 #include <ve/audio/Audio.hpp>
@@ -417,9 +418,11 @@ void Hud::onGui()
     // What are we looking at? A physics raycast from the eye (ignores the player's own capsule).
     if (input().mouseCaptured()) {
         if (auto hit = physics().raycast(m_player.eyePosition(), m_player.lookDirection(), 25.0f)) {
-            if (hit->gameObject && hit->gameObject->name() != "Terrain") {
+            // Instanced props have no GameObject; their collider carries a prop id instead.
+            const std::string name = hit->gameObject ? hit->gameObject->name() : std::string(propName(hit->userValue));
+            if (!name.empty() && name != "Terrain") {
                 char label[96];
-                std::snprintf(label, sizeof(label), "%s  (%.1f m)", hit->gameObject->name().c_str(), hit->distance);
+                std::snprintf(label, sizeof(label), "%s  (%.1f m)", name.c_str(), hit->distance);
                 const ImVec2 ls = ImGui::CalcTextSize(label);
                 dl->AddText({c.x - ls.x * 0.5f, c.y + 14.0f}, IM_COL32(255, 255, 255, 170), label);
             }

@@ -103,6 +103,24 @@ void buildWorld(ve::Engine& engine)
         }
     }
 
+    // --- Reed screens: alpha-tested (cutout) material; their shadows have holes too -----
+    auto reedMat = r.createStandardMaterial(ve::StandardMaterial::Mode::Cutout);
+    reedMat->setAlbedoTexture(assets.loadTexture("textures/reed_screen.png"))
+        .setUvScale({3.0f, 2.0f})
+        .setAlphaCutoff(0.5f)
+        .setRoughness(0.9f)
+        .setVertexColorWeight(0.0f);
+    auto reedMesh = ve::Mesh::create(r, ve::primitives::quad(2.6f, 1.9f), {}, "reed screen");
+    for (int i = 0; i < 3; ++i) {
+        const glm::vec2 p = camp + glm::vec2(1.0f - 2.7f * static_cast<float>(i), 7.5f + 0.4f * static_cast<float>(i));
+        auto& screen = scene.spawn("Reed screen");
+        screen.addComponent<ve::MeshRenderer>(reedMesh, reedMat);
+        screen.transform().setPosition({p.x, terrain.height(p.x, p.y) - 0.05f, p.y});
+        screen.transform().setLocalRotation(glm::angleAxis(glm::radians(-75.0f + 8.0f * static_cast<float>(i)), glm::vec3(0, 1, 0)));
+        screen.addComponent<ve::Rigidbody>(ve::Collider::box({1.3f, 0.95f, 0.03f}).offset({0.0f, 0.95f, 0.0f}),
+                                           ve::BodyType::Static);
+    }
+
     // --- Player ---------------------------------------------------------------------------
     auto& player = scene.spawn<Player>(terrain);
     player.setThrowable(props.rocks.meshes[0], props.material, props.rocks.colliders[0]);

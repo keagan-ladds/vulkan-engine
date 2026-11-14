@@ -51,6 +51,7 @@ struct ShaderDesc {
     // vertex shader if your vertex shader moves vertices (e.g. wind sway), so
     // shadows move too. Contract: see engine/shaders/shadow.vert.
     std::string shadowVertex = "shadow.vert";
+    std::string shadowFragment;                             // directional shadows: empty = depth only (fastest)
     std::string shadowPointFragment = "shadow_point.frag";
     BlendMode blend = BlendMode::Opaque;
     CullMode cull = CullMode::Back;

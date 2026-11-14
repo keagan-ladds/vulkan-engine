@@ -17,13 +17,16 @@ layout(location = 4) out vec4 outColor;
 
 void main()
 {
-    vec4 world = draw.model * vec4(inPosition, 1.0);
+    mat4 model = veModelMatrix(); // regular draw or GPU instance
+    vec4 world = model * vec4(inPosition, 1.0);
     // Inverse-transpose keeps normals perpendicular under non-uniform scale.
-    mat3 normalMatrix = transpose(inverse(mat3(draw.model)));
+    mat3 normalMatrix = transpose(inverse(mat3(model)));
     outWorldPos = world.xyz;
     outNormal = normalize(normalMatrix * inNormal);
-    outTangent = vec4(normalize(mat3(draw.model) * inTangent.xyz), inTangent.w);
+    outTangent = vec4(normalize(mat3(model) * inTangent.xyz), inTangent.w);
     outUV = inUV;
-    outColor = inColor;
+    // Optional per-instance tint (instance custom.w > 0), handy for foliage variation.
+    vec4 custom = veInstanceCustom();
+    outColor = custom.w > 0.0 ? vec4(inColor.rgb * custom.rgb, inColor.a) : inColor;
     gl_Position = frame.viewProj * world;
 }

@@ -6,6 +6,7 @@ downloads (and so the engine's importers get exercised on real files):
   sandbox/assets/textures/ground_detail.png   tileable grey noise (terrain detail)
   sandbox/assets/textures/mud_wall.png        red-clay wall texture
   sandbox/assets/textures/thatch.png          straw roof texture
+  sandbox/assets/textures/reed_screen.png     woven reed screen with holes (alpha cutout test)
   sandbox/assets/models/rondavel.gltf (+.bin) round African hut: walls + thatched
                                               roof (one mesh, two materials) + door node
   sandbox/assets/audio/*.wav                  wind / fire / rain loops, pickup chime
@@ -102,6 +103,24 @@ def textures():
             r = 0.55 * v + 0.12 + wave_
             img.putpixel((x, y), tuple(int(max(0, min(1, c)) * 255) for c in (r, r * 0.82, r * 0.48)))
     img.save(out("textures", "thatch.png"))
+
+
+def reed_screen():
+    """Woven reeds with gaps: RGBA, alpha 0 in the holes (alpha-tested material + shadows)."""
+    size = 128
+    img = Image.new("RGBA", (size, size))
+    rnd = random.Random(9)
+    for y in range(size):
+        for x in range(size):
+            vertical = (x % 16) < 9            # vertical reeds
+            horizontal = (y % 32) < 6          # binding strips
+            wobble = math.sin(y * 0.3 + (x // 16) * 1.7) * 0.06
+            if vertical or horizontal:
+                v = 0.62 + wobble + rnd.uniform(-0.04, 0.04) - (0.12 if horizontal else 0.0)
+                img.putpixel((x, y), (int(v * 230), int(v * 190), int(v * 110), 255))
+            else:
+                img.putpixel((x, y), (60, 45, 25, 0))
+    img.save(out("textures", "reed_screen.png"))
 
 
 # --------------------------------------------------------------------------- glTF
@@ -295,6 +314,7 @@ def audio():
 
 if __name__ == "__main__":
     textures()
+    reed_screen()
     rondavel()
     audio()
     print("Assets written to", os.path.normpath(ROOT))

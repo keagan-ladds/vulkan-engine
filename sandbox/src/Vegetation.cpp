@@ -3,15 +3,21 @@
 #include "Noise2D.hpp"
 #include "Terrain.hpp"
 
+#include <ve/core/Engine.hpp>
 #include <ve/core/Log.hpp>
 #include <ve/render/Mesh.hpp>
 #include <ve/render/Primitives.hpp>
+#include <ve/physics/Physics.hpp>
+#include <ve/render/Instancing.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Scene.hpp>
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include <iterator>
 
 #include <unordered_map>
 
@@ -185,62 +191,111 @@ PropLibrary buildPropLibrary(ve::Renderer& r)
     return lib;
 }
 
+namespace {
+// Names for raycast hits on instanced props (RaycastHit::userValue).
+const char* const kPropNames[] = {"", "baobab", "acacia", "fever tree", "boulder", "rock", "bush"};
+} // namespace
+
+const char* propName(uint32_t userValue)
+{
+    return userValue < std::size(kPropNames) ? kPropNames[userValue] : "";
+}
+
+PropField::~PropField()
+{
+    for (uint32_t id : bodies) physics().destroyStaticBody(id);
+}
+
 void scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& lib)
 {
+    // All props are GPU instances: one InstanceGroup per mesh variant, no
+    // GameObject per tree. Colliders are GameObject-less static bodies.
+    auto& field = scene.spawn<PropField>();
     Rng rng(42);
+
+    // Spatial hash so spacing checks stay O(1) with tens of thousands of props.
     struct Placed {
         glm::vec2 p;
         float r;
     };
-    std::vector<Placed> placed;
+    constexpr float kCell = 20.0f;
+    std::unordered_map<int64_t, std::vector<Placed>> grid;
+    auto key = [](int x, int z) { return (int64_t(x) << 32) ^ int64_t(uint32_t(z)); };
     auto free = [&](glm::vec2 p, float r) {
-        for (const auto& o : placed) {
-            if (glm::length(o.p - p) < o.r + r) return false;
+        const int cx = int(std::floor(p.x / kCell)), cz = int(std::floor(p.y / kCell));
+        const int reach = int(std::ceil((r + 20.0f) / kCell)); // 20 m = largest radius used
+        for (int z = cz - reach; z <= cz + reach; ++z) {
+            for (int x = cx - reach; x <= cx + reach; ++x) {
+                auto it = grid.find(key(x, z));
+                if (it == grid.end()) continue;
+                for (const auto& o : it->second) {
+                    if (glm::length(o.p - p) < o.r + r) return false;
+                }
+            }
         }
         return true;
     };
 
-    auto place = [&](const char* name, const PropSet& set, int count, float spacing,
-                     float minScale, float maxScale, auto&& accept) {
+    auto place = [&](uint32_t kind, const PropSet& set, int count, float spacing, float minScale, float maxScale,
+                     float cullDistance, float shadowDistance, auto&& accept) {
+        // One instance group per mesh variant.
+        std::vector<std::shared_ptr<ve::InstanceGroup>> groups;
+        const uint32_t perVariant = uint32_t(count) / uint32_t(set.meshes.size()) + 64;
+        for (const auto& mesh : set.meshes) {
+            ve::InstanceGroupDesc desc;
+            desc.name = propName(kind);
+            desc.lods = {{mesh, {lib.material}}};
+            desc.cullDistance = cullDistance;
+            desc.shadowDistance = shadowDistance;
+            groups.push_back(ve::Engine::get().renderer().createInstanceGroup(desc, perVariant));
+        }
         int done = 0;
-        for (int attempt = 0; attempt < count * 40 && done < count; ++attempt) {
-            const glm::vec2 p(rng.range(-Terrain::kHalfSize + 40.0f, Terrain::kHalfSize - 40.0f),
-                              rng.range(-Terrain::kHalfSize + 40.0f, Terrain::kHalfSize - 40.0f));
+        for (int attempt = 0; attempt < count * 30 && done < count; ++attempt) {
+            const glm::vec2 p(rng.range(-Terrain::kHalfSize + 45.0f, Terrain::kHalfSize - 45.0f),
+                              rng.range(-Terrain::kHalfSize + 45.0f, Terrain::kHalfSize - 45.0f));
             const float h = terrain.height(p.x, p.y);
             if (glm::length(p - Terrain::kCamp) < 26.0f || !accept(p, h) || !free(p, spacing * 0.5f)) continue;
-            placed.push_back({p, spacing * 0.5f});
-            const float s = rng.range(minScale, maxScale);
-            auto& go = scene.spawn(name);
-            go.tag = name;
             const size_t variant = size_t(rng.next() * set.meshes.size()) % set.meshes.size();
-            go.addComponent<ve::MeshRenderer>(set.meshes[variant], lib.material);
-            go.transform().setPosition({p.x, h - 0.15f * s, p.y});
-            go.transform().setLocalRotation(glm::angleAxis(rng.range(0.0f, 6.28f), glm::vec3(0, 1, 0)));
-            go.transform().setLocalScale(s); // the collider is scaled to match automatically
+            if (groups[variant]->count() >= groups[variant]->capacity()) continue;
+            grid[key(int(std::floor(p.x / kCell)), int(std::floor(p.y / kCell)))].push_back({p, spacing * 0.5f});
+
+            const float scale = rng.range(minScale, maxScale);
+            const glm::vec3 pos(p.x, h - 0.15f * scale, p.y);
+            const glm::quat rot = glm::angleAxis(rng.range(0.0f, 6.28f), glm::vec3(0, 1, 0));
+            const glm::mat4 m = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(rot) *
+                                glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+            // custom.w > 0: standard.vert tints the vertex colours by custom.rgb (natural variation).
+            const float t = rng.range(0.85f, 1.12f);
+            groups[variant]->add(m, glm::vec4(t, t * rng.range(0.95f, 1.05f), t, 1.0f));
             if (!set.colliders.empty()) {
-                go.addComponent<ve::Rigidbody>(set.colliders[set.colliders.size() == 1 ? 0 : variant], ve::BodyType::Static);
+                const ve::Collider& c = set.colliders[set.colliders.size() == 1 ? 0 : variant];
+                field.bodies.push_back(ve::Engine::get().physics().createStaticBody(c, pos, rot, glm::vec3(scale), kind));
             }
             ++done;
         }
+        for (auto& g : groups) field.groups.push_back(g);
         return done;
     };
 
     auto savannah = [&](glm::vec2 p, float h) {
         return h > 0.6f && terrain.swampMask(p.x, p.y) < 0.3f && terrain.rockMask(p.x, p.y) < 0.4f;
     };
-    const int baobabs = place("baobab", lib.baobabs, 14, 40.0f, 0.9f, 1.3f, savannah);
-    const int acacias = place("acacia", lib.acacias, 170, 14.0f, 0.8f, 1.3f, savannah);
-    const int fever = place("fever tree", lib.feverTrees, 70, 7.0f, 0.8f, 1.2f, [&](glm::vec2 p, float h) {
-        return h > 0.2f && terrain.swampMask(p.x, p.y) > 0.4f;
+    const int baobabs = place(1, lib.baobabs, 70, 30.0f, 0.9f, 1.3f, 3000.0f, 3000.0f, savannah);
+    // Acacias cluster in groves: accept more often where a low-frequency noise is high.
+    const int acacias = place(2, lib.acacias, 2600, 9.0f, 0.8f, 1.3f, 3000.0f, 3000.0f, [&](glm::vec2 p, float h) {
+        return savannah(p, h) && rng.next() < fbm(p * 0.008f, 2, 77) * 1.6f - 0.2f;
     });
-    const int boulders = place("boulder", lib.boulders, 60, 6.0f, 2.0f, 5.0f, [&](glm::vec2 p, float h) {
+    const int fever = place(3, lib.feverTrees, 900, 5.0f, 0.8f, 1.2f, 3000.0f, 3000.0f, [&](glm::vec2 p, float h) {
+        return h > 0.2f && terrain.swampMask(p.x, p.y) > 0.35f;
+    });
+    const int boulders = place(4, lib.boulders, 160, 6.0f, 2.0f, 5.0f, 3000.0f, 3000.0f, [&](glm::vec2 p, float h) {
         const bool nearKopje = glm::length(p - Terrain::kKopje) < 55.0f || glm::length(p - glm::vec2(-50.0f, -140.0f)) < 30.0f;
         return h > 0.5f && nearKopje && terrain.rockMask(p.x, p.y) > 0.5f;
     });
-    const int rocks = place("rock", lib.rocks, 110, 4.0f, 0.4f, 1.4f, [&](glm::vec2, float h) { return h > 0.3f; });
-    const int bushes = place("bush", lib.bushes, 260, 3.5f, 0.7f, 1.4f, [&](glm::vec2, float h) { return h > 0.3f; });
-    ve::log::info("Props: {} baobab, {} acacia, {} fever, {} boulders, {} rocks, {} bushes", baobabs, acacias, fever,
-                  boulders, rocks, bushes);
+    const int rocks = place(5, lib.rocks, 1500, 3.0f, 0.4f, 1.4f, 450.0f, 50.0f, [&](glm::vec2, float h) { return h > 0.3f; });
+    const int bushes = place(6, lib.bushes, 7000, 2.5f, 0.7f, 1.4f, 350.0f, 60.0f, [&](glm::vec2, float h) { return h > 0.3f; });
+    ve::log::info("Props (instanced): {} baobab, {} acacia, {} fever, {} boulders, {} rocks, {} bushes; {} static bodies",
+                  baobabs, acacias, fever, boulders, rocks, bushes, field.bodies.size());
 }
 
 void buildGrass(ve::Scene& scene, ve::Renderer& r, const Terrain& terrain)

@@ -88,5 +88,47 @@ struct DrawPush {
 static_assert(sizeof(DrawPush) <= 128);
 
 constexpr uint32_t kDrawFlagPointShadow = 1u << 0;
+constexpr uint32_t kDrawFlagInstanced = 1u << 1; // model matrix comes from the instance buffer
+
+// ---- GPU-driven instancing (see render/Instancing.hpp, instance_cull.comp) ----
+
+// One instance (set 0, binding 5). 64 bytes.
+struct GpuInstance {
+    glm::vec4 rows[3]; // affine transform, row-major (= transposed mat3x4)
+    glm::vec4 custom;  // free per-instance data; standard.vert: if w > 0, rgb tints the vertex colour
+};
+static_assert(sizeof(GpuInstance) == 64);
+
+// One InstanceGroup as the cull shader sees it (binding 8). 96 bytes.
+struct GpuInstanceGroup {
+    glm::vec4 localSphere;    // bounding sphere of LOD 0 in mesh space (xyz centre, w radius)
+    glm::vec4 lodDistances;   // max camera distance of LOD i
+    glm::uvec4 lodBatchStart; // first draw batch of LOD i
+    glm::uvec4 lodBatchCount; // number of batches (= submeshes) of LOD i
+    uint32_t firstInstance;   // into the instance buffer
+    uint32_t count;
+    uint32_t lodCount;
+    uint32_t flags;           // bit 0: casts shadows
+    float cullDistance;
+    float shadowDistance; // no shadow casting beyond this camera distance
+    uint32_t pad[2];
+};
+static_assert(sizeof(GpuInstanceGroup) == 96);
+
+// A view to cull against (binding 9): view 0 = camera, then directional shadow cascades.
+struct GpuCullView {
+    glm::vec4 planes[6];
+    glm::vec4 position; // xyz camera position (LOD distances use view 0), w = min bounding radius drawn (shadow texel size)
+};
+
+// Matches VkDrawIndexedIndirectCommand (20 bytes) - written by the cull shader.
+struct DrawIndexedIndirect {
+    uint32_t indexCount;
+    uint32_t instanceCount;
+    uint32_t firstIndex;
+    int32_t vertexOffset;
+    uint32_t firstInstance;
+};
+static_assert(sizeof(DrawIndexedIndirect) == 20);
 
 } // namespace ve

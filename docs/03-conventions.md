@@ -156,6 +156,24 @@ Put files under `<game>/assets/` (copied next to the exe on build), then
 `assets().loadTexture("textures/x.png", srgb)`, `loadModel("models/x.gltf")`
 followed by `scene.instantiate(*model)`, or `loadAudio("audio/x.wav")`.
 
+### Thousands of props: instancing
+
+```cpp
+ve::InstanceGroupDesc desc;
+desc.name = "acacia";
+desc.lods = {{acaciaMesh, {barkLeavesMaterial}}};   // up to 4 LODs: {mesh, materials, maxDistance}
+desc.shadowDistance = 150.0f;                       // small props: keep short
+auto trees = renderer.createInstanceGroup(desc, 20000);
+auto handle = trees->add(transform, glm::vec4(tint, 1.0f)); // w > 0: tint (standard shader)
+trees->remove(handle);
+```
+
+Keep the `shared_ptr<InstanceGroup>` alive somewhere that dies with the scene
+(e.g. a GameObject member, like `savanna::PropField`). Solid props use
+`physics().createStaticBody(collider, pos, rot, scale, userValue)`; the
+`userValue` comes back in `RaycastHit::userValue`. Custom vertex shaders must
+use `veModelMatrix()` (not `draw.model`) to work with instancing.
+
 ### Physics
 
 ```cpp

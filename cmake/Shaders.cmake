@@ -28,10 +28,21 @@ function(ve_compile_shaders TARGET)
         get_filename_component(SRC_ABS "${SRC}" ABSOLUTE)
         get_filename_component(NAME "${SRC}" NAME)
         set(OUT "${VE_SHADER_OUTPUT_DIR}/${NAME}.spv")
+        # Stage macro so shared includes can expose stage-specific helpers
+        # (e.g. ve.glsl's instancing functions use gl_InstanceIndex: vertex only).
+        get_filename_component(EXT "${SRC}" LAST_EXT)
+        set(STAGE_DEFINE "")
+        if(EXT STREQUAL ".vert")
+            set(STAGE_DEFINE "-DVE_VERTEX_STAGE")
+        elseif(EXT STREQUAL ".frag")
+            set(STAGE_DEFINE "-DVE_FRAGMENT_STAGE")
+        elseif(EXT STREQUAL ".comp")
+            set(STAGE_DEFINE "-DVE_COMPUTE_STAGE")
+        endif()
         add_custom_command(
             OUTPUT  "${OUT}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${VE_SHADER_OUTPUT_DIR}"
-            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -g ${INCLUDE_FLAGS}
+            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -g ${STAGE_DEFINE} ${INCLUDE_FLAGS}
                     -MD -MF "${OUT}.d" "${SRC_ABS}" -o "${OUT}"
             DEPENDS "${SRC_ABS}"
             DEPFILE "${OUT}.d"

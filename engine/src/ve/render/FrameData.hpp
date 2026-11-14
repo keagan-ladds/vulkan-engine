@@ -52,6 +52,8 @@ struct ShadowView {
     bool point = false;
     glm::vec3 lightPosition{0.0f}; // point lights: for range culling
     float range = 0.0f;
+    uint32_t cullView = 0xFFFFFFFFu; // GPU instance cull view (directional only), set by InstanceSystem
+    float texelSize = 0.0f;          // directional: world size of one shadow texel in this cascade
 };
 
 struct RenderStats {

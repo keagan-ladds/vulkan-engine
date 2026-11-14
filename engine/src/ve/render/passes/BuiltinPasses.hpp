@@ -16,6 +16,16 @@
 
 namespace ve {
 
+// Uploads changed instances and runs GPU culling for every InstanceGroup
+// (camera + directional shadow cascades) before anything is drawn.
+class InstanceCullPass : public RenderPass {
+public:
+    InstanceCullPass() : RenderPass("Instance culling", RenderStage::Shadow, -100) {}
+    void declare(PassBuilder&) override {}
+    void execute(RenderContext& ctx) override;
+    void onGui() override;
+};
+
 class ShadowPass : public RenderPass {
 public:
     ShadowPass() : RenderPass("Shadows", RenderStage::Shadow) {}

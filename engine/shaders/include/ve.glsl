@@ -22,6 +22,7 @@
 #define VE_MAX_SHADOW_VIEWS 128
 #define VE_INVALID 0xFFFFFFFFu
 #define VE_DRAW_FLAG_POINT_SHADOW 1u
+#define VE_DRAW_FLAG_INSTANCED 2u
 #define VE_PI 3.14159265359
 
 layout(set = 0, binding = 0, std140) uniform VeFrameGlobals {
@@ -94,6 +95,36 @@ layout(push_constant) uniform VeDrawPush {
 } draw;
 
 VeMaterial veMaterial() { return materials[draw.materialIndex]; }
+
+#ifdef VE_VERTEX_STAGE
+// ---- GPU instancing ------------------------------------------------------------
+// Instanced draws (InstanceGroup) get their transform from the instance
+// buffer: the cull shader wrote the visible instance indices, and
+// gl_InstanceIndex (offset by the indirect command's firstInstance) picks one.
+// Use veModelMatrix() instead of draw.model in every mesh vertex shader so it
+// works for both regular and instanced draws.
+struct VeInstance {
+    vec4 rows[3];
+    vec4 custom;
+};
+layout(set = 0, binding = 5, std430) readonly buffer VeInstanceBuffer { VeInstance veInstances[]; };
+layout(set = 0, binding = 6, std430) readonly buffer VeVisibleBuffer { uint veVisibleInstances[]; };
+
+bool veIsInstanced() { return (draw.flags & VE_DRAW_FLAG_INSTANCED) != 0u; }
+
+mat4 veModelMatrix()
+{
+    if (!veIsInstanced()) return draw.model;
+    VeInstance inst = veInstances[veVisibleInstances[gl_InstanceIndex]];
+    return transpose(mat4(inst.rows[0], inst.rows[1], inst.rows[2], vec4(0.0, 0.0, 0.0, 1.0)));
+}
+
+// Per-instance custom data (InstanceGroup::add(..., custom)); zero for regular draws.
+vec4 veInstanceCustom()
+{
+    return veIsInstanced() ? veInstances[veVisibleInstances[gl_InstanceIndex]].custom : vec4(0.0);
+}
+#endif // VE_VERTEX_STAGE
 #endif
 
 // ---- Helpers -----------------------------------------------------------------

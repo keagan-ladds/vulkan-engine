@@ -77,8 +77,9 @@ struct RaycastHit {
     glm::vec3 point{0.0f};
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
     float distance = 0.0f;
-    Rigidbody* body = nullptr;          // null when a character was hit
+    Rigidbody* body = nullptr;          // null for characters and createStaticBody() bodies
     GameObject* gameObject = nullptr;
+    uint32_t userValue = 0;             // the value given to createStaticBody()
 };
 
 class PhysicsWorld {
@@ -99,6 +100,14 @@ public:
     // unless hitCharacters is true.
     std::optional<RaycastHit> raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
                                       const Rigidbody* ignore = nullptr, bool hitCharacters = false) const;
+
+    // Static bodies without a GameObject: for instanced props (trees, rocks)
+    // where a GameObject per instance would be wasteful. `userValue` comes
+    // back in RaycastHit::userValue (e.g. a prop type or instance id).
+    uint32_t createStaticBody(const Collider& collider, const glm::vec3& position,
+                              const glm::quat& rotation = glm::quat(1, 0, 0, 0), const glm::vec3& scale = glm::vec3(1.0f),
+                              uint32_t userValue = 0);
+    void destroyStaticBody(uint32_t bodyId);
 
     uint32_t bodyCount() const;
     bool paused = false;

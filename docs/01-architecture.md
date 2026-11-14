@@ -114,6 +114,7 @@ Every pipeline uses **one global pipeline layout**:
 | set 0, b2 | `MaterialBuffer` SSBO | `MaterialData[]`: 12 × vec4 params + 16 uint texture indices = 256 B each |
 | set 0, b3 | `sampler2DArrayShadow` | directional shadow cascades (all lights × cascades as layers) |
 | set 0, b4 | `samplerCubeArrayShadow` | point light shadow cubes |
+| set 0, b5–b9 | instancing SSBOs | instances, visible-instance lists, indirect draw commands, instance groups, cull views (see §5.7) |
 | set 1, b0 | `image2D storageImages[]` | bindless storage images (compute) |
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
@@ -189,7 +190,8 @@ Default pass list:
 
 | Stage (order) | Pass | Module |
 |---|---|---|
-| Shadow | `ShadowPass` (cascades + point cubes) | engine |
+| Shadow (-100) | `InstanceCullPass` (upload changed instances, GPU culling → indirect commands) | engine |
+| Shadow | `ShadowPass` (cascades + point cubes; instanced draws in cascades) | engine |
 | Opaque | `OpaquePass` (clears, draws Opaque/AlphaTest queues) | engine |
 | Sky | `AtmospherePass` (sky LUT → half-res clouds → sky where depth == far) | effects |
 | Transparent (0) | `TransparentPass` (sorted back-to-front; water) | engine |
@@ -235,7 +237,44 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
 - Everything is configurable via `RendererSettings` (counts, cascade count,
   resolutions, split lambda, biases, max shadow distance).
 
-### 5.7 GPU layer (gfx)
+### 5.7 GPU-driven instancing
+
+For things there are thousands of (trees, rocks, bushes, later foliage) use
+`InstanceGroup` instead of a GameObject + MeshRenderer each:
+
+- `renderer.createInstanceGroup(desc, capacity)`: `desc` holds up to 4 LODs
+  (mesh + materials + max distance), `castShadows`, `cullDistance` and
+  `shadowDistance`. `add(transform, custom)` / `set` / `remove` use stable handles.
+  `custom` is a free vec4 per instance; `standard.vert` uses `w > 0` to tint vertex colours.
+- Storage: one device-local instance buffer (64 B per instance), sub-allocated
+  per group. Only changed slot ranges are uploaded, through a per-frame staging buffer.
+- Each frame `InstanceCullPass` dispatches `instance_cull.comp` per group, with
+  one row per **cull view**: view 0 is the camera, then every directional
+  shadow cascade (`ShadowView::cullView`). For each instance it tests the
+  distance limits, a minimum size (shadow views skip casters smaller than
+  `shadowMinCasterTexels` cascade texels) and the frustum. It then picks the LOD
+  by camera distance and appends the instance to that LOD's batches, with an
+  atomic on the indirect command's `instanceCount`.
+- Draw batches are (group × LOD × submesh). Opaque and shadow passes call
+  `instances().draw(ctx, cullView, kind, shadowViewIndex)`, which issues one
+  `vkCmdDrawIndexedIndirect` per batch with `DrawPush::flags = INSTANCED`. In
+  the vertex shader `veModelMatrix()` resolves
+  `veInstances[veVisibleInstances[gl_InstanceIndex]]`.
+- Limits: `RendererSettings::maxInstances`, `maxVisibleInstancesPerView`
+  (sum of batch capacities; the visible buffer is sized for camera + all
+  cascades), 1024 groups, 2048 batches. Point-light shadows and transparent
+  materials don't draw instances.
+- Stats (visible camera/shadow instance draws) are read back from the GPU one
+  frame-slot later and shown in the F1 overlay.
+- Cutout materials (`StandardMaterial::Mode::Cutout`) use `shadow_cutout.frag` /
+  `shadow_point_cutout.frag` (`ShaderDesc::shadowFragment`), so shadows keep the
+  alpha holes.
+
+Shader stages: CMake defines `VE_VERTEX_STAGE` / `VE_FRAGMENT_STAGE` /
+`VE_COMPUTE_STAGE` per file, so shared includes can expose stage-specific
+helpers (the instancing helpers are vertex-only).
+
+### 5.8 GPU layer (gfx)
 
 - `Device`: instance, debug messenger, surface, physical-device selection
   (requires Vulkan 1.3 dynamic rendering + synchronization2 + descriptor

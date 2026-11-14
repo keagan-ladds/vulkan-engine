@@ -1,0 +1,105 @@
+#version 460
+// GPU instance culling.
+//
+// One thread per instance of one InstanceGroup (x), one dispatch row per view
+// (y: view 0 = camera, then directional shadow cascades). For every instance
+// that survives the distance + frustum test, the thread picks a LOD (from the
+// distance to the camera, so all views agree) and appends the instance to the
+// visible list of each of that LOD's draw batches, bumping the batch's
+// indirect draw instanceCount with an atomic.
+//
+// The draw passes then issue vkCmdDrawIndexedIndirect per batch; the vertex
+// shader maps gl_InstanceIndex -> veVisibleInstances[] -> veInstances[].
+#define VE_CUSTOM_PUSH_CONSTANTS
+#include "ve.glsl"
+
+layout(local_size_x = 64) in;
+
+struct Instance {
+    vec4 rows[3];
+    vec4 custom;
+};
+
+struct Group {
+    vec4 localSphere;
+    vec4 lodDistances;
+    uvec4 lodBatchStart;
+    uvec4 lodBatchCount;
+    uint firstInstance;
+    uint count;
+    uint lodCount;
+    uint flags;
+    float cullDistance;
+    float shadowDistance;
+    uint pad0, pad1;
+};
+
+struct CullView {
+    vec4 planes[6];
+    vec4 position;
+};
+
+// Same layout as VkDrawIndexedIndirectCommand.
+struct DrawCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(set = 0, binding = 5, std430) readonly buffer Instances { Instance instances[]; };
+layout(set = 0, binding = 6, std430) writeonly buffer Visible { uint visible[]; };
+layout(set = 0, binding = 7, std430) buffer Commands { DrawCommand commands[]; };
+layout(set = 0, binding = 8, std430) readonly buffer Groups { Group groups[]; };
+layout(set = 0, binding = 9, std430) readonly buffer Views { CullView views[]; };
+
+layout(push_constant) uniform Push {
+    uint groupIndex;
+    uint batchCount; // batches per view (commands are [view][batch])
+} pc;
+
+void main()
+{
+    Group g = groups[pc.groupIndex];
+    uint local = gl_GlobalInvocationID.x;
+    if (local >= g.count) return;
+    uint view = gl_GlobalInvocationID.y;
+    if (view > 0u && (g.flags & 1u) == 0u) return; // not a shadow caster
+
+    uint index = g.firstInstance + local;
+    Instance inst = instances[index];
+    // World-space bounding sphere: transform the centre, scale the radius by the largest axis scale.
+    vec3 c = g.localSphere.xyz;
+    vec3 centre = vec3(dot(inst.rows[0].xyz, c) + inst.rows[0].w,
+                       dot(inst.rows[1].xyz, c) + inst.rows[1].w,
+                       dot(inst.rows[2].xyz, c) + inst.rows[2].w);
+    vec3 sx = vec3(inst.rows[0].x, inst.rows[1].x, inst.rows[2].x);
+    vec3 sy = vec3(inst.rows[0].y, inst.rows[1].y, inst.rows[2].y);
+    vec3 sz = vec3(inst.rows[0].z, inst.rows[1].z, inst.rows[2].z);
+    float radius = g.localSphere.w * sqrt(max(dot(sx, sx), max(dot(sy, sy), dot(sz, sz))));
+
+    float dist = distance(centre, views[0].position.xyz);
+    if (dist - radius > g.cullDistance) return;
+    if (view > 0u && dist - radius > g.shadowDistance) return;
+
+    CullView v = views[view];
+    // Too small to matter in this view (e.g. a bush in a far shadow cascade
+    // where it would cover less than ~2 shadow texels).
+    if (radius < v.position.w) return;
+    for (int p = 0; p < 6; ++p) {
+        if (dot(v.planes[p].xyz, centre) + v.planes[p].w < -radius) return;
+    }
+
+    uint lod = 0u;
+    while (lod + 1u < g.lodCount && dist > g.lodDistances[lod]) ++lod;
+
+    uint first = g.lodBatchStart[lod];
+    uint count = g.lodBatchCount[lod];
+    for (uint b = first; b < first + count; ++b) {
+        uint cmd = view * pc.batchCount + b;
+        uint slot = atomicAdd(commands[cmd].instanceCount, 1u);
+        // firstInstance already points at this batch's region of the visible list.
+        visible[commands[cmd].firstInstance + slot] = index;
+    }
+}

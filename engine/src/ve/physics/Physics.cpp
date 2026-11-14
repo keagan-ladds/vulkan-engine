@@ -163,6 +163,13 @@ bool physicsAlive()
     return g_joltInitialized && Engine::exists() && Engine::get().physics().impl().system;
 }
 
+// Body user data: a Rigidbody* (always even, it's aligned), or (value << 1) | 1
+// for GameObject-less static bodies.
+JPH::uint64 staticUserData(uint32_t value)
+{
+    return (JPH::uint64(value) << 1) | 1u;
+}
+
 } // namespace
 
 PhysicsWorld::PhysicsWorld() : m_impl(std::make_unique<Impl>()) {}
@@ -293,8 +300,13 @@ std::optional<RaycastHit> PhysicsWorld::raycast(const glm::vec3& origin, const g
     if (lock.Succeeded()) {
         const JPH::Body& body = lock.GetBody();
         result.normal = toG(body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, toJ(result.point)));
-        result.body = reinterpret_cast<Rigidbody*>(body.GetUserData());
-        if (result.body) result.gameObject = &result.body->gameObject();
+        const JPH::uint64 ud = body.GetUserData();
+        if (ud & 1u) {
+            result.userValue = static_cast<uint32_t>(ud >> 1);
+        } else {
+            result.body = reinterpret_cast<Rigidbody*>(ud);
+            if (result.body) result.gameObject = &result.body->gameObject();
+        }
     }
     return result;
 }
@@ -319,6 +331,16 @@ Collider makeCollider(const JPH::ShapeSettings::ShapeResult& result, const char*
     Collider c;
     c.impl = impl;
     return c;
+}
+
+// The collider's shape with a world scale baked in (Jolt ScaledShape).
+JPH::RefConst<JPH::Shape> scaledShape(const Collider& collider, const glm::vec3& scale)
+{
+    JPH::RefConst<JPH::Shape> shape = collider.impl->shape;
+    if (glm::any(glm::greaterThan(glm::abs(scale - 1.0f), glm::vec3(1e-4f)))) {
+        shape = new JPH::ScaledShape(shape, shape->MakeScaleValid(toJ(scale)));
+    }
+    return shape;
 }
 
 void requireJolt(const char* what)
@@ -412,6 +434,27 @@ Collider Collider::offset(const glm::vec3& translation, const glm::quat& rotatio
     return makeCollider(JPH::RotatedTranslatedShapeSettings(toJ(translation), toJ(rotation), impl->shape).Create(), "offset");
 }
 
+uint32_t PhysicsWorld::createStaticBody(const Collider& collider, const glm::vec3& position, const glm::quat& rotation,
+                                       const glm::vec3& scale, uint32_t userValue)
+{
+    if (!collider.valid()) return Rigidbody::kInvalidBody;
+    JPH::BodyCreationSettings s(scaledShape(collider, scale), toJ(position), toJ(rotation), JPH::EMotionType::Static,
+                                Layers::NonMoving);
+    s.mUserData = staticUserData(userValue);
+    const JPH::BodyID id = m_impl->system->GetBodyInterface().CreateAndAddBody(s, JPH::EActivation::DontActivate);
+    if (id.IsInvalid()) return Rigidbody::kInvalidBody;
+    ++m_impl->addedSinceOptimize;
+    return id.GetIndexAndSequenceNumber();
+}
+
+void PhysicsWorld::destroyStaticBody(uint32_t bodyId)
+{
+    if (bodyId == Rigidbody::kInvalidBody || !m_impl->system) return;
+    JPH::BodyInterface& bi = m_impl->system->GetBodyInterface();
+    bi.RemoveBody(JPH::BodyID(bodyId));
+    bi.DestroyBody(JPH::BodyID(bodyId));
+}
+
 // =============================================================================
 // Rigidbody
 // =============================================================================
@@ -432,10 +475,7 @@ void Rigidbody::start()
     // Bake the object's world scale into the shape.
     const glm::mat4& m = transform().worldMatrix();
     const glm::vec3 scale(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])), glm::length(glm::vec3(m[2])));
-    JPH::RefConst<JPH::Shape> shape = collider.impl->shape;
-    if (glm::any(glm::greaterThan(glm::abs(scale - 1.0f), glm::vec3(1e-4f)))) {
-        shape = new JPH::ScaledShape(shape, shape->MakeScaleValid(toJ(scale)));
-    }
+    JPH::RefConst<JPH::Shape> shape = scaledShape(collider, scale);
 
     if (shape->MustBeStatic() && type != BodyType::Static) {
         log::warn("Rigidbody on '{}': mesh/heightfield colliders must be static; making it static",

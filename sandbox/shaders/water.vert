@@ -7,7 +7,7 @@ layout(location = 0) out vec3 outWorldPos;
 
 void main()
 {
-    vec4 world = draw.model * vec4(inPosition, 1.0);
+    vec4 world = veModelMatrix() * vec4(inPosition, 1.0);
     outWorldPos = world.xyz;
     gl_Position = frame.viewProj * world;
 }
