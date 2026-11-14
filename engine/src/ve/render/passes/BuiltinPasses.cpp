@@ -21,6 +21,13 @@ void InstanceCullPass::onGui()
     ImGui::Text("Groups: %u   Batches: %u   Instances: %u", s.groups, s.batches, s.instances);
     ImGui::Text("Visible: %u camera, %u shadow (instance draws)", s.visibleCamera, s.visibleShadow);
     ImGui::Text("Indirect draws: %u", s.drawCalls);
+    ImGui::Text("Camera per LOD: %u / %u / %u / %u", s.visibleLod[0], s.visibleLod[1], s.visibleLod[2], s.visibleLod[3]);
+    RendererSettings& rs = renderer().settings();
+    ImGui::SliderFloat("LOD bias", &rs.lodBias, 0.25f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+    int shadowBias = static_cast<int>(rs.shadowLodBias);
+    if (ImGui::SliderInt("Shadow LOD bias", &shadowBias, 0, 3)) rs.shadowLodBias = static_cast<uint32_t>(shadowBias);
+    ImGui::Checkbox("LOD crossfade", &rs.lodCrossfade);
+    ImGui::SliderFloat("Fade band", &rs.lodFadeBand, 0.01f, 0.5f);
 }
 
 // -----------------------------------------------------------------------------

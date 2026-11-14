@@ -224,11 +224,19 @@ million grass blades), scaling up on discrete GPUs.
   Not measured on a discrete GPU yet.
 - Open: visible-list memory scales with views × group capacity (per-view compaction later); point-light shadows skip instances.
 
-### 12b — LOD
-- [ ] meshoptimizer dependency: `MeshData::simplify()` / automatic LOD chain generation (+ vertex cache optimisation)
-- [ ] Screen-size-based LOD selection in the cull shader (distance fallback)
-- [ ] Dithered LOD crossfade (no popping)
-- [ ] Shadow LOD bias (shadows use a coarser LOD)
+### 12b — LOD ✅
+- [x] meshoptimizer 0.22 dependency: `MeshData::simplified(SimplifyOptions)` (weld → simplify/sloppy → compact, `faceted` keeps low-poly flat shading) and `MeshData::optimize()` (vertex cache + fetch)
+- [x] Screen-size LOD selection in the cull shader (`InstanceLod::screenSize`, projected radius / distance), distance mode kept (`maxDistance`), global `lodBias`
+- [x] Dithered LOD crossfade: instances near a threshold are drawn in both LODs with complementary 4×4 ordered-dither masks (`veInstanceLodFade()` + `veLodDither()`), configurable band
+- [x] Shadow LOD bias (`shadowLodBias`, default 1: shadows use one LOD coarser, no crossfade)
+- [x] Per-LOD visible counts in the F1 overlay; LOD bias / crossfade sliders
+- [x] Savanna: every prop variant gets a LOD chain (trees 3 levels, e.g. acacia 454/153/16 triangles; bushes/rocks 2)
+- **Result:** GPU 19.5 → about 12 ms (Debug) / 13 ms (Release) on Iris Xe at 1600×900 with the same ~10.3k props;
+  shadows 6.4 → 3.2 ms, opaque 6.1 → 3.2 ms; vsync-locked 60 FPS. Back to the pre-instancing frame time
+  with 10× the props.
+- Notes: simplification treats a mesh as one submesh (fine for single-material props; multi-material glTFs
+  need per-part simplification). Custom material shaders must forward `veInstanceLodFade()` and call
+  `veLodDither()` to crossfade; otherwise they pop. Depth-only shadows never crossfade.
 
 ### 12c — Impostors
 - [ ] Octahedral impostor baking (render N×N views of a mesh into albedo/normal/depth atlas, at load, cached on disk)

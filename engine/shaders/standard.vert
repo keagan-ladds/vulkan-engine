@@ -14,6 +14,7 @@ layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec2 outUV;
 layout(location = 3) out vec4 outTangent;
 layout(location = 4) out vec4 outColor;
+layout(location = 5) flat out float outLodFade;
 
 void main()
 {
@@ -28,5 +29,6 @@ void main()
     // Optional per-instance tint (instance custom.w > 0), handy for foliage variation.
     vec4 custom = veInstanceCustom();
     outColor = custom.w > 0.0 ? vec4(inColor.rgb * custom.rgb, inColor.a) : inColor;
+    outLodFade = veInstanceLodFade(); // LOD crossfade (instanced draws)
     gl_Position = frame.viewProj * world;
 }

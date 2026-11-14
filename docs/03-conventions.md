@@ -168,6 +168,20 @@ auto handle = trees->add(transform, glm::vec4(tint, 1.0f)); // w > 0: tint (stan
 trees->remove(handle);
 ```
 
+LOD chains (meshoptimizer):
+
+```cpp
+ve::MeshData lod1 = tree.simplified({.ratio = 0.35f, .maxError = 0.08f, .faceted = true});
+ve::MeshData lod2 = tree.simplified({.ratio = 0.10f, .maxError = 0.3f, .sloppy = true, .faceted = true});
+desc.lods = {{mesh0, {mat}, /*screenSize*/ 0.10f},   // full detail while radius covers >= 10% of half-screen
+             {mesh1, {mat}, 0.035f},
+             {mesh2, {mat}}};                         // last LOD: threshold ignored
+```
+
+Custom material shaders: forward `veInstanceLodFade()` in a `flat` varying and
+call `veLodDither(fade)` at the start of the fragment shader to get crossfades
+(see `standard.vert/frag`).
+
 Keep the `shared_ptr<InstanceGroup>` alive somewhere that dies with the scene
 (e.g. a GameObject member, like `savanna::PropField`). Solid props use
 `physics().createStaticBody(collider, pos, rot, scale, userValue)`; the

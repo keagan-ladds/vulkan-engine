@@ -12,6 +12,7 @@
 #include <ve/core/Input.hpp>
 #include <ve/core/Time.hpp>
 #include <ve/physics/Physics.hpp>
+#include <ve/render/Instancing.hpp>
 #include <ve/render/Mesh.hpp>
 #include <ve/render/Primitives.hpp>
 #include <ve/render/Renderer.hpp>
@@ -337,6 +338,10 @@ void AutoTest::update(float dt)
                 "), speed " + std::to_string(rb ? glm::length(rb->linearVelocity()) : -1.0f));
         }
         log("physics bodies: " + std::to_string(physics().bodyCount()) + ", step ms: " + std::to_string(physics().lastStepMs));
+        const ve::InstanceStats& is = renderer().instances().stats();
+        log("instances: " + std::to_string(is.instances) + ", camera draws per LOD " + std::to_string(is.visibleLod[0]) +
+            "/" + std::to_string(is.visibleLod[1]) + "/" + std::to_string(is.visibleLod[2]) + ", shadow draws " +
+            std::to_string(is.visibleShadow));
         log("objects: " + std::to_string(scene().objectCount()) + ", draw calls: " +
             std::to_string(renderer().stats().drawCalls) + ", gpu ms: " + std::to_string(renderer().gpuFrameTimeMs()));
         engine().quit();

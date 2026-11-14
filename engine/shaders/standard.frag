@@ -7,11 +7,13 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
 layout(location = 3) in vec4 inTangent;
 layout(location = 4) in vec4 inColor;
+layout(location = 5) flat in float inLodFade;
 
 layout(location = 0) out vec4 outColor;
 
 void main()
 {
+    veLodDither(inLodFade);
     VeMaterial m = veMaterial();
     vec2 uv = inUV * m.params[3].xy;
 

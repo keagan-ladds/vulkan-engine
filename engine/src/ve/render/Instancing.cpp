@@ -50,6 +50,10 @@ void memoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccess
 struct CullPush {
     uint32_t groupIndex;
     uint32_t batchCount;
+    float lodScale;
+    float lodBias;
+    uint32_t shadowLodBias;
+    float fadeBand;
 };
 
 } // namespace
@@ -164,6 +168,7 @@ glm::mat4 InstanceGroup::transform(Handle h) const
 void InstanceSystem::init(Renderer& renderer, uint32_t maxInstances, uint32_t maxVisiblePerView, uint32_t maxViews)
 {
     m_renderer = &renderer;
+    if (maxInstances > (1u << 23)) throw std::runtime_error("maxInstances is limited to 8M (23-bit visible entries)");
     m_maxInstances = maxInstances;
     m_maxVisiblePerView = maxVisiblePerView;
     m_maxViews = maxViews;
@@ -302,6 +307,9 @@ void InstanceSystem::prepare(uint32_t slotIndex, FrameData& frame)
     m_activeViews = v;
     s.viewCount = v;
     s.batchCount = static_cast<uint32_t>(m_batches.size());
+    s.batchLods.resize(m_batches.size());
+    for (size_t b = 0; b < m_batches.size(); ++b) s.batchLods[b] = static_cast<uint8_t>(m_batches[b].lod);
+    m_lodScale = 1.0f / std::tan(frame.camera.fovY * 0.5f);
 
     // --- Groups -----------------------------------------------------------------------
     auto* groups = static_cast<GpuInstanceGroup*>(s.groups.mapped);
@@ -315,11 +323,15 @@ void InstanceSystem::prepare(uint32_t slotIndex, FrameData& frame)
         gpu.firstInstance = g->m_firstInstance;
         gpu.count = g->count();
         gpu.lodCount = static_cast<uint32_t>(g->m_desc.lods.size());
-        gpu.flags = g->m_desc.castShadows ? 1u : 0u;
+        const bool screenSize = g->m_desc.lods[0].screenSize > 0.0f;
+        gpu.flags = (g->m_desc.castShadows ? 1u : 0u) | (screenSize ? 2u : 0u);
         gpu.cullDistance = g->m_desc.cullDistance;
         gpu.shadowDistance = g->m_desc.shadowDistance;
         for (uint32_t l = 0; l < gpu.lodCount; ++l) {
-            gpu.lodDistances[l] = g->m_desc.lods[l].maxDistance;
+            // Threshold in the metric the cull shader uses (see instance_cull.comp).
+            const InstanceLod& lod = g->m_desc.lods[l];
+            gpu.lodDistances[l] = screenSize ? lod.screenSize
+                                             : (lod.maxDistance >= FLT_MAX ? 0.0f : 1.0f / std::max(lod.maxDistance, 1e-3f));
             gpu.lodBatchStart[l] = batch;
             const auto n = static_cast<uint32_t>(g->m_desc.lods[l].mesh->submeshes().size());
             gpu.lodBatchCount[l] = n;
@@ -403,7 +415,8 @@ void InstanceSystem::recordCulling(VkCommandBuffer cmd, uint32_t slotIndex)
     for (uint32_t gi = 0; gi < m_groups.size(); ++gi) {
         const uint32_t count = m_groups[gi]->count();
         if (count == 0) continue;
-        const CullPush push{gi, s.batchCount};
+        const RendererSettings& rs = m_renderer->settings();
+        const CullPush push{gi, s.batchCount, m_lodScale, rs.lodBias, rs.shadowLodBias, rs.lodCrossfade ? rs.lodFadeBand : 0.0f};
         vkCmdPushConstants(cmd, m_renderer->pipelineLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(push), &push);
         vkCmdDispatch(cmd, (count + 63) / 64, s.viewCount, 1);
     }
@@ -483,9 +496,19 @@ void InstanceSystem::collectStats(uint32_t slotIndex)
     vmaInvalidateAllocation(m_renderer->device().allocator(), s.readback.allocation, 0, VK_WHOLE_SIZE);
     const auto* cmds = static_cast<const DrawIndexedIndirect*>(s.readback.mapped);
     uint32_t camera = 0, shadow = 0;
+    uint32_t perLod[4] = {};
     for (uint32_t v = 0; v < s.viewCount; ++v) {
-        for (uint32_t b = 0; b < s.batchCount; ++b) (v == 0 ? camera : shadow) += cmds[v * s.batchCount + b].instanceCount;
+        for (uint32_t b = 0; b < s.batchCount; ++b) {
+            const uint32_t n = cmds[v * s.batchCount + b].instanceCount;
+            if (v == 0) {
+                camera += n;
+                if (b < s.batchLods.size()) perLod[s.batchLods[b]] += n;
+            } else {
+                shadow += n;
+            }
+        }
     }
+    std::copy(perLod, perLod + 4, m_stats.visibleLod);
     m_stats.visibleCamera = camera;
     m_stats.visibleShadow = shadow;
 }

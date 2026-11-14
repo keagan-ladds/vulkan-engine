@@ -28,7 +28,9 @@ class Terrain;
 // Mesh variants of one kind of prop plus their physics shapes:
 // no colliders = walk through it, one = shared by all variants, else one per variant.
 struct PropSet {
-    std::vector<std::shared_ptr<ve::Mesh>> meshes;
+    std::vector<std::shared_ptr<ve::Mesh>> meshes;                // LOD 0 per variant
+    std::vector<std::vector<std::shared_ptr<ve::Mesh>>> lods;     // LOD 1.. per variant (simplified)
+    std::vector<float> screenSizes;                               // LOD switch thresholds (InstanceLod::screenSize)
     std::vector<ve::Collider> colliders;
 };
 

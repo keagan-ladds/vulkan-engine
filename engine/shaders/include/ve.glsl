@@ -112,19 +112,50 @@ layout(set = 0, binding = 6, std430) readonly buffer VeVisibleBuffer { uint veVi
 
 bool veIsInstanced() { return (draw.flags & VE_DRAW_FLAG_INSTANCED) != 0u; }
 
+// Visible entries pack the instance index (bits 0-22) with LOD crossfade data.
+uint veVisibleEntry() { return veVisibleInstances[gl_InstanceIndex]; }
+uint veInstanceIndex() { return veVisibleEntry() & 0x7FFFFFu; }
+
 mat4 veModelMatrix()
 {
     if (!veIsInstanced()) return draw.model;
-    VeInstance inst = veInstances[veVisibleInstances[gl_InstanceIndex]];
+    VeInstance inst = veInstances[veInstanceIndex()];
     return transpose(mat4(inst.rows[0], inst.rows[1], inst.rows[2], vec4(0.0, 0.0, 0.0, 1.0)));
 }
 
 // Per-instance custom data (InstanceGroup::add(..., custom)); zero for regular draws.
 vec4 veInstanceCustom()
 {
-    return veIsInstanced() ? veInstances[veVisibleInstances[gl_InstanceIndex]].custom : vec4(0.0);
+    return veIsInstanced() ? veInstances[veInstanceIndex()].custom : vec4(0.0);
+}
+
+// LOD crossfade value for this instance copy: 0 = fully visible,
+// > 0 = incoming LOD (keeps a `fade` fraction of pixels), < 0 = outgoing LOD.
+// Pass it to the fragment shader in a `flat` varying and call veLodDither().
+float veInstanceLodFade()
+{
+    if (!veIsInstanced()) return 0.0;
+    uint e = veVisibleEntry();
+    uint q = (e >> 23) & 0xFFu;
+    if (q == 0u) return 0.0;
+    float f = float(q) / 255.0;
+    return (e >> 31) != 0u ? f : -f;
 }
 #endif // VE_VERTEX_STAGE
+
+#ifdef VE_FRAGMENT_STAGE
+// LOD crossfade: the outgoing and incoming LOD copies discard complementary
+// pixels of a 4x4 ordered dither, so together they cover the surface exactly
+// once while the mix shifts smoothly from one LOD to the other.
+void veLodDither(float fade)
+{
+    if (fade == 0.0) return;
+    const float bayer[16] = float[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+    ivec2 p = ivec2(gl_FragCoord.xy) & 3;
+    float d = (bayer[p.y * 4 + p.x] + 0.5) / 16.0;
+    if (fade > 0.0 ? d >= fade : d < -fade) discard;
+}
+#endif
 #endif
 
 // ---- Helpers -----------------------------------------------------------------

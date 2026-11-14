@@ -255,6 +255,14 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
   `shadowMinCasterTexels` cascade texels) and the frustum. It then picks the LOD
   by camera distance and appends the instance to that LOD's batches, with an
   atomic on the indirect command's `instanceCount`.
+- **LOD:** each group has up to 4 `InstanceLod`s, selected per instance by
+  screen size (`radius · cot(fov/2) / distance`, if `screenSize` is set) or
+  distance, scaled by `RendererSettings::lodBias`. Shadow views use
+  `shadowLodBias` coarser LODs. Near a threshold an instance is emitted into
+  both LODs. The visible entry packs the instance index (23 bits), a fade value
+  (8 bits) and an incoming/outgoing flag, and the fragment shader discards
+  complementary 4×4 ordered-dither pixels (`veLodDither`) for a pop-free
+  crossfade. LOD meshes come from `MeshData::simplified()` (meshoptimizer).
 - Draw batches are (group × LOD × submesh). Opaque and shadow passes call
   `instances().draw(ctx, cullView, kind, shadowViewIndex)`, which issues one
   `vkCmdDrawIndexedIndirect` per batch with `DrawPush::flags = INSTANCED`. In

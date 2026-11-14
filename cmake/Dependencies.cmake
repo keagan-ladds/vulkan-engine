@@ -75,6 +75,14 @@ FetchContent_Declare(jolt
     SYSTEM)                       # treat Jolt headers as system headers (no warnings from them)
 FetchContent_MakeAvailable(jolt)
 
+# meshoptimizer: mesh simplification (LOD generation) and vertex cache/fetch
+# optimisation. Private to ve_engine (used by MeshData::simplified/optimize).
+FetchContent_Declare(meshoptimizer
+    URL https://github.com/zeux/meshoptimizer/archive/refs/tags/v0.22.tar.gz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SYSTEM)
+FetchContent_MakeAvailable(meshoptimizer)
+
 add_library(ve_thirdparty STATIC
     ${CMAKE_CURRENT_LIST_DIR}/thirdparty/thirdparty_impl.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp

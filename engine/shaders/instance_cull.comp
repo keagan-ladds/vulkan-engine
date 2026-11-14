@@ -10,6 +10,14 @@
 //
 // The draw passes then issue vkCmdDrawIndexedIndirect per batch; the vertex
 // shader maps gl_InstanceIndex -> veVisibleInstances[] -> veInstances[].
+//
+// LOD metric: screen-size mode = projected radius / distance (fraction of half
+// the screen height), distance mode = 1 / distance. LOD i is used while the
+// metric >= lodThresholds[i]. Near a threshold the instance is emitted into
+// BOTH LODs with complementary dither masks (crossfade, no popping).
+//
+// Visible entry encoding: bits 0-22 instance index, 23-30 fade (0..255),
+// bit 31 = 1 for the incoming (next-LOD) copy. See ve.glsl.
 #define VE_CUSTOM_PUSH_CONSTANTS
 #include "ve.glsl"
 
@@ -56,8 +64,22 @@ layout(set = 0, binding = 9, std430) readonly buffer Views { CullView views[]; }
 
 layout(push_constant) uniform Push {
     uint groupIndex;
-    uint batchCount; // batches per view (commands are [view][batch])
+    uint batchCount;     // batches per view (commands are [view][batch])
+    float lodScale;      // 1 / tan(fovY / 2)
+    float lodBias;       // metric multiplier: > 1 = more detail
+    uint shadowLodBias;  // shadow views use LOD + this
+    float fadeBand;      // crossfade width, as a fraction of the threshold
 } pc;
+
+void emit(uint view, uint first, uint count, uint entry)
+{
+    for (uint b = first; b < first + count; ++b) {
+        uint cmd = view * pc.batchCount + b;
+        uint slot = atomicAdd(commands[cmd].instanceCount, 1u);
+        // firstInstance already points at this batch's region of the visible list.
+        visible[commands[cmd].firstInstance + slot] = entry;
+    }
+}
 
 void main()
 {
@@ -91,15 +113,29 @@ void main()
         if (dot(v.planes[p].xyz, centre) + v.planes[p].w < -radius) return;
     }
 
+    bool screenSize = (g.flags & 2u) != 0u;
+    float metric = (screenSize ? radius * pc.lodScale / max(dist, 1e-3) : 1.0 / max(dist, 1e-3)) * pc.lodBias;
     uint lod = 0u;
-    while (lod + 1u < g.lodCount && dist > g.lodDistances[lod]) ++lod;
+    while (lod + 1u < g.lodCount && metric < g.lodDistances[lod]) ++lod;
 
-    uint first = g.lodBatchStart[lod];
-    uint count = g.lodBatchCount[lod];
-    for (uint b = first; b < first + count; ++b) {
-        uint cmd = view * pc.batchCount + b;
-        uint slot = atomicAdd(commands[cmd].instanceCount, 1u);
-        // firstInstance already points at this batch's region of the visible list.
-        visible[commands[cmd].firstInstance + slot] = index;
+    if (view > 0u) {
+        // Shadows: coarser LOD, no crossfade (depth-only shaders can't dither).
+        lod = min(lod + pc.shadowLodBias, g.lodCount - 1u);
+        emit(view, g.lodBatchStart[lod], g.lodBatchCount[lod], index);
+        return;
+    }
+
+    // Crossfade: f = 0 well above the threshold -> 1 right at it.
+    uint q = 0u;
+    if (lod + 1u < g.lodCount && pc.fadeBand > 0.0) {
+        float thr = g.lodDistances[lod];
+        float f = clamp(1.0 - (metric - thr) / max(thr * pc.fadeBand, 1e-6), 0.0, 1.0);
+        q = uint(f * 255.0 + 0.5);
+    }
+    if (q == 0u) {
+        emit(view, g.lodBatchStart[lod], g.lodBatchCount[lod], index);
+    } else {
+        emit(view, g.lodBatchStart[lod], g.lodBatchCount[lod], index | (q << 23));                  // fading out
+        emit(view, g.lodBatchStart[lod + 1u], g.lodBatchCount[lod + 1u], index | (q << 23) | (1u << 31)); // fading in
     }
 }

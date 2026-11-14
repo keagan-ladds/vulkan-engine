@@ -39,10 +39,17 @@ class RenderContext;
 struct FrameData;
 class InstanceSystem;
 
+// One level of detail. Selection is by screen size if the group's first LOD
+// sets screenSize > 0, otherwise by distance.
 struct InstanceLod {
     std::shared_ptr<Mesh> mesh;
     std::vector<std::shared_ptr<Material>> materials; // per submesh material slot (like MeshRenderer)
-    float maxDistance = FLT_MAX;                      // camera distance up to which this LOD is used
+    // Screen-size mode: this LOD is used while the instance's bounding radius
+    // covers at least this fraction of half the screen height (0.1 ~ 10%).
+    // The last LOD's value is ignored.
+    float screenSize = 0.0f;
+    // Distance mode: camera distance up to which this LOD is used.
+    float maxDistance = FLT_MAX;
 };
 
 struct InstanceGroupDesc {
@@ -97,6 +104,7 @@ struct InstanceStats {
     uint32_t batches = 0;
     uint32_t visibleCamera = 0; // instances drawn for the camera (all batches), from the GPU, 1-2 frames old
     uint32_t visibleShadow = 0; // instance draws in shadow cascades
+    uint32_t visibleLod[4] = {}; // camera instance draws per LOD level (crossfading instances count twice)
     uint32_t drawCalls = 0;     // indirect draws issued last frame
 };
 
@@ -153,6 +161,7 @@ private:
         };
         std::vector<Copy> uploads;
         uint32_t batchCount = 0, viewCount = 0;
+        std::vector<uint8_t> batchLods; // LOD level of each batch (stats)
         bool hasReadback = false;
     };
     struct Range {
@@ -176,6 +185,7 @@ private:
     uint32_t m_visiblePerView = 0;
     uint32_t m_activeViews = 1;
     uint32_t m_drawsThisFrame = 0;
+    float m_lodScale = 1.0f;
     bool m_layoutDirty = true;
     bool m_warnedTransparent = false;
     VkPipeline m_cullPipeline = VK_NULL_HANDLE;

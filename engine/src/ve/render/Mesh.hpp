@@ -26,6 +26,19 @@ struct Submesh {
     AABB bounds;               // local-space bounds of just this submesh
 };
 
+// Options for MeshData::simplified() (LOD generation, via meshoptimizer).
+struct SimplifyOptions {
+    float ratio = 0.5f;     // target fraction of triangles to keep
+    float maxError = 0.05f; // max geometric deviation, relative to the mesh size (0.01 = 1%)
+    // "Sloppy" mode ignores topology: much more aggressive, good for far LODs
+    // of organic shapes (foliage blobs), bad for anything that must stay closed.
+    bool sloppy = false;
+    // Faceted/low-poly meshes (unshared vertices per triangle): weld by
+    // position + colour only, then re-flatten normals so the LOD stays faceted.
+    // For smooth meshes leave false: normals and UVs are kept.
+    bool faceted = false;
+};
+
 // CPU-side mesh data with a few useful operations for procedural geometry.
 struct MeshData {
     std::vector<Vertex> vertices;
@@ -43,6 +56,14 @@ struct MeshData {
     void computeTangents();
     void setColor(const glm::vec4& color);
     AABB bounds() const;
+    uint32_t triangleCount() const { return static_cast<uint32_t>(indices.size() / 3); }
+
+    // A simplified copy (one LOD level). All triangles are treated as one
+    // submesh, so use it per material part if your mesh has several.
+    MeshData simplified(const SimplifyOptions& options) const;
+    // Reorders triangles/vertices for the GPU's vertex cache and memory
+    // fetches (same mesh, renders faster). Cheap; do it for static meshes.
+    void optimize();
 };
 
 class Mesh {

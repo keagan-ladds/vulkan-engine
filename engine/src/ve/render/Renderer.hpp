@@ -57,6 +57,11 @@ struct RendererSettings {
     bool debugCascades = false;
     // --- GPU instancing (InstanceGroup) ---
     float shadowMinCasterTexels = 2.0f;           // instances smaller than this (in cascade texels) cast no shadow there
+    // --- Instance LOD ---
+    float lodBias = 1.0f;          // > 1 = higher detail further away (quality slider)
+    uint32_t shadowLodBias = 1;    // shadows use this many LODs coarser than the camera
+    bool lodCrossfade = true;      // dithered transitions instead of popping
+    float lodFadeBand = 0.15f;     // transition width, fraction of the LOD threshold
     uint32_t maxInstances = 262144;               // total across all groups (64 B each)
     uint32_t maxVisibleInstancesPerView = 1u << 20; // sum over batches of group capacity (4 B each, per cull view)
 };

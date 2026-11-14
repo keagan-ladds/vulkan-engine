@@ -5,6 +5,10 @@
 
 #include <glm/gtc/matrix_inverse.hpp>
 
+#include <meshoptimizer.h>
+
+#include <algorithm>
+
 namespace ve {
 
 void MeshData::append(const MeshData& other, const glm::mat4& transform, const glm::vec4& tint)
@@ -98,6 +102,62 @@ AABB MeshData::bounds() const
     AABB b;
     for (const auto& v : vertices) b.expand(v.position);
     return b;
+}
+
+MeshData MeshData::simplified(const SimplifyOptions& o) const
+{
+    if (indices.empty()) return *this;
+
+    // 1. Weld duplicate vertices so the simplifier can collapse edges. For
+    //    faceted meshes only position + colour must match (normals differ per face).
+    std::vector<meshopt_Stream> streams;
+    streams.push_back({&vertices[0].position, sizeof(glm::vec3), sizeof(Vertex)});
+    streams.push_back({&vertices[0].color, sizeof(glm::vec4), sizeof(Vertex)});
+    if (!o.faceted) {
+        streams.push_back({&vertices[0].normal, sizeof(glm::vec3), sizeof(Vertex)});
+        streams.push_back({&vertices[0].uv, sizeof(glm::vec2), sizeof(Vertex)});
+    }
+    std::vector<unsigned int> remap(vertices.size());
+    const size_t unique = meshopt_generateVertexRemapMulti(remap.data(), indices.data(), indices.size(),
+                                                           vertices.size(), streams.data(), streams.size());
+    MeshData welded;
+    welded.vertices.resize(unique);
+    welded.indices.resize(indices.size());
+    meshopt_remapVertexBuffer(welded.vertices.data(), vertices.data(), vertices.size(), sizeof(Vertex), remap.data());
+    meshopt_remapIndexBuffer(welded.indices.data(), indices.data(), indices.size(), remap.data());
+
+    // 2. Simplify towards the target triangle count, within the error budget.
+    const size_t target = std::max<size_t>(3, size_t(float(indices.size() / 3) * o.ratio) * 3);
+    std::vector<unsigned int> lod(welded.indices.size());
+    float error = 0.0f;
+    const float* positions = &welded.vertices[0].position.x;
+    const size_t count = o.sloppy
+        ? meshopt_simplifySloppy(lod.data(), welded.indices.data(), welded.indices.size(), positions, unique,
+                                 sizeof(Vertex), target, o.maxError, &error)
+        : meshopt_simplify(lod.data(), welded.indices.data(), welded.indices.size(), positions, unique, sizeof(Vertex),
+                           target, o.maxError, 0, &error);
+    lod.resize(count);
+
+    // 3. Drop unused vertices (and order the rest for fetch locality).
+    MeshData out;
+    out.indices.assign(lod.begin(), lod.end());
+    out.vertices.resize(unique);
+    const size_t used = meshopt_optimizeVertexFetch(out.vertices.data(), out.indices.data(), out.indices.size(),
+                                                    welded.vertices.data(), unique, sizeof(Vertex));
+    out.vertices.resize(used);
+    if (o.faceted) out.makeFlatShaded();
+    return out;
+}
+
+void MeshData::optimize()
+{
+    if (indices.empty()) return;
+    meshopt_optimizeVertexCache(indices.data(), indices.data(), indices.size(), vertices.size());
+    std::vector<Vertex> reordered(vertices.size());
+    const size_t used = meshopt_optimizeVertexFetch(reordered.data(), indices.data(), indices.size(), vertices.data(),
+                                                    vertices.size(), sizeof(Vertex));
+    reordered.resize(used);
+    vertices = std::move(reordered);
 }
 
 std::shared_ptr<Mesh> Mesh::create(Renderer& renderer, const MeshData& data,
