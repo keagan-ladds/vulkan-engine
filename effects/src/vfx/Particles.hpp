@@ -44,6 +44,11 @@ struct ParticleSettings {
     glm::vec3 gravity{0.0f};          // acceleration (m/s^2)
     float drag = 0.0f;                // velocity damping per second
     float windInfluence = 0.0f;       // 0..1, pushes along globalParams[SlotWind]
+    // Collision: each particle casts one physics ray along its initial motion
+    // when it spawns and dies where that ray hits (roofs stop rain). Cheap and
+    // exact for straight-falling particles; gravity curves aren't followed.
+    bool collide = false;
+    float collisionDistance = 40.0f;  // ray length (m)
     float sizeStart = 0.2f, sizeEnd = 0.5f;
     float sizeRandom = 0.3f;          // +-fraction
     // Colour over life: start -> mid (at midPoint) -> end. RGB can exceed 1 (HDR).
@@ -61,6 +66,9 @@ struct ParticleSettings {
 
 class ParticleEmitter : public ve::Component {
 public:
+    // Wind drift applied on top of particle velocities (drag-free particles), m/s.
+    const glm::vec3& drift() const { return m_drift; }
+
     struct Particle {
         glm::vec3 position;
         glm::vec3 velocity;
@@ -69,6 +77,7 @@ public:
         float sizeScale;
         float rotation;
         float spin;
+        float killY; // collide: dies below this height (-inf = no hit)
     };
 
     ParticleSettings settings;
@@ -85,6 +94,7 @@ private:
     float rand01() { return m_dist(m_rng); }
 
     std::vector<Particle> m_particles;
+    glm::vec3 m_drift{0.0f};
     float m_accumulator = 0.0f;
     std::mt19937 m_rng{std::random_device{}()};
     std::uniform_real_distribution<float> m_dist{0.0f, 1.0f};

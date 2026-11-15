@@ -6,6 +6,7 @@
 
 #include <ve/audio/Audio.hpp>
 #include <ve/render/Renderer.hpp>
+#include <ve/render/passes/BuiltinPasses.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Scene.hpp>
 
@@ -19,17 +20,19 @@ Weather::State lerp(const Weather::State& a, const Weather::State& b, float t)
 {
     auto m = [t](float x, float y) { return x + (y - x) * t; };
     return {m(a.coverage, b.coverage), m(a.cloudDensity, b.cloudDensity), m(a.fog, b.fog), m(a.haze, b.haze),
-            m(a.wind, b.wind),         m(a.rain, b.rain),                 m(a.sunScale, b.sunScale)};
+            m(a.wind, b.wind),         m(a.rain, b.rain),                 m(a.sunScale, b.sunScale),
+            m(a.thunder, b.thunder)};
 }
 } // namespace
 
 Weather::Weather() : GameObject("Weather")
 {
-    //                         coverage density fog  haze wind rain sun
-    presets[size_t(Type::Clear)] = {0.30f, 0.8f, 0.7f, 1.0f, 2.5f, 0.0f, 1.00f};
-    presets[size_t(Type::Hazy)] = {0.45f, 1.0f, 1.3f, 2.2f, 4.0f, 0.0f, 0.85f};
-    presets[size_t(Type::Overcast)] = {0.85f, 1.3f, 1.8f, 2.0f, 7.0f, 0.0f, 0.30f};
-    presets[size_t(Type::Rain)] = {0.97f, 1.8f, 1.8f, 2.0f, 9.0f, 1.0f, 0.15f};
+    //                                  coverage density fog  haze  wind  rain  sun   thunder
+    presets[size_t(Type::Clear)] =        {0.30f, 0.8f, 0.7f, 1.0f, 2.5f,  0.0f, 1.00f, 0.0f};
+    presets[size_t(Type::Hazy)] =         {0.45f, 1.0f, 1.3f, 2.2f, 4.0f,  0.0f, 0.85f, 0.0f};
+    presets[size_t(Type::Overcast)] =     {0.85f, 1.3f, 1.8f, 2.0f, 7.0f,  0.0f, 0.30f, 0.0f};
+    presets[size_t(Type::Rain)] =         {0.97f, 1.8f, 1.8f, 2.0f, 9.0f,  1.0f, 0.15f, 0.0f};
+    presets[size_t(Type::Thunderstorm)] = {1.00f, 2.3f, 2.2f, 2.0f, 14.0f, 1.0f, 0.07f, 1.0f};
     m_current = m_from = presets[size_t(Type::Clear)];
 }
 
@@ -40,6 +43,7 @@ const char* Weather::name(Type type)
     case Type::Hazy: return "Hazy";
     case Type::Overcast: return "Overcast";
     case Type::Rain: return "Rain";
+    case Type::Thunderstorm: return "Thunderstorm";
     default: return "?";
     }
 }
@@ -72,6 +76,7 @@ void Weather::start()
     s.velocity = {0.0f, -24.0f, 0.0f};
     s.velocityRandom = {0.4f, 2.0f, 0.4f};
     s.windInfluence = 1.0f;
+    s.collide = true; // stops on roofs, rocks, crates (anything with a collider)
     s.sizeStart = s.sizeEnd = 0.012f;
     s.sizeRandom = 0.2f;
     s.colorStart = s.colorMid = {0.75f, 0.8f, 0.85f, 0.35f};
@@ -81,13 +86,53 @@ void Weather::start()
     s.softness = 0.05f;
     s.rotationSpeed = 0.0f;
 
-    if (rainSound) {
-        m_rainAudio = &rainObj.addComponent<ve::AudioSource>(rainSound);
-        m_rainAudio->loop = true;
-        m_rainAudio->spatial = false;
-        m_rainAudio->volume = 0.0f;
-        m_rainAudio->playOnStart = true;
+    // Sound layers: all loops, crossfaded by update() from the blended state.
+    m_rainAudio = addLoop(rainObj, rainSound);
+    m_stormAudio = addLoop(rainObj, stormSound);
+    m_windAudio = addLoop(rainObj, windSound);
+}
+
+ve::AudioSource* Weather::addLoop(ve::GameObject& owner, const std::shared_ptr<ve::AudioClip>& clip)
+{
+    if (!clip) return nullptr;
+    auto& src = owner.addComponent<ve::AudioSource>(clip);
+    src.loop = true;
+    src.spatial = false;
+    src.bus = "Weather"; // AudioZones (indoors) muffle this bus
+    src.volume = 0.0f;
+    src.playOnStart = true;
+    return &src;
+}
+
+void Weather::updateLightning(float dt)
+{
+    auto* composite = renderer().graph().findPass<ve::CompositePass>();
+    if (!composite) return;
+    auto rnd = [&] {
+        m_rng = m_rng * 1664525u + 1013904223u;
+        return static_cast<float>(m_rng >> 8) / 16777216.0f;
+    };
+    float flash = 0.0f;
+    if (lightning && m_current.thunder > 0.05f) {
+        m_nextFlash -= dt * m_current.thunder;
+        if (m_nextFlash <= 0.0f && m_flashT < 0.0f) {
+            m_flashT = 0.0f;
+            m_nextFlash = lightningInterval * (0.3f + 1.4f * rnd());
+        }
     }
+    if (m_flashT >= 0.0f) {
+        // A main strike and a couple of flickers over ~0.5 s.
+        m_flashT += dt;
+        const float t = m_flashT;
+        auto pulse = [&](float at, float width, float amp) {
+            const float x = (t - at) / width;
+            return x < 0.0f ? 0.0f : amp * std::exp(-x * x * 4.0f) * (x < 1.5f ? 1.0f : 0.0f);
+        };
+        flash = std::max({pulse(0.0f, 0.06f, 1.0f), pulse(0.12f, 0.05f, 0.6f), pulse(0.28f, 0.12f, 0.8f)});
+        if (t > 0.5f) m_flashT = -1.0f;
+    }
+    // Multiplies whatever exposure the game sets (eye adaptation, grading).
+    composite->exposureMultiplier = 1.0f + flash * lightningStrength * m_current.thunder;
 }
 
 void Weather::update(float dt)
@@ -113,10 +158,17 @@ void Weather::update(float dt)
     r.setGlobalParam(SlotWeather, glm::vec4(m_wetness, m_current.rain, m_current.coverage, m_current.fog));
 
     if (m_rain) m_rain->settings.rate = m_current.rain * 2500.0f;
-    if (m_rainAudio) {
-        m_rainAudio->volume = m_current.rain * 0.6f;
-        m_rainAudio->applySettings();
-    }
+    // Crossfade the sound layers. With no storm sound, the rain loop covers storms too.
+    const float storm = m_stormAudio ? m_current.thunder : 0.0f;
+    auto setVolume = [](ve::AudioSource* src, float v) {
+        if (!src) return;
+        src->volume = v;
+        src->applySettings();
+    };
+    setVolume(m_rainAudio, m_current.rain * (1.0f - storm) * rainVolume);
+    setVolume(m_stormAudio, std::max(storm * stormVolume, stormBackground));
+    setVolume(m_windAudio, std::min(m_current.wind / std::max(windVolumeAt, 0.1f), 1.6f) * windVolume);
+    updateLightning(dt);
 }
 
 void Weather::lateUpdate(float)

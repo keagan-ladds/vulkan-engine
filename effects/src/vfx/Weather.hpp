@@ -3,11 +3,18 @@
 // =============================================================================
 // Weather - a GameObject that blends between weather presets by driving the
 // other effects: cloud coverage/density, fog amount, haze, wind, rain
-// particles (following the camera) and an optional rain sound.
+// particles (following the camera), lightning flashes and ambient sound.
 //
 //   auto& weather = scene.spawn<vfx::Weather>();
-//   weather.setWeather(vfx::Weather::Type::Rain, 20.0f);   // over 20 seconds
+//   weather.rainSound  = assets.loadAudio("audio/rain_loop.wav");
+//   weather.stormSound = assets.loadAudio("audio/rain_thunder_loop.wav", /*stream*/ true);
+//   weather.windSound  = assets.loadAudio("audio/wind_loop.wav");
+//   weather.setWeather(vfx::Weather::Type::Thunderstorm, 20.0f);   // over 20 seconds
 //   sun.intensity = baseSun * weather.sunScale();          // dim the sun when overcast
+//
+// Sounds are loops on the "Weather" audio bus (so AudioZones muffle them
+// indoors). Their volumes follow the blended state (rain * (1 - thunder),
+// thunder, wind), so changing weather crossfades them over the transition.
 //
 // It publishes wind (SlotWind) and wetness/rain (SlotWeather) as global
 // shader params so materials (grass sway, wet surfaces) can react.
@@ -31,7 +38,7 @@ class ParticleEmitter;
 
 class Weather : public ve::GameObject {
 public:
-    enum class Type { Clear, Hazy, Overcast, Rain, Count };
+    enum class Type { Clear, Hazy, Overcast, Rain, Thunderstorm, Count };
 
     struct State {
         float coverage;    // cloud coverage
@@ -41,6 +48,7 @@ public:
         float wind;        // wind strength (m/s)
         float rain;        // 0..1
         float sunScale;    // multiplier for direct sunlight
+        float thunder;     // 0..1: storm sound + lightning
     };
 
     Weather();
@@ -56,7 +64,17 @@ public:
 
     std::array<State, static_cast<size_t>(Type::Count)> presets;
     glm::vec2 windDirection{0.8f, 0.6f};
-    std::shared_ptr<ve::AudioClip> rainSound;
+    std::shared_ptr<ve::AudioClip> rainSound;  // steady rain loop
+    std::shared_ptr<ve::AudioClip> stormSound; // heavy rain + thunder loop (Thunderstorm)
+    std::shared_ptr<ve::AudioClip> windSound;  // wind loop, volume follows wind strength
+    float rainVolume = 0.6f, stormVolume = 0.8f, windVolume = 0.35f;
+    float stormBackground = 0.0f;              // storm loop never drops below this (distant-storm ambience)
+    float windVolumeAt = 9.0f;                 // wind strength (m/s) that plays windVolume
+
+    // Lightning: random flashes (exposure pulses) while thunder > 0.
+    bool lightning = true;
+    float lightningInterval = 9.0f;            // average seconds between flashes at full storm
+    float lightningStrength = 3.0f;            // peak exposure boost (x)
 
     void start() override;
     void update(float dt) override;
@@ -72,6 +90,12 @@ private:
     ve::GameObject* m_rainObject = nullptr;
     ParticleEmitter* m_rain = nullptr;
     ve::AudioSource* m_rainAudio = nullptr;
+    ve::AudioSource* m_stormAudio = nullptr;
+    ve::AudioSource* m_windAudio = nullptr;
+    ve::AudioSource* addLoop(ve::GameObject& owner, const std::shared_ptr<ve::AudioClip>& clip);
+    void updateLightning(float dt);
+    float m_nextFlash = 4.0f, m_flashT = -1.0f;
+    uint32_t m_rng = 0x2468ACEu;
 };
 
 } // namespace vfx

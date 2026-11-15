@@ -1,5 +1,9 @@
 #include "vfx/Particles.hpp"
 
+#include <limits>
+
+#include <ve/physics/Physics.hpp>
+
 #include "vfx/Noise.hpp"
 #include "vfx/Vfx.hpp"
 
@@ -38,6 +42,14 @@ void ParticleEmitter::spawn()
     p.sizeScale = 1.0f + (rand01() * 2.0f - 1.0f) * s.sizeRandom;
     p.rotation = rand01() * 6.2831853f;
     p.spin = (rand01() * 2.0f - 1.0f) * s.rotationSpeed;
+    p.killY = -std::numeric_limits<float>::infinity();
+    if (s.collide) {
+        // Along the motion it will actually have: own velocity + wind drift.
+        const glm::vec3 motion = p.velocity + m_drift;
+        if (glm::dot(motion, motion) > 1e-6f) {
+            if (auto hit = physics().raycast(p.position, glm::normalize(motion), s.collisionDistance)) p.killY = hit->point.y;
+        }
+    }
     m_particles.push_back(p);
 }
 
@@ -60,14 +72,15 @@ void ParticleEmitter::update(float dt)
     const glm::vec4 windParam = renderer().globalParam(SlotWind);
     const glm::vec3 air = glm::vec3(windParam.x, 0.0f, windParam.y) * windParam.z * settings.windInfluence;
     const float pull = std::min(1.0f, settings.drag * dt);
+    m_drift = settings.drag > 0.0f ? glm::vec3(0.0f) : air; // added to motion (and streak direction) below
     for (Particle& p : m_particles) {
         p.velocity += settings.gravity * dt;
         if (settings.drag > 0.0f) p.velocity += (air - p.velocity) * pull;
-        p.position += (p.velocity + (settings.drag > 0.0f ? glm::vec3(0.0f) : air)) * dt;
+        p.position += (p.velocity + m_drift) * dt;
         p.rotation += p.spin * dt;
         p.age += dt;
     }
-    std::erase_if(m_particles, [](const Particle& p) { return p.age >= p.lifetime; });
+    std::erase_if(m_particles, [](const Particle& p) { return p.age >= p.lifetime || p.position.y < p.killY; });
 }
 
 // -----------------------------------------------------------------------------
@@ -176,7 +189,8 @@ void ParticlePass::prepare(ve::FrameData& frame)
             const glm::vec4 color = t < s.midPoint ? glm::mix(s.colorStart, s.colorMid, t / std::max(s.midPoint, 1e-4f))
                                                    : glm::mix(s.colorMid, s.colorEnd, (t - s.midPoint) / std::max(1.0f - s.midPoint, 1e-4f));
             const float size = glm::mix(s.sizeStart, s.sizeEnd, t) * p.sizeScale;
-            out[count++] = {glm::vec4(p.position, size), color, glm::vec4(p.velocity, p.rotation)};
+            // Streaks follow the actual motion: own velocity + wind drift (rain slants in the wind).
+            out[count++] = {glm::vec4(p.position, size), color, glm::vec4(p.velocity + it.emitter->drift(), p.rotation)};
         }
         if (count == first) continue;
         const auto& tex = s.texture ? s.texture : softSprite;
