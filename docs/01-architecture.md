@@ -548,6 +548,7 @@ Optional add-ons built only on public engine APIs:
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Props.*` | Campfire/torches (point shadows, particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
+| `assets/scenes/savanna.json` | Hand-placed level content (edit with F2): campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 
 Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..3`,

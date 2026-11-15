@@ -10,6 +10,10 @@
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
 
+#include <algorithm>
+#include <functional>
+#include <sstream>
+
 namespace ve {
 
 // -----------------------------------------------------------------------------
@@ -26,6 +30,23 @@ void ModelInstance::rebuild()
     try {
         auto model = assets().loadModel(path);
         m_root = &gameObject().scene().instantiate(*model, &gameObject(), staticColliders);
+        if (!hiddenNodes.empty()) {
+            std::vector<std::string> names;
+            std::stringstream ss(hiddenNodes);
+            for (std::string n; std::getline(ss, n, ',');) {
+                n.erase(0, n.find_first_not_of(' '));
+                n.erase(n.find_last_not_of(' ') + 1);
+                if (!n.empty()) names.push_back(n);
+            }
+            // Destroyed before they start: no colliders or draws for hidden nodes.
+            std::function<void(Transform&)> hide = [&](Transform& t) {
+                for (Transform* c : t.children()) {
+                    if (std::find(names.begin(), names.end(), c->gameObject().name()) != names.end()) c->gameObject().destroy();
+                    else hide(*c);
+                }
+            };
+            hide(m_root->transform());
+        }
     } catch (const std::exception& e) {
         log::warn("ModelInstance on '{}': {}", gameObject().name(), e.what());
     }

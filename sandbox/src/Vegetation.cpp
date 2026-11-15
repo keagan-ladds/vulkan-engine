@@ -365,7 +365,7 @@ std::shared_ptr<ve::Texture> makeGrassCardTexture(ve::Renderer& r)
 }
 } // namespace
 
-void addGrass(ve::Renderer& r, const Terrain& terrain)
+void addGrass(ve::Renderer& r, const Terrain& terrain, std::vector<glm::vec2> clearings)
 {
     // GPU grass (ve::GrassPass): nothing stored per blade; density, colour and
     // height come from masks sampled once from the terrain's biome functions.
@@ -376,15 +376,11 @@ void addGrass(ve::Renderer& r, const Terrain& terrain)
     grass.resolution = uint32_t(2.0f * Terrain::kHalfSize / Terrain::kCellSize) + 1; // = the terrain's samples
     grass.maskResolution = 640;
     grass.height = [&terrain](glm::vec2 p) { return terrain.height(p.x, p.y); };
-    grass.mask = [&terrain](glm::vec2 p) {
+    grass.mask = [&terrain, clearings](glm::vec2 p) {
         const float h = terrain.height(p.x, p.y);
         if (h < 0.25f || terrain.rockMask(p.x, p.y) > 0.45f || terrain.swampMask(p.x, p.y) > 0.6f) return glm::vec4(0.0f);
         float camp = glm::smoothstep(8.0f, 14.0f, glm::length(p - Terrain::kCamp)); // trampled camp floor
-        // No grass inside the huts (same layout as main.cpp: 3 huts 11 m out at 200 + 65*i degrees).
-        for (int i = 0; i < 3; ++i) {
-            const float a = glm::radians(200.0f + 65.0f * static_cast<float>(i));
-            camp *= glm::smoothstep(2.8f, 3.6f, glm::length(p - (Terrain::kCamp + glm::vec2(std::cos(a), std::sin(a)) * 11.0f)));
-        }
+        for (const glm::vec2& c : clearings) camp *= glm::smoothstep(2.8f, 3.6f, glm::length(p - c)); // no grass inside huts
         const float density = glm::clamp(fbm(p * 0.03f, 2, 61) * 2.0f - 0.2f, 0.0f, 1.0f) * camp;
         return glm::vec4(density, fbm(p * 0.012f, 3, 31), glm::mix(0.7f, 1.0f, fbm(p * 0.05f, 2, 13)), 0.0f);
     };

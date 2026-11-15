@@ -9,6 +9,7 @@ in C++ (the Unity split). Press **F2** in any game built on the engine.
 |---|---|---|
 | E1 | Reflection (types describe their fields), scene files (JSON), persistent object IDs | ✅ |
 | E2 | Editor MVP: hierarchy, inspector, GPU picking, move/rotate/scale gizmo, debug shapes, Play/Stop with restore, undo/redo, save/load, editor camera | ✅ |
+| E2b | Savanna's hand-placed content moved to `sandbox/assets/scenes/savanna.json` (camp, huts + audio zones, torches, crates, reed screens, sunstones, ambience, PlayerStart) | ✅ |
 | E3 | Prefabs (save a configured object as a reusable asset), asset browser with drag & drop, multi-select, snapping UI polish | planned |
 | E4 | World tools: foliage paint/exclusions, terrain sculpt/paint (needs Phase 13 terrain module) | planned |
 
@@ -58,6 +59,24 @@ in C++ (the Unity split). Press **F2** in any game built on the engine.
 Saved to the game's *source* assets folder (`VE_SOURCE_ASSETS_DIR`, set by
 `ve_setup_game`), so edits are not lost when the build copies assets again.
 Load with `ve::SceneSerializer::load(scene, "scenes/x.json")`.
+
+### How a game uses scene files (Savanna as the example)
+- **Level content goes in the file.** Anything placed by hand goes in
+  `scenes/<level>.json`, made of registered GameObject classes
+  (`VE_REGISTER_TYPE`) plus engine components. Procedural systems stay in
+  code: terrain, foliage rules, grass, weather, the HUD.
+- **Classes stored in files must be default constructible.** They fetch shared
+  resources themselves in `start()`, e.g. Savanna's `propMaterial()` or a lazily
+  created shared mesh, and find other objects by name, e.g.
+  `scene().find("Player")`.
+- **Load at startup:** `auto level = SceneSerializer::load(scene, "scenes/savanna.json");`.
+  Then use the returned roots for anything code needs from the level: spawn
+  the player at the `PlayerStart` marker, collect grass clearings from objects
+  tagged `hut`.
+- **Variations are data.** `ModelInstance::hiddenNodes = "Door"` gives the hut
+  without a door.
+- **Derive counters from the scene, don't hard-code them.** For example, the
+  sunstone total is collected + remaining, so stones added in the editor count.
 
 ### Editor (`ve/editor/Editor.hpp`)
 - **Modes:**

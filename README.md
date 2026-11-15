@@ -36,7 +36,7 @@ cmake --build build
 ./build/bin/savanna
 ```
 
-Or in VS Code press **F5** (Debug / Release / Debug autotest).
+Or in VS Code press **F5** and pick a configuration: Sandbox (the game) or Editor (starts in the in-engine editor; F2 toggles it anywhere), each in Debug or Release, plus the Debug Autotest and Editor test smoke tests.
 
 | Key | Action |
 |---|---|

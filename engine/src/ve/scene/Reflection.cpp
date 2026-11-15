@@ -106,6 +106,7 @@ void registerBuiltinTypes()
         t.category("Rendering");
         t.field("path", &ModelInstance::path).assets(".gltf .glb");
         t.field("staticColliders", &ModelInstance::staticColliders).tooltip("Exact mesh colliders on every node");
+        t.field("hiddenNodes", &ModelInstance::hiddenNodes).tooltip("Comma-separated node names to leave out, e.g. Door");
         t.onChanged([](ModelInstance& m) { m.rebuild(); });
     });
     r.add<PrimitiveRenderer>("PrimitiveRenderer", [](TypeBuilder<PrimitiveRenderer>& t) {

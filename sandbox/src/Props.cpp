@@ -20,6 +20,8 @@
 #include <ve/world/Foliage.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Scene.hpp>
+#include <ve/render/Material.hpp>
+#include <ve/scene/Reflection.hpp>
 #include <vfx/Particles.hpp>
 #include <vfx/Weather.hpp>
 
@@ -74,10 +76,44 @@ vfx::ParticleSettings flameSettings(float scale)
 // Campfire
 // -----------------------------------------------------------------------------
 
-Campfire::Campfire(std::shared_ptr<ve::Material> propMaterial) : GameObject("Campfire"), m_material(std::move(propMaterial)) {}
+namespace {
+// Weak: the objects using the material keep it alive, nothing outlives the renderer.
+std::weak_ptr<ve::Material>& propMaterialSlot()
+{
+    static std::weak_ptr<ve::Material> material;
+    return material;
+}
+} // namespace
+
+void setPropMaterial(std::shared_ptr<ve::Material> material) { propMaterialSlot() = material; }
+
+std::shared_ptr<ve::Material> propMaterial()
+{
+    if (auto m = propMaterialSlot().lock()) return m;
+    auto mat = ve::Engine::get().renderer().createStandardMaterial();
+    mat->setBaseColor(glm::vec4(1.0f)).setRoughness(0.85f).setVertexColorWeight(1.0f);
+    propMaterialSlot() = mat;
+    return mat;
+}
+
+// --- Reflection: these types can be created in the editor and stored in scene files.
+VE_REGISTER_TYPE(Campfire, "Campfire")
+{
+    t.category("Savanna");
+    t.field("baseIntensity", &Campfire::baseIntensity).range(0.0f, 100.0f).speed(0.2f);
+}
+VE_REGISTER_TYPE(Torch, "Torch")
+{
+    t.category("Savanna");
+    t.field("intensity", &Torch::intensity).range(0.0f, 50.0f).speed(0.1f);
+}
+VE_REGISTER_TYPE(Sunstone, "Sunstone") { t.category("Savanna"); }
+VE_REGISTER_TYPE(ReedScreen, "ReedScreen") { t.category("Savanna"); }
+VE_REGISTER_TYPE(PlayerStart, "PlayerStart") { t.category("Savanna"); }
 
 void Campfire::start()
 {
+    m_material = propMaterial();
     ve::Renderer& r = renderer();
     ve::Scene& s = scene();
 
@@ -175,10 +211,9 @@ void Campfire::update(float dt)
 // Torch
 // -----------------------------------------------------------------------------
 
-Torch::Torch(std::shared_ptr<ve::Material> propMaterial) : GameObject("Torch"), m_material(std::move(propMaterial)) {}
-
 void Torch::start()
 {
+    m_material = propMaterial();
     ve::MeshData md;
     md.append(ve::primitives::cylinder(0.05f, 0.04f, 1.9f, 6), glm::mat4(1.0f), {0.25f, 0.16f, 0.09f, 1.0f});
     md.append(ve::primitives::cylinder(0.09f, 0.11f, 0.25f, 6), glm::translate(glm::mat4(1.0f), {0, 1.85f, 0}),
@@ -203,27 +238,46 @@ void Torch::start()
 void Torch::update(float dt)
 {
     m_t += dt;
-    if (m_light) m_light->intensity = 7.0f * flicker(m_t, 5.7f);
+    if (m_light) m_light->intensity = intensity * flicker(m_t, 5.7f);
 }
 
 // -----------------------------------------------------------------------------
 // Sunstone
 // -----------------------------------------------------------------------------
 
-Sunstone::Sunstone(std::shared_ptr<ve::Mesh> mesh, std::shared_ptr<ve::Material> material, Player& player,
-                   std::shared_ptr<ve::AudioClip> pickupSound)
-    : GameObject("Sunstone"), m_mesh(std::move(mesh)), m_material(std::move(material)), m_player(player),
-      m_sound(std::move(pickupSound))
+int Sunstone::remaining(const ve::Scene& scene)
 {
-    tag = "collectible";
+    int n = 0;
+    for (const auto& o : scene.objects()) n += (!o->isDestroyed() && dynamic_cast<const Sunstone*>(o.get())) ? 1 : 0;
+    return n;
 }
 
 void Sunstone::start()
 {
+    // Shared by all stones (created once).
+    static std::weak_ptr<ve::Mesh> sharedMesh;
+    static std::weak_ptr<ve::Material> sharedMaterial;
+    auto mesh = sharedMesh.lock();
+    if (!mesh) {
+        ve::MeshData data = ve::primitives::icosphere(0.22f, 0);
+        data.makeFlatShaded();
+        mesh = ve::Mesh::create(renderer(), data, {}, "sunstone");
+        sharedMesh = mesh;
+    }
+    auto material = sharedMaterial.lock();
+    if (!material) {
+        auto m = renderer().createStandardMaterial();
+        m->setBaseColor({1.0f, 0.6f, 0.25f, 1.0f}).setRoughness(0.3f).setEmissive({1.0f, 0.45f, 0.12f}, 6.0f);
+        material = m;
+        sharedMaterial = material;
+    }
+    m_sound = assets().loadAudio("audio/pickup.wav");
+    m_player = dynamic_cast<Player*>(scene().find("Player"));
+
     m_base = transform().position();
     m_visual = &scene().spawn("SunstoneVisual");
     m_visual->setParent(this, false);
-    m_visual->addComponent<ve::MeshRenderer>(m_mesh, m_material);
+    m_visual->addComponent<ve::MeshRenderer>(mesh, material);
     auto& glow = m_visual->addComponent<ve::PointLight>();
     glow.color = {1.0f, 0.65f, 0.25f};
     glow.intensity = 2.5f;
@@ -238,13 +292,14 @@ void Sunstone::update(float dt)
     m_visual->transform().setLocalRotation(glm::angleAxis(m_t * 1.2f, glm::normalize(glm::vec3(0.3f, 1.0f, 0.1f))));
 
     // Pick up when close, roughly looked at, and "Use" pressed.
-    const glm::vec3 toStone = m_visual->transform().position() - m_player.eyePosition();
+    if (!m_player) return;
+    const glm::vec3 toStone = m_visual->transform().position() - m_player->eyePosition();
     const float dist = glm::length(toStone);
-    if (dist < 3.0f && glm::dot(toStone / dist, m_player.lookDirection()) > 0.6f) {
+    if (dist < 3.0f && glm::dot(toStone / dist, m_player->lookDirection()) > 0.6f) {
         GameState& gs = gameState();
         gs.message = "[E] Pick up sunstone";
         gs.messageTimer = 0.1f;
-        if (m_player.usePressed()) collect();
+        if (m_player->usePressed()) collect();
     }
 }
 
@@ -253,10 +308,39 @@ void Sunstone::collect()
     if (isDestroyed()) return;
     GameState& gs = gameState();
     ++gs.collected;
+    gs.total = gs.collected + remaining(scene()) - 1; // this one is still in the scene until the frame ends
     gs.message = "Sunstone collected! (" + std::to_string(gs.collected) + "/" + std::to_string(gs.total) + ")";
     gs.messageTimer = 2.5f;
     if (m_sound) audio().playOneShot(*m_sound, 0.8f);
     destroy(); // deferred to the end of the frame; children (visual + light) go too
+}
+
+// -----------------------------------------------------------------------------
+// ReedScreen
+// -----------------------------------------------------------------------------
+
+void ReedScreen::start()
+{
+    static std::weak_ptr<ve::Mesh> sharedMesh;
+    static std::weak_ptr<ve::Material> sharedMaterial;
+    auto mesh = sharedMesh.lock();
+    if (!mesh) {
+        mesh = ve::Mesh::create(renderer(), ve::primitives::quad(2.6f, 1.9f), {}, "reed screen");
+        sharedMesh = mesh;
+    }
+    auto material = sharedMaterial.lock();
+    if (!material) {
+        auto m = renderer().createStandardMaterial(ve::StandardMaterial::Mode::Cutout);
+        m->setAlbedoTexture(assets().loadTexture("textures/reed_screen.png"))
+            .setUvScale({3.0f, 2.0f})
+            .setAlphaCutoff(0.5f)
+            .setRoughness(0.9f)
+            .setVertexColorWeight(0.0f);
+        material = m;
+        sharedMaterial = material;
+    }
+    addComponent<ve::MeshRenderer>(mesh, material);
+    addComponent<ve::Rigidbody>(ve::Collider::box({1.3f, 0.95f, 0.03f}).offset({0.0f, 0.95f, 0.0f}), ve::BodyType::Static);
 }
 
 // -----------------------------------------------------------------------------
@@ -436,6 +520,7 @@ Hud::Hud(Player& player, DayNightCycle& dayNight, vfx::Weather& weather)
 
 void Hud::update(float dt)
 {
+    gameState().total = gameState().collected + Sunstone::remaining(scene()); // stones can be added in the editor
     GameState& gs = gameState();
     gs.messageTimer = std::max(0.0f, gs.messageTimer - dt);
     if (input().keyPressed(ve::Key::R)) m_weather.next(12.0f);

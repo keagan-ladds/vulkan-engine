@@ -17,6 +17,8 @@
 #include "Vegetation.hpp"
 
 #include <ve/editor/Editor.hpp>
+#include <ve/scene/MeshComponents.hpp>
+#include <ve/scene/SceneSerializer.hpp>
 #include <ve/ve.hpp>
 #include <vfx/Atmosphere.hpp>
 #include <vfx/Bloom.hpp>
@@ -70,7 +72,6 @@ void buildWorld(ve::Engine& engine)
     scene.spawn<Water>();
     const PropLibrary props = buildPropLibrary(r);
     auto& foliage = scatterProps(scene, terrain, props);
-    addGrass(r, terrain);
 
     // --- Weather + day/night ------------------------------------------------------------
     auto& weather = scene.spawn<vfx::Weather>();
@@ -81,122 +82,32 @@ void buildWorld(ve::Engine& engine)
     auto& dayNight = scene.spawn<DayNightCycle>();
     dayNight.weather = &weather;
 
-    // --- Camp: imported glTF huts around a campfire ------------------------------------
-    const glm::vec2 camp = Terrain::kCamp;
-    const float campY = terrain.height(camp.x, camp.y);
-    auto& fire = scene.spawn<Campfire>(props.material);
-    fire.transform().setPosition({camp.x, campY, camp.y});
+    setPropMaterial(props.material); // shared by Campfire / Torch (scene objects)
 
-    auto hut = assets.loadModel("models/rondavel.gltf");
-    for (int i = 0; i < 3; ++i) {
-        const float a = glm::radians(200.0f + 65.0f * static_cast<float>(i));
-        const glm::vec2 p = camp + glm::vec2(std::cos(a), std::sin(a)) * 11.0f;
-        // staticColliders: every hut mesh also becomes a static triangle-mesh
-        // collider, so walls block you but the doorway shape is respected.
-        ve::GameObject& h = scene.instantiate(*hut, nullptr, /*staticColliders*/ true);
-        const float hy = terrain.height(p.x, p.y) - 0.05f;
-        h.transform().setPosition({p.x, hy, p.y});
-        // Turn the doorway (+Z in the model) towards the fire.
-        h.transform().lookAt({camp.x, hy, camp.y});
-        h.transform().rotate({0, 1, 0}, glm::pi<float>());
-        ve::log::info("Hut {} at ({:.1f}, {:.1f}, {:.1f}){}", i, p.x, hy, p.y, i == 1 ? " (no door)" : "");
-        if (i == 1) {
-            // The middle hut has no door, so you can walk in (and hear the rain muffle).
-            std::function<void(ve::Transform&)> removeDoor = [&](ve::Transform& t) {
-                for (ve::Transform* child : t.children()) {
-                    if (child->gameObject().name() == "Door") child->gameObject().destroy(); // also removes its collider
-                    else removeDoor(*child);
-                }
-            };
-            removeDoor(h.transform());
-        }
-        // Indoors: rain and wind are muffled while the listener is inside the walls.
-        auto& zone = scene.spawn("HutZone");
-        zone.transform().setPosition({p.x, hy, p.y});
-        auto& az = zone.addComponent<ve::AudioZone>();
-        az.shape = ve::AudioZone::Shape::Cylinder;
-        az.radius = 2.4f; // walls are at 2.6 m
-        az.height = 4.0f;
-        az.effects = {{"Weather", 0.3f, 450.0f}, {"Ambient", 0.45f, 900.0f}};
-
-        // A torch beside each door.
-        const glm::vec2 tp = p + glm::normalize(camp - p) * 3.4f + glm::vec2(-std::sin(a), std::cos(a)) * 1.4f;
-        auto& torch = scene.spawn<Torch>(props.material);
-        torch.transform().setPosition({tp.x, terrain.height(tp.x, tp.y), tp.y});
+    // --- Hand-placed level content: scenes/savanna.json (edit it in the editor, F2) -------
+    // Campfire, huts (+ audio zones), torches, crates, reed screens, sunstones,
+    // ambience and the player start. Everything procedural stays in code.
+    std::vector<ve::GameObject*> level = ve::SceneSerializer::load(scene, "scenes/savanna.json");
+    std::vector<glm::vec2> clearings; // no grass inside the huts
+    for (ve::GameObject* o : level) {
+        if (o->tag == "hut") clearings.emplace_back(o->transform().position().x, o->transform().position().z);
     }
+    addGrass(r, terrain, clearings);
 
-    // --- Crates: a pyramid of dynamic boxes to knock over -----------------------------
-    auto crateMat = r.createStandardMaterial();
-    crateMat->setAlbedoTexture(assets.loadTexture("textures/thatch.png")).setBaseColor({0.75f, 0.55f, 0.38f, 1.0f}).setRoughness(0.8f);
-    auto crateMesh = ve::Mesh::create(r, ve::primitives::cube(glm::vec3(0.8f)), {}, "crate");
-    const ve::Collider crateShape = ve::Collider::box(glm::vec3(0.4f)); // one shape shared by all crates
-    const glm::vec2 cratesAt = camp + glm::vec2(4.0f, -9.0f);
-    const float groundY = terrain.height(cratesAt.x, cratesAt.y);
-    for (int row = 0; row < 4; ++row) {
-        for (int i = 0; i < 4 - row; ++i) {
-            auto& crate = scene.spawn("Crate");
-            crate.tag = "crate";
-            crate.addComponent<ve::MeshRenderer>(crateMesh, crateMat);
-            const float x = (static_cast<float>(i) - (3.0f - static_cast<float>(row)) * 0.5f) * 0.82f;
-            crate.transform().setPosition({cratesAt.x + x, groundY + 0.41f + static_cast<float>(row) * 0.81f, cratesAt.y});
-            crate.addComponent<ve::Rigidbody>(crateShape, ve::BodyType::Dynamic).mass = 15.0f;
-        }
-    }
-
-    // --- Reed screens: alpha-tested (cutout) material; their shadows have holes too -----
-    auto reedMat = r.createStandardMaterial(ve::StandardMaterial::Mode::Cutout);
-    reedMat->setAlbedoTexture(assets.loadTexture("textures/reed_screen.png"))
-        .setUvScale({3.0f, 2.0f})
-        .setAlphaCutoff(0.5f)
-        .setRoughness(0.9f)
-        .setVertexColorWeight(0.0f);
-    auto reedMesh = ve::Mesh::create(r, ve::primitives::quad(2.6f, 1.9f), {}, "reed screen");
-    for (int i = 0; i < 3; ++i) {
-        const glm::vec2 p = camp + glm::vec2(1.0f - 2.7f * static_cast<float>(i), 7.5f + 0.4f * static_cast<float>(i));
-        auto& screen = scene.spawn("Reed screen");
-        screen.addComponent<ve::MeshRenderer>(reedMesh, reedMat);
-        screen.transform().setPosition({p.x, terrain.height(p.x, p.y) - 0.05f, p.y});
-        screen.transform().setLocalRotation(glm::angleAxis(glm::radians(-75.0f + 8.0f * static_cast<float>(i)), glm::vec3(0, 1, 0)));
-        screen.addComponent<ve::Rigidbody>(ve::Collider::box({1.3f, 0.95f, 0.03f}).offset({0.0f, 0.95f, 0.0f}),
-                                           ve::BodyType::Static);
-    }
-
-    // --- Player ---------------------------------------------------------------------------
+    // --- Player: spawns at the PlayerStart marker ------------------------------------------
     auto& player = scene.spawn<Player>(terrain);
     player.setThrowable(props.rocks.variants[0][0].mesh, props.material, props.rocks.colliders[0]);
-    const glm::vec2 start = camp + glm::vec2(9.0f, 5.0f);
-    // Face west, towards the setting sun and the swamp.
-    player.teleport({start.x, terrain.height(start.x, start.y), start.y}, glm::radians(78.0f));
-
-    // --- Collectibles ---------------------------------------------------------------------
-    auto stoneMat = r.createStandardMaterial();
-    stoneMat->setBaseColor({1.0f, 0.6f, 0.25f, 1.0f}).setRoughness(0.3f).setEmissive({1.0f, 0.45f, 0.12f}, 6.0f);
-    ve::MeshData stoneData = ve::primitives::icosphere(0.22f, 0);
-    stoneData.makeFlatShaded();
-    auto stoneMesh = ve::Mesh::create(r, stoneData, {}, "sunstone");
-    auto pickup = assets.loadAudio("audio/pickup.wav");
-    Rng rng(99);
-    int placed = 0;
-    for (int attempt = 0; attempt < 400 && placed < 12; ++attempt) {
-        const glm::vec2 p = camp + glm::vec2(rng.range(-90.0f, 90.0f), rng.range(-90.0f, 90.0f));
-        const float h = terrain.height(p.x, p.y);
-        if (h < 0.5f || glm::length(p - camp) < 6.0f || terrain.slope(p.x, p.y) > 0.3f) continue;
-        auto& stone = scene.spawn<Sunstone>(stoneMesh, stoneMat, player, pickup);
-        stone.transform().setPosition({p.x, h, p.y});
-        ++placed;
+    glm::vec2 start = Terrain::kCamp + glm::vec2(9.0f, 5.0f);
+    float startYaw = glm::radians(78.0f);
+    for (ve::GameObject* o : level) {
+        if (dynamic_cast<PlayerStart*>(o)) {
+            const glm::quat q = o->transform().rotation();
+            start = {o->transform().position().x, o->transform().position().z};
+            startYaw = 2.0f * std::atan2(q.y, q.w); // rotation about Y
+        }
     }
-    gameState().total = placed;
+    player.teleport({start.x, terrain.height(start.x, start.y), start.y}, startYaw);
 
-    // --- Ambience + HUD ------------------------------------------------------------------
-    // Soft ambient music bed (wind, rain and storm loops are driven by the Weather object).
-    // On the Ambient bus, so the huts' AudioZones muffle it a little indoors.
-    auto& ambience = scene.spawn("Ambience");
-    auto& bed = ambience.addComponent<ve::AudioSource>(assets.loadAudio("audio/ambient_01.wav", /*stream*/ true));
-    bed.loop = true;
-    bed.spatial = false;
-    bed.bus = "Ambient";
-    bed.volume = 0.15f;
-    bed.playOnStart = true;
     scene.spawn<Hud>(player, dayNight, weather);
 
     // Test hooks (handy for screenshots / automated checks):

@@ -1,12 +1,14 @@
 {
     // F5 configurations. Each builds first, then runs the savanna test scene under gdb.
-    //  - Debug:          no optimisation, Vulkan validation ON (watch the terminal for [vulkan] messages)
-    //  - Release:        optimised, validation OFF
-    //  - Debug autotest: scripted smoke test that exits by itself (SAVANNA_AUTOTEST=1)
+    //  - Sandbox:     the game (Debug: no optimisation, Vulkan validation ON - watch the
+    //                 terminal for [vulkan] messages; Release: optimised, validation OFF)
+    //  - Editor:      the same scene, starting in the in-engine editor (SAVANNA_EDITOR=1;
+    //                 F2 toggles editor <-> game in any configuration)
+    //  - Autotest / Editor test: scripted smoke tests that exit by themselves
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug",
+            "name": "Sandbox (Debug)",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/savanna",
@@ -18,7 +20,7 @@
             "preLaunchTask": "Build Debug"
         },
         {
-            "name": "Release",
+            "name": "Sandbox (Release)",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build-release/bin/savanna",
@@ -30,12 +32,48 @@
             "preLaunchTask": "Build Release"
         },
         {
-            "name": "Debug autotest",
+            "name": "Editor (Debug)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/savanna",
+            "cwd": "${workspaceFolder}/build/bin",
+            "environment": [{ "name": "SAVANNA_EDITOR", "value": "1" }],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
+            "preLaunchTask": "Build Debug"
+        },
+        {
+            "name": "Editor (Release)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-release/bin/savanna",
+            "cwd": "${workspaceFolder}/build-release/bin",
+            "environment": [{ "name": "SAVANNA_EDITOR", "value": "1" }],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
+            "preLaunchTask": "Build Release"
+        },
+        {
+            "name": "Autotest (Debug)",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/bin/savanna",
             "cwd": "${workspaceFolder}/build/bin",
             "environment": [{ "name": "SAVANNA_AUTOTEST", "value": "1" }],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
+            "preLaunchTask": "Build Debug"
+        },
+        {
+            "name": "Editor test (Debug)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/bin/savanna",
+            "cwd": "${workspaceFolder}/build/bin",
+            "environment": [{ "name": "SAVANNA_EDITORTEST", "value": "1" }],
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],

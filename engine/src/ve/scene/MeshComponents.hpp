@@ -28,6 +28,7 @@ class ModelInstance : public Component {
 public:
     std::string path;             // e.g. "models/rondavel.gltf"
     bool staticColliders = false; // exact mesh colliders on every node (buildings)
+    std::string hiddenNodes;      // comma-separated node names to leave out (e.g. "Door")
 
     void start() override { rebuild(); }
     void onDestroy() override;

@@ -48,6 +48,6 @@ PropLibrary buildPropLibrary(ve::Renderer& renderer);
 // Adds a ve::FoliageSystem with one layer per prop type (biome rules, streaming, colliders).
 ve::FoliageSystem& scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& lib);
 // Adds GPU grass + reeds (ve::GrassPass x2).
-void addGrass(ve::Renderer& renderer, const Terrain& terrain);
+void addGrass(ve::Renderer& renderer, const Terrain& terrain, std::vector<glm::vec2> clearings = {}); // clearings: 3 m circles without grass
 
 } // namespace savanna
