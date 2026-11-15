@@ -2,6 +2,7 @@
 
 #include <ve/ui/UiLayer.hpp>
 
+#include <ve/audio/Audio.hpp>
 #include <ve/core/Engine.hpp>
 
 #include <imgui.h>
@@ -97,6 +98,10 @@ void DayNightCycle::update(float dt)
     const float night = glm::smoothstep(0.08f, -0.12f, m_towardsSun.y);
     m_moon->intensity = moonIntensity * moonUp * night * (0.4f + 0.6f * weatherScale);
     m_moon->enabled = m_moon->intensity > 0.002f;
+
+    // For ambience (AmbientLayer hours) and game code.
+    audio().setParameter("timeOfDay", timeOfDay);
+    audio().setParameter("night", night);
 
     // Simple "eye adaptation": brighter exposure at night.
     if (auto* composite = renderer().graph().findPass<ve::CompositePass>()) {

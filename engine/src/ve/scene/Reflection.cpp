@@ -1,7 +1,9 @@
 #include "ve/scene/Reflection.hpp"
 
 #include "ve/assets/AssetManager.hpp"
+#include "ve/audio/Ambience.hpp"
 #include "ve/audio/Audio.hpp"
+#include "ve/audio/Music.hpp"
 #include "ve/core/Engine.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/scene/Components.hpp"
@@ -25,7 +27,7 @@ std::shared_ptr<AudioClip> loadAudioClip(const std::string& path)
 }
 std::string audioClipPath(const std::shared_ptr<AudioClip>& clip)
 {
-    return clip ? clip->path() : std::string();
+    return clip ? clip->assetPath() : std::string();
 }
 } // namespace detail
 
@@ -235,6 +237,44 @@ void registerBuiltinTypes()
                  }
              })
             .tooltip("[{\"bus\": \"Weather\", \"volume\": 0.3, \"lowpass\": 450}]");
+    });
+    r.add<AmbientLayer>("AmbientLayer", [](TypeBuilder<AmbientLayer>& t) {
+        t.category("Audio");
+        t.field("loop", &AmbientLayer::loop).tooltip("looping bed (2D, streamed)");
+        t.field("oneShots", &AmbientLayer::oneShots).tooltip("'audio/bird1.wav; audio/bird2.wav': played at random around the listener");
+        t.field("interval", &AmbientLayer::interval).range(0.05f, 3600.0f).speed(0.05f).tooltip("s between one-shots (min, max) at full level");
+        t.field("distance", &AmbientLayer::distance).range(0.0f, 1000.0f).tooltip("m from the listener (min, max); max 0 = 2D");
+        t.field("heightRange", &AmbientLayer::heightRange).range(0.0f, 100.0f).speed(0.05f);
+        t.field("pitchVariation", &AmbientLayer::pitchVariation).range(0.0f, 1.0f).speed(0.005f);
+        t.field("volumeVariation", &AmbientLayer::volumeVariation).range(0.0f, 1.0f).speed(0.01f);
+        t.field("volume", &AmbientLayer::volume).range(0.0f, 2.0f).speed(0.01f);
+        t.field("bus", &AmbientLayer::bus);
+        t.field("fromHour", &AmbientLayer::fromHour).range(0.0f, 24.0f).speed(0.05f).tooltip("plays from this hour...");
+        t.field("toHour", &AmbientLayer::toHour).range(0.0f, 24.0f).speed(0.05f).tooltip("...to this one (wraps past midnight; 0..24 = always)");
+        t.field("hourFade", &AmbientLayer::hourFade).range(0.0f, 12.0f).speed(0.05f).tooltip("hours to fade in / out at each end");
+        t.field("biomes", &AmbientLayer::biomes).tooltip("level per terrain biome around the listener: 'Savannah:1, Swamp:-1' (empty = everywhere)");
+        t.field("biomeRadius", &AmbientLayer::biomeRadius).range(0.0f, 500.0f).tooltip("m around the listener the biome is averaged over");
+        t.field("parameters", &AmbientLayer::parameters)
+            .tooltip("audio parameters: 'rain:-1, wind:-0.5' = 1 + sum (clamped); '*:0, danger:1' = only with danger");
+        t.field("fadeTime", &AmbientLayer::fadeTime).range(0.0f, 60.0f).speed(0.05f);
+    });
+    r.add<MusicMood>("MusicMood", [](TypeBuilder<MusicMood>& t) {
+        t.category("Audio");
+        t.field("tracks", &MusicMood::tracks).tooltip("'audio/a.ogg; audio/b.ogg' (the object name is the mood name)");
+        t.field("shuffle", &MusicMood::shuffle);
+        t.field("volume", &MusicMood::volume).range(0.0f, 2.0f).speed(0.01f);
+        t.field("fadeIn", &MusicMood::fadeIn).range(0.0f, 60.0f).speed(0.05f).tooltip("s to crossfade into this mood");
+        t.field("gap", &MusicMood::gap).range(0.0f, 3600.0f).tooltip("s of silence between tracks (min, max)");
+        t.field("playOnStart", &MusicMood::playOnStart).tooltip("the base mood when the scene starts");
+        t.onChanged([](MusicMood& m) { m.apply(); });
+    });
+    r.add<MusicZone>("MusicZone", [](TypeBuilder<MusicZone>& t) {
+        t.category("Audio");
+        t.field("mood", &MusicZone::mood).tooltip("pushed while the listener is inside");
+        t.field("radius", &MusicZone::radius).range(0.0f, 10000.0f);
+        t.field("height", &MusicZone::height).range(0.0f, 10000.0f).tooltip("0 = sphere; >0 = vertical cylinder from the object up");
+        t.field("exitMargin", &MusicZone::exitMargin).range(0.0f, 100.0f);
+        t.field("priority", &MusicZone::priority).tooltip("higher wins over other pushed moods (combat: use more)");
     });
 }
 

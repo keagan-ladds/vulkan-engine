@@ -3,7 +3,9 @@
 // Convenience header: everything a game typically needs.
 #include "ve/assets/AssetManager.hpp"
 #include "ve/assets/Model.hpp"
+#include "ve/audio/Ambience.hpp"
 #include "ve/audio/Audio.hpp"
+#include "ve/audio/Music.hpp"
 #include "ve/core/Engine.hpp"
 #include "ve/core/Input.hpp"
 #include "ve/core/Log.hpp"

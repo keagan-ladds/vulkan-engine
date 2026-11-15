@@ -37,6 +37,9 @@ public:
     // Absolute path of an asset; throws if it can't be found.
     std::filesystem::path resolve(const std::filesystem::path& path) const;
     bool exists(const std::filesystem::path& path) const;
+    // How scene files refer to a file: relative to the search path that holds
+    // it ("audio/fire.wav"), or the path unchanged if it's outside them.
+    std::string assetName(const std::filesystem::path& file) const;
 
     // PNG/JPG/TGA/BMP/PSD/GIF (8-bit) or HDR (float). `srgb` = colour data;
     // use false for normal maps, roughness, masks, etc.

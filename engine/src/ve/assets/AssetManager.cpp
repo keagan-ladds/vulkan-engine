@@ -52,6 +52,18 @@ std::filesystem::path AssetManager::resolve(const std::filesystem::path& path) c
     throw std::runtime_error("Asset not found: " + path.string());
 }
 
+std::string AssetManager::assetName(const std::filesystem::path& file) const
+{
+    std::error_code ec;
+    const auto canonical = std::filesystem::weakly_canonical(file, ec);
+    for (const auto& root : m_searchPaths) {
+        const auto r = std::filesystem::weakly_canonical(root, ec);
+        const auto rel = canonical.lexically_relative(r);
+        if (!rel.empty() && *rel.begin() != "..") return rel.generic_string();
+    }
+    return file.generic_string();
+}
+
 std::shared_ptr<Texture> AssetManager::loadTexture(const std::filesystem::path& path, bool srgb, bool mipmaps,
                                                    SamplerType sampler)
 {
@@ -80,9 +92,9 @@ std::shared_ptr<Model> AssetManager::loadModel(const std::filesystem::path& path
 std::shared_ptr<AudioClip> AssetManager::loadAudio(const std::filesystem::path& path, bool stream)
 {
     const auto file = resolve(path);
-    const std::string key = file.string();
+    const std::string key = file.string() + (stream ? "|stream" : "");
     if (auto it = m_audio.find(key); it != m_audio.end()) return it->second;
-    auto clip = std::make_shared<AudioClip>(file.string(), stream);
+    auto clip = std::make_shared<AudioClip>(file.string(), stream, assetName(file));
     m_audio[key] = clip;
     return clip;
 }

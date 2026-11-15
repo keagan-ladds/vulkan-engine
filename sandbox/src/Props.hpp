@@ -134,6 +134,7 @@ private:
     vfx::DayNightCycle* m_dayNight = nullptr;
     vfx::Weather* m_weather = nullptr;
     bool m_showHelp = true;
+    bool m_combat = false; // M: stand-in for a fight (pushes the "Combat" music mood)
 };
 
 } // namespace savanna

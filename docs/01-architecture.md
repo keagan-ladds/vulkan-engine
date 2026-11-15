@@ -16,7 +16,7 @@ vulkan-engine/
 │   ├── src/ve/scene/       Scene, GameObject, Component, Transform, Camera, MeshRenderer, Lights
 │   ├── src/ve/physics/     Jolt-backed physics: PhysicsWorld, Collider, Rigidbody, CharacterController
 │   ├── src/ve/assets/      AssetManager, texture loading (stb), glTF loading (cgltf), Model
-│   ├── src/ve/audio/       AudioSystem, AudioClip, AudioSource (miniaudio)
+│   ├── src/ve/audio/       AudioSystem, AudioClip, AudioSource, zones (miniaudio); Music, Ambience
 │   ├── src/ve/ui/          ImGui integration + engine debug overlay
 │   ├── src/ve/world/       Terrain, FoliageSystem (streamed scattering), GrassPass (GPU grass), Vegetation (scene types), LodModel
 │   └── shaders/            engine shaders + include/ve.glsl (the shared shader interface)

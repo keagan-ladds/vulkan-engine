@@ -174,6 +174,11 @@ void Weather::update(float dt)
     setVolume(m_rainAudio, m_current.rain * (1.0f - storm) * rainVolume);
     setVolume(m_stormAudio, std::max(storm * stormVolume, stormBackground));
     setVolume(m_windAudio, std::min(m_current.wind / std::max(windVolumeAt, 0.1f), 1.6f) * windVolume);
+
+    // For ambience (AmbientLayer parameters) and game code: 0..1 each.
+    audio().setParameter("rain", std::clamp(m_current.rain, 0.0f, 1.0f));
+    audio().setParameter("storm", std::clamp(m_current.thunder, 0.0f, 1.0f));
+    audio().setParameter("wind", std::clamp(m_current.wind / std::max(windVolumeAt, 0.1f), 0.0f, 1.0f));
     updateLightning(dt);
 }
 

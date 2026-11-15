@@ -21,6 +21,15 @@
 //   zone.shape = ve::AudioZone::Shape::Cylinder; zone.radius = 2.5f; zone.height = 3.0f;
 //   zone.effects = {{"Weather", 0.35f, 500.0f}, {"Ambient", 0.6f, 1500.0f}}; // volume, low-pass Hz
 //
+// Music: audio().music() plays moods (playlists) with crossfades; see Music.hpp.
+// Ambience: AmbientLayer components (loops / random one-shots by time of day,
+// biome and parameters); see Ambience.hpp.
+//
+// Parameters: named floats that ambience (and game code) reacts to. The
+// effects module sets "timeOfDay" (hours), "night" (0..1), "rain", "wind",
+// "storm"; the game can add its own ("danger"...):
+//   audio().setParameter("danger", 1.0f);
+//
 // The listener (your ears) follows the main camera automatically.
 // If no audio device is available the system disables itself silently.
 // =============================================================================
@@ -29,6 +38,7 @@
 
 #include <glm/glm.hpp>
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -41,16 +51,23 @@ namespace ve {
 
 class AudioClip {
 public:
-    AudioClip(std::string path, bool stream) : m_path(std::move(path)), m_stream(stream) {}
-    const std::string& path() const { return m_path; }
+    AudioClip(std::string path, bool stream, std::string assetPath = {})
+        : m_path(std::move(path)), m_assetPath(std::move(assetPath)), m_stream(stream)
+    {
+        if (m_assetPath.empty()) m_assetPath = m_path;
+    }
+    const std::string& path() const { return m_path; }           // file on disk
+    const std::string& assetPath() const { return m_assetPath; } // as saved in scenes ("audio/fire.wav")
     bool stream() const { return m_stream; }
 
 private:
     std::string m_path;
+    std::string m_assetPath;
     bool m_stream;
 };
 
 class AudioZone;
+class MusicPlayer;
 struct AudioFilter; // miniaudio low-pass node (internal)
 
 // A mixer bus: sounds -> low-pass -> output. Volume/lowpass are the game's
@@ -67,11 +84,21 @@ struct AudioBus {
     AudioFilter* filter = nullptr;
 };
 
+// Optional settings for AudioSystem::playOneShot.
+struct OneShotSettings {
+    float volume = 1.0f;
+    std::optional<glm::vec3> position; // 3D if set, else 2D
+    float pitch = 1.0f;
+    std::string bus = "SFX";
+    float minDistance = 1.0f;          // 3D: full volume within this distance...
+    float maxDistance = 0.0f;          // ...fading linearly to silence here (0 = miniaudio's default roll-off)
+};
+
 class AudioSystem {
 public:
     static constexpr float kNoFilter = 20000.0f;
 
-    AudioSystem() = default;
+    AudioSystem();
     ~AudioSystem();
     AudioSystem(const AudioSystem&) = delete;
     AudioSystem& operator=(const AudioSystem&) = delete;
@@ -94,19 +121,31 @@ public:
     // Plays a clip once. With a position it's 3D, otherwise 2D (UI sounds).
     void playOneShot(const AudioClip& clip, float volume = 1.0f, std::optional<glm::vec3> position = std::nullopt,
                      float pitch = 1.0f, const std::string& bus = "SFX");
+    void playOneShot(const AudioClip& clip, const OneShotSettings& settings);
+
+    // Music moods, playlists and crossfades (Music.hpp).
+    MusicPlayer& music() { return *m_music; }
+
+    // Named parameters (see the top of this file). Unset parameters read as `fallback`.
+    void setParameter(const std::string& name, float value) { m_parameters[name] = value; }
+    float parameter(const std::string& name, float fallback = 0.0f) const;
+    bool hasParameter(const std::string& name) const { return m_parameters.count(name) != 0; }
+    const std::map<std::string, float>& parameters() const { return m_parameters; }
 
     // Engine internal: frees finished one-shots, applies zones to buses.
     void update(float dt);
     ma_engine* engine() const { return m_engine; }
     void addZone(AudioZone* zone) { m_zones.push_back(zone); }
     void removeZone(AudioZone* zone) { std::erase(m_zones, zone); }
-    void onGui(); // bus volumes + active zones
+    void onGui(); // bus volumes, zones, parameters, music
 
 private:
     ma_engine* m_engine = nullptr;
     std::vector<ma_sound*> m_oneShots; // owned; freed in update()/shutdown()
     std::vector<std::unique_ptr<AudioBus>> m_buses;
     std::vector<AudioZone*> m_zones;
+    std::map<std::string, float> m_parameters;
+    std::unique_ptr<MusicPlayer> m_music;
     glm::vec3 m_listener{0.0f};
     float m_masterVolume = 1.0f;
 };

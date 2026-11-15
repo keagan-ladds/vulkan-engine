@@ -1,4 +1,5 @@
 #include "ve/audio/Audio.hpp"
+#include "ve/audio/Music.hpp"
 
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
@@ -67,6 +68,14 @@ float mixCutoff(float a, float b, float t)
 // AudioSystem
 // -----------------------------------------------------------------------------
 
+AudioSystem::AudioSystem() : m_music(std::make_unique<MusicPlayer>(*this)) {}
+
+float AudioSystem::parameter(const std::string& name, float fallback) const
+{
+    const auto it = m_parameters.find(name);
+    return it != m_parameters.end() ? it->second : fallback;
+}
+
 AudioSystem::~AudioSystem()
 {
     shutdown();
@@ -89,6 +98,7 @@ void AudioSystem::init()
 void AudioSystem::shutdown()
 {
     if (!m_engine) return;
+    m_music->release();
     for (ma_sound* s : m_oneShots) {
         ma_sound_uninit(s);
         delete s;
@@ -149,18 +159,33 @@ void AudioSystem::setMasterVolume(float volume)
 void AudioSystem::playOneShot(const AudioClip& clip, float volume, std::optional<glm::vec3> position, float pitch,
                               const std::string& busName)
 {
+    OneShotSettings s;
+    s.volume = volume;
+    s.position = position;
+    s.pitch = pitch;
+    s.bus = busName;
+    playOneShot(clip, s);
+}
+
+void AudioSystem::playOneShot(const AudioClip& clip, const OneShotSettings& settings)
+{
     if (!m_engine) return;
     auto* sound = new ma_sound();
     const ma_uint32 flags = MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC;
-    if (ma_sound_init_from_file(m_engine, clip.path().c_str(), flags, bus(busName).group, nullptr, sound) != MA_SUCCESS) {
+    if (ma_sound_init_from_file(m_engine, clip.path().c_str(), flags, bus(settings.bus).group, nullptr, sound) != MA_SUCCESS) {
         log::warn("Audio: failed to load {}", clip.path());
         delete sound;
         return;
     }
-    ma_sound_set_volume(sound, volume);
-    ma_sound_set_pitch(sound, pitch);
-    if (position) {
+    ma_sound_set_volume(sound, settings.volume);
+    ma_sound_set_pitch(sound, settings.pitch);
+    if (const auto& position = settings.position) {
         ma_sound_set_position(sound, position->x, position->y, position->z);
+        if (settings.maxDistance > 0.0f) {
+            ma_sound_set_attenuation_model(sound, ma_attenuation_model_linear);
+            ma_sound_set_min_distance(sound, settings.minDistance);
+            ma_sound_set_max_distance(sound, std::max(settings.maxDistance, settings.minDistance + 0.01f));
+        }
     } else {
         ma_sound_set_spatialization_enabled(sound, MA_FALSE);
     }
@@ -171,6 +196,7 @@ void AudioSystem::playOneShot(const AudioClip& clip, float volume, std::optional
 void AudioSystem::update(float dt)
 {
     if (!m_engine) return;
+    m_music->update(dt);
     std::erase_if(m_oneShots, [](ma_sound* s) {
         if (ma_sound_at_end(s)) {
             ma_sound_uninit(s);
@@ -214,6 +240,11 @@ void AudioSystem::onGui()
     int inside = 0;
     for (AudioZone* z : m_zones) inside += z->m_inside ? 1 : 0;
     ImGui::Text("Zones: %zu (listener inside %d)", m_zones.size(), inside);
+    if (!m_parameters.empty() && ImGui::TreeNode("Parameters")) {
+        for (auto& [name, value] : m_parameters) ImGui::DragFloat(name.c_str(), &value, 0.01f);
+        ImGui::TreePop();
+    }
+    m_music->onGui();
 }
 
 // -----------------------------------------------------------------------------

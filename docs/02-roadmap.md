@@ -276,7 +276,13 @@ million grass blades), scaling up on discrete GPUs.
 ### Audio follow-up ✅
 - [x] Mixer buses (SFX/Ambient/Weather/Music/UI) with volume + low-pass; `AudioZone` (box/sphere/cylinder) muffles buses while the listener is inside; per-source occlusion via physics rays
 - [x] Savanna: rain on Weather, wind on Ambient, a zone in each hut, occluded campfire; autotest checks both
-- Not done: reverb/echo zones, HRTF (front/back cues), Doppler, streaming music crossfades
+- Not done: reverb/echo zones, HRTF (front/back cues), Doppler
+
+### Music & ambience ✅ (docs/07-audio.md)
+- [x] A1 `MusicPlayer` (`audio().music()`): moods (playlists, shuffle, gaps), crossfades, mood stack with priorities (`pushMood` / `popMood`), resume, stingers; `MusicMood` / `MusicZone` scene components
+- [x] A2 Audio parameters (`timeOfDay`, `night`, `rain`, `wind`, `storm` from the effects module; game ones like `danger`); `AmbientLayer` (loop + random 3D one-shots, gated by hours, terrain biome at the listener, parameters)
+- [x] A3 Savanna: Explore / Camp / Combat moods (M = stand-in fight), camp music zone; crickets, frogs, day insects, birds, hyenas (synthesized placeholders, `tools/generate_ambience.py`); autotest logs moods and layer levels
+- Later: intensity stems driven by a parameter, moving Weather's own loops onto layers
 
 ---
 

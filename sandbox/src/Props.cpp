@@ -8,7 +8,9 @@
 #include "Vegetation.hpp"
 
 #include <ve/assets/AssetManager.hpp>
+#include <ve/audio/Ambience.hpp>
 #include <ve/audio/Audio.hpp>
+#include <ve/audio/Music.hpp>
 #include <ve/core/Engine.hpp>
 #include <ve/editor/Editor.hpp>
 #include <ve/core/Input.hpp>
@@ -355,6 +357,18 @@ void AutoTest::update(float dt)
 {
     m_t += dt;
     auto log = [](const std::string& s) { std::fprintf(stderr, "[autotest] %s\n", s.c_str()); };
+    // Music mood and ambient layer levels (target levels: the fades take a few seconds).
+    auto logAudio = [&](const std::string& where) {
+        std::string layers;
+        scene().forEach<ve::AmbientLayer>([&](ve::AmbientLayer& l) {
+            char b[96];
+            std::snprintf(b, sizeof(b), "%s%s %.2f", layers.empty() ? "" : ", ", l.gameObject().name().c_str(), l.targetLevel());
+            layers += b;
+        });
+        log("audio @ " + where + ": music '" + audio().music().currentMood() + "' (" + audio().music().currentTrack() +
+            "), Ambient bus x" + std::to_string(audio().bus("Ambient").zoneVolume) + ", Music bus x" +
+            std::to_string(audio().bus("Music").zoneVolume) + "; layers: " + layers);
+    };
     if (m_step == 0 && m_t > 3.0f) {
         auto stones = scene().findAllWithTag("collectible");
         log("sunstones in scene: " + std::to_string(stones.size()));
@@ -385,6 +399,7 @@ void AutoTest::update(float dt)
             maxY = std::max(maxY, c->transform().position().y);
         }
         log("crates: " + std::to_string(crates.size()) + ", y range " + std::to_string(minY) + " .. " + std::to_string(maxY));
+        logAudio("start (camp)");
     } else if (m_step == 1 && m_t > 4.0f) {
         log("after pickup: " + std::to_string(scene().findAllWithTag("collectible").size()) + " left, collected " +
             std::to_string(gameState().collected) + "/" + std::to_string(gameState().total));
@@ -463,6 +478,9 @@ void AutoTest::update(float dt)
             std::to_string(fs.dropped) + " dropped, " + std::to_string(fs.generateMs) + " ms per cell");
         // Bushes are deterministic: the instances near the player must match a fresh query.
         const glm::vec3 p = static_cast<Player*>(scene().find("Player"))->transform().position();
+        logAudio("far corner");
+        audio().music().pushMood("Combat", 10, 1.0f); // as a fight would
+        if (auto* dn = dynamic_cast<vfx::DayNightCycle*>(scene().find("DayNight"))) dn->timeOfDay = 22.0f;
         log("bushes within 30 m (query): " + std::to_string(foliage->query(uint32_t(foliageObject->layerIndex("Bushes")), glm::vec2(p.x, p.z), 30.0f).size()));
         // Audio: step inside a hut (zone muffles the Weather bus) and check the fire's occlusion.
         if (auto* hutZone = scene().find("HutZone")) {
@@ -480,6 +498,9 @@ void AutoTest::update(float dt)
             if (auto* src = fire->getComponent<ve::AudioSource>()) fireOcclusion = src->occluded();
         log("audio: inside " + std::to_string(inside) + " hut zone(s), Weather bus x" + std::to_string(weather.zoneVolume) +
             " / " + std::to_string(weather.zoneLowpass) + " Hz, fire occlusion " + std::to_string(fireOcclusion));
+        logAudio("hut, 22:00, combat pushed");
+        audio().music().popMood("Combat");
+        log("audio: combat popped -> mood '" + audio().music().currentMood() + "'");
         engine().quit();
         ++m_step;
     }
@@ -516,6 +537,16 @@ void Hud::update(float dt)
     findEnvironment();
     if (input().keyPressed(ve::Key::R) && m_weather) m_weather->next(12.0f);
     if (input().keyPressed(ve::Key::H)) m_showHelp = !m_showHelp;
+    // A stand-in for a fight until there are enemies: game code pushes a mood
+    // when combat starts and pops it when it ends; the music returns to
+    // whatever was playing (camp or explore).
+    if (input().keyPressed(ve::Key::M)) {
+        m_combat = !m_combat;
+        if (m_combat) audio().music().pushMood("Combat", 10, 1.0f);
+        else audio().music().popMood("Combat", 4.0f);
+        gs.message = m_combat ? "Combat music (M to stop)" : "Combat over";
+        gs.messageTimer = 2.0f;
+    }
 }
 
 void Hud::onGui()
@@ -568,7 +599,7 @@ void Hud::onGui()
 
     if (m_showHelp) {
         const char* help = "WASD move  Shift sprint  Space jump  F fly  E pick up  Q/RMB throw\n"
-                           "T/G time +/-  R weather  Tab mouse  F1 debug  H hide help";
+                           "T/G time +/-  R weather  M combat music  Tab mouse  F1 debug  H hide help";
         const ImVec2 hs = ImGui::CalcTextSize(help);
         const ImVec2 hp(16.0f, io.DisplaySize.y - hs.y - 16.0f);
         dl->AddRectFilled({hp.x - 8, hp.y - 6}, {hp.x + hs.x + 8, hp.y + hs.y + 6}, IM_COL32(20, 14, 8, 120), 6.0f);

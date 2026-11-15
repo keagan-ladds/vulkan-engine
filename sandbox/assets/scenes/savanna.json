@@ -2281,46 +2281,455 @@
       "type": "PlayerStart"
     },
     {
+      "id": "bd69ef4ecdbe1f86",
+      "type": "GameObject",
+      "name": "Music",
       "active": true,
-      "components": [
-        {
-          "enabled": true,
-          "fields": {
-            "bus": "Ambient",
-            "clip": "/home/kladds/source/vulkan-engine/sandbox/assets/audio/ambient_01.wav",
-            "loop": true,
-            "maxDistance": 40.0,
-            "minDistance": 1.0,
-            "occlusion": false,
-            "occlusionLowpass": 700.0,
-            "occlusionVolume": 0.44999998807907104,
-            "pitch": 1.0,
-            "playOnStart": true,
-            "spatial": false,
-            "volume": 0.15000000596046448
-          },
-          "type": "AudioSource"
-        }
-      ],
-      "id": "fdec5e4330d07561",
-      "name": "Ambience",
       "position": [
-        0.0,
-        0.0,
-        0.0
+        0,
+        0,
+        0
       ],
       "rotation": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
+        0,
+        0,
+        0,
+        1
       ],
       "scale": [
-        1.0,
-        1.0,
-        1.0
+        1,
+        1,
+        1
       ],
-      "type": "GameObject"
+      "children": [
+        {
+          "id": "ce33162ebd17f9ab",
+          "type": "GameObject",
+          "name": "Explore",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "MusicMood",
+              "enabled": true,
+              "fields": {
+                "tracks": "audio/ambient_01.wav; audio/ambient_02.wav",
+                "shuffle": true,
+                "volume": 0.15,
+                "fadeIn": 5,
+                "gap": [
+                  15,
+                  45
+                ],
+                "playOnStart": true
+              }
+            }
+          ]
+        },
+        {
+          "id": "c707ff8e9ba6028d",
+          "type": "GameObject",
+          "name": "Camp",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "MusicMood",
+              "enabled": true,
+              "fields": {
+                "tracks": "audio/ambient_02.wav",
+                "shuffle": true,
+                "volume": 0.15,
+                "fadeIn": 4,
+                "gap": [
+                  6,
+                  20
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "23e66a226e5150c0",
+          "type": "GameObject",
+          "name": "Combat",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "MusicMood",
+              "enabled": true,
+              "fields": {
+                "tracks": "audio/ambient_01.wav",
+                "shuffle": true,
+                "volume": 0.3,
+                "fadeIn": 1,
+                "gap": [
+                  0,
+                  2
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "bd943a9009bef2ee",
+          "type": "GameObject",
+          "name": "Camp music zone",
+          "active": true,
+          "position": [
+            20,
+            3.2,
+            10
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "MusicZone",
+              "enabled": true,
+              "fields": {
+                "mood": "Camp",
+                "radius": 20,
+                "height": 0,
+                "exitMargin": 3,
+                "priority": 0
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "15d1af3e1ce2d897",
+      "type": "GameObject",
+      "name": "Ambience",
+      "active": true,
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "children": [
+        {
+          "id": "a83feeb2fca5b16e",
+          "type": "GameObject",
+          "name": "Crickets",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "AmbientLayer",
+              "enabled": true,
+              "fields": {
+                "bus": "Ambient",
+                "loop": "audio/ambience/crickets_loop.wav",
+                "volume": 0.45,
+                "fromHour": 19.0,
+                "toHour": 5.5,
+                "hourFade": 1.0,
+                "biomes": "Savannah:1, Camp:0.8, Rocky:0.5, Swamp:0.3",
+                "parameters": "rain:-0.8, wind:-0.4"
+              }
+            }
+          ]
+        },
+        {
+          "id": "804c1e28dfee51b0",
+          "type": "GameObject",
+          "name": "Swamp frogs",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "AmbientLayer",
+              "enabled": true,
+              "fields": {
+                "bus": "Ambient",
+                "loop": "audio/ambience/frogs_loop.wav",
+                "volume": 0.5,
+                "fromHour": 18.0,
+                "toHour": 7.0,
+                "hourFade": 1.0,
+                "biomes": "Swamp:1",
+                "biomeRadius": 25
+              }
+            }
+          ]
+        },
+        {
+          "id": "dd9911de5ae194eb",
+          "type": "GameObject",
+          "name": "Day insects",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "AmbientLayer",
+              "enabled": true,
+              "fields": {
+                "bus": "Ambient",
+                "loop": "audio/ambience/day_insects_loop.wav",
+                "volume": 0.15,
+                "fromHour": 9.5,
+                "toHour": 17.5,
+                "hourFade": 1.5,
+                "biomes": "Savannah:1, Rocky:0.6",
+                "parameters": "rain:-1, wind:-0.5"
+              }
+            }
+          ]
+        },
+        {
+          "id": "01101d03c7040d89",
+          "type": "GameObject",
+          "name": "Dawn birds",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "AmbientLayer",
+              "enabled": true,
+              "fields": {
+                "bus": "Ambient",
+                "oneShots": "audio/ambience/bird_1.wav; audio/ambience/bird_2.wav; audio/ambience/bird_3.wav",
+                "volume": 0.5,
+                "interval": [
+                  1.5,
+                  6
+                ],
+                "distance": [
+                  12,
+                  40
+                ],
+                "fromHour": 5.25,
+                "toHour": 9.5,
+                "hourFade": 1.0,
+                "biomes": "*:1, Swamp:-0.3",
+                "parameters": "rain:-1"
+              }
+            }
+          ]
+        },
+        {
+          "id": "7cf814401ba260b3",
+          "type": "GameObject",
+          "name": "Day birds",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "AmbientLayer",
+              "enabled": true,
+              "fields": {
+                "bus": "Ambient",
+                "oneShots": "audio/ambience/bird_4.wav; audio/ambience/bird_1.wav",
+                "volume": 0.35,
+                "interval": [
+                  6,
+                  18
+                ],
+                "distance": [
+                  15,
+                  45
+                ],
+                "fromHour": 9.0,
+                "toHour": 17.75,
+                "hourFade": 1.0,
+                "biomes": "*:1, Rocky:-0.5",
+                "parameters": "rain:-1"
+              }
+            }
+          ]
+        },
+        {
+          "id": "afafbc2aa59e3512",
+          "type": "GameObject",
+          "name": "Hyenas",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "AmbientLayer",
+              "enabled": true,
+              "fields": {
+                "bus": "Ambient",
+                "oneShots": "audio/ambience/hyena_1.wav",
+                "volume": 0.5,
+                "interval": [
+                  25,
+                  70
+                ],
+                "distance": [
+                  60,
+                  120
+                ],
+                "heightRange": 0,
+                "fromHour": 20.0,
+                "toHour": 4.5,
+                "hourFade": 0.5,
+                "biomes": "Savannah:1, Rocky:1",
+                "parameters": "rain:-0.7"
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "version": 1
