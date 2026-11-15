@@ -379,7 +379,12 @@ void addGrass(ve::Renderer& r, const Terrain& terrain)
     grass.mask = [&terrain](glm::vec2 p) {
         const float h = terrain.height(p.x, p.y);
         if (h < 0.25f || terrain.rockMask(p.x, p.y) > 0.45f || terrain.swampMask(p.x, p.y) > 0.6f) return glm::vec4(0.0f);
-        const float camp = glm::smoothstep(8.0f, 14.0f, glm::length(p - Terrain::kCamp)); // trampled camp floor
+        float camp = glm::smoothstep(8.0f, 14.0f, glm::length(p - Terrain::kCamp)); // trampled camp floor
+        // No grass inside the huts (same layout as main.cpp: 3 huts 11 m out at 200 + 65*i degrees).
+        for (int i = 0; i < 3; ++i) {
+            const float a = glm::radians(200.0f + 65.0f * static_cast<float>(i));
+            camp *= glm::smoothstep(2.8f, 3.6f, glm::length(p - (Terrain::kCamp + glm::vec2(std::cos(a), std::sin(a)) * 11.0f)));
+        }
         const float density = glm::clamp(fbm(p * 0.03f, 2, 61) * 2.0f - 0.2f, 0.0f, 1.0f) * camp;
         return glm::vec4(density, fbm(p * 0.012f, 3, 31), glm::mix(0.7f, 1.0f, fbm(p * 0.05f, 2, 13)), 0.0f);
     };

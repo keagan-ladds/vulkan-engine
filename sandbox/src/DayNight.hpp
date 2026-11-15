@@ -23,11 +23,15 @@ public:
 
     void start() override;
     void update(float dt) override;
+    void onGui() override; // "Day / night" window while the F1 overlay is open
 
     float timeOfDay = 17.3f;     // hours, 0..24
     float dayLengthMinutes = 16.0f; // real minutes per in-game day
     float sunIntensity = 3.2f;
-    float moonIntensity = 0.14f;
+    float moonIntensity = 0.08f;
+    // Night brightness. Exposure rises towards this at night (crude eye
+    // adaptation): 1 = no adaptation (darkest), 3 = bright "game" nights.
+    float nightExposure = 1.4f;
     vfx::Weather* weather = nullptr;
 
     ve::DirectionalLight* sun() const { return m_sun; }

@@ -253,7 +253,8 @@ million grass blades), scaling up on discrete GPUs.
 - [x] `vfx::DepthOfFieldPass`: thin-lens CoC, auto focus, half-res golden-angle gather with background clamping
 - [x] Savanna: SSGI + SSR on (`SAVANNA_SSFX=0` disables), DOF off (`SAVANNA_DOF=1` enables); all toggle in F1
 - **Result:** SSGI about 1.3 ms, SSR about 0.3 ms, DOF about 1.2 ms (1600×900, Iris Xe); validation clean
-- Not done: temporal accumulation (would allow fewer rays and less noise), SSR roughness blur (glossy reflections are sharp), SSR fallback to the sky probe on miss, an albedo target for more accurate GI, bokeh highlights in DOF
+- [x] Follow-up: temporal accumulation for SSGI + SSR (`vfx::TemporalAccumulator`), exact 4×4 depth-aware SSGI upsample (fixed dot patterns around small bright lights)
+- Not done: SSR roughness blur (glossy reflections are sharp), SSR fallback to the sky probe on miss, an albedo target for more accurate GI, bokeh highlights in DOF
 
 ### 12d — Foliage system ✅
 - [x] `ve::FoliageSystem`: (cell, layer) streaming around the camera, nearest-first generation on a worker thread, per-frame instance budget, hysteresis unloading, stale-result tickets, `preload()`
@@ -268,6 +269,13 @@ million grass blades), scaling up on discrete GPUs.
 ### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds)
 - [ ] Engine terrain module: chunked heightfield streaming, LOD (geomorphing or clipmaps), splat materials
 - [ ] Physics heightfield tiles streamed with the terrain
+
+---
+
+### Audio follow-up ✅
+- [x] Mixer buses (SFX/Ambient/Weather/Music/UI) with volume + low-pass; `AudioZone` (box/sphere/cylinder) muffles buses while the listener is inside; per-source occlusion via physics rays
+- [x] Savanna: rain on Weather, wind on Ambient, a zone in each hut, occluded campfire; autotest checks both
+- Not done: reverb/echo zones, HRTF (front/back cues), Doppler, streaming music crossfades
 
 ---
 

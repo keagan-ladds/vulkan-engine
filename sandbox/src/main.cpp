@@ -18,6 +18,7 @@
 #include <ve/ve.hpp>
 #include <vfx/Atmosphere.hpp>
 #include <vfx/Bloom.hpp>
+#include <vfx/ColorGrading.hpp>
 #include <vfx/DepthOfField.hpp>
 #include <vfx/Particles.hpp>
 #include <vfx/ScreenSpaceGI.hpp>
@@ -31,6 +32,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <functional>
 #include <iostream>
 #include <string>
 
@@ -50,11 +52,16 @@ void buildWorld(ve::Engine& engine)
     fx.fog->heightFalloff = 0.06f;
     fx.bloom->intensity = 0.05f;
     // Optional screen-space passes (toggle each in the F1 render-pass list).
-    // SAVANNA_SSFX=0 starts with SSGI/SSR off; SAVANNA_DOF=1 starts with depth of field on.
+    // SAVANNA_SSFX=0 starts with SSGI/SSR off (SAVANNA_SSGI=0 / SAVANNA_SSR=0 for one); SAVANNA_DOF=1 starts with depth of field on.
     const bool ssfx = !std::getenv("SAVANNA_SSFX") || std::string(std::getenv("SAVANNA_SSFX")) != "0";
-    r.graph().addPass<vfx::ScreenSpaceGIPass>().enabled = ssfx;
-    r.graph().addPass<vfx::ScreenSpaceReflectionsPass>().enabled = ssfx;
+    auto envOff = [](const char* name) { return std::getenv(name) && std::string(std::getenv(name)) == "0"; };
+    r.graph().addPass<vfx::ScreenSpaceGIPass>().enabled = ssfx && !envOff("SAVANNA_SSGI");
+    r.graph().addPass<vfx::ScreenSpaceReflectionsPass>().enabled = ssfx && !envOff("SAVANNA_SSR");
     r.graph().addPass<vfx::DepthOfFieldPass>().enabled = std::getenv("SAVANNA_DOF") != nullptr;
+    // Colour grading + tonemapping (off by default: the composite's plain ACES).
+    // Turn it on in F1 > Render passes > Color grading and pick a preset, or SAVANNA_GRADE=1.
+    auto& grading = r.graph().addPass<vfx::ColorGradingPass>();
+    grading.enabled = std::getenv("SAVANNA_GRADE") && std::string(std::getenv("SAVANNA_GRADE")) == "1";
 
     // --- World ---------------------------------------------------------------------
     auto& terrain = scene.spawn<Terrain>();
@@ -66,6 +73,9 @@ void buildWorld(ve::Engine& engine)
     // --- Weather + day/night ------------------------------------------------------------
     auto& weather = scene.spawn<vfx::Weather>();
     weather.rainSound = assets.loadAudio("audio/rain_loop.wav");
+    weather.stormSound = assets.loadAudio("audio/rain_thunder_loop.wav", /*stream*/ true); // 48 s: stream from disk
+    weather.windSound = assets.loadAudio("audio/wind_loop.wav");                           // volume follows the wind
+    weather.stormBackground = 0.12f; // the storm loop plays softly all the time, full volume in thunderstorms
     weather.setWeather(vfx::Weather::Type::Hazy, 0.01f);
     auto& dayNight = scene.spawn<DayNightCycle>();
     dayNight.weather = &weather;
@@ -88,6 +98,25 @@ void buildWorld(ve::Engine& engine)
         // Turn the doorway (+Z in the model) towards the fire.
         h.transform().lookAt({camp.x, hy, camp.y});
         h.transform().rotate({0, 1, 0}, glm::pi<float>());
+        ve::log::info("Hut {} at ({:.1f}, {:.1f}, {:.1f}){}", i, p.x, hy, p.y, i == 1 ? " (no door)" : "");
+        if (i == 1) {
+            // The middle hut has no door, so you can walk in (and hear the rain muffle).
+            std::function<void(ve::Transform&)> removeDoor = [&](ve::Transform& t) {
+                for (ve::Transform* child : t.children()) {
+                    if (child->gameObject().name() == "Door") child->gameObject().destroy(); // also removes its collider
+                    else removeDoor(*child);
+                }
+            };
+            removeDoor(h.transform());
+        }
+        // Indoors: rain and wind are muffled while the listener is inside the walls.
+        auto& zone = scene.spawn("HutZone");
+        zone.transform().setPosition({p.x, hy, p.y});
+        auto& az = zone.addComponent<ve::AudioZone>();
+        az.shape = ve::AudioZone::Shape::Cylinder;
+        az.radius = 2.4f; // walls are at 2.6 m
+        az.height = 4.0f;
+        az.effects = {{"Weather", 0.3f, 450.0f}, {"Ambient", 0.45f, 900.0f}};
 
         // A torch beside each door.
         const glm::vec2 tp = p + glm::normalize(camp - p) * 3.4f + glm::vec2(-std::sin(a), std::cos(a)) * 1.4f;
@@ -158,16 +187,11 @@ void buildWorld(ve::Engine& engine)
     gameState().total = placed;
 
     // --- Ambience + HUD ------------------------------------------------------------------
-    auto& ambience = scene.spawn("Ambience");
-    auto& wind = ambience.addComponent<ve::AudioSource>(assets.loadAudio("audio/wind_loop.wav"));
-    wind.loop = true;
-    wind.spatial = false;
-    wind.volume = 0.35f;
-    wind.playOnStart = true;
+    // (Wind, rain and storm loops are driven by the Weather object.)
     scene.spawn<Hud>(player, dayNight, weather);
 
     // Test hooks (handy for screenshots / automated checks):
-    //   SAVANNA_TIME=21.5  SAVANNA_WEATHER=0..3  SAVANNA_DEBUG=1  SAVANNA_FLY=x,y,z,yawDeg,pitchDeg
+    //   SAVANNA_TIME=21.5  SAVANNA_WEATHER=0..4 (4 = thunderstorm)  SAVANNA_DEBUG=1  SAVANNA_FLY=x,y,z,yawDeg,pitchDeg
     if (const char* t = std::getenv("SAVANNA_TIME")) dayNight.timeOfDay = std::strtof(t, nullptr);
     if (const char* w = std::getenv("SAVANNA_WEATHER")) {
         weather.setWeather(static_cast<vfx::Weather::Type>(std::atoi(w) % int(vfx::Weather::Type::Count)), 0.01f);

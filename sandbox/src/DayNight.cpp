@@ -1,5 +1,11 @@
 #include "DayNight.hpp"
 
+#include <ve/ui/UiLayer.hpp>
+
+#include <ve/core/Engine.hpp>
+
+#include <imgui.h>
+
 #include <ve/core/Input.hpp>
 #include <ve/core/Time.hpp>
 #include <ve/render/Renderer.hpp>
@@ -77,8 +83,25 @@ void DayNightCycle::update(float dt)
 
     // Simple "eye adaptation": brighter exposure at night.
     if (auto* composite = renderer().graph().findPass<ve::CompositePass>()) {
-        composite->exposure = glm::mix(1.0f, 3.0f, night);
+        composite->exposure = glm::mix(1.0f, nightExposure, night);
     }
+}
+
+void DayNightCycle::onGui()
+{
+    if (!engine().ui().debugOverlay) return;
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x - 430.0f, 90.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowCollapsed(true, ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Day / night")) {
+        ImGui::SliderFloat("Time of day", &timeOfDay, 0.0f, 24.0f, "%.2f h");
+        ImGui::SliderFloat("Day length (min)", &dayLengthMinutes, 1.0f, 120.0f);
+        ImGui::SliderFloat("Sun intensity", &sunIntensity, 0.0f, 8.0f);
+        ImGui::SliderFloat("Moon intensity", &moonIntensity, 0.0f, 0.5f);
+        ImGui::SliderFloat("Night exposure", &nightExposure, 0.5f, 4.0f);
+        if (auto* atmo = renderer().graph().findPass<vfx::AtmospherePass>())
+            ImGui::ColorEdit3("Night ambient", &atmo->nightAmbient.x, ImGuiColorEditFlags_Float);
+    }
+    ImGui::End();
 }
 
 } // namespace savanna

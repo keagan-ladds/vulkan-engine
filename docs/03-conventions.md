@@ -277,6 +277,35 @@ The fragment shader defaults to `grass_card.frag`. Its alpha test is sharpened
 with `fwidth`, so thin blades survive mipmapping. Try it in the sandbox with
 `SAVANNA_GRASSCARDS=1`.
 
+### Audio: 3D sounds, buses, indoor muffling, occlusion
+
+```cpp
+auto& fire = go.addComponent<ve::AudioSource>(assets.loadAudio("audio/fire_loop.wav"));
+fire.loop = true; fire.playOnStart = true; fire.maxDistance = 28.0f; // 3D: pans + fades
+fire.occlusion = true;                     // muffled when walls/terrain block it
+rain.spatial = false; rain.bus = "Weather"; // 2D bed on the Weather bus
+
+auto& zone = hut.addComponent<ve::AudioZone>();            // "indoors"
+zone.shape = ve::AudioZone::Shape::Cylinder; zone.radius = 2.4f; zone.height = 4.0f;
+zone.effects = {{"Weather", 0.3f, 450.0f}, {"Ambient", 0.45f, 900.0f}}; // bus, volume, low-pass Hz
+
+audio().setBusVolume("Music", 0.5f);       // options menu
+```
+Set `bus` and `occlusion` before the sound first plays.
+
+### Colour grading / tonemapping
+
+```cpp
+#include <vfx/ColorGrading.hpp>
+auto& grade = renderer.graph().addPass<vfx::ColorGradingPass>();
+grade.settings.tonemapper = vfx::ColorGradingSettings::Tonemapper::AgX;
+grade.settings.temperature = 10.0f; grade.settings.contrast = 1.15f;   // or a preset: ...::farCry2()
+grade.settings.lut = assets.loadTexture("textures/my_lut.png", /*srgb*/ false); // optional strip LUT
+```
+Tweak everything live in F1 > Render passes > Color grading. Night brightness
+in Savanna: `DayNightCycle::nightExposure`, `moonIntensity`, and the
+atmosphere's `nightAmbient` (all in F1 > Day / night).
+
 ### Physics
 
 ```cpp

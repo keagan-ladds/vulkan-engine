@@ -427,8 +427,29 @@ Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
 
 `AudioSystem` wraps `ma_engine`. `AudioSource` (component) owns an `ma_sound`, follows
 its transform (3D spatialization with min/max distance), and can loop and
-play on start. `audio.playOneShot(clip, volume, position?)` fires and forgets.
+play on start. `audio.playOneShot(clip, volume, position?, pitch, bus)` fires and forgets.
 The listener follows the main camera.
+
+- **Buses:** each `AudioBus` is a miniaudio sound group feeding a 2nd-order
+  low-pass node, which feeds the output. The built-in buses are SFX, Ambient,
+  Weather, Music and UI; `bus(name)` creates more. Every sound plays through
+  `AudioSource::bus`. `volume`/`lowpass` are the game's settings (options menu),
+  and zones apply on top. Cutoffs interpolate in log-frequency, and the filter
+  is only re-initialised when the cutoff changes by more than 1 %.
+- **`AudioZone`** (component; box, sphere or vertical cylinder in local space)
+  registers with the system. Each frame `AudioSystem::update` marks zones that
+  hold the listener, takes the strongest effect per bus (min volume, min
+  cutoff) and approaches it exponentially over `fadeTime`. Typical use is
+  "indoors": the Weather bus at 0.3× and 450 Hz.
+- **Occlusion** (`AudioSource::occlusion`, 3D only): the source gets its own
+  low-pass node (sound → filter → bus). Every ~0.13 s (staggered) it casts 3
+  physics rays from the listener to the source and two points beside it,
+  stopping 0.6 m short and ignoring the source's own Rigidbody and characters.
+  The blocked fraction is smoothed and drives volume (`occlusionVolume`) and
+  cutoff (`occlusionLowpass`). Terrain heightfields, building mesh colliders
+  and streamed foliage colliders all occlude.
+- The F1 overlay has an Audio section with bus volumes, current zone
+  volume/cutoff, and the zone count.
 
 ## 9. UI
 
@@ -445,7 +466,11 @@ Optional add-ons built only on public engine APIs:
 - `AtmospherePass`: analytic single-scattering sky (Rayleigh + Mie, tuned for
   warm sunsets), a sun disk, and volumetric clouds raymarched through a slab
   using a CPU-generated 3D Perlin-Worley noise texture. It also sets the
-  hemispherical ambient light in frame globals from the sun elevation.
+  hemispherical ambient light in frame globals from the sun elevation. The ground
+  term reports its sunlit-bounce share (`Environment::groundSunFraction`, i.e.
+  `ambientGround.w`), and `veAmbient` scales that share by the sun shadow 2 m
+  out from the surface. Objects therefore stop glowing orange once the sun is
+  behind terrain.
 - `VolumetricFogPass`: a half-resolution raymarch from the camera to scene depth
   into `FogBuffer`. It uses exponential height fog, 3D noise, a Henyey-Greenstein
   phase function, shadow-cascade sampling for god rays, and only the point lights
@@ -457,13 +482,22 @@ Optional add-ons built only on public engine APIs:
 - `BloomPass`: threshold + progressive downsample/upsample chain added back into SceneColor.
 - **Screen-space passes (opt-in; not added by `addDefaultEffects`).** They read
   the thin G-buffer `SceneNormal` (§5.4):
-  - `ScreenSpaceGIPass`: 4 cosine rays × 8 steps per half-res pixel, marched
-    through SceneDepth. Hits gather the lit SceneColor (one diffuse bounce) and
-    count as occlusion. The ray rotation is a 4×4 Bayer pattern, and the fog's
-    4×4 box upsample (`fog_apply.frag`) averages it. The bounce is tinted by the
-    receiver's own colour chroma, because there is no albedo buffer.
+  - `ScreenSpaceGIPass`: 3 cosine rays × 8 steps per half-res pixel, marched
+    through SceneDepth. Hits gather the lit SceneColor (one diffuse bounce,
+    luminance-clamped against fireflies) and count as occlusion. The ray
+    rotation is a 4×4 Bayer pattern offset every frame, and a
+    `TemporalAccumulator` blends about 10 frames. `ssgi_apply.frag` then takes
+    an exact, normal/depth-aware 4×4 average (4 bilinear taps on texel corners),
+    which always holds all 16 rotations. The bounce is tinted by the receiver's
+    own colour chroma, because there is no albedo buffer.
+  - `TemporalAccumulator` (shared by SSGI and SSR): ping-ponged half-res
+    history plus linear depth. It reprojects with `frame.prevViewProj`, rejects
+    history on a depth mismatch or off-screen, clips it to the current 3×3
+    mean ± 1.5σ, then blends. Without the accumulation, small bright emitters
+    (sunstones, fire) showed as dot patterns.
   - `ScreenSpaceReflectionsPass`: a view-space ray march (quadratic step
-    distribution, binary refinement) for surfaces below `maxRoughness`. It is
+    distribution with per-frame jitter, binary refinement, temporally
+    accumulated) for surfaces below `maxRoughness`. It is
     weighted by Fresnel, edge/distance/roughness fades and back-face rejection.
     Transparent geometry and particles are not in SceneColor yet, so they are
     not reflected.
@@ -475,8 +509,31 @@ Optional add-ons built only on public engine APIs:
     0.3 ms, DOF about 1.2 ms.
 - `ParticleEmitter` component (CPU simulation) and `ParticlePass`
   (instanced camera-facing or velocity-stretched quads, alpha/additive).
-- `Weather`: a GameObject that blends presets (clear/overcast/rain) by driving
-  atmosphere, fog, light intensity and a rain emitter that follows the camera.
+  - Streaks stretch along the actual motion, wind drift included, so rain
+    slants in the wind.
+  - With `collide`, each particle casts one physics ray along its motion at
+    spawn and dies at the hit height, so roofs, rocks and crates stop rain.
+    The weather's rain enables this.
+- `ColorGradingPass` *(opt-in)*: HDR → exposure (the composite's, so
+  adaptation and lightning apply), white balance (LMS), colour filter, log
+  contrast, saturation/vibrance, then one of 7 tonemappers (ACES fitted/Hill,
+  AgX, Hable filmic, Reinhard, Khronos Neutral, none), then split toning,
+  lift/gamma/gain and an optional strip LUT.
+  - It writes `GradedColor` and calls `CompositePass::useGradedInput()` each
+    frame, so the composite only adds vignette and dither. Disabling the pass
+    restores the built-in tonemapping.
+  - Presets: `neutral()`, `farCry2()` (a starting point).
+  - `tools/generate_assets.py` writes `lut_neutral_32.png` for authoring LUTs.
+- `Weather`: a GameObject that blends presets (clear/hazy/overcast/rain/thunderstorm)
+  by driving the atmosphere, fog, light intensity and a rain emitter that follows
+  the camera.
+  - Sound layers (`rainSound`, `stormSound`, `windSound`) are loops on the
+    "Weather" bus. Their volumes come from the blended state (rain × (1 −
+    thunder), thunder, wind), so a weather change crossfades them over the
+    transition, and AudioZones muffle them indoors.
+  - Thunderstorms add lightning as short multi-pulse `CompositePass::exposure`
+    boosts at random intervals. These aren't synced to the thunder in the
+    loop.
 - Global shader param convention (`vfx::GlobalSlot`, `vfx.glsl`):
   `[0]` wind (xy dir, z strength, w gust), `[1]` weather (x wetness, y rain,
   z cloud coverage, w fog multiplier), `[2]` direction towards the sun + illuminance,
