@@ -15,6 +15,7 @@
 //   execute(): TextureId smooth = m_accum.resolve(ctx, noisyBuffer);  // Sampled on return
 // =============================================================================
 
+#include <ve/render/PipelineHandle.hpp>
 #include <ve/render/RenderGraph.hpp>
 
 #include <string>
@@ -38,7 +39,7 @@ private:
     ve::Renderer* m_renderer = nullptr;
     ve::TextureId m_history[2] = {ve::kNoTexture, ve::kNoTexture};
     ve::TextureId m_depth[2] = {ve::kNoTexture, ve::kNoTexture};
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    ve::PipelineHandle m_pipeline;
     uint32_t m_frame = 0;
     bool m_valid = false;
 };

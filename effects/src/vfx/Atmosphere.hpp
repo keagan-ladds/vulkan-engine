@@ -17,6 +17,7 @@
 // the sandbox DayNightCycle).
 // =============================================================================
 
+#include <ve/render/PipelineHandle.hpp>
 #include <ve/render/RenderGraph.hpp>
 
 #include <glm/glm.hpp>
@@ -92,9 +93,9 @@ public:
 private:
     ve::TextureId m_lut = ve::kNoTexture;
     ve::TextureId m_clouds = ve::kNoTexture;
-    VkPipeline m_lutPipeline = VK_NULL_HANDLE;
-    VkPipeline m_cloudPipeline = VK_NULL_HANDLE;
-    VkPipeline m_skyPipeline = VK_NULL_HANDLE;
+    ve::PipelineHandle m_lutPipeline;
+    ve::PipelineHandle m_cloudPipeline;
+    ve::PipelineHandle m_skyPipeline;
     std::shared_ptr<ve::Texture> m_noise;
 
     glm::vec3 m_sunDir{0.0f, 1.0f, 0.0f};

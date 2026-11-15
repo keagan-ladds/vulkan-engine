@@ -18,6 +18,7 @@
 
 #include "vfx/TemporalAccumulator.hpp"
 
+#include <ve/render/PipelineHandle.hpp>
 #include <ve/render/RenderGraph.hpp>
 
 namespace vfx {
@@ -44,8 +45,8 @@ public:
 private:
     float m_scale;
     ve::TextureId m_buffer = ve::kNoTexture;
-    VkPipeline m_trace = VK_NULL_HANDLE;
-    VkPipeline m_apply = VK_NULL_HANDLE;
+    ve::PipelineHandle m_trace;
+    ve::PipelineHandle m_apply;
 };
 
 } // namespace vfx

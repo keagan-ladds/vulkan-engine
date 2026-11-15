@@ -113,6 +113,14 @@ go.addComponent<Spin>().speed = 3.0f;
 The CMake glob picks up new shader files automatically. Re-run CMake when you
 add a file (`cmake -B build`); the VS Code build task does this every time.
 
+**Hot-reload.** While the app runs, saving a shader (or anything it
+`#include`s) recompiles it with the build's own glslc command and rebuilds the
+pipelines that use it, within about half a second. Compile errors go to the log
+and the old version keeps running. This covers `ShaderDesc` shaders and pipelines
+made with `createFullscreenPipeline` / `createComputePipeline`. Keep those as
+`ve::PipelineHandle` members, which always give the current `VkPipeline`. New
+shader files still need a rebuild. `VE_SHADER_HOT_RELOAD=0` turns it off.
+
 ### Add a full-screen post-process effect
 
 ```cpp

@@ -13,7 +13,9 @@
 # names must therefore be unique across the engine, effects and game.
 #
 # glslc writes a depfile (-MD) listing every #included file, so editing
-# ve.glsl correctly rebuilds every shader that includes it.
+# ve.glsl correctly rebuilds every shader that includes it. Next to each .spv
+# go <name>.spv.cmd (the command) and <name>.spv.d (the depfile), which the
+# running app uses to recompile edited shaders (shader hot-reload).
 # =============================================================================
 function(ve_compile_shaders TARGET)
     cmake_parse_arguments(ARG "" "" "SOURCES;INCLUDE_DIRS" ${ARGN})
@@ -39,6 +41,12 @@ function(ve_compile_shaders TARGET)
         elseif(EXT STREQUAL ".comp")
             set(STAGE_DEFINE "-DVE_COMPUTE_STAGE")
         endif()
+        # The same command, one argument per line, for shader hot-reload
+        # (engine/src/ve/render/ShaderHotReload.hpp).
+        set(CMD_ARGS "${Vulkan_GLSLC_EXECUTABLE}" --target-env=vulkan1.3 -O -g ${STAGE_DEFINE} ${INCLUDE_FLAGS}
+                     -MD -MF "${OUT}.d" "${SRC_ABS}" -o "${OUT}")
+        list(JOIN CMD_ARGS "\n" CMD_TEXT)
+        file(CONFIGURE OUTPUT "${OUT}.cmd" CONTENT "${CMD_TEXT}\n" @ONLY)
         add_custom_command(
             OUTPUT  "${OUT}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${VE_SHADER_OUTPUT_DIR}"

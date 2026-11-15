@@ -1,4 +1,5 @@
 #include "ve/render/Renderer.hpp"
+#include "ve/render/ShaderHotReload.hpp"
 
 #include "ve/core/Log.hpp"
 #include "ve/core/Time.hpp"
@@ -76,6 +77,7 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
                       1 + m_settings.maxShadowedDirectionalLights * m_settings.cascadeCount);
     writeInstanceDescriptors();
     createDefaultPasses();
+    m_hotReload = std::make_unique<ShaderHotReload>(m_shaderDirs);
     m_initialized = true;
 }
 
@@ -384,7 +386,10 @@ bool Renderer::recreateSwapchain()
 
 std::shared_ptr<Shader> Renderer::createShader(const ShaderDesc& desc)
 {
-    return std::make_shared<Shader>(*this, desc);
+    auto shader = std::make_shared<Shader>(*this, desc);
+    std::erase_if(m_shaders, [](const std::weak_ptr<Shader>& w) { return w.expired(); });
+    m_shaders.push_back(shader);
+    return shader;
 }
 
 std::shared_ptr<Material> Renderer::createMaterial(std::shared_ptr<Shader> shader)
@@ -465,7 +470,89 @@ VkPipeline Renderer::buildMeshPipeline(const ShaderDesc& desc, PassKind kind)
     return pipeline;
 }
 
-VkPipeline Renderer::createFullscreenPipeline(const FullscreenPipelineDesc& desc)
+PipelineHandle::operator VkPipeline() const
+{
+    return m_renderer ? m_renderer->pipeline(*this) : VK_NULL_HANDLE;
+}
+
+VkPipeline Renderer::pipeline(const PipelineHandle& h) const
+{
+    return h.m_id != 0 && h.m_id <= m_rawPipelines.size() ? m_rawPipelines[h.m_id - 1].pipeline : VK_NULL_HANDLE;
+}
+
+PipelineHandle Renderer::createFullscreenPipeline(const FullscreenPipelineDesc& desc)
+{
+    RawPipeline raw{buildFullscreenPipeline(desc), false, desc, {}};
+    PipelineHandle h;
+    h.m_renderer = this;
+    if (!m_freeRawPipelines.empty()) {
+        h.m_id = m_freeRawPipelines.back();
+        m_freeRawPipelines.pop_back();
+        m_rawPipelines[h.m_id - 1] = std::move(raw);
+    } else {
+        m_rawPipelines.push_back(std::move(raw));
+        h.m_id = static_cast<uint32_t>(m_rawPipelines.size());
+    }
+    return h;
+}
+
+PipelineHandle Renderer::createComputePipeline(const std::string& shaderName)
+{
+    RawPipeline raw{buildComputePipeline(shaderName), true, {}, shaderName};
+    PipelineHandle h;
+    h.m_renderer = this;
+    if (!m_freeRawPipelines.empty()) {
+        h.m_id = m_freeRawPipelines.back();
+        m_freeRawPipelines.pop_back();
+        m_rawPipelines[h.m_id - 1] = std::move(raw);
+    } else {
+        m_rawPipelines.push_back(std::move(raw));
+        h.m_id = static_cast<uint32_t>(m_rawPipelines.size());
+    }
+    return h;
+}
+
+void Renderer::destroyPipeline(PipelineHandle& h)
+{
+    if (h.m_renderer == this && h.m_id != 0 && h.m_id <= m_rawPipelines.size()) {
+        RawPipeline& raw = m_rawPipelines[h.m_id - 1];
+        destroyPipeline(raw.pipeline);
+        raw = RawPipeline{};
+        m_freeRawPipelines.push_back(h.m_id);
+    }
+    h = PipelineHandle{};
+}
+
+void Renderer::reloadShaders(const std::vector<std::string>& names)
+{
+    auto has = [&](const std::string& n) { return !n.empty() && std::find(names.begin(), names.end(), n) != names.end(); };
+    uint32_t rebuilt = 0;
+    for (RawPipeline& raw : m_rawPipelines) {
+        if (!raw.pipeline) continue;
+        const bool hit = raw.compute ? has(raw.computeShader) : has(raw.fullscreen.fragment) || has("fullscreen.vert");
+        if (!hit) continue;
+        try {
+            VkPipeline fresh = raw.compute ? buildComputePipeline(raw.computeShader) : buildFullscreenPipeline(raw.fullscreen);
+            destroyPipeline(raw.pipeline);
+            raw.pipeline = fresh;
+            ++rebuilt;
+        } catch (const std::exception& e) {
+            log::error("Shader hot-reload: keeping the old pipeline: {}", e.what());
+        }
+    }
+    for (const auto& w : m_shaders) {
+        const auto shader = w.lock();
+        if (!shader) continue;
+        const ShaderDesc& d = shader->desc();
+        if (has(d.vertex) || has(d.fragment) || has(d.shadowVertex) || has(d.shadowFragment) || has(d.shadowPointFragment)) {
+            shader->invalidate(); // rebuilt on next use
+            ++rebuilt;
+        }
+    }
+    log::info("Shader hot-reload: {} pipeline(s) rebuilt", rebuilt);
+}
+
+VkPipeline Renderer::buildFullscreenPipeline(const FullscreenPipelineDesc& desc)
 {
     VkDevice dev = m_device.handle();
     VkShaderModule vert = loadShader("fullscreen.vert");
@@ -482,7 +569,7 @@ VkPipeline Renderer::createFullscreenPipeline(const FullscreenPipelineDesc& desc
     return p;
 }
 
-VkPipeline Renderer::createComputePipeline(const std::string& shaderName)
+VkPipeline Renderer::buildComputePipeline(const std::string& shaderName)
 {
     VkShaderModule module = loadShader(shaderName);
     VkPipeline p = ve::createComputePipeline(m_device.handle(), module, m_pipelineLayout);
@@ -867,6 +954,9 @@ bool Renderer::render(Scene& scene, const Time& time)
     const VkExtent2D size = m_window->drawableSize();
     if (size.width == 0 || size.height == 0) return false;
     if (m_swapchainDirty && !recreateSwapchain()) return false;
+    if (m_hotReload) {
+        if (auto changed = m_hotReload->poll(); !changed.empty()) reloadShaders(changed);
+    }
 
     VkDevice dev = m_device.handle();
     const uint32_t slotIndex = static_cast<uint32_t>(m_frameNumber % Device::kFramesInFlight);

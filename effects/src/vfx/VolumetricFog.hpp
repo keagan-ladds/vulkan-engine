@@ -12,6 +12,7 @@
 // cloud noise).
 // =============================================================================
 
+#include <ve/render/PipelineHandle.hpp>
 #include <ve/render/RenderGraph.hpp>
 
 namespace vfx {
@@ -47,8 +48,8 @@ private:
     ve::TextureId m_fog = ve::kNoTexture;
     ve::TextureId m_lut = ve::kNoTexture;
     uint32_t m_noise = 0xFFFFFFFFu;
-    VkPipeline m_march = VK_NULL_HANDLE;
-    VkPipeline m_apply = VK_NULL_HANDLE;
+    ve::PipelineHandle m_march;
+    ve::PipelineHandle m_apply;
 };
 
 } // namespace vfx

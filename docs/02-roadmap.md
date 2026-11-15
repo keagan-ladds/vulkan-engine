@@ -24,7 +24,8 @@ Physics (Phase 11, formerly future phase F1) is done too: Jolt rigid bodies, a
 character controller and raycasts, all used by the savanna scene and the game
 template. One physics step takes about 0.3–0.7 ms for roughly 410 bodies.
 
-Next up: **Phase 12 (dense worlds)**, then F2 (animation) and building/gameplay systems. Also see
+Phase 12 (dense worlds), the scene-file world (W1–W5) and music/ambience are done
+too. Next up: physics follow-ups, F2 (animation) and building/gameplay systems. Also see
 [Known issues](#known-issues--tech-debt).
 
 ---
@@ -290,27 +291,20 @@ million grass blades), scaling up on discrete GPUs.
 
 Ordered roughly by how much they'll bite while building a game.
 
-1. **Alpha-tested materials cast solid shadows.** The default shadow shader
-   ignores alpha. Add a cutout shadow fragment shader (`ShaderDesc` already
-   allows a custom one).
-2. **No temporal accumulation for clouds/fog.** They use per-pixel jitter plus
+1. **No temporal accumulation for clouds/fog.** They use per-pixel jitter plus
    a blur and look slightly soft. TAA or temporal reprojection would allow fewer
    steps and sharper results.
-4. **One draw call per submesh.** Fine for about 1k objects. Grass is
-   pre-merged per 32 m cell. Large forests need GPU instancing or indirect
-   draws (F3).
-5. **Material params are positional** (slot indices, no reflection). Each
+2. **Material params are positional** (slot indices, no reflection). Each
    shader documents its layout in a comment. A SPIR-V reflection layer could
    add named parameters.
-6. **Shader hot-reload missing.** Changing a shader means restarting the app.
-7. Sky-view LUT assumes a viewer near y = 0 and a flat ground; very high
+3. Sky-view LUT assumes a viewer near y = 0 and a flat ground; very high
    cameras get an approximate sky.
-8. Physics: the heightfield collider's triangle diagonals can differ from the
+4. Physics: the heightfield collider's triangle diagonals can differ from the
    render mesh, so feet may float or sink up to a few cm on steep slopes.
    Jolt also quantises heights to 8 bits per 2×2 block. Characters can't
    climb up onto dynamic crates reliably (a CharacterVirtual limitation unless
    you tune `mMaxStrength` and the supporting volume).
-9. `Scene::forEach<T>()` only finds components registered under exactly `T`
+5. `Scene::forEach<T>()` only finds components registered under exactly `T`
    (a `class MyLight : public PointLight` added as `MyLight` is not seen by the
    renderer). Add as `addComponent<PointLight>` or extend the registry.
 
@@ -336,7 +330,7 @@ Ordered roughly by how much they'll bite while building a game.
 - [ ] Combat (hitboxes, damage, stamina), boss encounters
 
 ### F5 — Tooling
-- [ ] Shader hot-reload (watch `shaders/`, recompile via glslc, `Shader::invalidate()`)
+- [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)
 - [ ] Scene/prefab serialization (JSON)
 - [ ] Retained-mode game UI (inventory grids, health bars) beyond ImGui
 - [ ] Gamepad input + rebinding UI

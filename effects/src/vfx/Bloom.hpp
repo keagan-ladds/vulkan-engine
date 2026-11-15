@@ -7,6 +7,7 @@
 // added onto SceneColor. Bright things (sun, fire, emissive) glow softly.
 // =============================================================================
 
+#include <ve/render/PipelineHandle.hpp>
 #include <ve/render/RenderGraph.hpp>
 
 #include <vector>
@@ -31,9 +32,9 @@ public:
 private:
     int m_levels;
     std::vector<ve::TextureId> m_chain;
-    VkPipeline m_down = VK_NULL_HANDLE;
-    VkPipeline m_up = VK_NULL_HANDLE;
-    VkPipeline m_composite = VK_NULL_HANDLE;
+    ve::PipelineHandle m_down;
+    ve::PipelineHandle m_up;
+    ve::PipelineHandle m_composite;
 };
 
 } // namespace vfx

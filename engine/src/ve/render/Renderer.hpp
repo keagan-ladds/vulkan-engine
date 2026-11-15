@@ -23,14 +23,20 @@
 #include "ve/render/FrameData.hpp"
 #include "ve/render/Instancing.hpp"
 #include "ve/render/Material.hpp"
+#include "ve/render/PipelineHandle.hpp"
+#include "ve/render/ShaderHotReload.hpp"
 #include "ve/render/RenderGraph.hpp"
 
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <vector>
 
 namespace ve {
+
+class Renderer;
+
 
 class Window;
 class Scene;
@@ -169,11 +175,19 @@ public:
         VkFormat depthFormat = VK_FORMAT_UNDEFINED;
         VkCompareOp depthCompare = VK_COMPARE_OP_ALWAYS;
     };
-    VkPipeline createFullscreenPipeline(const FullscreenPipelineDesc& desc);
+    PipelineHandle createFullscreenPipeline(const FullscreenPipelineDesc& desc);
     // Compute pipeline using the global layout.
-    VkPipeline createComputePipeline(const std::string& shaderName);
+    PipelineHandle createComputePipeline(const std::string& shaderName);
     // Destroys a pipeline once the GPU is done with it.
     void destroyPipeline(VkPipeline pipeline);
+    void destroyPipeline(PipelineHandle& pipeline); // also resets the handle
+    VkPipeline pipeline(const PipelineHandle& h) const;
+
+    // Rebuilds every pipeline that uses one of these shaders (e.g.
+    // "bloom_up.frag"); called by the shader hot-reload watcher. Pipelines
+    // whose rebuild fails keep the old version.
+    void reloadShaders(const std::vector<std::string>& names);
+    ShaderHotReload* shaderHotReload() { return m_hotReload.get(); }
 
     // Draws `items[indices]` with each material's pipeline for `kind`.
     // Used by the built-in passes; handy for custom geometry passes too.
@@ -233,6 +247,19 @@ private:
     void gatherLights(Scene& scene);
     void buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uint32_t shadowSlot, GpuDirectionalLight& gpu);
     void fillGlobals(const Time& time);
+    VkPipeline buildFullscreenPipeline(const FullscreenPipelineDesc& desc);
+    VkPipeline buildComputePipeline(const std::string& shaderName);
+
+    struct RawPipeline {
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        bool compute = false;
+        FullscreenPipelineDesc fullscreen;
+        std::string computeShader;
+    };
+    std::vector<RawPipeline> m_rawPipelines; // PipelineHandle id - 1
+    std::vector<uint32_t> m_freeRawPipelines;
+    std::vector<std::weak_ptr<Shader>> m_shaders; // for hot-reload
+    std::unique_ptr<ShaderHotReload> m_hotReload;
 
     Window* m_window = nullptr;
     RendererSettings m_settings;

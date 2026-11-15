@@ -13,6 +13,7 @@
 // HDR colour). Auto focus uses the depth at the screen centre.
 // =============================================================================
 
+#include <ve/render/PipelineHandle.hpp>
 #include <ve/render/RenderGraph.hpp>
 
 namespace vfx {
@@ -39,9 +40,9 @@ private:
     float m_scale;
     ve::TextureId m_prep = ve::kNoTexture;   // rgb colour, a linear depth
     ve::TextureId m_buffer = ve::kNoTexture; // blurred colour
-    VkPipeline m_prepPipeline = VK_NULL_HANDLE;
-    VkPipeline m_gather = VK_NULL_HANDLE;
-    VkPipeline m_apply = VK_NULL_HANDLE;
+    ve::PipelineHandle m_prepPipeline;
+    ve::PipelineHandle m_gather;
+    ve::PipelineHandle m_apply;
 };
 
 } // namespace vfx

@@ -25,6 +25,7 @@
 #include "ve/gfx/Resources.hpp"
 #include "ve/render/GpuTypes.hpp"
 #include "ve/render/Material.hpp"
+#include "ve/render/PipelineHandle.hpp"
 
 #include <cfloat>
 #include <memory>
@@ -188,7 +189,7 @@ private:
     float m_lodScale = 1.0f;
     bool m_layoutDirty = true;
     bool m_warnedTransparent = false;
-    VkPipeline m_cullPipeline = VK_NULL_HANDLE;
+    PipelineHandle m_cullPipeline;
     InstanceStats m_stats;
 };
 

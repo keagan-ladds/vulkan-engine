@@ -25,6 +25,7 @@
 // =============================================================================
 
 #include "ve/gfx/Pipeline.hpp"
+#include "ve/render/PipelineHandle.hpp"
 #include "ve/render/RenderGraph.hpp"
 
 #include <array>
@@ -74,7 +75,7 @@ protected:
     std::vector<TextureId> m_inputs;
     TextureId m_output = kNoTexture;
     TextureId m_depth = kNoTexture;
-    VkPipeline m_pipeline = VK_NULL_HANDLE;
+    PipelineHandle m_pipeline;
     std::array<uint8_t, 128> m_push{};
     uint32_t m_pushSize = 0;
 };
