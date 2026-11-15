@@ -49,6 +49,7 @@ public:
     GameObject& instantiate(const Model& model, GameObject* parent = nullptr, bool staticColliders = false);
 
     GameObject* find(const std::string& name) const;
+    GameObject* findById(uint64_t id) const;
     std::vector<GameObject*> findAllWithTag(const std::string& tag) const;
     const std::vector<std::unique_ptr<GameObject>>& objects() const { return m_objects; }
     size_t objectCount() const { return m_objects.size() + m_pending.size(); }
@@ -68,8 +69,9 @@ public:
     // --- Engine internal -----------------------------------------------------------
     void startPending();
     void fixedUpdate(float dt);
-    void update(float dt);
-    void lateUpdate(float dt);
+    // editorOnly: only objects with runInEditor (and their components) update.
+    void update(float dt, bool editorOnly = false);
+    void lateUpdate(float dt, bool editorOnly = false);
     void onGui();
     void flushDestroyed();
     void clear();

@@ -12,6 +12,8 @@
 
 namespace ve {
 
+class GameObject;
+
 class Mesh;
 class Material;
 class Scene;
@@ -25,6 +27,7 @@ struct DrawItem {
     AABB bounds;          // world space
     float distance = 0.0f; // distance from the camera (sorting)
     bool castShadows = true;
+    const GameObject* owner = nullptr; // the MeshRenderer's object (editor picking)
 };
 
 struct CameraData {

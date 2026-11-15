@@ -71,6 +71,9 @@ public:
     bool isActive() const;
 
     bool enabled = true;
+    // Saved in scene files (set by the editor / scene loader). Components a
+    // GameObject class creates for itself stay false.
+    bool persistent = false;
 
 private:
     friend class GameObject;
@@ -108,6 +111,13 @@ public:
     bool isDestroyed() const { return m_destroyed; }
     Scene& scene() const { return *m_scene; }
     std::string tag; // free-form label for gameplay queries
+
+    // --- Editor / scene files ---------------------------------------------------
+    uint64_t id() const { return m_id; } // random, stable across save/load
+    void setId(uint64_t id) { m_id = id; }
+    bool persistent = false;      // saved in scene files (editor-created / loaded objects)
+    bool runInEditor = false;     // keeps updating while the editor has the game paused
+    bool hideInHierarchy = false; // editor internals (editor camera)
 
     // Convenience: parent this object's transform under another object.
     void setParent(GameObject* parent, bool keepWorld = true);
@@ -149,6 +159,7 @@ private:
     void attachComponent(std::unique_ptr<Component> component, std::type_index type);
 
     std::string m_name;
+    uint64_t m_id = 0;
     Transform m_transform;
     std::vector<std::unique_ptr<Component>> m_components;
     Scene* m_scene = nullptr;

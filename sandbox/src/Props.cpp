@@ -9,6 +9,7 @@
 #include <ve/assets/AssetManager.hpp>
 #include <ve/audio/Audio.hpp>
 #include <ve/core/Engine.hpp>
+#include <ve/editor/Editor.hpp>
 #include <ve/core/Input.hpp>
 #include <ve/core/Time.hpp>
 #include <ve/physics/Physics.hpp>
@@ -158,7 +159,7 @@ void Campfire::start()
     auto& audioSrc = addComponent<ve::AudioSource>(assets().loadAudio("audio/fire_loop.wav"));
     audioSrc.loop = true;
     audioSrc.playOnStart = true;
-    audioSrc.volume = 0.9f;
+    audioSrc.volume = 0.15f;
     audioSrc.minDistance = 1.5f;
     audioSrc.maxDistance = 28.0f;
     audioSrc.occlusion = true; // muffled behind huts or terrain
@@ -443,6 +444,7 @@ void Hud::update(float dt)
 
 void Hud::onGui()
 {
+    if (engine().editor() && engine().editor()->paused()) return; // the editor's panels take the screen
     ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     const ImVec2 c(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);

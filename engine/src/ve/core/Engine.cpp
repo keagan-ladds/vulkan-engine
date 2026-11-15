@@ -4,8 +4,10 @@
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Window.hpp"
+#include "ve/editor/Editor.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/scene/Components.hpp"
+#include "ve/scene/Reflection.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/ui/UiLayer.hpp"
 
@@ -13,6 +15,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 
 namespace ve {
 
@@ -52,6 +55,13 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     shaderDirs.push_back(exeDir / "shaders");
     std::vector<std::filesystem::path> assetDirs;
     for (const auto& p : config.assetPaths) assetDirs.push_back(resolve(p));
+    // Development builds: the game's source assets folder first (written by
+    // ve_setup_game), so the editor reads and saves the real files.
+    if (std::ifstream src(exeDir / "ve-source-assets.txt"); src) {
+        std::string dir;
+        std::getline(src, dir);
+        if (!dir.empty() && std::filesystem::is_directory(dir)) assetDirs.insert(assetDirs.begin(), dir);
+    }
     assetDirs.push_back(exeDir / "assets");
 
     m_window = std::make_unique<Window>(config.title, config.width, config.height);
@@ -66,6 +76,11 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_ui = std::make_unique<UiLayer>();
     m_ui->init(*this);
     m_scene = std::make_unique<Scene>();
+    registerBuiltinTypes(); // reflection: scene files + editor
+    if (config.enableEditor) {
+        m_editor = std::make_unique<Editor>();
+        m_editor->init(*this);
+    }
     log::info("Engine ready");
 }
 
@@ -74,6 +89,8 @@ Engine::~Engine()
     // Tear down in reverse dependency order. Scene objects hold meshes,
     // materials, textures and sounds, so they go first.
     if (m_renderer) m_renderer->device().waitIdle();
+    if (m_editor) m_editor->shutdown();
+    m_editor.reset();
     m_scene.reset();
     m_assets.reset();
     if (m_ui) m_ui->shutdown(); // no-op if run() already did it
@@ -142,10 +159,14 @@ void Engine::tickFrame()
     m_ui->beginFrame();
     m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
 
+    if (m_editor) m_editor->beginFrame(m_time.unscaledDeltaTime);
+    // Editor "Edit" mode: the game is paused; only runInEditor objects update.
+    const bool paused = m_editor && m_editor->paused();
+
     m_scene->startPending();
 
     // Fixed timestep: run as many fixed steps as the elapsed time requires.
-    m_accumulator += m_time.deltaTime;
+    if (!paused) m_accumulator += m_time.deltaTime;
     int steps = 0;
     // Each step: gameplay fixedUpdate() hooks (forces, character movement), then the physics world.
     while (m_accumulator >= m_time.fixedDeltaTime && steps < m_config.maxFixedStepsPerFrame) {
@@ -159,11 +180,12 @@ void Engine::tickFrame()
     if (steps == m_config.maxFixedStepsPerFrame) m_accumulator = 0.0; // drop time we can't catch up on
     m_time.fixedAlpha = static_cast<float>(m_accumulator / m_time.fixedDeltaTime);
     // Smooth motion: place physics objects between their last two fixed-step poses.
-    m_physics->interpolate(*m_scene, m_time.fixedAlpha);
+    if (!paused) m_physics->interpolate(*m_scene, m_time.fixedAlpha);
 
-    m_scene->update(m_time.deltaTime);
-    m_scene->lateUpdate(m_time.deltaTime);
+    m_scene->update(m_time.deltaTime, paused);
+    m_scene->lateUpdate(m_time.deltaTime, paused);
     m_scene->onGui();
+    if (m_editor) m_editor->onGui();
     m_ui->drawDebugOverlay();
 
     if (Camera* cam = m_scene->mainCamera()) {

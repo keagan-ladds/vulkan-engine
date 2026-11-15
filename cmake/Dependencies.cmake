@@ -5,7 +5,7 @@
 #   Vulkan headers + loader + glslc, SDL2, glm
 #
 # Fetched automatically at configure time (pinned versions):
-#   Vulkan Memory Allocator, Dear ImGui, cgltf, stb, miniaudio
+#   Vulkan Memory Allocator, Dear ImGui, cgltf, stb, miniaudio, nlohmann/json
 #
 # The fetched libraries are header-only or loose source files, so we compile
 # them ourselves into one static library `ve_thirdparty` with warnings off.
@@ -46,7 +46,14 @@ FetchContent_Declare(miniaudio
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SOURCE_SUBDIR _none)
 
-FetchContent_MakeAvailable(vma imgui cgltf stb miniaudio)
+FetchContent_Declare(nlohmann_json   # JSON for scene files / editor
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SYSTEM)
+set(JSON_BuildTests OFF CACHE INTERNAL "")
+set(JSON_Install OFF CACHE INTERNAL "")
+
+FetchContent_MakeAvailable(vma imgui cgltf stb miniaudio nlohmann_json)
 
 # Jolt Physics: built with its own CMake (Build/ subfolder). Only engine .cpp
 # files include Jolt headers; games never see them. Jolt's SIMD flags are

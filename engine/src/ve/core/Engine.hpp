@@ -32,6 +32,7 @@ class Scene;
 class AssetManager;
 class AudioSystem;
 class UiLayer;
+class Editor;
 class PhysicsWorld;
 
 struct EngineConfig {
@@ -47,6 +48,7 @@ struct EngineConfig {
     float fixedTimestep = 1.0f / 50.0f;
     int maxFixedStepsPerFrame = 5; // avoids the "spiral of death" after a hitch
     bool enableAudio = true;
+    bool enableEditor = true; // F2 opens the in-engine scene editor (docs/05-editor.md)
     // Extra asset / shader folders (relative to the executable or absolute).
     // <exe>/assets and <exe>/shaders are always searched.
     std::vector<std::filesystem::path> assetPaths;
@@ -76,6 +78,7 @@ public:
     AudioSystem& audio() { return *m_audio; }
     PhysicsWorld& physics() { return *m_physics; }
     UiLayer& ui() { return *m_ui; }
+    Editor* editor() { return m_editor.get(); } // null if EngineConfig::enableEditor is false
     const EngineConfig& config() const { return m_config; }
 
 private:
@@ -91,6 +94,7 @@ private:
     std::unique_ptr<PhysicsWorld> m_physics;
     std::unique_ptr<AssetManager> m_assets;
     std::unique_ptr<UiLayer> m_ui;
+    std::unique_ptr<Editor> m_editor;
     std::unique_ptr<Scene> m_scene;
     bool m_running = false;
     double m_accumulator = 0.0;

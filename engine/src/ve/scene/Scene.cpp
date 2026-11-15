@@ -44,6 +44,17 @@ GameObject* Scene::find(const std::string& name) const
     return nullptr;
 }
 
+GameObject* Scene::findById(uint64_t id) const
+{
+    for (const auto& o : m_objects) {
+        if (!o->m_destroyed && o->id() == id) return o.get();
+    }
+    for (const auto& o : m_pending) {
+        if (!o->m_destroyed && o->id() == id) return o.get();
+    }
+    return nullptr;
+}
+
 std::vector<GameObject*> Scene::findAllWithTag(const std::string& tag) const
 {
     std::vector<GameObject*> result;
@@ -114,9 +125,10 @@ void Scene::fixedUpdate(float dt)
     });
 }
 
-void Scene::update(float dt)
+void Scene::update(float dt, bool editorOnly)
 {
-    forActive([dt](GameObject& o) {
+    forActive([dt, editorOnly](GameObject& o) {
+        if (editorOnly && !o.runInEditor) return;
         o.update(dt);
         for (size_t i = 0; i < o.m_components.size(); ++i) {
             Component* c = o.m_components[i].get();
@@ -125,9 +137,10 @@ void Scene::update(float dt)
     });
 }
 
-void Scene::lateUpdate(float dt)
+void Scene::lateUpdate(float dt, bool editorOnly)
 {
-    forActive([dt](GameObject& o) {
+    forActive([dt, editorOnly](GameObject& o) {
+        if (editorOnly && !o.runInEditor) return;
         o.lateUpdate(dt);
         for (size_t i = 0; i < o.m_components.size(); ++i) {
             Component* c = o.m_components[i].get();

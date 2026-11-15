@@ -3,6 +3,7 @@
 #include "ve/scene/Scene.hpp"
 
 #include <algorithm>
+#include <random>
 
 namespace ve {
 
@@ -16,7 +17,17 @@ bool Component::isActive() const
     return enabled && m_owner && m_owner->activeInHierarchy() && !m_owner->isDestroyed();
 }
 
-GameObject::GameObject(std::string name) : m_name(std::move(name)), m_transform(*this) {}
+namespace {
+uint64_t newObjectId()
+{
+    static std::mt19937_64 rng{std::random_device{}()};
+    uint64_t id = 0;
+    while (id == 0) id = rng();
+    return id;
+}
+} // namespace
+
+GameObject::GameObject(std::string name) : m_name(std::move(name)), m_id(newObjectId()), m_transform(*this) {}
 
 GameObject::~GameObject() = default;
 
@@ -51,12 +62,13 @@ void GameObject::attachComponent(std::unique_ptr<Component> component, std::type
 
 void GameObject::removeComponent(Component* component)
 {
-    auto it = std::find_if(m_components.begin(), m_components.end(),
-                           [&](const auto& c) { return c.get() == component; });
-    if (it == m_components.end()) return;
+    auto find = [&] {
+        return std::find_if(m_components.begin(), m_components.end(), [&](const auto& c) { return c.get() == component; });
+    };
+    if (find() == m_components.end()) return;
     if (m_scene) m_scene->unregisterComponent(component);
-    component->onDestroy();
-    m_components.erase(it);
+    component->onDestroy(); // may add/remove other components: look it up again afterwards
+    if (auto it = find(); it != m_components.end()) m_components.erase(it);
 }
 
 } // namespace ve

@@ -9,12 +9,14 @@
 // =============================================================================
 
 #include "DayNight.hpp"
+#include "EditorTest.hpp"
 #include "Noise2D.hpp"
 #include "Player.hpp"
 #include "Props.hpp"
 #include "Terrain.hpp"
 #include "Vegetation.hpp"
 
+#include <ve/editor/Editor.hpp>
 #include <ve/ve.hpp>
 #include <vfx/Atmosphere.hpp>
 #include <vfx/Bloom.hpp>
@@ -234,6 +236,9 @@ int main()
 
         ve::Engine engine(config);
         buildWorld(engine);
+        // SAVANNA_EDITOR=1: start in the editor (same as pressing F2).
+        if (std::getenv("SAVANNA_EDITOR") && engine.editor()) engine.editor()->setMode(ve::Editor::Mode::Edit);
+        if (std::getenv("SAVANNA_EDITORTEST")) engine.scene().spawn<savanna::EditorTest>();
         engine.run();
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << '\n';

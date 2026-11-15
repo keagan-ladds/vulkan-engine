@@ -45,6 +45,9 @@ function(ve_setup_game TARGET)
 
     if(ARG_ASSETS)
         get_filename_component(ASSET_DIR "${ARG_ASSETS}" ABSOLUTE)
+        # Lets the engine (editor) read and save assets in the source folder,
+        # not the copy in bin/ that the next build would overwrite.
+        file(GENERATE OUTPUT ${VE_OUTPUT_DIR}/ve-source-assets.txt CONTENT "${ASSET_DIR}")
         add_custom_target(${TARGET}_assets
             COMMAND ${CMAKE_COMMAND} -E make_directory ${VE_OUTPUT_DIR}/assets
             COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different ${ASSET_DIR} ${VE_OUTPUT_DIR}/assets

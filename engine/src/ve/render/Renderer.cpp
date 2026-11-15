@@ -613,6 +613,7 @@ void Renderer::gatherScene(Scene& scene)
             item.bounds = sm.bounds.transformed(world);
             item.distance = glm::length(item.bounds.center() - cam.position);
             item.castShadows = mr.castShadows;
+            item.owner = &mr.gameObject();
             m_frame.items.push_back(item);
         }
     });

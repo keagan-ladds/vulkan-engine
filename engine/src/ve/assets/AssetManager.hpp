@@ -33,6 +33,7 @@ public:
     void clear(); // drops the cache (assets still referenced elsewhere stay alive)
 
     void addSearchPath(const std::filesystem::path& path);
+    const std::vector<std::filesystem::path>& searchPaths() const { return m_searchPaths; }
     // Absolute path of an asset; throws if it can't be found.
     std::filesystem::path resolve(const std::filesystem::path& path) const;
     bool exists(const std::filesystem::path& path) const;

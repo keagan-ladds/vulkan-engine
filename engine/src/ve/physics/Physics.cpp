@@ -466,8 +466,30 @@ Rigidbody::~Rigidbody()
     destroyBody();
 }
 
+void Rigidbody::rebuild()
+{
+    if (!m_startedOnce) return; // start() will build it with the new settings
+    destroyBody();
+    if (shape != ColliderShape::Custom) collider = {};
+    start();
+}
+
 void Rigidbody::start()
 {
+    m_startedOnce = true;
+    if (!collider.valid() && shape != ColliderShape::Custom) {
+        const glm::vec3 s = glm::max(shapeSize, glm::vec3(0.01f));
+        switch (shape) {
+        case ColliderShape::Box: collider = Collider::box(s * 0.5f); break;
+        case ColliderShape::Sphere: collider = Collider::sphere(s.x * 0.5f); break;
+        case ColliderShape::Capsule:
+            collider = Collider::capsule(std::max(s.y * 0.5f - s.x * 0.5f, 0.01f), s.x * 0.5f);
+            break;
+        case ColliderShape::Cylinder: collider = Collider::cylinder(s.y * 0.5f, s.x * 0.5f); break;
+        default: break;
+        }
+        if (shapeOffset != glm::vec3(0.0f)) collider = collider.offset(shapeOffset);
+    }
     if (!collider.valid()) {
         log::warn("Rigidbody on '{}' has no collider", gameObject().name());
         return;

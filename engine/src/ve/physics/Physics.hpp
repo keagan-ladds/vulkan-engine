@@ -124,6 +124,10 @@ private:
     std::unique_ptr<Impl> m_impl;
 };
 
+// Simple collider shapes described by numbers (editable in the editor and
+// saved in scene files; a Collider itself is an opaque physics shape).
+enum class ColliderShape { Custom, Box, Sphere, Capsule, Cylinder };
+
 class Rigidbody : public Component {
 public:
     explicit Rigidbody(Collider collider = {}, BodyType type = BodyType::Dynamic);
@@ -132,6 +136,14 @@ public:
     // --- Settings (read when the body is created in start()) ---------------------
     Collider collider;
     BodyType type;
+    // When shape != Custom (and no collider was given), the collider is built from
+    // these: Box = size (full extents); Sphere = size.x diameter; Capsule /
+    // Cylinder = size.x diameter, size.y total height (along Y). offset moves it.
+    ColliderShape shape = ColliderShape::Custom;
+    glm::vec3 shapeSize{1.0f};
+    glm::vec3 shapeOffset{0.0f};
+    // Re-creates the body from the current settings (editor edits).
+    void rebuild();
     float mass = 0.0f;         // kg; 0 = computed from the shape's volume (density 1000 kg/m^3)
     float friction = 0.6f;
     float restitution = 0.1f;  // bounciness 0..1
@@ -167,6 +179,7 @@ public:
 private:
     void destroyBody();
     uint32_t m_bodyId = kInvalidBody;
+    bool m_startedOnce = false;
     glm::vec3 m_pendingVelocity{0.0f};
     bool m_hasPendingVelocity = false;
 };
