@@ -43,6 +43,6 @@ void CameraController::onGui()
     ImGui::SetNextWindowBgAlpha(0.4f);
     ImGui::Begin("##help", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
-    ImGui::TextUnformatted("RMB/Tab look  WASD move  Space/Ctrl up/down  F1 engine overlay  Esc quit");
+    ImGui::TextUnformatted("RMB/Tab look  WASD move  Space/Ctrl up/down  Arrows move sun  F1 engine overlay  Esc quit");
     ImGui::End();
 }

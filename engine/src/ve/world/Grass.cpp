@@ -83,20 +83,40 @@ void GrassPass::setup(RenderGraph&)
     m_tilesX = std::max(1, int(std::ceil(size.x / d.tileSize)));
     m_tilesZ = std::max(1, int(std::ceil(size.y / d.tileSize)));
     m_tileHeights.assign(size_t(m_tilesX) * m_tilesZ, glm::vec2(FLT_MAX, -FLT_MAX));
-    for (uint32_t z = 0; z < res; ++z) {
-        for (uint32_t x = 0; x < res; ++x) {
-            const glm::vec2 p = size * glm::vec2(float(x), float(z)) / float(res - 1);
-            const float h = heights[size_t(z) * res + x];
-            // A sample on a tile border belongs to both tiles.
-            for (int dz = -1; dz <= 0; ++dz) {
-                for (int dx = -1; dx <= 0; ++dx) {
-                    const int tx = int(std::floor(p.x / d.tileSize + 0.001f * float(dx)));
-                    const int tz = int(std::floor(p.y / d.tileSize + 0.001f * float(dz)));
-                    if (tx < 0 || tz < 0 || tx >= m_tilesX || tz >= m_tilesZ) continue;
-                    glm::vec2& t = m_tileHeights[size_t(tz) * m_tilesX + tx];
-                    t = {std::min(t.x, h), std::max(t.y, h)};
+    // The ground is bilinear between samples, so a tile's extremes are at the
+    // samples inside it or on its border: take both (coarse heightmaps may have
+    // no sample inside a tile at all).
+    auto heightAt = [&](glm::vec2 local) { // local = position - boundsMin
+        const glm::vec2 t = glm::clamp(local / size, 0.0f, 1.0f) * float(res - 1);
+        const glm::ivec2 i = glm::min(glm::ivec2(glm::floor(t)), glm::ivec2(int(res) - 2));
+        const glm::vec2 f = t - glm::vec2(i);
+        auto h = [&](int x, int z) { return heights[size_t(z) * res + size_t(x)]; };
+        return glm::mix(glm::mix(h(i.x, i.y), h(i.x + 1, i.y), f.x), glm::mix(h(i.x, i.y + 1), h(i.x + 1, i.y + 1), f.x), f.y);
+    };
+    const glm::vec2 cell = size / float(res - 1);
+    for (int tz = 0; tz < m_tilesZ; ++tz) {
+        for (int tx = 0; tx < m_tilesX; ++tx) {
+            const glm::vec2 lo = glm::vec2(float(tx), float(tz)) * d.tileSize;
+            const glm::vec2 hi = glm::min(lo + d.tileSize, size);
+            glm::vec2 range(FLT_MAX, -FLT_MAX);
+            auto add = [&](glm::vec2 p) {
+                const float h = heightAt(p);
+                range = {std::min(range.x, h), std::max(range.y, h)};
+            };
+            // Border: every sample-grid crossing along the four edges (+ corners).
+            for (float x = std::ceil(lo.x / cell.x) * cell.x; x <= hi.x; x += cell.x) { add({x, lo.y}); add({x, hi.y}); }
+            for (float z = std::ceil(lo.y / cell.y) * cell.y; z <= hi.y; z += cell.y) { add({lo.x, z}); add({hi.x, z}); }
+            add(lo); add(hi); add({lo.x, hi.y}); add({hi.x, lo.y});
+            // Samples inside.
+            const int x0 = int(std::ceil(lo.x / cell.x)), x1 = int(std::floor(hi.x / cell.x));
+            const int z0 = int(std::ceil(lo.y / cell.y)), z1 = int(std::floor(hi.y / cell.y));
+            for (int z = std::max(z0, 0); z <= std::min(z1, int(res) - 1); ++z) {
+                for (int x = std::max(x0, 0); x <= std::min(x1, int(res) - 1); ++x) {
+                    const float h = heights[size_t(z) * res + size_t(x)];
+                    range = {std::min(range.x, h), std::max(range.y, h)};
                 }
             }
+            m_tileHeights[size_t(tz) * m_tilesX + tx] = range;
         }
     }
 

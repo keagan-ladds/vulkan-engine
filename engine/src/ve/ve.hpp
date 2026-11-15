@@ -18,6 +18,8 @@
 #include "ve/render/Texture.hpp"
 #include "ve/render/passes/BuiltinPasses.hpp"
 #include "ve/render/passes/FullscreenPass.hpp"
+#include "ve/render/Impostor.hpp"
+#include "ve/render/Instancing.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/GameObject.hpp"
 #include "ve/scene/Scene.hpp"

@@ -34,9 +34,11 @@ assets/     copied to build/bin/assets on every build; load with assets().loadTe
 
 | File | Feature |
 |---|---|
-| `src/main.cpp` | Engine setup, optional effects, sun coloured by the atmosphere, PBR `StandardMaterial` with a texture, a custom-shader material, point light with shadows, particles, physics (static ground/spheres, kinematic spinning cubes, falling dynamic boxes) |
+| `src/main.cpp` | Engine setup, optional effects, opt-in screen-space GI / reflections / depth of field, sun coloured by the atmosphere, PBR `StandardMaterial` with a texture, a custom-shader material, point light with shadows, particles, physics (static ground/spheres, kinematic spinning cubes, falling dynamic boxes) |
+| `src/World.*` | GPU grass (`ve::GrassPass`, with shadows; cards commented) and rule-based streamed trees/rocks (`ve::FoliageSystem`) with LOD chains, an impostor, colliders, groves and avoid rules |
 | `src/CameraController.*` | A `GameObject` with behaviour (`update`, `onGui`) and a `Camera` component |
 | `src/Spinner.hpp` | A reusable `Component` |
+| `src/SunController.hpp` | The sun as a `GameObject`: arrow keys change its direction/height; colour from the atmosphere |
 | `shaders/mygame_toon.frag` | Custom (non-PBR) lighting using the engine's lights and shadows |
 
 ## Notes
@@ -48,5 +50,10 @@ assets/     copied to build/bin/assets on every build; load with assets().loadTe
   set `renderer.environment()` ambient colours and a clear colour yourself.
 - **Updating the engine:** pull the engine repo and rebuild. If the update
   changes APIs, its `docs/` will say so.
+- **Screen-space passes** (GI, reflections, DOF) are optional: delete their
+  `addPass` lines to drop them. GI/reflections need opaque shaders to write the
+  thin G-buffer (`outGBuffer = veGBuffer(N, roughness)`, see the toon shader).
+- **Foliage callbacks run on a worker thread**: `FoliageWorld::height` and layer
+  `density` functions must only read data that doesn't change.
 - Engine documentation and recipes live in the engine repo: `docs/03-conventions.md`
   (custom materials, post-process passes, components, global shader params).

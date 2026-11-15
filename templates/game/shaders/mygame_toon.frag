@@ -29,8 +29,10 @@ void main()
     vec3 V = normalize(frame.cameraPosition.xyz - inWorldPos);
     float viewDepth = dot(inWorldPos - frame.cameraPosition.xyz, frame.cameraForward.xyz);
 
-    // Ambient from the engine's sky/ground colours.
-    vec3 color = albedo * mix(frame.ambientGround.rgb, frame.ambientSky.rgb, N.y * 0.5 + 0.5);
+    // Ambient from the engine's sky/ground colours. veAmbientGround() removes the
+    // sunlit-ground bounce where the sun is hidden (e.g. behind hills at sunset).
+    VeSurface surface = veDefaultSurface(inWorldPos, N, albedo);
+    vec3 color = albedo * mix(veAmbientGround(surface), frame.ambientSky.rgb, N.y * 0.5 + 0.5);
 
     // Directional lights: quantise N.L into flat bands (with shadows).
     for (uint i = 0u; i < frame.lightCounts.x; ++i) {

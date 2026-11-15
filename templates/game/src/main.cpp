@@ -3,22 +3,30 @@
 //
 // This file shows the usual pieces; delete what you don't need:
 //   - engine setup + optional effects (sky, clouds, fog, bloom, particles)
+//   - optional screen-space passes: GI (bounce light + AO), reflections, depth of field
 //   - a sun whose colour comes from the atmosphere
 //   - the built-in PBR material (StandardMaterial) with a texture from assets/
 //   - a custom shader/material (shaders/mygame_toon.frag)
 //   - GameObjects with behaviour (CameraController) and a reusable Component (Spinner)
 //   - a point light with shadows + a particle emitter
 //   - physics: static, kinematic and dynamic Rigidbodies
+//   - world dressing (src/World.cpp): GPU grass with shadows, streamed trees/rocks
+//     with LODs, impostors and colliders (ve::FoliageSystem)
 //
 // Engine docs: <engine>/docs (architecture, recipes in 03-conventions.md).
 // =============================================================================
 
 #include "CameraController.hpp"
 #include "Spinner.hpp"
+#include "SunController.hpp"
+#include "World.hpp"
 
 #include <ve/ve.hpp>
 #include <vfx/Atmosphere.hpp>
+#include <vfx/DepthOfField.hpp>
 #include <vfx/Particles.hpp>
+#include <vfx/ScreenSpaceGI.hpp>
+#include <vfx/ScreenSpaceReflections.hpp>
 #include <vfx/Vfx.hpp>
 
 #include <algorithm>
@@ -43,16 +51,18 @@ int main()
         // Remove this (and NO_EFFECTS in CMake) for a plain renderer.
         vfx::Effects fx = vfx::addDefaultEffects(renderer);
 
-        // --- Sun -------------------------------------------------------------------------
-        const glm::vec3 towardsSun = glm::normalize(glm::vec3(-0.6f, 0.35f, -0.5f));
-        auto& sunObject = scene.spawn("Sun");
-        sunObject.transform().setRotation(glm::quatLookAt(-towardsSun, glm::vec3(0, 1, 0)));
-        auto& sun = sunObject.addComponent<ve::DirectionalLight>();
-        sun.intensity = 3.0f;
-        // Sunlight that passed through the atmosphere: warm when the sun is low.
-        const glm::vec3 t = vfx::AtmospherePass::sunTransmittance(towardsSun);
-        sun.color = t / std::max({t.r, t.g, t.b});
-        fx.atmosphere->sun = &sun; // the sky draws its sun disc where this light comes from
+        // Opt-in screen-space passes (each has a checkbox + settings in F1 > Render passes).
+        // Opaque shaders must write the thin G-buffer for GI/reflections (see shaders/mygame_toon.frag).
+        renderer.graph().addPass<vfx::ScreenSpaceGIPass>();          // bounce light + ambient occlusion
+        renderer.graph().addPass<vfx::ScreenSpaceReflectionsPass>(); // smooth and metal surfaces (the spheres)
+        auto& dof = renderer.graph().addPass<vfx::DepthOfFieldPass>();
+        dof.enabled = false; // e.g. enable while aiming or in a photo mode; autoFocus uses the screen centre
+
+        // --- Sun: arrow keys move it (src/SunController.hpp) ---------------------------------
+        auto& sun = scene.spawn<SunController>();
+        sun.azimuthDegrees = 220.0f;
+        sun.elevationDegrees = 20.0f;
+        fx.atmosphere->sun = &sun.light(); // the sky draws its sun disc (and sets ambient) from this light
 
         // --- Ground: built-in PBR material with a texture from assets/ -----------------
         auto groundMat = renderer.createStandardMaterial();
@@ -137,6 +147,10 @@ int main()
         // --- Camera ------------------------------------------------------------------------
         auto& camera = scene.spawn<CameraController>();
         camera.transform().setPosition({0.0f, 2.5f, 8.0f});
+
+        // --- World: grass + streamed trees and rocks (src/World.cpp) ----------------------
+        addGrass(renderer);
+        addFoliage(scene, renderer, camera); // colliders stream around the camera (use your player)
 
         engine.run();
     } catch (const std::exception& e) {
