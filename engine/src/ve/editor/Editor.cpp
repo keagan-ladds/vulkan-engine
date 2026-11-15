@@ -14,6 +14,7 @@
 #include "ve/scene/Scene.hpp"
 #include "ve/scene/SceneSerializer.hpp"
 #include "ve/ui/UiLayer.hpp"
+#include "ve/world/Terrain.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -128,8 +129,7 @@ void Editor::setMode(Mode mode)
 
     if (m_mode == Mode::Play && mode != Mode::Play && !m_playSnapshot.is_null()) {
         // Stop: every persistent object back to how it was when Play was pressed.
-        SceneSerializer::clearPersistent(scene);
-        SceneSerializer::loadJson(scene, m_playSnapshot);
+        restoreSnapshot(m_playSnapshot);
         m_playSnapshot = Json();
         m_status = "Stopped: scene restored";
         m_statusTime = 3.0f;
@@ -164,6 +164,41 @@ void Editor::setMode(Mode mode)
         m_looking = false;
     }
     m_mode = mode;
+}
+
+void Editor::restoreSnapshot(const Json& snapshot)
+{
+    // In place where possible: objects that still exist get their saved state
+    // re-applied (game code may hold pointers to them, e.g. the terrain); only
+    // objects destroyed during play are re-created, and ones created during
+    // play are removed.
+    Scene& scene = m_engine->scene();
+    std::set<uint64_t> keep;
+    std::function<void(const Json&)> collectIds = [&](const Json& j) {
+        keep.insert(SceneSerializer::idFromString(j.value("id", std::string())));
+        for (const Json& c : j.value("children", Json::array())) collectIds(c);
+    };
+    std::function<void(const Json&, GameObject*)> apply = [&](const Json& j, GameObject* parent) {
+        const uint64_t id = SceneSerializer::idFromString(j.value("id", std::string()));
+        keep.insert(id);
+        GameObject* o = scene.findById(id);
+        if (o && !o->isDestroyed() && SceneSerializer::applyObject(*o, j)) {
+            const Transform* want = parent ? &parent->transform() : o->transform().parent();
+            if (o->transform().parent() != want) o->setParent(parent, false);
+            afterTransformEdit(*o);
+            for (const Json& c : j.value("children", Json::array())) apply(c, o);
+        } else {
+            if (o && !o->isDestroyed()) o->destroy();
+            SceneSerializer::createObject(scene, j, parent, false);
+            collectIds(j);
+        }
+    };
+    for (const Json& oj : snapshot.value("objects", Json::array())) apply(oj, nullptr);
+    std::vector<GameObject*> extra;
+    for (const auto& o : scene.objects()) {
+        if (o->persistent && !o->isDestroyed() && !keep.count(o->id())) extra.push_back(o.get());
+    }
+    for (GameObject* o : extra) o->destroy();
 }
 
 GameObject* Editor::selected() const
@@ -1092,6 +1127,12 @@ void Editor::drawViewport()
             case AudioZone::Shape::Sphere: dd.sphere(glm::vec3(m[3]), z->radius * glm::length(glm::vec3(m[0])), col); break;
             case AudioZone::Shape::Cylinder: dd.cylinder(m, z->radius, 0.0f, z->height, col); break;
             }
+        }
+        if (auto* st = sel->getComponent<TerrainStamp>()) {
+            const glm::vec3 c(m[3]);
+            dd.circle(c, {0, 1, 0}, std::max(st->radius, 0.05f), IM_COL32(255, 160, 60, 230), 64);
+            dd.circle(c, {0, 1, 0}, st->radius + st->falloff, IM_COL32(255, 160, 60, 110), 64);
+            if (!st->biome.empty()) dd.circle(c, {0, 1, 0}, st->biomeRadius + st->biomeFalloff * 0.5f, IM_COL32(120, 255, 140, 160), 64);
         }
         if (auto* l = sel->getComponent<PointLight>()) dd.sphere(glm::vec3(m[3]), l->range, IM_COL32(255, 210, 80, 120));
         if (auto* a = sel->getComponent<AudioSource>(); a && a->spatial) {

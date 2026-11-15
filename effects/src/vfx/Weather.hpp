@@ -64,6 +64,7 @@ public:
 
     std::array<State, static_cast<size_t>(Type::Count)> presets;
     glm::vec2 windDirection{0.8f, 0.6f};
+    Type startWeather = Type::Clear;           // applied on start (unless setWeather was called first)
     std::shared_ptr<ve::AudioClip> rainSound;  // steady rain loop
     std::shared_ptr<ve::AudioClip> stormSound; // heavy rain + thunder loop (Thunderstorm)
     std::shared_ptr<ve::AudioClip> windSound;  // wind loop, volume follows wind strength
@@ -80,10 +81,12 @@ public:
     void update(float dt) override;
     void lateUpdate(float dt) override;
     void onGui() override {}
+    void onDestroy() override; // removes the rain object it created
 
 private:
     State m_from{}, m_current{};
     Type m_target = Type::Clear;
+    bool m_explicit = false;
     float m_t = 1.0f, m_duration = 1.0f;
     float m_wetness = 0.0f;
     float m_gustPhase = 0.0f;

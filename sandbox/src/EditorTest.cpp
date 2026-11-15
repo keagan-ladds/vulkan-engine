@@ -6,6 +6,7 @@
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Scene.hpp>
 #include <ve/scene/SceneSerializer.hpp>
+#include <ve/world/Terrain.hpp>
 
 #include <cstdlib>
 #include <filesystem>
@@ -70,6 +71,28 @@ void EditorTest::update(float)
     if (m_frame == 120) {
         if (auto* o = s.find("Test cube")) ed->select(o);
         log(std::string("selected for inspector: ") + (ed->selected() ? ed->selected()->name() : "(none)"));
+    }
+    // Terrain: move the kopje stamp 40 m east; the terrain must rebuild there.
+    if (m_frame == 125) {
+        if (auto* t = ve::Terrain::find(s)) {
+            m_terrainVersion = t->version();
+            log("kopje height before: old " + std::to_string(t->height(120, -80)) + ", new spot " + std::to_string(t->height(160, -80)));
+        }
+        if (auto* k = s.find("Kopje")) {
+            k->transform().setPosition(k->transform().position() + glm::vec3(40.0f, 0.0f, 0.0f));
+            ed->select(k);
+            if (std::string(std::getenv("SAVANNA_EDITORTEST")) == "hold") {
+                // Look at it from above for a screenshot.
+                if (auto* cam = s.find("Editor Camera")) {
+                    cam->transform().setPosition({160.0f, 110.0f, 30.0f});
+                }
+            }
+        }
+    }
+    if (m_frame == 145) {
+        if (auto* t = ve::Terrain::find(s))
+            log("terrain rebuilt: " + std::string(t->version() > m_terrainVersion ? "yes" : "NO") + ", old " +
+                std::to_string(t->height(120, -80)) + ", new spot " + std::to_string(t->height(160, -80)));
     }
     if (m_frame == 150 && std::string(std::getenv("SAVANNA_EDITORTEST")) != "hold") {
         log("done");

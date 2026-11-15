@@ -1,4 +1,4 @@
-#include "DayNight.hpp"
+#include "vfx/DayNight.hpp"
 
 #include <ve/ui/UiLayer.hpp>
 
@@ -12,19 +12,28 @@
 #include <ve/render/passes/BuiltinPasses.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Scene.hpp>
-#include <vfx/Atmosphere.hpp>
-#include <vfx/Weather.hpp>
+#include "vfx/Atmosphere.hpp"
+#include "vfx/Weather.hpp"
+
+#include <ve/editor/Editor.hpp>
 
 #include <glm/gtc/constants.hpp>
 
 #include <cmath>
 
-namespace savanna {
+namespace vfx {
 
 DayNightCycle::DayNightCycle() : GameObject("DayNight")
 {
-    // Lights are components on child objects; we aim them each frame.
-    m_sunObject = nullptr;
+    runInEditor = true; // the sky and lighting follow edits while the game is paused
+}
+
+void DayNightCycle::onDestroy()
+{
+    // The lights are separate objects we created.
+    if (m_sunObject) m_sunObject->destroy();
+    if (m_moonObject) m_moonObject->destroy();
+    m_sunObject = m_moonObject = nullptr;
 }
 
 glm::vec3 DayNightCycle::sunDirection(float hours)
@@ -38,10 +47,12 @@ glm::vec3 DayNightCycle::sunDirection(float hours)
 void DayNightCycle::start()
 {
     m_sunObject = &scene().spawn("Sun");
+    m_sunObject->runInEditor = true;
     m_sun = &m_sunObject->addComponent<ve::DirectionalLight>();
     m_sun->castShadows = true;
 
     m_moonObject = &scene().spawn("Moon");
+    m_moonObject->runInEditor = true;
     m_moon = &m_moonObject->addComponent<ve::DirectionalLight>();
     m_moon->castShadows = true;
     m_moon->color = {0.55f, 0.65f, 1.0f};
@@ -55,9 +66,15 @@ void DayNightCycle::start()
 void DayNightCycle::update(float dt)
 {
     ve::Input& in = input();
-    float speed = 24.0f / (dayLengthMinutes * 60.0f); // hours per second
-    if (in.keyDown(ve::Key::T)) speed *= 40.0f;        // fast forward
-    if (in.keyDown(ve::Key::G)) speed *= -40.0f;       // rewind
+    if (!weather) {
+        for (const auto& o : scene().objects()) {
+            if (auto* w = dynamic_cast<Weather*>(o.get()); w && !w->isDestroyed()) weather = w;
+        }
+    }
+    float speed = 24.0f / (std::max(dayLengthMinutes, 0.01f) * 60.0f); // hours per second
+    if (engine().editor() && engine().editor()->paused() && !advanceInEditor) speed = 0.0f;
+    if (timeKeys && in.keyDown(ve::Key::T)) speed = 24.0f / 60.0f; // fast forward: 1 h per 2.5 s
+    if (timeKeys && in.keyDown(ve::Key::G)) speed = -24.0f / 60.0f; // rewind
     timeOfDay = std::fmod(timeOfDay + speed * dt + 24.0f, 24.0f);
 
     m_towardsSun = sunDirection(timeOfDay);
@@ -104,4 +121,4 @@ void DayNightCycle::onGui()
     ImGui::End();
 }
 
-} // namespace savanna
+} // namespace vfx

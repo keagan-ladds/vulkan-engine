@@ -13,6 +13,7 @@ public:
 private:
     int m_frame = 0;
     size_t m_persistentAtPlay = 0;
+    uint64_t m_terrainVersion = 0;
 };
 
 } // namespace savanna

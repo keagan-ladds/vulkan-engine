@@ -8,15 +8,15 @@
 //   3D audio, ImGui HUD, and a fixed-timestep player controller.
 // =============================================================================
 
-#include "DayNight.hpp"
 #include "EditorTest.hpp"
 #include "Noise2D.hpp"
 #include "Player.hpp"
 #include "Props.hpp"
-#include "Terrain.hpp"
+#include "SavannaLayout.hpp"
 #include "Vegetation.hpp"
 
 #include <ve/editor/Editor.hpp>
+#include <ve/world/Terrain.hpp>
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SceneSerializer.hpp>
 #include <ve/ve.hpp>
@@ -29,6 +29,7 @@
 #include <vfx/ScreenSpaceReflections.hpp>
 #include <vfx/Vfx.hpp>
 #include <vfx/VolumetricFog.hpp>
+#include <vfx/DayNight.hpp>
 #include <vfx/Weather.hpp>
 
 #include <glm/gtc/constants.hpp>
@@ -48,7 +49,6 @@ void buildWorld(ve::Engine& engine)
 {
     ve::Renderer& r = engine.renderer();
     ve::Scene& scene = engine.scene();
-    ve::AssetManager& assets = engine.assets();
 
     // --- Optional effects: sky, clouds, fog, particles, bloom ----------------------
     vfx::Effects fx = vfx::addDefaultEffects(r);
@@ -67,27 +67,21 @@ void buildWorld(ve::Engine& engine)
     auto& grading = r.graph().addPass<vfx::ColorGradingPass>();
     grading.enabled = std::getenv("SAVANNA_GRADE") && std::string(std::getenv("SAVANNA_GRADE")) == "1";
 
-    // --- World ---------------------------------------------------------------------
-    auto& terrain = scene.spawn<Terrain>();
-    scene.spawn<Water>();
-    const PropLibrary props = buildPropLibrary(r);
-    auto& foliage = scatterProps(scene, terrain, props);
-
-    // --- Weather + day/night ------------------------------------------------------------
-    auto& weather = scene.spawn<vfx::Weather>();
-    weather.rainSound = assets.loadAudio("audio/rain_loop.wav");
-    weather.stormSound = assets.loadAudio("audio/rain_thunder_loop.wav", /*stream*/ true); // 48 s: stream from disk
-    weather.windSound = assets.loadAudio("audio/wind_loop.wav");                           // volume follows the wind
-    weather.setWeather(vfx::Weather::Type::Hazy, 0.01f);
-    auto& dayNight = scene.spawn<DayNightCycle>();
-    dayNight.weather = &weather;
-
-    setPropMaterial(props.material); // shared by Campfire / Torch (scene objects)
-
-    // --- Hand-placed level content: scenes/savanna.json (edit it in the editor, F2) -------
-    // Campfire, huts (+ audio zones), torches, crates, reed screens, sunstones,
-    // ambience and the player start. Everything procedural stays in code.
+    // --- The level: scenes/savanna.json (edit it in the editor, F2) ------------------------
+    // Terrain (shape, biomes, stamps), water, weather, day/night, the camp (huts +
+    // audio zones, campfire, torches, crates, reed screens), sunstones, ambience
+    // and the player start. Vegetation rules are still code (below) until Phase W4.
     std::vector<ve::GameObject*> level = ve::SceneSerializer::load(scene, "scenes/savanna.json");
+    ve::Terrain* terrainPtr = ve::Terrain::find(scene);
+    for (ve::GameObject* o : level) {
+        if (!terrainPtr) terrainPtr = dynamic_cast<ve::Terrain*>(o);
+    }
+    if (!terrainPtr) terrainPtr = &scene.spawn<ve::Terrain>(); // a scene without terrain: default one
+    ve::Terrain& terrain = *terrainPtr;
+
+    const PropLibrary props = buildPropLibrary(r);
+    setPropMaterial(props.material); // shared by Campfire / Torch (scene objects)
+    auto& foliage = scatterProps(scene, terrain, props);
     std::vector<glm::vec2> clearings; // no grass inside the huts
     for (ve::GameObject* o : level) {
         if (o->tag == "hut") clearings.emplace_back(o->transform().position().x, o->transform().position().z);
@@ -95,9 +89,9 @@ void buildWorld(ve::Engine& engine)
     addGrass(r, terrain, clearings);
 
     // --- Player: spawns at the PlayerStart marker ------------------------------------------
-    auto& player = scene.spawn<Player>(terrain);
+    auto& player = scene.spawn<Player>();
     player.setThrowable(props.rocks.variants[0][0].mesh, props.material, props.rocks.colliders[0]);
-    glm::vec2 start = Terrain::kCamp + glm::vec2(9.0f, 5.0f);
+    glm::vec2 start = layout::kCamp + glm::vec2(9.0f, 5.0f);
     float startYaw = glm::radians(78.0f);
     for (ve::GameObject* o : level) {
         if (dynamic_cast<PlayerStart*>(o)) {
@@ -108,13 +102,21 @@ void buildWorld(ve::Engine& engine)
     }
     player.teleport({start.x, terrain.height(start.x, start.y), start.y}, startYaw);
 
-    scene.spawn<Hud>(player, dayNight, weather);
+    scene.spawn<Hud>(player);
+
+    // Environment objects from the scene file (Weather, DayNightCycle, Water).
+    vfx::Weather* weather = nullptr;
+    vfx::DayNightCycle* dayNight = nullptr;
+    for (ve::GameObject* o : level) {
+        if (!weather) weather = dynamic_cast<vfx::Weather*>(o);
+        if (!dayNight) dayNight = dynamic_cast<vfx::DayNightCycle*>(o);
+    }
 
     // Test hooks (handy for screenshots / automated checks):
     //   SAVANNA_TIME=21.5  SAVANNA_WEATHER=0..4 (4 = thunderstorm)  SAVANNA_DEBUG=1  SAVANNA_FLY=x,y,z,yawDeg,pitchDeg
-    if (const char* t = std::getenv("SAVANNA_TIME")) dayNight.timeOfDay = std::strtof(t, nullptr);
-    if (const char* w = std::getenv("SAVANNA_WEATHER")) {
-        weather.setWeather(static_cast<vfx::Weather::Type>(std::atoi(w) % int(vfx::Weather::Type::Count)), 0.01f);
+    if (const char* t = std::getenv("SAVANNA_TIME"); t && dayNight) dayNight->timeOfDay = std::strtof(t, nullptr);
+    if (const char* w = std::getenv("SAVANNA_WEATHER"); w && weather) {
+        weather->setWeather(static_cast<vfx::Weather::Type>(std::atoi(w) % int(vfx::Weather::Type::Count)), 0.01f);
     }
     if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
     if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser

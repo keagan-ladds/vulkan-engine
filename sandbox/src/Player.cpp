@@ -1,6 +1,6 @@
 #include "Player.hpp"
 
-#include "Terrain.hpp"
+#include <ve/world/Terrain.hpp>
 
 #include <ve/core/Engine.hpp>
 #include <ve/core/Input.hpp>
@@ -14,7 +14,7 @@ namespace savanna {
 
 using ve::Key;
 
-Player::Player(const Terrain& terrain) : GameObject("Player"), m_terrain(terrain)
+Player::Player() : GameObject("Player")
 {
     // Input actions: gameplay code asks for "Jump" rather than a specific key,
     // so bindings can change without touching the logic.
@@ -144,7 +144,7 @@ void Player::update(float)
         move.y += in.axis(Key::LCtrl, Key::Space);
         const float speed = flySpeed * (in.actionDown("Sprint") ? 4.0f : 1.0f);
         glm::vec3 p = transform().position() + move * speed * dt;
-        p.y = std::max(p.y, m_terrain.height(p.x, p.z));
+        if (const ve::Terrain* t = ve::Terrain::find(scene())) p.y = std::max(p.y, t->height(p.x, p.z));
         m_controller->teleport(p);
     }
 }
@@ -160,7 +160,8 @@ void Player::fixedUpdate(float)
     glm::vec3 wish = fwd * in.axis(Key::S, Key::W) + right * in.axis(Key::A, Key::D);
     if (glm::length(wish) > 1.0f) wish = glm::normalize(wish);
     const glm::vec3 feet = transform().position();
-    const bool wading = m_terrain.height(feet.x, feet.z) < Terrain::kWaterLevel - 0.3f;
+    const ve::Terrain* terrain = ve::Terrain::find(scene());
+    const bool wading = terrain && terrain->height(feet.x, feet.z) < terrain->waterLevel - 0.3f;
     float speed = in.actionDown("Sprint") ? sprintSpeed : walkSpeed;
     if (wading) speed *= 0.5f;
 

@@ -26,3 +26,5 @@
 #include "ve/ui/UiLayer.hpp"
 #include "ve/world/Foliage.hpp"
 #include "ve/world/Grass.hpp"
+#include "ve/world/Noise.hpp"
+#include "ve/world/Terrain.hpp"

@@ -6,6 +6,7 @@
 #include "ve/physics/Physics.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/MeshComponents.hpp"
+#include "ve/world/Terrain.hpp"
 
 #include <algorithm>
 
@@ -135,6 +136,59 @@ void registerBuiltinTypes()
         t.field("angularDamping", &Rigidbody::angularDamping).range(0.0f, 10.0f).speed(0.01f);
         t.field("continuousCollision", &Rigidbody::continuousCollision);
         t.onChanged([](Rigidbody& rb) { rb.rebuild(); });
+    });
+
+    r.add<Terrain>("Terrain", [](TypeBuilder<Terrain>& t) {
+        t.category("World");
+        t.field("seed", &Terrain::seed);
+        t.field("size", &Terrain::size).range(16.0f, 16384.0f).speed(1.0f);
+        t.field("cellSize", &Terrain::cellSize).range(0.25f, 16.0f).speed(0.05f);
+        t.field("chunkCells", &Terrain::chunkCells).range(4.0f, 128.0f);
+        t.field("baseHeight", &Terrain::baseHeight);
+        t.field("noiseFrequency", &Terrain::noiseFrequency).range(0.0f, 0.1f).speed(0.0001f);
+        t.field("noiseAmplitude", &Terrain::noiseAmplitude).range(0.0f, 500.0f);
+        t.field("noiseOctaves", &Terrain::noiseOctaves).range(1.0f, 8.0f);
+        t.field("waves", &Terrain::waves).tooltip("amplitude, x frequency, z frequency");
+        t.field("borderStart", &Terrain::borderStart).range(0.0f, 10000.0f);
+        t.field("borderEnd", &Terrain::borderEnd).range(0.0f, 10000.0f);
+        t.field("borderHeight", &Terrain::borderHeight).range(0.0f, 1000.0f);
+        t.field("borderNoise", &Terrain::borderNoise).range(0.0f, 1000.0f);
+        t.field("borderNoiseFrequency", &Terrain::borderNoiseFrequency).range(0.0f, 0.1f).speed(0.0001f);
+        t.field("waterLevel", &Terrain::waterLevel);
+        t.field("rockColor", &Terrain::rockColor).color();
+        t.field("mudColor", &Terrain::mudColor).color();
+        t.field("steepStart", &Terrain::steepStart).range(0.0f, 1.0f).speed(0.005f);
+        t.field("steepEnd", &Terrain::steepEnd).range(0.0f, 1.0f).speed(0.005f);
+        t.field("borderRockStart", &Terrain::borderRockStart);
+        t.field("borderRockEnd", &Terrain::borderRockEnd);
+        t.field("borderRock", &Terrain::borderRock).range(0.0f, 1.0f).speed(0.01f);
+        t.field("brightnessVariation", &Terrain::brightnessVariation).range(0.0f, 1.0f).speed(0.01f);
+        t.field("detailTexture", &Terrain::detailTexture).assets(".png .jpg .jpeg .tga");
+        t.field("detailScales", &Terrain::detailScales);
+        t.field("wetnessSlot", &Terrain::wetnessSlot).range(-1.0f, 7.0f);
+        t.property("biomes", FieldKind::Json, [](const Terrain& x) { return x.biomesJson(); },
+                   [](Terrain& x, const Json& j) { x.setBiomesJson(j); })
+            .tooltip("[{name, color, color2, patchColor, patchFrequency, minHeight, maxHeight, maxSlope, coverage, ...}]; "
+                     "biome 0 fills the rest, later biomes paint over earlier ones");
+        t.onChanged([](Terrain& x) { x.markDirty(); });
+    });
+    r.add<TerrainStamp>("TerrainStamp", [](TypeBuilder<TerrainStamp>& t) {
+        t.category("World");
+        t.enumField("mode", &TerrainStamp::mode, {"Flatten (to this height)", "Raise"});
+        t.field("radius", &TerrainStamp::radius).range(0.0f, 10000.0f);
+        t.field("falloff", &TerrainStamp::falloff).range(0.0f, 10000.0f);
+        t.field("noiseAmplitude", &TerrainStamp::noiseAmplitude).tooltip("Flatten: noisy pools / bumps added to the target height");
+        t.field("noiseFrequency", &TerrainStamp::noiseFrequency).range(0.0f, 1.0f).speed(0.001f);
+        t.field("noiseSeed", &TerrainStamp::noiseSeed);
+        t.field("height", &TerrainStamp::height).tooltip("Raise: peak height (negative = pit)");
+        t.field("exponent", &TerrainStamp::exponent).range(0.1f, 8.0f).speed(0.01f);
+        t.field("ridgeAmount", &TerrainStamp::ridgeAmount);
+        t.field("ridgeFrequency", &TerrainStamp::ridgeFrequency).range(0.0f, 1.0f).speed(0.001f);
+        t.field("ridgeSeed", &TerrainStamp::ridgeSeed);
+        t.field("biome", &TerrainStamp::biome).tooltip("Paint this biome (by name) around the stamp");
+        t.field("biomeRadius", &TerrainStamp::biomeRadius).range(0.0f, 10000.0f);
+        t.field("biomeFalloff", &TerrainStamp::biomeFalloff).range(0.0f, 10000.0f);
+        t.field("biomeStrength", &TerrainStamp::biomeStrength).range(0.0f, 1.0f).speed(0.01f);
     });
 
     r.add<AudioSource>("AudioSource", [](TypeBuilder<AudioSource>& t) {

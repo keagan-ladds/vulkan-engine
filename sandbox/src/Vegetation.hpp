@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace ve {
+class Terrain;
 class Mesh;
 class Material;
 class InstanceGroup;
@@ -25,7 +26,6 @@ class Scene;
 
 namespace savanna {
 
-class Terrain;
 
 // Mesh variants of one kind of prop plus their physics shapes:
 // no colliders = walk through it, one = shared by all variants, else one per variant.
@@ -46,8 +46,8 @@ const char* propName(uint32_t userValue);
 
 PropLibrary buildPropLibrary(ve::Renderer& renderer);
 // Adds a ve::FoliageSystem with one layer per prop type (biome rules, streaming, colliders).
-ve::FoliageSystem& scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& lib);
+ve::FoliageSystem& scatterProps(ve::Scene& scene, const ve::Terrain& terrain, const PropLibrary& lib);
 // Adds GPU grass + reeds (ve::GrassPass x2).
-void addGrass(ve::Renderer& renderer, const Terrain& terrain, std::vector<glm::vec2> clearings = {}); // clearings: 3 m circles without grass
+void addGrass(ve::Renderer& renderer, const ve::Terrain& terrain, std::vector<glm::vec2> clearings = {}); // clearings: 3 m circles without grass
 
 } // namespace savanna

@@ -27,6 +27,7 @@ Weather::State lerp(const Weather::State& a, const Weather::State& b, float t)
 
 Weather::Weather() : GameObject("Weather")
 {
+    runInEditor = true; // sky, fog and sounds follow edits while the game is paused
     //                                  coverage density fog  haze  wind  rain  sun   thunder
     presets[size_t(Type::Clear)] =        {0.30f, 0.8f, 0.7f, 1.0f, 2.5f,  0.0f, 1.00f, 0.0f};
     presets[size_t(Type::Hazy)] =         {0.45f, 1.0f, 1.3f, 2.2f, 4.0f,  0.0f, 0.85f, 0.0f};
@@ -50,6 +51,7 @@ const char* Weather::name(Type type)
 
 void Weather::setWeather(Type type, float transitionSeconds)
 {
+    m_explicit = true;
     m_from = m_current;
     m_target = type;
     m_t = 0.0f;
@@ -63,6 +65,10 @@ void Weather::next(float transitionSeconds)
 
 void Weather::start()
 {
+    if (!m_explicit) {
+        setWeather(startWeather, 0.01f);
+        m_explicit = false;
+    }
     // Rain is a particle emitter that follows the camera around.
     auto& rainObj = scene().spawn("Rain");
     m_rainObject = &rainObj;
@@ -169,6 +175,14 @@ void Weather::update(float dt)
     setVolume(m_stormAudio, std::max(storm * stormVolume, stormBackground));
     setVolume(m_windAudio, std::min(m_current.wind / std::max(windVolumeAt, 0.1f), 1.6f) * windVolume);
     updateLightning(dt);
+}
+
+void Weather::onDestroy()
+{
+    if (m_rainObject) m_rainObject->destroy();
+    m_rainObject = nullptr;
+    m_rain = nullptr;
+    m_rainAudio = m_stormAudio = m_windAudio = nullptr;
 }
 
 void Weather::lateUpdate(float)

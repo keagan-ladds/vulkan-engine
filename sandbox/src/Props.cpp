@@ -1,9 +1,10 @@
 #include "Props.hpp"
 
-#include "DayNight.hpp"
 #include "Noise2D.hpp"
 #include "Player.hpp"
-#include "Terrain.hpp"
+#include "SavannaLayout.hpp"
+
+#include <ve/world/Terrain.hpp>
 #include "Vegetation.hpp"
 
 #include <ve/assets/AssetManager.hpp>
@@ -23,6 +24,8 @@
 #include <ve/render/Material.hpp>
 #include <ve/scene/Reflection.hpp>
 #include <vfx/Particles.hpp>
+#include <vfx/DayNight.hpp>
+#include <vfx/Water.hpp>
 #include <vfx/Weather.hpp>
 
 #include <glm/gtc/constants.hpp>
@@ -357,7 +360,7 @@ void AutoTest::update(float dt)
         if (!stones.empty()) static_cast<Sunstone*>(stones.front())->collect();
         ++m_step;
         // Physics: ray straight down onto the terrain, player standing, crates resting.
-        const glm::vec3 above(Terrain::kCamp.x + 3.0f, 200.0f, Terrain::kCamp.y + 3.0f);
+        const glm::vec3 above(layout::kCamp.x + 3.0f, 200.0f, layout::kCamp.y + 3.0f);
         if (auto hit = physics().raycast(above, {0, -1, 0}, 400.0f)) {
             log("raycast down hit '" + (hit->gameObject ? hit->gameObject->name() : std::string("?")) +
                 "' at y=" + std::to_string(hit->point.y) + " (terrain says " +
@@ -483,39 +486,23 @@ void AutoTest::update(float dt)
 // Water
 // -----------------------------------------------------------------------------
 
-Water::Water() : GameObject("Water")
-{
-    ve::Renderer& r = renderer();
-    ve::ShaderDesc desc;
-    desc.name = "Water";
-    desc.vertex = "water.vert";
-    desc.fragment = "water.frag";
-    desc.blend = ve::BlendMode::AlphaBlend;
-    desc.queue = ve::RenderQueue::Transparent;
-    desc.depthWrite = false;
-    desc.castShadows = false;
-    desc.cull = ve::CullMode::None;
-    auto mat = r.createMaterial(r.createShader(desc));
-    mat->setVector(0, {0.05f, 0.09f, 0.06f, 1.0f}); // deep colour (murky swamp water)
-    mat->setVector(1, {0.22f, 0.25f, 0.15f, 1.0f}); // shallow colour
-    mat->setVector(2, {1.2f, 0.5f, 0.35f, 0.12f});  // absorption, shore foam, ripple scale, ripple strength
-    // The atmosphere's sky LUT is a render-graph texture; it's in the bindless
-    // table like any other, so the material can just reference its index.
-    const ve::TextureId lut = r.graph().texture("SkyViewLUT");
-    mat->setTextureIndex(0, lut != ve::kNoTexture ? r.graph().get(lut).sampledIndex : ve::kInvalidIndex);
-
-    auto mesh = ve::Mesh::create(r, ve::primitives::plane(640.0f, 640.0f, 8, 8), {}, "water");
-    auto& mr = addComponent<ve::MeshRenderer>(mesh, mat);
-    mr.castShadows = false;
-}
-
 // -----------------------------------------------------------------------------
 // HUD
 // -----------------------------------------------------------------------------
 
-Hud::Hud(Player& player, DayNightCycle& dayNight, vfx::Weather& weather)
-    : GameObject("HUD"), m_player(player), m_dayNight(dayNight), m_weather(weather)
+Hud::Hud(Player& player) : GameObject("HUD"), m_player(player)
 {
+}
+
+void Hud::findEnvironment()
+{
+    if (m_weather && m_weather->isDestroyed()) m_weather = nullptr;
+    if (m_dayNight && m_dayNight->isDestroyed()) m_dayNight = nullptr;
+    if (m_weather && m_dayNight) return;
+    for (const auto& o : scene().objects()) {
+        if (!m_weather) m_weather = dynamic_cast<vfx::Weather*>(o.get());
+        if (!m_dayNight) m_dayNight = dynamic_cast<vfx::DayNightCycle*>(o.get());
+    }
 }
 
 void Hud::update(float dt)
@@ -523,7 +510,8 @@ void Hud::update(float dt)
     gameState().total = gameState().collected + Sunstone::remaining(scene()); // stones can be added in the editor
     GameState& gs = gameState();
     gs.messageTimer = std::max(0.0f, gs.messageTimer - dt);
-    if (input().keyPressed(ve::Key::R)) m_weather.next(12.0f);
+    findEnvironment();
+    if (input().keyPressed(ve::Key::R) && m_weather) m_weather->next(12.0f);
     if (input().keyPressed(ve::Key::H)) m_showHelp = !m_showHelp;
 }
 
@@ -542,11 +530,12 @@ void Hud::onGui()
 
     // Status panel (top right).
     const GameState& gs = gameState();
-    const int hours = static_cast<int>(m_dayNight.timeOfDay);
-    const int minutes = static_cast<int>((m_dayNight.timeOfDay - hours) * 60.0f);
+    const float tod = m_dayNight ? m_dayNight->timeOfDay : 12.0f;
+    const int hours = static_cast<int>(tod);
+    const int minutes = static_cast<int>((tod - hours) * 60.0f);
     char buf[256];
     std::snprintf(buf, sizeof(buf), "%02d:%02d   %s%s\nSunstones: %d / %d", hours, minutes,
-                  vfx::Weather::name(m_weather.weather()), m_player.flying() ? "   [FLY]" : "", gs.collected, gs.total);
+                  m_weather ? vfx::Weather::name(m_weather->weather()) : "-", m_player.flying() ? "   [FLY]" : "", gs.collected, gs.total);
     const ImVec2 size = ImGui::CalcTextSize(buf);
     const ImVec2 p(io.DisplaySize.x - size.x - 20.0f, 16.0f);
     dl->AddRectFilled({p.x - 10, p.y - 6}, {p.x + size.x + 10, p.y + size.y + 6}, IM_COL32(20, 14, 8, 140), 6.0f);

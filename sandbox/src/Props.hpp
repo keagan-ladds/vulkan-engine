@@ -12,6 +12,7 @@
 #include <vector>
 
 namespace ve {
+class Terrain;
 class Material;
 class Mesh;
 class PointLight;
@@ -20,12 +21,12 @@ class AudioClip;
 namespace vfx {
 class ParticleEmitter;
 class Weather;
+class DayNightCycle;
 } // namespace vfx
 
 namespace savanna {
 
 class Player;
-class DayNightCycle;
 
 // Shared game state (a real game would have an inventory system).
 struct GameState {
@@ -104,22 +105,17 @@ public:
     PlayerStart() : GameObject("PlayerStart") {}
 };
 
-// Water plane with a custom transparent shader (soft shores, sky reflections, rain ripples).
-class Water : public ve::GameObject {
-public:
-    Water();
-};
 
 // Scripted smoke test (SAVANNA_AUTOTEST=1): picks up a sunstone, cycles the
 // weather, then quits, logging what happened. Exercises gameplay code paths
 // (deferred destroy, one-shot audio, weather transitions) without input.
 class AutoTest : public ve::GameObject {
 public:
-    explicit AutoTest(const class Terrain& terrain) : GameObject("AutoTest"), m_terrain(&terrain) {}
+    explicit AutoTest(const ve::Terrain& terrain) : GameObject("AutoTest"), m_terrain(&terrain) {}
     void update(float dt) override;
 
 private:
-    const class Terrain* m_terrain;
+    const ve::Terrain* m_terrain;
     std::vector<glm::vec3> m_crateStart;
     bool m_throwPending = false;
     float m_t = 0.0f;
@@ -128,14 +124,15 @@ private:
 
 class Hud : public ve::GameObject {
 public:
-    Hud(Player& player, DayNightCycle& dayNight, vfx::Weather& weather);
+    explicit Hud(Player& player);
     void update(float dt) override;
     void onGui() override;
 
 private:
+    void findEnvironment(); // the scene's Weather / DayNightCycle (scene objects)
     Player& m_player;
-    DayNightCycle& m_dayNight;
-    vfx::Weather& m_weather;
+    vfx::DayNightCycle* m_dayNight = nullptr;
+    vfx::Weather* m_weather = nullptr;
     bool m_showHelp = true;
 };
 

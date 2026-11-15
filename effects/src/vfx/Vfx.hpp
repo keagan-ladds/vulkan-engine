@@ -43,6 +43,11 @@ struct Effects {
 };
 
 // Adds sky + clouds, volumetric fog, particles and bloom with sensible defaults.
+// Also registers the effects' scene types (registerTypes()).
 Effects addDefaultEffects(ve::Renderer& renderer);
+
+// Registers Weather, DayNightCycle, Water and ParticleEmitter for scene files
+// and the editor (called by addDefaultEffects; safe to call more than once).
+void registerTypes();
 
 } // namespace vfx

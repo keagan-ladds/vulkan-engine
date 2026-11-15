@@ -22,13 +22,16 @@ class Mesh;
 class Material;
 } // namespace ve
 
+namespace ve {
+class Terrain;
+}
+
 namespace savanna {
 
-class Terrain;
 
 class Player : public ve::GameObject {
 public:
-    explicit Player(const Terrain& terrain);
+    Player();
 
     void start() override;
     void update(float dt) override;
@@ -56,7 +59,6 @@ public:
     float mouseSensitivity = 0.0022f;
 
 private:
-    const Terrain& m_terrain;
     ve::CharacterController* m_controller = nullptr;
     ve::GameObject* m_head = nullptr;
     glm::vec3 m_walkVelocity{0.0f};

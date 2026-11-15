@@ -72,6 +72,7 @@ private:
     };
 
     ObjectState snapshot(uint64_t id) const;
+    void restoreSnapshot(const Json& sceneJson);
     void applyStates(const std::vector<ObjectState>& states);
     void pushUndo(UndoEntry entry);
     void beginEdit(GameObject& object);

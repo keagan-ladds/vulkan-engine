@@ -1,4 +1,8 @@
 #include "vfx/Vfx.hpp"
+#include <ve/scene/Reflection.hpp>
+#include "vfx/Weather.hpp"
+#include "vfx/Water.hpp"
+#include "vfx/DayNight.hpp"
 
 #include "vfx/Atmosphere.hpp"
 #include "vfx/Bloom.hpp"
@@ -9,8 +13,55 @@
 
 namespace vfx {
 
+void registerTypes()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+    ve::TypeRegistry& r = ve::TypeRegistry::get();
+
+    r.add<Weather>("Weather", [](ve::TypeBuilder<Weather>& t) {
+        t.category("Environment");
+        t.enumField("startWeather", &Weather::startWeather, {"Clear", "Hazy", "Overcast", "Rain", "Thunderstorm"});
+        t.field("windDirection", &Weather::windDirection);
+        t.field("rainSound", &Weather::rainSound);
+        t.field("stormSound", &Weather::stormSound);
+        t.field("windSound", &Weather::windSound);
+        t.field("rainVolume", &Weather::rainVolume).range(0.0f, 2.0f).speed(0.01f);
+        t.field("stormVolume", &Weather::stormVolume).range(0.0f, 2.0f).speed(0.01f);
+        t.field("windVolume", &Weather::windVolume).range(0.0f, 2.0f).speed(0.01f);
+        t.field("stormBackground", &Weather::stormBackground).range(0.0f, 1.0f).speed(0.01f);
+        t.field("lightning", &Weather::lightning);
+        t.field("lightningInterval", &Weather::lightningInterval).range(1.0f, 120.0f);
+        t.field("lightningStrength", &Weather::lightningStrength).range(0.0f, 10.0f);
+        t.onChanged([](Weather& w) { w.setWeather(w.startWeather, 1.0f); });
+    });
+    r.add<DayNightCycle>("DayNightCycle", [](ve::TypeBuilder<DayNightCycle>& t) {
+        t.category("Environment");
+        t.field("timeOfDay", &DayNightCycle::timeOfDay).range(0.0f, 24.0f);
+        t.field("dayLengthMinutes", &DayNightCycle::dayLengthMinutes).range(0.1f, 600.0f);
+        t.field("sunIntensity", &DayNightCycle::sunIntensity).range(0.0f, 20.0f);
+        t.field("moonIntensity", &DayNightCycle::moonIntensity).range(0.0f, 2.0f).speed(0.005f);
+        t.field("nightExposure", &DayNightCycle::nightExposure).range(0.5f, 5.0f).speed(0.01f);
+        t.field("advanceInEditor", &DayNightCycle::advanceInEditor);
+        t.field("timeKeys", &DayNightCycle::timeKeys).tooltip("T / G fast-forward / rewind time");
+    });
+    r.add<Water>("Water", [](ve::TypeBuilder<Water>& t) {
+        t.category("Environment");
+        t.field("size", &Water::size).range(1.0f, 100000.0f);
+        t.field("deepColor", &Water::deepColor).color();
+        t.field("shallowColor", &Water::shallowColor).color();
+        t.field("absorption", &Water::absorption).range(0.0f, 10.0f).speed(0.01f);
+        t.field("shoreFoam", &Water::shoreFoam).range(0.0f, 2.0f).speed(0.01f);
+        t.field("rippleScale", &Water::rippleScale).range(0.01f, 5.0f).speed(0.01f);
+        t.field("rippleStrength", &Water::rippleStrength).range(0.0f, 1.0f).speed(0.005f);
+        t.onChanged([](Water& w) { w.rebuild(); });
+    });
+}
+
 Effects addDefaultEffects(ve::Renderer& renderer)
 {
+    registerTypes();
     ve::RenderGraph& g = renderer.graph();
     Effects fx;
     fx.atmosphere = &g.addPass<AtmospherePass>();

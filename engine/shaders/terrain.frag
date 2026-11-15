@@ -1,11 +1,11 @@
 #version 460
-// Terrain material (a custom shader using the engine's lighting):
-//   params[0].xy = detail texture scales (near, far), params[1].rgb = rock colour
-//   textures[0]  = greyscale detail noise (imported PNG)
-// Biome colours come from the vertex colour; the weather's wetness
-// (vfx.glsl) darkens and polishes the ground when it rains.
+// ve::Terrain material:
+//   params[0].xy = detail texture scales (near, far), params[1].rgb = rock colour,
+//   params[1].w = global param slot holding wetness in .x (-1 = none; the
+//   effects' weather uses slot 1), params[2].x = water level
+//   textures[0]  = greyscale detail noise
+// Biome colours come from the vertex colour (computed by ve::Terrain).
 #include "ve_lighting.glsl"
-#include "vfx.glsl"
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
@@ -30,8 +30,8 @@ void main()
     albedo = mix(albedo, m.params[1].rgb * mix(0.7, 1.15, d1), steep);
 
     // Wetness: near the waterline, and everywhere when it rains.
-    float shore = smoothstep(0.8, 0.0, inWorldPos.y);
-    float wet = clamp(max(shore, VFX_WEATHER.x * 0.8), 0.0, 1.0);
+    float shore = smoothstep(0.8, 0.0, inWorldPos.y - m.params[2].x);
+    float wet = clamp(max(shore, (int(m.params[1].w) >= 0 ? frame.globalParams[int(m.params[1].w)].x : 0.0) * 0.8), 0.0, 1.0);
     albedo *= mix(1.0, 0.55, wet);
 
     VeSurface s = veDefaultSurface(inWorldPos, N, albedo);

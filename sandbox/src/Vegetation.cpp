@@ -1,7 +1,9 @@
 #include "Vegetation.hpp"
 
 #include "Noise2D.hpp"
-#include "Terrain.hpp"
+#include "SavannaLayout.hpp"
+
+#include <ve/world/Terrain.hpp>
 
 #include <ve/core/Engine.hpp>
 #include <ve/core/Log.hpp>
@@ -30,6 +32,18 @@
 #include <unordered_map>
 
 namespace savanna {
+
+namespace {
+// Biome weights from the terrain (scenes/savanna.json): swamp, and rock = the
+// Rocky biome (painted at 0.9 strength around the kopjes) or steep slopes.
+// They take the terrain's immutable data (safe on worker threads, and still
+// valid if the Terrain object is replaced).
+float swampMask(const ve::TerrainData& t, float x, float z) { return t.biomeWeight(t.biomeIndex("Swamp"), x, z); }
+float rockMask(const ve::TerrainData& t, float x, float z)
+{
+    return std::max(t.biomeWeight(t.biomeIndex("Rocky"), x, z) / 0.9f, glm::smoothstep(0.25f, 0.45f, 1.0f - t.normal(x, z).y));
+}
+} // namespace
 
 using ve::MeshData;
 namespace prim = ve::primitives;
@@ -236,19 +250,21 @@ const char* propName(uint32_t userValue)
     return userValue < std::size(kPropNames) ? kPropNames[userValue] : "";
 }
 
-ve::FoliageSystem& scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& lib)
+ve::FoliageSystem& scatterProps(ve::Scene& scene, const ve::Terrain& terrain, const PropLibrary& lib)
 {
+    // Worker-thread callbacks capture an immutable copy of the terrain data.
+    auto td = terrain.data();
     // Streamed, rule-based placement (ve::FoliageSystem): every layer is a
     // jittered grid filtered by biome rules, so the same world appears no
     // matter where the player starts or in which order cells load.
     ve::FoliageWorld world;
-    const float edge = Terrain::kHalfSize - 45.0f; // stay off the border mountains
+    const float edge = layout::kHalfSize - 45.0f; // stay off the border mountains
     world.boundsMin = glm::vec2(-edge);
     world.boundsMax = glm::vec2(edge);
-    world.height = [&terrain](glm::vec2 p) { return terrain.height(p.x, p.y); };
-    world.normal = [&terrain](glm::vec2 p) { return terrain.normal(p.x, p.y); };
+    world.height = [td](glm::vec2 p) { return td->height(p.x, p.y); };
+    world.normal = [td](glm::vec2 p) { return td->normal(p.x, p.y); };
     auto& foliage = scene.spawn<ve::FoliageSystem>(world);
-    foliage.addExclusion(Terrain::kCamp, 26.0f);
+    foliage.addExclusion(layout::kCamp, 26.0f);
 
     auto layer = [&](uint32_t kind, const PropSet& set, float spacing, float probability, float minScale, float maxScale) {
         ve::FoliageLayer l;
@@ -265,9 +281,9 @@ ve::FoliageSystem& scatterProps(ve::Scene& scene, const Terrain& terrain, const 
         l.seed = 1000u + kind;
         return l;
     };
-    auto savannah = [&terrain](const ve::FoliageSample& s) {
-        return s.height > 0.6f && terrain.swampMask(s.position.x, s.position.y) < 0.3f &&
-                       terrain.rockMask(s.position.x, s.position.y) < 0.4f
+    auto savannah = [td](const ve::FoliageSample& s) {
+        return s.height > 0.6f && swampMask(*td, s.position.x, s.position.y) < 0.3f &&
+                       rockMask(*td, s.position.x, s.position.y) < 0.4f
                    ? 1.0f
                    : 0.0f;
     };
@@ -290,8 +306,8 @@ ve::FoliageSystem& scatterProps(ve::Scene& scene, const Terrain& terrain, const 
 
     auto fever = layer(3, lib.feverTrees, 5.5f, 0.6f, 0.8f, 1.2f);
     fever.minHeight = 0.2f;
-    fever.density = [&terrain](const ve::FoliageSample& s) {
-        return terrain.swampMask(s.position.x, s.position.y) > 0.35f ? 1.0f : 0.0f;
+    fever.density = [td](const ve::FoliageSample& s) {
+        return swampMask(*td, s.position.x, s.position.y) > 0.35f ? 1.0f : 0.0f;
     };
     fever.viewDistance = 3000.0f;
     fever.maxInstances = 2000;
@@ -300,10 +316,10 @@ ve::FoliageSystem& scatterProps(ve::Scene& scene, const Terrain& terrain, const 
     auto boulders = layer(4, lib.boulders, 6.0f, 0.35f, 2.0f, 5.0f);
     boulders.minHeight = 0.5f;
     boulders.alignToNormal = 0.5f;
-    boulders.density = [&terrain](const ve::FoliageSample& s) {
+    boulders.density = [td](const ve::FoliageSample& s) {
         const glm::vec2 p = s.position;
-        const bool nearKopje = glm::length(p - Terrain::kKopje) < 55.0f || glm::length(p - glm::vec2(-50.0f, -140.0f)) < 30.0f;
-        return nearKopje && terrain.rockMask(p.x, p.y) > 0.5f ? 1.0f : 0.0f;
+        const bool nearKopje = glm::length(p - layout::kKopje) < 55.0f || glm::length(p - layout::kSmallKopje) < 30.0f;
+        return nearKopje && rockMask(*td, p.x, p.y) > 0.5f ? 1.0f : 0.0f;
     };
     boulders.viewDistance = 3000.0f;
     boulders.maxInstances = 500;
@@ -365,21 +381,22 @@ std::shared_ptr<ve::Texture> makeGrassCardTexture(ve::Renderer& r)
 }
 } // namespace
 
-void addGrass(ve::Renderer& r, const Terrain& terrain, std::vector<glm::vec2> clearings)
+void addGrass(ve::Renderer& r, const ve::Terrain& terrain, std::vector<glm::vec2> clearings)
 {
+    auto td = terrain.data(); // sampled once at setup
     // GPU grass (ve::GrassPass): nothing stored per blade; density, colour and
     // height come from masks sampled once from the terrain's biome functions.
     ve::GrassDesc grass;
     grass.name = "Grass";
-    grass.boundsMin = glm::vec2(-Terrain::kHalfSize);
-    grass.boundsMax = glm::vec2(Terrain::kHalfSize);
-    grass.resolution = uint32_t(2.0f * Terrain::kHalfSize / Terrain::kCellSize) + 1; // = the terrain's samples
+    grass.boundsMin = glm::vec2(-layout::kHalfSize);
+    grass.boundsMax = glm::vec2(layout::kHalfSize);
+    grass.resolution = uint32_t(2.0f * layout::kHalfSize / terrain.cellSize) + 1; // = the terrain's samples
     grass.maskResolution = 640;
-    grass.height = [&terrain](glm::vec2 p) { return terrain.height(p.x, p.y); };
-    grass.mask = [&terrain, clearings](glm::vec2 p) {
-        const float h = terrain.height(p.x, p.y);
-        if (h < 0.25f || terrain.rockMask(p.x, p.y) > 0.45f || terrain.swampMask(p.x, p.y) > 0.6f) return glm::vec4(0.0f);
-        float camp = glm::smoothstep(8.0f, 14.0f, glm::length(p - Terrain::kCamp)); // trampled camp floor
+    grass.height = [td](glm::vec2 p) { return td->height(p.x, p.y); };
+    grass.mask = [td, clearings](glm::vec2 p) {
+        const float h = td->height(p.x, p.y);
+        if (h < 0.25f || rockMask(*td, p.x, p.y) > 0.45f || swampMask(*td, p.x, p.y) > 0.6f) return glm::vec4(0.0f);
+        float camp = glm::smoothstep(8.0f, 14.0f, glm::length(p - layout::kCamp)); // trampled camp floor
         for (const glm::vec2& c : clearings) camp *= glm::smoothstep(2.8f, 3.6f, glm::length(p - c)); // no grass inside huts
         const float density = glm::clamp(fbm(p * 0.03f, 2, 61) * 2.0f - 0.2f, 0.0f, 1.0f) * camp;
         return glm::vec4(density, fbm(p * 0.012f, 3, 31), glm::mix(0.7f, 1.0f, fbm(p * 0.05f, 2, 13)), 0.0f);
@@ -414,9 +431,9 @@ void addGrass(ve::Renderer& r, const Terrain& terrain, std::vector<glm::vec2> cl
 
     ve::GrassDesc reeds = grass;
     reeds.name = "Reeds";
-    reeds.mask = [&terrain](glm::vec2 p) {
-        const float h = terrain.height(p.x, p.y);
-        const bool reed = terrain.swampMask(p.x, p.y) > 0.4f && h > -0.5f && h < 0.6f;
+    reeds.mask = [td](glm::vec2 p) {
+        const float h = td->height(p.x, p.y);
+        const bool reed = swampMask(*td, p.x, p.y) > 0.4f && h > -0.5f && h < 0.6f;
         return reed ? glm::vec4(0.9f, fbm(p * 0.05f, 2, 3), 1.0f, 0.0f) : glm::vec4(0.0f);
     };
     reeds.colorA = {0.30f, 0.40f, 0.14f};
