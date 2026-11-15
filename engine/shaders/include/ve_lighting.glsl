@@ -47,14 +47,9 @@ int veCascadeIndex(VeDirectionalLight L, float viewDepth)
     return -1;
 }
 
-// Visibility (0 = fully shadowed, 1 = lit) of directional light `i`.
-float veDirectionalShadow(uint i, vec3 P, vec3 N, float viewDepth)
+// PCF visibility of `P` in cascade `c` of directional light `L`.
+float veSampleCascade(VeDirectionalLight L, int c, vec3 P, vec3 N)
 {
-    VeDirectionalLight L = lights.directional[i];
-    if (L.shadow.x < 0) return 1.0;
-    int c = veCascadeIndex(L, viewDepth);
-    if (c < 0) return 1.0;
-
     // Normal-offset bias: sample from slightly above the surface, scaled by
     // the size of a shadow texel in this cascade. Kills acne on slopes.
     vec3 offsetP = P + N * L.cascadeTexel[c] * frame.shadowParams.x;
@@ -72,7 +67,28 @@ float veDirectionalShadow(uint i, vec3 P, vec3 N, float viewDepth)
             sum += texture(veDirShadowMap, vec4(uv + vec2(x, y) * texel, layer, ndc.z));
         }
     }
-    float shadow = sum / 9.0;
+    return sum / 9.0;
+}
+
+// Visibility (0 = fully shadowed, 1 = lit) of directional light `i`.
+float veDirectionalShadow(uint i, vec3 P, vec3 N, float viewDepth)
+{
+    VeDirectionalLight L = lights.directional[i];
+    if (L.shadow.x < 0) return 1.0;
+    int c = veCascadeIndex(L, viewDepth);
+    if (c < 0) return 1.0;
+    float shadow = veSampleCascade(L, c, P, N);
+
+    // Blend into the next cascade over the last part of this one, so the
+    // resolution change doesn't show as a seam (only pixels in the band pay
+    // for the second lookup).
+    if (c + 1 < L.shadow.y) {
+        float begin = c > 0 ? L.cascadeSplits[c - 1] : 0.0;
+        float end = L.cascadeSplits[c];
+        float band = (end - begin) * 0.15;
+        float t = clamp((viewDepth - (end - band)) / max(band, 1e-4), 0.0, 1.0);
+        if (t > 0.0) shadow = mix(shadow, veSampleCascade(L, c + 1, P, N), t * t * (3.0 - 2.0 * t));
+    }
 
     // Fade out at the very end of the shadow distance instead of a hard edge.
     float last = L.cascadeSplits[L.shadow.y - 1];

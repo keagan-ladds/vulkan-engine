@@ -85,7 +85,7 @@ Next up: **Phase 12 (dense worlds)**, then F2 (animation) and building/gameplay 
 - [x] 3×3 hardware PCF (directional), 4-tap (point), normal-offset + slope bias, cascade selection, distance fade
 - [x] Per-cascade / per-face (+ light range) caster culling
 - [x] Debug UI: cascade visualisation toggle, bias sliders, live count/cascade changes
-- [ ] Cascade blending at split boundaries (seams can be visible on large flat areas)
+- [x] Cascade blending: the last 15% of each cascade blends into the next (each cascade's box is widened to cover the band)
 
 **Accept:** two shadowed directional lights (sun + moon) and ≥2 shadowed point lights (campfire + torches) render correct shadows, validation clean. ✅
 
@@ -296,7 +296,6 @@ Ordered roughly by how much they'll bite while building a game.
 2. **No temporal accumulation for clouds/fog.** They use per-pixel jitter plus
    a blur and look slightly soft. TAA or temporal reprojection would allow fewer
    steps and sharper results.
-3. **No cascade blending**, so cascade transitions can show a seam.
 4. **One draw call per submesh.** Fine for about 1k objects. Grass is
    pre-merged per 32 m cell. Large forests need GPU instancing or indirect
    draws (F3).

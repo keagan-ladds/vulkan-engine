@@ -677,6 +677,7 @@ void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uin
     const float tanHalf = std::tan(cam.fovY * 0.5f);
 
     float prevSplit = nearP;
+    float prevBegin = 0.0f; // where the previous cascade's range starts (0 for the first, like the shader)
     for (uint32_t c = 0; c < n; ++c) {
         // "Practical split scheme": blend of logarithmic and uniform splits.
         const float p = static_cast<float>(c + 1) / static_cast<float>(n);
@@ -687,7 +688,10 @@ void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uin
         // Corners of this slice of the camera frustum, in world space.
         glm::vec3 corners[8];
         int k = 0;
-        for (float d : {prevSplit, split}) {
+        // The shader blends the last 15% of each cascade into the next one, so
+        // the next one must cover that band too (16%: a little slack).
+        const float sliceStart = c == 0 ? nearP : std::max(nearP, prevSplit - (prevSplit - prevBegin) * 0.16f);
+        for (float d : {sliceStart, split}) {
             const float h = tanHalf * d, w = h * cam.aspect;
             const glm::vec3 center = cam.position + cam.forward * d;
             for (float sx : {-1.0f, 1.0f}) {
@@ -734,6 +738,7 @@ void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uin
 
         gpu.cascadeSplits[c] = split;
         gpu.cascadeTexel[c] = 2.0f * radius / res;
+        prevBegin = c == 0 ? 0.0f : prevSplit;
         prevSplit = split;
     }
     gpu.shadow = glm::ivec4(static_cast<int>(baseView), static_cast<int>(n), static_cast<int>(baseLayer), 0);

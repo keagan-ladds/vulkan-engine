@@ -38,7 +38,10 @@ struct VeGrassClump {
     bool visible;
 };
 
-// Bilinear height from exact samples (texelFetch: R32F needn't be filterable).
+// Ground height from exact samples (texelFetch: R32F needn't be filterable),
+// interpolated over the same two triangles per cell as the terrain mesh
+// (split along the (i, j+1) -> (i+1, j) diagonal), so roots sit on the
+// rendered surface instead of a bilinear one that floats or sinks mid-cell.
 float veGrassGroundHeight(VeMaterial m, vec2 xz)
 {
     vec2 res = vec2(textureSize(veTextures[nonuniformEXT(m.textures[0])], 0));
@@ -49,7 +52,8 @@ float veGrassGroundHeight(VeMaterial m, vec2 xz)
     float h10 = texelFetch(veTextures[nonuniformEXT(m.textures[0])], i + ivec2(1, 0), 0).r;
     float h01 = texelFetch(veTextures[nonuniformEXT(m.textures[0])], i + ivec2(0, 1), 0).r;
     float h11 = texelFetch(veTextures[nonuniformEXT(m.textures[0])], i + ivec2(1, 1), 0).r;
-    return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
+    if (f.x + f.y < 1.0) return h00 + (h10 - h00) * f.x + (h01 - h00) * f.y;
+    return h11 + (h01 - h11) * (1.0 - f.x) + (h10 - h11) * (1.0 - f.y);
 }
 
 VeGrassClump veGrassClump(VeMaterial m)
@@ -124,6 +128,10 @@ vec3 veGrassPlace(VeMaterial m, VeGrassClump c, vec3 position, vec4 tangent, vec
 {
     bool cards = m.params[5].x > 0.5;
     vec3 world = cards ? veGrassCardPosition(c, position) : veGrassVertexPosition(c, position, tangent.xyz, uv, color.r);
+    // Mesh clumps can be wider than a terrain cell: shift each vertex by the
+    // ground under it (relative to the root) so the whole clump follows the
+    // slope instead of floating on the downhill side and sinking uphill.
+    if (cards) world.y += veGrassGroundHeight(m, world.xz) - (c.root.y + 0.03);
     tip = cards ? clamp(position.y, 0.0, 1.0) : uv.y;
     float phase = cards ? veHash12(c.root.xz) : uv.x;
 
