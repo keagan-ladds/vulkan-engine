@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 
 namespace ve {
@@ -64,9 +65,11 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     }
     assetDirs.push_back(exeDir / "assets");
 
-    m_window = std::make_unique<Window>(config.title, config.width, config.height);
+    RendererSettings rs = config.renderer;
+    if (const char* h = std::getenv("VE_HEADLESS"); h && h[0] == '1') rs.headless = true;
+    m_window = std::make_unique<Window>(config.title, config.width, config.height, rs.headless);
     m_renderer = std::make_unique<Renderer>();
-    m_renderer->init(*m_window, config.renderer, config.validation, shaderDirs);
+    m_renderer->init(*m_window, rs, config.validation, shaderDirs);
     m_audio = std::make_unique<AudioSystem>();
     if (config.enableAudio) m_audio->init();
     m_physics = std::make_unique<PhysicsWorld>();

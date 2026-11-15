@@ -13,7 +13,11 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 
 namespace ve {
 
@@ -51,6 +55,18 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
     m_sceneDepth = m_graph->createTexture("SceneDepth", {.format = kDepthFormat, .sampler = SamplerType::NearestClamp});
     m_sceneNormal = m_graph->createTexture("SceneNormal", {.format = kSceneNormalFormat, .sampler = SamplerType::NearestClamp});
     m_backbuffer = m_graph->importTexture("Backbuffer");
+    if (m_settings.headless) {
+        m_headlessTarget = m_device.createImage({.format = m_swapchain.format(),
+                                                 .extent = {m_swapchain.extent().width, m_swapchain.extent().height, 1},
+                                                 .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                                 .debugName = "headless backbuffer"});
+        log::info("Renderer: headless (offscreen, nothing presented)");
+        if (const char* c = std::getenv("VE_CAPTURE"); c && *c) {
+            m_envCapturePath = c;
+            const char* f = std::getenv("VE_CAPTURE_FRAME");
+            m_envCaptureFrame = f && *f ? std::strtoull(f, nullptr, 10) : 150;
+        }
+    }
     createShadowMaps();
     writeShadowDescriptors();
 
@@ -95,6 +111,8 @@ void Renderer::shutdown()
     vkDestroyPipelineLayout(dev, m_pipelineLayout, nullptr);
     vkDestroyDescriptorPool(dev, m_globalPool, nullptr);
     vkDestroyDescriptorSetLayout(dev, m_globalSetLayout, nullptr);
+    if (m_headlessTarget.handle) m_device.destroyImage(m_headlessTarget);
+    if (m_captureBuffer.handle) m_device.destroyBuffer(m_captureBuffer);
     m_swapchain.destroy(m_device);
     m_bindless.shutdown();
     m_samplers.shutdown(m_device);
@@ -865,14 +883,17 @@ bool Renderer::render(Scene& scene, const Time& time)
     }
 
     uint32_t imageIndex = 0;
-    const VkResult acquire = vkAcquireNextImageKHR(dev, m_swapchain.handle(), UINT64_MAX, slot.imageAvailable,
-                                                   VK_NULL_HANDLE, &imageIndex);
-    if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
-        m_swapchainDirty = true;
-        return false;
+    const bool headless = m_settings.headless;
+    if (!headless) {
+        const VkResult acquire = vkAcquireNextImageKHR(dev, m_swapchain.handle(), UINT64_MAX, slot.imageAvailable,
+                                                       VK_NULL_HANDLE, &imageIndex);
+        if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
+            m_swapchainDirty = true;
+            return false;
+        }
+        if (acquire == VK_SUBOPTIMAL_KHR) m_swapchainDirty = true;
+        else VK_CHECK(acquire);
     }
-    if (acquire == VK_SUBOPTIMAL_KHR) m_swapchainDirty = true;
-    else VK_CHECK(acquire);
     VK_CHECK(vkResetFences(dev, 1, &slot.inFlight));
 
     // --- CPU side: gather, cull, prepare ------------------------------------------
@@ -898,9 +919,15 @@ bool Renderer::render(Scene& scene, const Time& time)
     // The swapchain image's previous contents are irrelevant (UNDEFINED). Its
     // first use must wait for the acquire semaphore, which the submit below
     // waits on at COLOR_ATTACHMENT_OUTPUT, so the barrier chains from that stage.
-    m_graph->setImported(m_backbuffer, m_swapchain.image(imageIndex), m_swapchain.view(imageIndex),
-                         m_swapchain.format(), m_swapchain.extent(),
-                         {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_NONE});
+    if (headless) {
+        m_graph->setImported(m_backbuffer, m_headlessTarget.handle, m_headlessTarget.view, m_headlessTarget.format,
+                             {m_headlessTarget.extent.width, m_headlessTarget.extent.height},
+                             {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_NONE});
+    } else {
+        m_graph->setImported(m_backbuffer, m_swapchain.image(imageIndex), m_swapchain.view(imageIndex),
+                             m_swapchain.format(), m_swapchain.extent(),
+                             {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_NONE});
+    }
 
     if (slot.timestamps) vkCmdResetQueryPool(slot.cmd, slot.timestamps, 0, kMaxTimestamps);
     m_graph->setTimestampPool(slot.timestamps, kMaxTimestamps);
@@ -915,27 +942,64 @@ bool Renderer::render(Scene& scene, const Time& time)
     slot.timedPasses = m_graph->lastExecuted();
     m_instances->recordReadback(slot.cmd, slotIndex);
     slot.timestampsWritten = slot.timestamps != VK_NULL_HANDLE;
-    m_graph->transition(slot.cmd, m_backbuffer, Access::Present);
+    m_graph->transition(slot.cmd, m_backbuffer, headless ? Access::TransferSrc : Access::Present);
+    if (headless && !m_envCapturePath.empty() && m_frameNumber == m_envCaptureFrame) m_capturePath = m_envCapturePath;
+    const bool capture = headless && !m_capturePath.empty();
+    if (capture) {
+        const VkExtent3D e = m_headlessTarget.extent;
+        const VkDeviceSize bytes = VkDeviceSize(e.width) * e.height * 4;
+        if (m_captureBuffer.size < bytes) {
+            if (m_captureBuffer.handle) m_device.destroyBuffer(m_captureBuffer);
+            m_captureBuffer = m_device.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryUsage::GpuToCpu,
+                                                    "capture readback");
+        }
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {e.width, e.height, 1};
+        vkCmdCopyImageToBuffer(slot.cmd, m_headlessTarget.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               m_captureBuffer.handle, 1, &region);
+    }
     VK_CHECK(vkEndCommandBuffer(slot.cmd));
 
     // --- Submit & present ---------------------------------------------------------
     VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
     wait.semaphore = slot.imageAvailable;
     wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    const VkSemaphore finished = m_swapchain.renderFinished(imageIndex);
+    const VkSemaphore finished = headless ? VK_NULL_HANDLE : m_swapchain.renderFinished(imageIndex);
     VkSemaphoreSubmitInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
     signal.semaphore = finished;
     signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     VkCommandBufferSubmitInfo cmdInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
     cmdInfo.commandBuffer = slot.cmd;
     VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-    submit.waitSemaphoreInfoCount = 1;
+    submit.waitSemaphoreInfoCount = headless ? 0 : 1;
     submit.pWaitSemaphoreInfos = &wait;
     submit.commandBufferInfoCount = 1;
     submit.pCommandBufferInfos = &cmdInfo;
-    submit.signalSemaphoreInfoCount = 1;
+    submit.signalSemaphoreInfoCount = headless ? 0 : 1;
     submit.pSignalSemaphoreInfos = &signal;
     VK_CHECK(vkQueueSubmit2(m_device.graphicsQueue(), 1, &submit, slot.inFlight));
+    if (headless) {
+        if (capture) {
+            VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
+            vmaInvalidateAllocation(m_device.allocator(), m_captureBuffer.allocation, 0, VK_WHOLE_SIZE);
+            const VkExtent3D e = m_headlessTarget.extent;
+            std::vector<uint8_t> px(size_t(e.width) * e.height * 4);
+            std::memcpy(px.data(), m_captureBuffer.mapped, px.size());
+            const VkFormat f = m_headlessTarget.format;
+            if (f == VK_FORMAT_B8G8R8A8_SRGB || f == VK_FORMAT_B8G8R8A8_UNORM)
+                for (size_t i = 0; i < px.size(); i += 4) std::swap(px[i], px[i + 2]);
+            for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+            if (stbi_write_png(m_capturePath.c_str(), int(e.width), int(e.height), 4, px.data(), int(e.width) * 4))
+                log::info("Renderer: captured frame {} to {}", m_frameNumber, m_capturePath);
+            else
+                log::error("Renderer: failed to write {}", m_capturePath);
+            m_capturePath.clear();
+        }
+        m_prevViewProj = m_frame.camera.viewProj;
+        ++m_frameNumber;
+        return true;
+    }
 
     const VkSwapchainKHR sc = m_swapchain.handle();
     VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};

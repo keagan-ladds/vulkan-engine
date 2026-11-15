@@ -40,6 +40,9 @@ struct Time;
 
 struct RendererSettings {
     bool vsync = true;
+    // Render into an offscreen image instead of presenting (window hidden):
+    // automated tests that shouldn't take over the screen. Env: VE_HEADLESS=1.
+    bool headless = false;
     // --- Directional (sun/moon) shadows: cascaded shadow maps ---
     uint32_t maxShadowedDirectionalLights = 2; // 0..kMaxDirectionalLights
     uint32_t cascadeCount = 4;                 // 1..kMaxCascades
@@ -187,6 +190,9 @@ public:
     // for GPU work at load time that reads materials, e.g. impostor baking.
     void uploadMaterialsNow();
     uint64_t frameNumber() const { return m_frameNumber; }
+    // Headless only: write the next rendered frame to a PNG (tests / CI).
+    // Env: VE_CAPTURE=out.png [VE_CAPTURE_FRAME=N, default 150].
+    void requestCapture(const std::string& pngPath) { m_capturePath = pngPath; }
 
     // Built-in graph textures.
     TextureId sceneColor() const { return m_sceneColor; }
@@ -251,6 +257,11 @@ private:
     TextureId m_sceneColor = kNoTexture;
     TextureId m_sceneDepth = kNoTexture;
     TextureId m_sceneNormal = kNoTexture;
+    Image m_headlessTarget; // headless: stands in for the swapchain image
+    Buffer m_captureBuffer;
+    std::string m_capturePath;
+    uint64_t m_envCaptureFrame = 0;
+    std::string m_envCapturePath;
     TextureId m_dirShadowMap = kNoTexture;
     TextureId m_pointShadowMap = kNoTexture;
     TextureId m_backbuffer = kNoTexture;

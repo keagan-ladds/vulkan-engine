@@ -36,6 +36,9 @@ cmake --build build
 ./build/bin/savanna
 ```
 
+Smoke tests without a window on screen (offscreen rendering):
+`VE_HEADLESS=1 SAVANNA_AUTOTEST=1 ./build/bin/savanna` (or `SAVANNA_EDITORTEST=1`).
+
 Or in VS Code press **F5** and pick a configuration: Sandbox (the game) or Editor (starts in the in-engine editor; F2 toggles it anywhere), each in Debug or Release, plus the Debug Autotest and Editor test smoke tests.
 
 | Key | Action |

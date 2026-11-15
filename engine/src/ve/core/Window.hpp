@@ -21,7 +21,7 @@ namespace ve {
 
 class Window {
 public:
-    Window(const std::string& title, int width, int height);
+    Window(const std::string& title, int width, int height, bool hidden = false);
     ~Window();
 
     Window(const Window&) = delete;
