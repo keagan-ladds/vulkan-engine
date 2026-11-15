@@ -10,6 +10,8 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+
 #include <chrono>
 #include <cmath>
 
@@ -205,12 +207,16 @@ void AtmospherePass::prepare(ve::FrameData& frame)
     if (driveAmbient) {
         ve::Environment& env = r.environment();
         const glm::vec3 ambSky = m_ambientSky * ambientScale + nightAmbient * night;
-        const glm::vec3 ambGround = groundAlbedo * (m_sunRadiance * std::max(m_sunDir.y, 0.0f) + m_ambientSky * 0.5f) *
-                                        ambientScale + nightAmbient * 0.4f * night;
+        // Ground bounce = sunlit ground + skylit ground. The sunlit part is
+        // reported separately so shaders can remove it where the sun is hidden.
+        const glm::vec3 groundSun = groundAlbedo * m_sunRadiance * std::max(m_sunDir.y, 0.0f) * ambientScale;
+        const glm::vec3 ambGround = groundSun + groundAlbedo * m_ambientSky * 0.5f * ambientScale + nightAmbient * 0.4f * night;
+        auto lum = [](const glm::vec3& c) { return c.r * 0.2126f + c.g * 0.7152f + c.b * 0.0722f; };
         env.ambientSky = ambSky;
         env.ambientGround = ambGround;
+        env.groundSunFraction = std::clamp(lum(groundSun) / std::max(lum(ambGround), 1e-6f), 0.0f, 1.0f);
         frame.globals.ambientSky = glm::vec4(ambSky * env.ambientIntensity, 0.0f);
-        frame.globals.ambientGround = glm::vec4(ambGround * env.ambientIntensity, 0.0f);
+        frame.globals.ambientGround = glm::vec4(ambGround * env.ambientIntensity, env.groundSunFraction);
     }
 }
 

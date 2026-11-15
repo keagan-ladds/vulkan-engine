@@ -823,7 +823,8 @@ void Renderer::fillGlobals(const Time& time)
     g.screenSize = glm::vec4(float(ext.width), float(ext.height), 1.0f / float(ext.width), 1.0f / float(ext.height));
     g.time = glm::vec4(time.time, time.deltaTime, float(m_frameNumber % 100000), time.realTime);
     g.ambientSky = glm::vec4(m_environment.ambientSky * m_environment.ambientIntensity, 0.0f);
-    g.ambientGround = glm::vec4(m_environment.ambientGround * m_environment.ambientIntensity, 0.0f);
+    g.ambientGround = glm::vec4(m_environment.ambientGround * m_environment.ambientIntensity,
+                                m_environment.groundSunFraction);
     g.lightCounts.w = m_settings.debugCascades ? 1u : 0u;
     g.shadowParams = glm::vec4(m_settings.shadowNormalBias, m_settings.shadowPcfRadius,
                                float(m_settings.directionalShadowResolution), float(m_settings.pointShadowResolution));

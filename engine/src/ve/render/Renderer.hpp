@@ -72,6 +72,10 @@ struct Environment {
     glm::vec3 ambientSky{0.35f, 0.42f, 0.55f};
     glm::vec3 ambientGround{0.18f, 0.15f, 0.12f};
     float ambientIntensity = 1.0f;
+    // Fraction of ambientGround that is sunlight bounced off the ground. Shaders
+    // scale that part by sun visibility (veAmbientGround), so objects don't get
+    // a warm "sunlit ground" glow once the sun is behind terrain.
+    float groundSunFraction = 0.0f;
 };
 
 enum class BuiltinShader { Standard, StandardCutout, StandardTransparent, Unlit, Impostor, Count };

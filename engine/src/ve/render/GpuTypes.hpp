@@ -38,7 +38,7 @@ struct FrameGlobals {
     glm::vec4 screenSize;     // width, height, 1/width, 1/height
     glm::vec4 time;           // x = time, y = delta time, z = frame index, w = real time
     glm::vec4 ambientSky;     // rgb (pre-multiplied by intensity), w unused
-    glm::vec4 ambientGround;  // rgb, w unused
+    glm::vec4 ambientGround;  // rgb, w = sunlit-bounce fraction (Environment::groundSunFraction)
     glm::uvec4 lightCounts;   // x = directional, y = point, z = cascade count, w = debug flags
     glm::vec4 shadowParams;   // x = normal bias (texels), y = PCF radius (texels), z = dir shadow map size, w = point shadow map size
     glm::uvec4 builtinTextures; // x = SceneDepth, y = SceneColor, z = SceneNormal (bindless indices), w = reserved

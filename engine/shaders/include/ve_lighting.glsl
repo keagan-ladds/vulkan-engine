@@ -158,10 +158,31 @@ float vePointAttenuation(float dist, float range)
     return window * window / (dist * dist + 1.0);
 }
 
+// Sun visibility of the ground a surface receives bounce light from.
+// frame.ambientGround.w = fraction of the ground ambient that is sunlit-ground
+// bounce (set by whoever drives the ambient, e.g. vfx::AtmospherePass); that
+// part must vanish where the sun is hidden (behind terrain at sunset). Sampled
+// 2 m out along the normal so a face turned away from the sun isn't "shadowed"
+// by its own object.
+float veGroundBounceVisibility(VeSurface s)
+{
+    if (frame.lightCounts.x == 0u || frame.ambientGround.w <= 0.0) return 1.0;
+    vec3 p = s.position + s.normal * 2.0;
+    float viewDepth = dot(p - frame.cameraPosition.xyz, frame.cameraForward.xyz);
+    return veDirectionalShadow(0u, p, vec3(0.0, 1.0, 0.0), viewDepth);
+}
+
+// Ground ambient colour with the sunlit-bounce part scaled by visibility.
+vec3 veAmbientGround(VeSurface s)
+{
+    return frame.ambientGround.rgb * (1.0 - frame.ambientGround.w * (1.0 - veGroundBounceVisibility(s)));
+}
+
 vec3 veAmbient(VeSurface s, vec3 V)
 {
     vec3 N = s.normal;
-    vec3 hemi = mix(frame.ambientGround.rgb, frame.ambientSky.rgb, N.y * 0.5 + 0.5);
+    vec3 ground = veAmbientGround(s);
+    vec3 hemi = mix(ground, frame.ambientSky.rgb, N.y * 0.5 + 0.5);
     vec3 F0 = mix(vec3(0.04), s.albedo, s.metallic);
     float NdotV = max(dot(N, V), 1e-4);
     // Karis' analytic approximation of the split-sum environment BRDF.
@@ -171,7 +192,7 @@ vec3 veAmbient(VeSurface s, vec3 V)
     float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
     vec2 AB = vec2(-1.04, 1.04) * a004 + r.zw;
     vec3 R = reflect(-V, N);
-    vec3 envSpec = mix(frame.ambientGround.rgb, frame.ambientSky.rgb, clamp(R.y * 0.5 + 0.5, 0.0, 1.0));
+    vec3 envSpec = mix(ground, frame.ambientSky.rgb, clamp(R.y * 0.5 + 0.5, 0.0, 1.0));
     vec3 diffuse = hemi * s.albedo * (1.0 - s.metallic);
     vec3 specular = envSpec * (F0 * AB.x + AB.y);
     return (diffuse + specular) * s.ao;

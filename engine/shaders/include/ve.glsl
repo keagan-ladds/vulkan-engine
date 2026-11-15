@@ -38,7 +38,7 @@ layout(set = 0, binding = 0, std140) uniform VeFrameGlobals {
     vec4 screenSize;       // w, h, 1/w, 1/h
     vec4 time;             // time, dt, frame, realTime
     vec4 ambientSky;
-    vec4 ambientGround;
+    vec4 ambientGround;    // rgb, w = sunlit-bounce fraction (scaled by sun visibility: veAmbientGround)
     uvec4 lightCounts;     // dir, point, cascades, debug flags
     vec4 shadowParams;     // normal bias (texels), pcf radius (texels), dir res, point res
     uvec4 builtinTextures; // SceneDepth, SceneColor, SceneNormal
