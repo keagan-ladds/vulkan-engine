@@ -75,7 +75,6 @@ void buildWorld(ve::Engine& engine)
     weather.rainSound = assets.loadAudio("audio/rain_loop.wav");
     weather.stormSound = assets.loadAudio("audio/rain_thunder_loop.wav", /*stream*/ true); // 48 s: stream from disk
     weather.windSound = assets.loadAudio("audio/wind_loop.wav");                           // volume follows the wind
-    weather.stormBackground = 0.12f; // the storm loop plays softly all the time, full volume in thunderstorms
     weather.setWeather(vfx::Weather::Type::Hazy, 0.01f);
     auto& dayNight = scene.spawn<DayNightCycle>();
     dayNight.weather = &weather;
@@ -187,7 +186,15 @@ void buildWorld(ve::Engine& engine)
     gameState().total = placed;
 
     // --- Ambience + HUD ------------------------------------------------------------------
-    // (Wind, rain and storm loops are driven by the Weather object.)
+    // Soft ambient music bed (wind, rain and storm loops are driven by the Weather object).
+    // On the Ambient bus, so the huts' AudioZones muffle it a little indoors.
+    auto& ambience = scene.spawn("Ambience");
+    auto& bed = ambience.addComponent<ve::AudioSource>(assets.loadAudio("audio/ambient_01.wav", /*stream*/ true));
+    bed.loop = true;
+    bed.spatial = false;
+    bed.bus = "Ambient";
+    bed.volume = 0.15f;
+    bed.playOnStart = true;
     scene.spawn<Hud>(player, dayNight, weather);
 
     // Test hooks (handy for screenshots / automated checks):
