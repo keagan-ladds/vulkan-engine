@@ -1,5 +1,7 @@
 #include "ve/ui/UiLayer.hpp"
 
+#include "ve/audio/Audio.hpp"
+
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Window.hpp"
@@ -172,6 +174,10 @@ void UiLayer::drawDebugOverlay()
         }
     }
 
+    if (ImGui::CollapsingHeader("Audio")) {
+        if (m_engine->audio().available()) m_engine->audio().onGui();
+        else ImGui::TextDisabled("No audio device");
+    }
     if (ImGui::CollapsingHeader("Scene hierarchy")) {
         std::function<void(GameObject&)> node = [&](GameObject& go) {
             ImGui::PushID(&go);

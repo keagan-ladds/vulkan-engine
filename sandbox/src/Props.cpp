@@ -161,6 +161,7 @@ void Campfire::start()
     audioSrc.volume = 0.9f;
     audioSrc.minDistance = 1.5f;
     audioSrc.maxDistance = 28.0f;
+    audioSrc.occlusion = true; // muffled behind huts or terrain
 }
 
 void Campfire::update(float dt)
@@ -350,6 +351,9 @@ void AutoTest::update(float dt)
         auto* player = static_cast<Player*>(scene().find("Player"));
         if (foliage && player) {
             const ve::FoliageStats& fs = foliage->stats();
+            if (auto* fire = scene().find("Campfire"))
+                if (auto* src = fire->getComponent<ve::AudioSource>())
+                    log("audio: fire occlusion in the open: " + std::to_string(src->occluded()));
             log("foliage before: " + std::to_string(fs.instances) + " instances, " + std::to_string(fs.cells) + " cells, " +
                 std::to_string(fs.bodies) + " bodies");
             const glm::vec2 corner(-240.0f, -240.0f);
@@ -369,6 +373,22 @@ void AutoTest::update(float dt)
         // Bushes are deterministic: the instances near the player must match a fresh query.
         const glm::vec3 p = static_cast<Player*>(scene().find("Player"))->transform().position();
         log("bushes within 30 m (query): " + std::to_string(foliage->query(5, glm::vec2(p.x, p.z), 30.0f).size()));
+        // Audio: step inside a hut (zone muffles the Weather bus) and check the fire's occlusion.
+        if (auto* hutZone = scene().find("HutZone")) {
+            const glm::vec3 hp = hutZone->transform().position();
+            static_cast<Player*>(scene().find("Player"))->teleport(hp + glm::vec3(0.0f, 0.2f, 0.0f), 0.0f);
+        }
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 4 && m_t > 2.0f) {
+        const ve::AudioBus& weather = audio().bus("Weather");
+        int inside = 0;
+        scene().forEach<ve::AudioZone>([&](ve::AudioZone& z) { inside += z.listenerInside() ? 1 : 0; });
+        float fireOcclusion = -1.0f;
+        if (auto* fire = scene().find("Campfire"))
+            if (auto* src = fire->getComponent<ve::AudioSource>()) fireOcclusion = src->occluded();
+        log("audio: inside " + std::to_string(inside) + " hut zone(s), Weather bus x" + std::to_string(weather.zoneVolume) +
+            " / " + std::to_string(weather.zoneLowpass) + " Hz, fire occlusion " + std::to_string(fireOcclusion));
         engine().quit();
         ++m_step;
     }

@@ -170,7 +170,7 @@ void Engine::tickFrame()
         const Transform& t = cam->transform();
         m_audio->setListener(t.position(), t.forward(), t.up());
     }
-    m_audio->update();
+    m_audio->update(m_time.unscaledDeltaTime);
 
     m_renderer->render(*m_scene, m_time);
     m_ui->endFrameIfNotRendered();
