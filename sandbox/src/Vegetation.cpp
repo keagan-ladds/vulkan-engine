@@ -11,6 +11,12 @@
 #include <ve/render/Impostor.hpp>
 #include <ve/render/Instancing.hpp>
 #include <ve/render/Renderer.hpp>
+#include <ve/world/Foliage.hpp>
+#include <ve/world/Grass.hpp>
+#include <ve/render/Texture.hpp>
+
+#include <cstdlib>
+#include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Scene.hpp>
 
@@ -229,179 +235,196 @@ const char* propName(uint32_t userValue)
     return userValue < std::size(kPropNames) ? kPropNames[userValue] : "";
 }
 
-PropField::~PropField()
+ve::FoliageSystem& scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& lib)
 {
-    for (uint32_t id : bodies) physics().destroyStaticBody(id);
-}
+    // Streamed, rule-based placement (ve::FoliageSystem): every layer is a
+    // jittered grid filtered by biome rules, so the same world appears no
+    // matter where the player starts or in which order cells load.
+    ve::FoliageWorld world;
+    const float edge = Terrain::kHalfSize - 45.0f; // stay off the border mountains
+    world.boundsMin = glm::vec2(-edge);
+    world.boundsMax = glm::vec2(edge);
+    world.height = [&terrain](glm::vec2 p) { return terrain.height(p.x, p.y); };
+    world.normal = [&terrain](glm::vec2 p) { return terrain.normal(p.x, p.y); };
+    auto& foliage = scene.spawn<ve::FoliageSystem>(world);
+    foliage.addExclusion(Terrain::kCamp, 26.0f);
 
-void scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& lib)
-{
-    // All props are GPU instances: one InstanceGroup per mesh variant, no
-    // GameObject per tree. Colliders are GameObject-less static bodies.
-    auto& field = scene.spawn<PropField>();
-    Rng rng(42);
-
-    // Spatial hash so spacing checks stay O(1) with tens of thousands of props.
-    struct Placed {
-        glm::vec2 p;
-        float r;
+    auto layer = [&](uint32_t kind, const PropSet& set, float spacing, float probability, float minScale, float maxScale) {
+        ve::FoliageLayer l;
+        l.name = propName(kind);
+        l.variants = set.variants;
+        l.colliders = set.colliders;
+        l.colliderUserValue = kind;
+        l.spacing = spacing;
+        l.probability = probability;
+        l.minScale = minScale;
+        l.maxScale = maxScale;
+        l.tint = 0.13f;
+        l.sink = 0.15f;
+        l.seed = 1000u + kind;
+        return l;
     };
-    constexpr float kCell = 20.0f;
-    std::unordered_map<int64_t, std::vector<Placed>> grid;
-    auto key = [](int x, int z) { return (int64_t(x) << 32) ^ int64_t(uint32_t(z)); };
-    auto free = [&](glm::vec2 p, float r) {
-        const int cx = int(std::floor(p.x / kCell)), cz = int(std::floor(p.y / kCell));
-        const int reach = int(std::ceil((r + 20.0f) / kCell)); // 20 m = largest radius used
-        for (int z = cz - reach; z <= cz + reach; ++z) {
-            for (int x = cx - reach; x <= cx + reach; ++x) {
-                auto it = grid.find(key(x, z));
-                if (it == grid.end()) continue;
-                for (const auto& o : it->second) {
-                    if (glm::length(o.p - p) < o.r + r) return false;
-                }
-            }
-        }
-        return true;
-    };
-
-    auto place = [&](uint32_t kind, const PropSet& set, int count, float spacing, float minScale, float maxScale,
-                     float cullDistance, float shadowDistance, auto&& accept) {
-        // One instance group per mesh variant.
-        std::vector<std::shared_ptr<ve::InstanceGroup>> groups;
-        const uint32_t perVariant = uint32_t(count) / uint32_t(set.variants.size()) + 64;
-        for (const auto& chain : set.variants) {
-            ve::InstanceGroupDesc desc;
-            desc.name = propName(kind);
-            desc.lods = chain;
-            desc.cullDistance = cullDistance;
-            desc.shadowDistance = shadowDistance;
-            groups.push_back(ve::Engine::get().renderer().createInstanceGroup(desc, perVariant));
-        }
-        int done = 0;
-        for (int attempt = 0; attempt < count * 30 && done < count; ++attempt) {
-            const glm::vec2 p(rng.range(-Terrain::kHalfSize + 45.0f, Terrain::kHalfSize - 45.0f),
-                              rng.range(-Terrain::kHalfSize + 45.0f, Terrain::kHalfSize - 45.0f));
-            const float h = terrain.height(p.x, p.y);
-            if (glm::length(p - Terrain::kCamp) < 26.0f || !accept(p, h) || !free(p, spacing * 0.5f)) continue;
-            const size_t variant = size_t(rng.next() * set.variants.size()) % set.variants.size();
-            if (groups[variant]->count() >= groups[variant]->capacity()) continue;
-            grid[key(int(std::floor(p.x / kCell)), int(std::floor(p.y / kCell)))].push_back({p, spacing * 0.5f});
-
-            const float scale = rng.range(minScale, maxScale);
-            const glm::vec3 pos(p.x, h - 0.15f * scale, p.y);
-            const glm::quat rot = glm::angleAxis(rng.range(0.0f, 6.28f), glm::vec3(0, 1, 0));
-            const glm::mat4 m = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(rot) *
-                                glm::scale(glm::mat4(1.0f), glm::vec3(scale));
-            // custom.w > 0: standard.vert tints the vertex colours by custom.rgb (natural variation).
-            const float t = rng.range(0.85f, 1.12f);
-            groups[variant]->add(m, glm::vec4(t, t * rng.range(0.95f, 1.05f), t, 1.0f));
-            if (!set.colliders.empty()) {
-                const ve::Collider& c = set.colliders[set.colliders.size() == 1 ? 0 : variant];
-                field.bodies.push_back(ve::Engine::get().physics().createStaticBody(c, pos, rot, glm::vec3(scale), kind));
-            }
-            ++done;
-        }
-        for (auto& g : groups) field.groups.push_back(g);
-        return done;
+    auto savannah = [&terrain](const ve::FoliageSample& s) {
+        return s.height > 0.6f && terrain.swampMask(s.position.x, s.position.y) < 0.3f &&
+                       terrain.rockMask(s.position.x, s.position.y) < 0.4f
+                   ? 1.0f
+                   : 0.0f;
     };
 
-    auto savannah = [&](glm::vec2 p, float h) {
-        return h > 0.6f && terrain.swampMask(p.x, p.y) < 0.3f && terrain.rockMask(p.x, p.y) < 0.4f;
+    // Trees: the whole (small) world stays loaded; impostors make that cheap.
+    auto baobabs = layer(1, lib.baobabs, 30.0f, 0.3f, 0.9f, 1.3f);
+    baobabs.density = savannah;
+    baobabs.viewDistance = 3000.0f;
+    baobabs.maxInstances = 300;
+    const uint32_t baobabLayer = foliage.addLayer(baobabs);
+
+    auto acacias = layer(2, lib.acacias, 8.5f, 0.82f, 0.8f, 1.3f);
+    acacias.density = savannah;
+    acacias.clusterFrequency = 0.012f; // groves
+    acacias.clusterCoverage = 0.5f;
+    acacias.avoid = {{baobabLayer, 12.0f}};
+    acacias.viewDistance = 3000.0f;
+    acacias.maxInstances = 5000;
+    const uint32_t acaciaLayer = foliage.addLayer(acacias);
+
+    auto fever = layer(3, lib.feverTrees, 5.5f, 0.6f, 0.8f, 1.2f);
+    fever.minHeight = 0.2f;
+    fever.density = [&terrain](const ve::FoliageSample& s) {
+        return terrain.swampMask(s.position.x, s.position.y) > 0.35f ? 1.0f : 0.0f;
     };
-    const int baobabs = place(1, lib.baobabs, 70, 30.0f, 0.9f, 1.3f, 3000.0f, 3000.0f, savannah);
-    // Acacias cluster in groves: accept more often where a low-frequency noise is high.
-    const int acacias = place(2, lib.acacias, 2600, 9.0f, 0.8f, 1.3f, 3000.0f, 3000.0f, [&](glm::vec2 p, float h) {
-        return savannah(p, h) && rng.next() < fbm(p * 0.008f, 2, 77) * 1.6f - 0.2f;
-    });
-    const int fever = place(3, lib.feverTrees, 900, 5.0f, 0.8f, 1.2f, 3000.0f, 3000.0f, [&](glm::vec2 p, float h) {
-        return h > 0.2f && terrain.swampMask(p.x, p.y) > 0.35f;
-    });
-    const int boulders = place(4, lib.boulders, 160, 6.0f, 2.0f, 5.0f, 3000.0f, 3000.0f, [&](glm::vec2 p, float h) {
+    fever.viewDistance = 3000.0f;
+    fever.maxInstances = 2000;
+    const uint32_t feverLayer = foliage.addLayer(fever);
+
+    auto boulders = layer(4, lib.boulders, 6.0f, 0.35f, 2.0f, 5.0f);
+    boulders.minHeight = 0.5f;
+    boulders.alignToNormal = 0.5f;
+    boulders.density = [&terrain](const ve::FoliageSample& s) {
+        const glm::vec2 p = s.position;
         const bool nearKopje = glm::length(p - Terrain::kKopje) < 55.0f || glm::length(p - glm::vec2(-50.0f, -140.0f)) < 30.0f;
-        return h > 0.5f && nearKopje && terrain.rockMask(p.x, p.y) > 0.5f;
-    });
-    const int rocks = place(5, lib.rocks, 1500, 3.0f, 0.4f, 1.4f, 450.0f, 50.0f, [&](glm::vec2, float h) { return h > 0.3f; });
-    const int bushes = place(6, lib.bushes, 7000, 2.5f, 0.7f, 1.4f, 350.0f, 60.0f, [&](glm::vec2, float h) { return h > 0.3f; });
-    ve::log::info("Props (instanced): {} baobab, {} acacia, {} fever, {} boulders, {} rocks, {} bushes; {} static bodies",
-                  baobabs, acacias, fever, boulders, rocks, bushes, field.bodies.size());
+        return nearKopje && terrain.rockMask(p.x, p.y) > 0.5f ? 1.0f : 0.0f;
+    };
+    boulders.viewDistance = 3000.0f;
+    boulders.maxInstances = 500;
+    const uint32_t boulderLayer = foliage.addLayer(boulders);
+
+    // Small props stream in around the camera; colliders only near the player.
+    auto rocks = layer(5, lib.rocks, 6.0f, 0.18f, 0.4f, 1.4f);
+    rocks.minHeight = 0.3f;
+    rocks.alignToNormal = 0.7f;
+    rocks.avoid = {{boulderLayer, 3.0f}};
+    rocks.viewDistance = 450.0f;
+    rocks.shadowDistance = 50.0f;
+    rocks.colliderDistance = 40.0f;
+    foliage.addLayer(rocks);
+
+    auto bushes = layer(6, lib.bushes, 4.5f, 0.5f, 0.7f, 1.4f);
+    bushes.minHeight = 0.3f;
+    bushes.avoid = {{baobabLayer, 5.0f}, {acaciaLayer, 2.5f}, {feverLayer, 1.5f}, {boulderLayer, 3.0f}};
+    bushes.viewDistance = 350.0f;
+    bushes.shadowDistance = 60.0f;
+    bushes.colliderDistance = 40.0f;
+    foliage.addLayer(bushes);
+    return foliage;
 }
 
-void buildGrass(ve::Scene& scene, ve::Renderer& r, const Terrain& terrain)
+namespace {
+// A grass-card texture: tapered, slightly curved blades on transparent
+// background (stand-in for an artist-made card).
+std::shared_ptr<ve::Texture> makeGrassCardTexture(ve::Renderer& r)
 {
-    // Custom shader: blades bend with the wind (frame.globalParams[0]).
-    ve::ShaderDesc desc;
-    desc.name = "Grass";
-    desc.vertex = "grass.vert";
-    desc.fragment = "grass.frag";
-    desc.cull = ve::CullMode::None;
-    desc.castShadows = false; // thousands of thin blades: skip for speed
-    auto material = r.createMaterial(r.createShader(desc));
-
-    const float radius = 210.0f;
-    const float cell = 32.0f;
-    Rng rng(7);
-    std::unordered_map<int64_t, ve::MeshData> chunks;
-    size_t clumps = 0;
-
-    auto addBlade = [&](ve::MeshData& md, glm::vec3 base, float yaw, float height, float width, glm::vec3 col,
-                        float phase) {
-        const glm::vec3 side(std::cos(yaw) * width, 0.0f, std::sin(yaw) * width);
-        const glm::vec3 bend = glm::vec3(std::sin(yaw + 1.3f), 0.0f, std::cos(yaw + 1.3f)) * height * 0.25f;
-        const auto first = static_cast<uint32_t>(md.vertices.size());
-        ve::Vertex a, b, c;
-        a.position = base - side;
-        b.position = base + side;
-        c.position = base + glm::vec3(0, height, 0) + bend;
-        a.normal = b.normal = c.normal = glm::vec3(0, 1, 0);
-        a.uv = {phase, 0.0f};
-        b.uv = {phase, 0.0f};
-        c.uv = {phase, 1.0f}; // uv.y = sway weight
-        a.color = b.color = glm::vec4(col * 0.7f, 1.0f);
-        c.color = glm::vec4(col * 1.15f, 1.0f);
-        md.vertices.insert(md.vertices.end(), {a, b, c});
-        md.indices.insert(md.indices.end(), {first, first + 1, first + 2});
-    };
-
-    for (float x = -radius; x < radius; x += 2.2f) {
-        for (float z = -radius; z < radius; z += 2.2f) {
-            const glm::vec2 p = Terrain::kCamp + glm::vec2(x, z) + glm::vec2(rng.range(-1.0f, 1.0f), rng.range(-1.0f, 1.0f));
-            if (glm::length(p - Terrain::kCamp) > radius || !terrain.inBounds(p.x, p.y, 60.0f)) continue;
-            if (glm::length(p - Terrain::kCamp) < 9.0f) continue; // trampled camp floor
-            const float h = terrain.height(p.x, p.y);
-            const float swamp = terrain.swampMask(p.x, p.y);
-            const bool reeds = swamp > 0.4f && h > -0.5f && h < 0.6f;
-            if (!reeds && (h < 0.25f || terrain.rockMask(p.x, p.y) > 0.45f)) continue;
-            // Patchy density driven by noise.
-            const float density = reeds ? 0.9f : fbm(p * 0.03f, 2, 61) * 1.3f - 0.1f;
-            if (rng.next() > density) continue;
-
-            const int64_t key = (int64_t(std::floor(p.x / cell)) << 32) ^ int64_t(int32_t(std::floor(p.y / cell)));
-            ve::MeshData& md = chunks[key];
-            const glm::vec3 base(p.x, h - 0.05f, p.y);
-            const float phase = rng.next();
-            ++clumps;
-            if (reeds) {
-                for (int i = 0; i < 5; ++i) {
-                    addBlade(md, base + glm::vec3(rng.range(-0.3f, 0.3f), 0, rng.range(-0.3f, 0.3f)), rng.range(0.0f, 6.28f),
-                             rng.range(1.4f, 2.3f), 0.03f, glm::vec3(0.30f, 0.40f, 0.14f) * rng.range(0.85f, 1.15f), phase);
-                }
-            } else {
-                const glm::vec3 dry = glm::mix(glm::vec3(0.78f, 0.63f, 0.32f), glm::vec3(0.55f, 0.55f, 0.26f),
-                                               fbm(p * 0.012f, 3, 31));
-                for (int i = 0; i < 4; ++i) {
-                    addBlade(md, base + glm::vec3(rng.range(-0.25f, 0.25f), 0, rng.range(-0.25f, 0.25f)),
-                             rng.range(0.0f, 6.28f), rng.range(0.45f, 1.05f), 0.05f, dry * rng.range(0.85f, 1.15f), phase);
-                }
+    constexpr int W = 128, H = 256;
+    std::vector<uint8_t> px(size_t(W) * H * 4, 0);
+    Rng rng(99);
+    for (int b = 0; b < 14; ++b) {
+        const float x0 = rng.range(10.0f, W - 10.0f);
+        const float lean = rng.range(-30.0f, 30.0f);
+        const float top = rng.range(0.05f, 0.45f) * H; // blade tip row (image top = card top)
+        const float width = rng.range(3.0f, 6.5f);
+        const glm::vec3 base = glm::mix(glm::vec3(0.55f, 0.48f, 0.25f), glm::vec3(0.72f, 0.7f, 0.42f), rng.next());
+        for (int y = int(top); y < H; ++y) {
+            const float t = (float(H) - float(y)) / (float(H) - top); // 0 root .. 1 tip
+            const float cx = x0 + lean * t * t;
+            const float hw = width * (1.0f - t) + 0.4f;
+            for (int x = int(cx - hw - 1); x <= int(cx + hw + 1); ++x) {
+                if (x < 0 || x >= W) continue;
+                const float cover = glm::clamp(hw - std::abs(float(x) - cx) + 0.5f, 0.0f, 1.0f);
+                if (cover <= 0.0f) continue;
+                uint8_t* p = &px[(size_t(y) * W + x) * 4];
+                const glm::vec3 c = base * glm::mix(0.6f, 1.15f, t);
+                p[0] = uint8_t(255.0f * glm::clamp(c.r, 0.0f, 1.0f));
+                p[1] = uint8_t(255.0f * glm::clamp(c.g, 0.0f, 1.0f));
+                p[2] = uint8_t(255.0f * glm::clamp(c.b, 0.0f, 1.0f));
+                p[3] = std::max(p[3], uint8_t(255.0f * cover));
             }
         }
     }
-    for (auto& [key, md] : chunks) {
-        if (md.indices.empty()) continue;
-        auto& go = scene.spawn("Grass");
-        auto& mr = go.addComponent<ve::MeshRenderer>(ve::Mesh::create(r, md, {}, "grass"), material);
-        mr.castShadows = false;
+    return ve::Texture::create2D(r, W, H, VK_FORMAT_R8G8B8A8_SRGB, px.data(), px.size(), true,
+                                 ve::SamplerType::LinearClamp, "grass card");
+}
+} // namespace
+
+void addGrass(ve::Renderer& r, const Terrain& terrain)
+{
+    // GPU grass (ve::GrassPass): nothing stored per blade; density, colour and
+    // height come from masks sampled once from the terrain's biome functions.
+    ve::GrassDesc grass;
+    grass.name = "Grass";
+    grass.boundsMin = glm::vec2(-Terrain::kHalfSize);
+    grass.boundsMax = glm::vec2(Terrain::kHalfSize);
+    grass.resolution = uint32_t(2.0f * Terrain::kHalfSize / Terrain::kCellSize) + 1; // = the terrain's samples
+    grass.maskResolution = 640;
+    grass.height = [&terrain](glm::vec2 p) { return terrain.height(p.x, p.y); };
+    grass.mask = [&terrain](glm::vec2 p) {
+        const float h = terrain.height(p.x, p.y);
+        if (h < 0.25f || terrain.rockMask(p.x, p.y) > 0.45f || terrain.swampMask(p.x, p.y) > 0.6f) return glm::vec4(0.0f);
+        const float camp = glm::smoothstep(8.0f, 14.0f, glm::length(p - Terrain::kCamp)); // trampled camp floor
+        const float density = glm::clamp(fbm(p * 0.03f, 2, 61) * 2.0f - 0.2f, 0.0f, 1.0f) * camp;
+        return glm::vec4(density, fbm(p * 0.012f, 3, 31), glm::mix(0.7f, 1.0f, fbm(p * 0.05f, 2, 13)), 0.0f);
+    };
+    grass.colorA = {0.78f, 0.63f, 0.32f}; // dry
+    grass.colorB = {0.55f, 0.55f, 0.26f}; // greener
+    grass.spacing = 0.75f;
+    grass.bladesPerClump = 6;
+    grass.clumpRadius = 0.3f;
+    grass.minHeight = 0.45f;
+    grass.maxHeight = 1.05f;
+    grass.bladeWidth = 0.06f;
+    grass.fragmentShader = "grass.frag"; // engine placement + wind, savanna look (wetness, translucency)
+    if (std::getenv("SAVANNA_GRASSCARDS")) {
+        // Alpha-clipped cards instead of procedural blades.
+        ve::GrassDesc cards = grass;
+        cards.cardMesh = ve::GrassDesc::cardMeshCrossed(3, 1.1f);
+        cards.cardTexture = makeGrassCardTexture(r);
+        cards.colorA = glm::vec3(1.05f, 0.95f, 0.8f); // tints multiply the texture
+        cards.colorB = glm::vec3(0.85f, 0.95f, 0.75f);
+        cards.spacing = 1.1f;
+        cards.minHeight = 0.5f;
+        cards.maxHeight = 1.0f;
+        cards.maxTilt = 0.25f;
+        cards.fragmentShader = ""; // engine grass_card.frag
+        r.graph().addPass<ve::GrassPass>(cards);
+    } else {
+        r.graph().addPass<ve::GrassPass>(grass);
     }
-    ve::log::info("Grass: {} clumps in {} chunks", clumps, chunks.size());
+
+    ve::GrassDesc reeds = grass;
+    reeds.name = "Reeds";
+    reeds.mask = [&terrain](glm::vec2 p) {
+        const float h = terrain.height(p.x, p.y);
+        const bool reed = terrain.swampMask(p.x, p.y) > 0.4f && h > -0.5f && h < 0.6f;
+        return reed ? glm::vec4(0.9f, fbm(p * 0.05f, 2, 3), 1.0f, 0.0f) : glm::vec4(0.0f);
+    };
+    reeds.colorA = {0.30f, 0.40f, 0.14f};
+    reeds.colorB = {0.42f, 0.46f, 0.18f};
+    reeds.spacing = 1.2f;
+    reeds.bladesPerClump = 5;
+    reeds.minHeight = 1.4f;
+    reeds.maxHeight = 2.3f;
+    reeds.bladeWidth = 0.03f;
+    reeds.clumpRadius = 0.3f;
+    reeds.radius = 140.0f;
+    r.graph().addPass<ve::GrassPass>(reeds);
 }
 
 } // namespace savanna

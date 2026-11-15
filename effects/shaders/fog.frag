@@ -62,7 +62,24 @@ void main()
     vec3 sunDir = VFX_SUN.xyz;
     float phase = vfxPhaseHG(dot(rd, sunDir), pc.scatter.x);
     vec3 sunLight = pc.sunColor.rgb * phase * pc.sunColor.w;
-    vec3 ambient = vfxSampleSky(pc.skyLut, normalize(vec3(rd.x, max(rd.y, 0.05), rd.z)), sunDir) * pc.scatter.w;
+    // Sky light reaching the fog from all around (not the sky behind it in
+    // the view direction, which would make fog glow orange towards a sunset
+    // even when the sun is hidden behind terrain).
+    vec3 ambient = vfxSampleSky(pc.skyLut, vec3(0.0, 1.0, 0.0), sunDir) * 0.4;
+    for (int k = 0; k < 6; ++k) {
+        float a = float(k) * 1.0471976;
+        ambient += vfxSampleSky(pc.skyLut, normalize(vec3(cos(a), 0.35, sin(a))), sunDir) * 0.1;
+    }
+    ambient *= pc.scatter.w;
+
+    // Beyond the shadow cascades there's no shadow information. Treating that
+    // fog as sunlit makes it glow after the sun has gone behind distant
+    // terrain, so instead carry on with the average sun visibility seen in
+    // the last cascade along this ray (or the camera's own when the ray
+    // never got that far).
+    int lastCascade = vfxSunCascadeCount() - 1;
+    float farVisSum = 0.0, farVisWeight = 0.0;
+    float nearVis = vfxSunShadow(ro + sunDir * 0.5);
 
     vec3 scattered = vec3(0.0);
     float T = 1.0;
@@ -77,7 +94,15 @@ void main()
         float sigma = fogDensity(p);
         if (sigma <= 1e-6) continue;
 
-        vec3 light = ambient + sunLight * vfxSunShadow(p);
+        int cascade;
+        float vis = vfxSunShadowCascade(p, cascade);
+        if (cascade < 0 && lastCascade >= 0) {
+            vis = farVisWeight > 0.0 ? farVisSum / farVisWeight : nearVis;
+        } else if (cascade == lastCascade) {
+            farVisSum += vis * ds;
+            farVisWeight += ds;
+        }
+        vec3 light = ambient + sunLight * vis;
         for (uint k = 0u; k < nearCount; ++k) {
             VePointLight L = lights.point[nearLights[k]];
             float d = length(L.positionRange.xyz - p);

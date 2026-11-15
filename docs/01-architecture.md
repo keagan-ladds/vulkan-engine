@@ -18,6 +18,7 @@ vulkan-engine/
 │   ├── src/ve/assets/      AssetManager, texture loading (stb), glTF loading (cgltf), Model
 │   ├── src/ve/audio/       AudioSystem, AudioClip, AudioSource (miniaudio)
 │   ├── src/ve/ui/          ImGui integration + engine debug overlay
+│   ├── src/ve/world/       FoliageSystem (streamed rule-based scattering), GrassPass (GPU grass)
 │   └── shaders/            engine shaders + include/ve.glsl (the shared shader interface)
 ├── effects/                ve_effects  – OPTIONAL static library (namespace vfx)
 │   ├── src/vfx/            Atmosphere (sky + volumetric clouds), VolumetricFog, Bloom,
@@ -131,6 +132,11 @@ indices in push constants.
 sampling, depth reconstruction). C++ mirrors are in `ve/render/GpuTypes.hpp`
 and must be kept in sync.
 
+**Directional shadow casters:** shadow pipelines use depth clamp, so the
+cascade cull frustum has no near plane. Casters anywhere between the sun and
+the cascade (e.g. distant mountains at sunset) are pancaked to depth 0 and
+still shadow it.
+
 **Depth convention:** the main camera uses **reversed-Z** (near → 1, far → 0,
 compare `GREATER_OR_EQUAL`, clear to 0) for precision over long view
 distances. Shadow maps use standard Z (clear to 1, `LESS_OR_EQUAL`).
@@ -201,6 +207,7 @@ Default pass list:
 | Shadow (-100) | `InstanceCullPass` (upload changed instances, GPU culling → indirect commands) | engine |
 | Shadow | `ShadowPass` (cascades + point cubes; instanced draws in cascades) | engine |
 | Opaque | `OpaquePass` (clears, draws Opaque/AlphaTest queues) | engine |
+| Opaque (10) | `GrassPass` *(per grass layer, added by the game)*: GPU-placed clumps per visible tile | engine (world) |
 | Sky | `AtmospherePass` (sky LUT → half-res clouds → sky where depth == far) | effects |
 | AfterOpaque (0) | `ScreenSpaceGIPass` *(opt-in)*: half-res bounce + AO → `scene * ao + bounce` | effects |
 | AfterOpaque (10) | `ScreenSpaceReflectionsPass` *(opt-in)*: half-res trace → premultiplied blend | effects |
@@ -312,6 +319,52 @@ helpers (the instancing helpers are vertex-only).
 - `PipelineBuilder`: fluent builder (from tinyvulkan) extended with depth,
   multiple attachments, blending presets, depth bias and custom vertex input.
 
+### 5.9 World: foliage streaming and GPU grass (`ve/world`)
+
+**`FoliageSystem`** (a GameObject) scatters `InstanceGroup` instances using
+`FoliageLayer` rules.
+- **Placement is a pure function.** Each layer has a jittered grid of
+  candidates, one per `spacing`² square, seeded from (layer seed, grid x, z).
+  A candidate is kept if it passes, cheapest first: probability, world bounds,
+  exclusion circles, value-noise clustering, height/slope range, the
+  `density(FoliageSample)` callback, and `avoid` rules. An avoid rule
+  re-evaluates the earlier layer's candidates in the neighbourhood, with a
+  distance pre-check, so cross-layer spacing stays deterministic. As a result
+  no placement data is stored, and `query(layer, p, r)` answers "what grows
+  here" even for unloaded cells.
+- **Streaming.** The world is split into `cellSize` cells (64 m). Each
+  (cell, layer) pair within the layer's `viewDistance` is generated
+  nearest-first on one worker thread. The main thread adds results to the
+  layer's groups (one per variant) under `instancesPerFrame`, and unloads
+  pairs beyond `viewDistance × unloadMargin`. Stale results are dropped by
+  ticket. Static colliders are created (`bodiesPerFrame`) only for cells
+  within `colliderDistance` of `colliderFocus`, and destroyed with 25 %
+  hysteresis. `preload(pos)` loads the start area synchronously. Cell scans
+  are clamped to the world bounds, so a 3 km view distance on a small map
+  costs nothing.
+
+**`GrassPass`** (a RenderPass, Opaque stage, order 10; one pass per grass layer)
+stores nothing per blade.
+- **Setup.** The game's `height`/`mask` functions are sampled once into an
+  R32F height texture (exact samples; manual bilinear via `texelFetch`) and an
+  RGBA8 mask (density, colour mix, height scale, free).
+- **Per frame.** The CPU walks 16 m tiles within `radius` and frustum-culls
+  them using per-tile ground height ranges. It issues one instanced draw of a
+  small clump mesh per tile, with instance count = clumps × the tile's best
+  distance density.
+- **Vertex shader.** `ve_grass.glsl` maps `gl_InstanceIndex` to an R2
+  low-discrepancy point in the tile. A clump is kept if
+  `index / count < mask.density × distanceFalloff`, so any prefix of the
+  sequence is evenly spread and thinning never flickers. Far blades widen to
+  keep coverage. Hidden clumps are moved outside the depth range.
+- **Wind and output.** Wind comes from `frame.globalParams[windSlot]`. Blades
+  write the thin G-buffer and cast no shadows.
+- **Variation.** Each clump has a random yaw, a random tilt around a horizontal
+  axis (`maxTilt`) and a random width.
+- **Card mode.** With `cardMesh` set, the mesh is scaled uniformly by the clump
+  height. Vertex y is the sway weight and uv goes to `grass_card.frag`, which
+  alpha-tests `cardTexture`.
+
 ## 6. Physics
 
 Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
@@ -385,7 +438,10 @@ Optional add-ons built only on public engine APIs:
 - `VolumetricFogPass`: a half-resolution raymarch from the camera to scene depth
   into `FogBuffer`. It uses exponential height fog, 3D noise, a Henyey-Greenstein
   phase function, shadow-cascade sampling for god rays, and only the point lights
-  whose sphere the ray actually crosses. A 4×4 ordered (Bayer) jitter is used,
+  whose sphere the ray actually crosses. Ambient light is the sky averaged over
+  the hemisphere (not the view direction, so fog doesn't glow toward a hidden
+  sunset). Beyond the last cascade, sun visibility is the average seen in the
+  last cascade along that ray. A 4×4 ordered (Bayer) jitter is used,
   and a matching 4-tap box upsample blends the result over SceneColor.
 - `BloomPass`: threshold + progressive downsample/upsample chain added back into SceneColor.
 - **Screen-space passes (opt-in; not added by `addDefaultEffects`).** They read
@@ -420,7 +476,7 @@ Optional add-ons built only on public engine APIs:
 | File | What it demonstrates |
 |---|---|
 | `Terrain.*` | Heightfield chunks, biome vertex colours, **custom shader** (`terrain.frag`), heightfield collider |
-| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading), scattering with shared colliders (trunk capsules, rock convex hulls), grass with a wind shader |
+| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading), LOD chains + impostors, `FoliageSystem` layers (biome rules, avoid rules, streamed colliders), `GrassPass` grass + reeds with a custom fragment shader |
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Props.*` | Campfire/torches (point shadows, particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |

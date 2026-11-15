@@ -702,6 +702,11 @@ void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uin
         ShadowView sv;
         sv.viewProj = vp;
         sv.frustum = Frustum::fromMatrix(vp);
+        // Directional shadow pipelines use depth clamp, so casters between the
+        // sun and the cascade (beyond casterMargin, e.g. a distant mountain at
+        // sunset) still land in the map at depth 0. Don't cull them by the near
+        // plane.
+        if (m_device.features().depthClamp) sv.frustum.planes[4] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
         sv.viewIndex = viewIndex;
         sv.layer = baseLayer + c;
         sv.lightIndex = lightIndex;

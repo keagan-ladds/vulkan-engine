@@ -85,6 +85,29 @@ vec3 vfxSampleSky(uint lutIndex, vec3 dir, vec3 sunDir)
 }
 
 // ---- Shadows for volumetrics (single tap, no PCF: noise averages it out) --------
+// Sun shadow at p, and which cascade covered it (-1 = beyond the shadow
+// distance or no shadowed sun; the result is then 1).
+float vfxSunShadowCascade(vec3 p, out int cascade)
+{
+    cascade = -1;
+    if (frame.lightCounts.x == 0u) return 1.0;
+    VeDirectionalLight L = lights.directional[0];
+    if (L.shadow.x < 0) return 1.0;
+    float viewDepth = dot(p - frame.cameraPosition.xyz, frame.cameraForward.xyz);
+    for (int i = 0; i < L.shadow.y; ++i) {
+        if (viewDepth <= L.cascadeSplits[i]) { cascade = i; break; }
+    }
+    if (cascade < 0) return 1.0;
+    vec4 sp = lights.shadowViews[L.shadow.x + cascade] * vec4(p, 1.0);
+    vec3 ndc = sp.xyz / sp.w;
+    return texture(veDirShadowMap, vec4(ndc.xy * 0.5 + 0.5, float(L.shadow.z + cascade), ndc.z));
+}
+
+int vfxSunCascadeCount()
+{
+    return frame.lightCounts.x == 0u || lights.directional[0].shadow.x < 0 ? 0 : lights.directional[0].shadow.y;
+}
+
 float vfxSunShadow(vec3 p)
 {
     if (frame.lightCounts.x == 0u) return 1.0;

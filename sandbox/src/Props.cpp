@@ -16,6 +16,7 @@
 #include <ve/render/Mesh.hpp>
 #include <ve/render/Primitives.hpp>
 #include <ve/render/Renderer.hpp>
+#include <ve/world/Foliage.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Scene.hpp>
 #include <vfx/Particles.hpp>
@@ -344,6 +345,30 @@ void AutoTest::update(float dt)
             std::to_string(is.visibleShadow));
         log("objects: " + std::to_string(scene().objectCount()) + ", draw calls: " +
             std::to_string(renderer().stats().drawCalls) + ", gpu ms: " + std::to_string(renderer().gpuFrameTimeMs()));
+        // Foliage streaming: jump to the far corner and let cells stream.
+        auto* foliage = static_cast<ve::FoliageSystem*>(scene().find("Foliage"));
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        if (foliage && player) {
+            const ve::FoliageStats& fs = foliage->stats();
+            log("foliage before: " + std::to_string(fs.instances) + " instances, " + std::to_string(fs.cells) + " cells, " +
+                std::to_string(fs.bodies) + " bodies");
+            const glm::vec2 corner(-240.0f, -240.0f);
+            player->teleport({corner.x, m_terrain->height(corner.x, corner.y), corner.y}, 0.0f);
+            m_t = 0.0f;
+            ++m_step;
+        } else {
+            engine().quit();
+            m_step = 100;
+        }
+    } else if (m_step == 3 && m_t > 4.0f) {
+        auto* foliage = static_cast<ve::FoliageSystem*>(scene().find("Foliage"));
+        const ve::FoliageStats& fs = foliage->stats();
+        log("foliage after teleport: " + std::to_string(fs.instances) + " instances, " + std::to_string(fs.cells) +
+            " cells, " + std::to_string(fs.pending) + " pending, " + std::to_string(fs.bodies) + " bodies, " +
+            std::to_string(fs.dropped) + " dropped, " + std::to_string(fs.generateMs) + " ms per cell");
+        // Bushes are deterministic: the instances near the player must match a fresh query.
+        const glm::vec3 p = static_cast<Player*>(scene().find("Player"))->transform().position();
+        log("bushes within 30 m (query): " + std::to_string(foliage->query(5, glm::vec2(p.x, p.z), 30.0f).size()));
         engine().quit();
         ++m_step;
     }

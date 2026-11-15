@@ -60,8 +60,8 @@ void buildWorld(ve::Engine& engine)
     auto& terrain = scene.spawn<Terrain>();
     scene.spawn<Water>();
     const PropLibrary props = buildPropLibrary(r);
-    scatterProps(scene, terrain, props);
-    buildGrass(scene, r, terrain);
+    auto& foliage = scatterProps(scene, terrain, props);
+    addGrass(r, terrain);
 
     // --- Weather + day/night ------------------------------------------------------------
     auto& weather = scene.spawn<vfx::Weather>();
@@ -179,6 +179,11 @@ void buildWorld(ve::Engine& engine)
         float x, y, z, yaw, pitch;
         if (std::sscanf(f, "%f,%f,%f,%f,%f", &x, &y, &z, &yaw, &pitch) == 5) player.setPose({x, y, z}, yaw, pitch);
     }
+
+    // Props stream around the camera; colliders around the player. Load the
+    // start area up front so nothing pops in on the first frames.
+    foliage.colliderFocus = &player;
+    foliage.preload(player.transform().position());
 }
 
 } // namespace

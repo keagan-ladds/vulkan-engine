@@ -22,3 +22,5 @@
 #include "ve/scene/GameObject.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/ui/UiLayer.hpp"
+#include "ve/world/Foliage.hpp"
+#include "ve/world/Grass.hpp"

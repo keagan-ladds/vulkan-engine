@@ -88,6 +88,9 @@ north (-Z), 90 looks west (-X).
   pass that draws scene materials must bind both (`TransparentPass` does, and
   leaves the normal target unwritten). Otherwise pipeline/rendering attachment
   counts mismatch. Full-screen passes are unaffected.
+- **FoliageSystem callbacks run on a worker thread.** `FoliageWorld::height`,
+  `normal` and every `FoliageLayer::density` must only read immutable data.
+  Add layers and exclusions before the first `update()`/`preload()`.
 - **Components are registered by their exact type** (see Known issue 9).
 - **glm + GCC "most vexing parse":** `glm::mat3 m(glm::vec3(x[0]) / s, ...)` can
   parse as a declaration. Use brace initialisation.

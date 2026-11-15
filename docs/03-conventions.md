@@ -216,6 +216,65 @@ Keep the `shared_ptr<InstanceGroup>` alive somewhere that dies with the scene
 `userValue` comes back in `RaycastHit::userValue`. Custom vertex shaders must
 use `veModelMatrix()` (not `draw.model`) to work with instancing.
 
+### Forests, rocks, bushes: foliage layers
+
+For anything scattered by rules rather than placed by hand, use
+`ve::FoliageSystem` (it streams, so world size doesn't matter):
+```cpp
+ve::FoliageWorld world;
+world.boundsMin = {-2000, -2000}; world.boundsMax = {2000, 2000};
+world.height = [&](glm::vec2 p) { return terrain.height(p.x, p.y); }; // called on a worker thread
+auto& foliage = scene.spawn<ve::FoliageSystem>(world);
+foliage.addExclusion(campCentre, 25.0f);
+
+ve::FoliageLayer trees;
+trees.name = "acacia";
+trees.variants = {lodChainA, lodChainB};       // vector<InstanceLod> per mesh variant
+trees.colliders = {trunkCapsule};
+trees.colliderUserValue = kAcacia;             // comes back in RaycastHit::userValue
+trees.spacing = 8.0f;  trees.probability = 0.8f;
+trees.clusterFrequency = 0.01f;                // groves
+trees.density = [&](const ve::FoliageSample& s) { return biome.savannah(s.position); };
+trees.viewDistance = 1500.0f;
+const uint32_t treeLayer = foliage.addLayer(trees);
+
+ve::FoliageLayer bushes = /* ... */;
+bushes.avoid = {{treeLayer, 2.5f}};            // keep clear of trunks
+foliage.addLayer(bushes);
+foliage.colliderFocus = &player;
+foliage.preload(player.transform().position());
+```
+Rules are deterministic, so the same world appears every run without saving
+anything. To make a change persistent (e.g. a felled tree), keep your own
+"removed" set and exclude it, either in `density` or by `addExclusion` before
+loading. A built-in removal API is a roadmap item.
+
+### Grass
+
+```cpp
+ve::GrassDesc g;
+g.boundsMin = {-320, -320}; g.boundsMax = {320, 320};
+g.resolution = 321;                                    // match your heightfield samples for an exact fit
+g.height = [&](glm::vec2 p) { return terrain.height(p.x, p.y); };
+g.mask = [&](glm::vec2 p) { return glm::vec4(density, colourMix, heightScale, 0.0f); };
+g.colorA = {...}; g.colorB = {...};
+renderer.graph().addPass<ve::GrassPass>(g);            // one pass per grass type (e.g. grass + reeds)
+```
+Tweak live via `pass.desc()` or F1. For a custom look, set `g.fragmentShader`
+to a shader with `grass_field.frag`'s inputs (the savanna's `grass.frag` adds
+wetness). Every clump gets a random yaw plus a tilt up to `g.maxTilt` radians.
+
+Alpha-clipped **grass cards** (Valheim-style) instead of procedural blades:
+```cpp
+g.cardMesh = ve::GrassDesc::cardMeshCrossed(3, 1.0f);  // or your own: root at origin, height 1
+g.cardTexture = assets.loadTexture("textures/grass_card.png", true); // alpha = blade coverage
+g.alphaCutoff = 0.5f;
+g.colorA = g.colorB = glm::vec3(1.0f);                  // tints multiply the texture
+```
+The fragment shader defaults to `grass_card.frag`. Its alpha test is sharpened
+with `fwidth`, so thin blades survive mipmapping. Try it in the sandbox with
+`SAVANNA_GRASSCARDS=1`.
+
 ### Physics
 
 ```cpp

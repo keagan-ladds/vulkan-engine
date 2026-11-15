@@ -2,9 +2,9 @@
 
 // =============================================================================
 // Procedural low-poly props (acacia / baobab / fever trees, bushes, rocks),
-// wind-swept grass and reeds, and the functions that scatter them over the
-// terrain. All props share one vertex-coloured StandardMaterial; the grass
-// uses its own shader (grass.vert/frag) that sways with the global wind.
+// their placement rules (ve::FoliageSystem layers) and GPU grass/reeds
+// (ve::GrassPass). All props share one vertex-coloured StandardMaterial; the
+// grass uses the engine's grass_field.vert with the sandbox's grass.frag.
 // =============================================================================
 
 #include <ve/physics/Physics.hpp>
@@ -18,6 +18,7 @@ namespace ve {
 class Mesh;
 class Material;
 class InstanceGroup;
+class FoliageSystem;
 class Renderer;
 class Scene;
 } // namespace ve
@@ -40,21 +41,13 @@ struct PropLibrary {
     std::shared_ptr<ve::Material> material;
 };
 
-// Owns the instanced props (GPU instance groups + static physics bodies) so
-// they live and die with the scene.
-class PropField : public ve::GameObject {
-public:
-    PropField() : GameObject("Props") {}
-    ~PropField() override;
-    std::vector<std::shared_ptr<ve::InstanceGroup>> groups;
-    std::vector<uint32_t> bodies;
-};
-
 // Display name for RaycastHit::userValue of a prop collider.
 const char* propName(uint32_t userValue);
 
 PropLibrary buildPropLibrary(ve::Renderer& renderer);
-void scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& lib);
-void buildGrass(ve::Scene& scene, ve::Renderer& renderer, const Terrain& terrain);
+// Adds a ve::FoliageSystem with one layer per prop type (biome rules, streaming, colliders).
+ve::FoliageSystem& scatterProps(ve::Scene& scene, const Terrain& terrain, const PropLibrary& lib);
+// Adds GPU grass + reeds (ve::GrassPass x2).
+void addGrass(ve::Renderer& renderer, const Terrain& terrain);
 
 } // namespace savanna
