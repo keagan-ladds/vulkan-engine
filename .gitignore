@@ -3,3 +3,4 @@ build-release/
 .cache/
 compile_commands.json
 imgui.ini
+__pycache__/

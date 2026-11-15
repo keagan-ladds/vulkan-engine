@@ -177,6 +177,7 @@ struct CompositePush {
     float saturation;
     glm::vec4 tint;    // rgb, w = vignette
     int tonemapper;
+    uint32_t graded;   // 1 = input is already graded + tonemapped
 };
 } // namespace
 
@@ -188,11 +189,28 @@ CompositePass::CompositePass()
 
 void CompositePass::prepare(FrameData&)
 {
-    setPush(CompositePush{inputIndex(0), exposure, contrast, saturation, glm::vec4(tint, vignette), tonemapper});
+    if (m_graded != kNoTexture) {
+        setPush(CompositePush{graph().get(m_graded).sampledIndex, 1.0f, 1.0f, 1.0f, glm::vec4(1.0f, 1.0f, 1.0f, vignette), 2, 1u});
+    } else {
+        setPush(CompositePush{inputIndex(0), effectiveExposure(), contrast, saturation, glm::vec4(tint, vignette), tonemapper, 0u});
+    }
+}
+
+void CompositePass::declare(PassBuilder& b)
+{
+    FullscreenPass::declare(b);
+    if (m_graded != kNoTexture) b.use(m_graded, Access::Sampled);
+}
+
+void CompositePass::execute(RenderContext& ctx)
+{
+    FullscreenPass::execute(ctx);
+    m_graded = kNoTexture; // the grading pass sets it again next frame (if it's still enabled)
 }
 
 void CompositePass::onGui()
 {
+    if (m_graded != kNoTexture) ImGui::TextDisabled("Graded input: tonemapping is done by the grading pass");
     ImGui::SliderFloat("Exposure", &exposure, 0.05f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderFloat("Contrast", &contrast, 0.5f, 1.5f);
     ImGui::SliderFloat("Saturation", &saturation, 0.0f, 2.0f);

@@ -312,7 +312,21 @@ def audio():
     write_wav("pickup.wav", s)
 
 
+def lut_neutral(size=32):
+    """Identity colour-grading LUT strip (size slices of size x size) for
+    vfx::ColorGradingPass. Grade a screenshot in a photo editor, apply the
+    same adjustments to this image and load it as an UNORM (non-sRGB) texture."""
+    img = Image.new("RGB", (size * size, size))
+    px = img.load()
+    for b in range(size):
+        for g in range(size):
+            for r in range(size):
+                px[b * size + r, g] = (round(r * 255 / (size - 1)), round(g * 255 / (size - 1)), round(b * 255 / (size - 1)))
+    img.save(out("textures", f"lut_neutral_{size}.png"))
+
+
 if __name__ == "__main__":
+    lut_neutral()
     textures()
     reed_screen()
     rondavel()

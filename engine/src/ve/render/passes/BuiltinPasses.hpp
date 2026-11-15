@@ -57,14 +57,27 @@ class CompositePass : public FullscreenPass {
 public:
     CompositePass();
     void prepare(FrameData& frame) override;
+    void declare(PassBuilder& builder) override;
+    void execute(RenderContext& ctx) override;
     void onGui() override;
 
+    // A grading pass (e.g. vfx::ColorGradingPass) that already applied exposure,
+    // grading and tonemapping calls this from its prepare() every frame; the
+    // composite then only adds vignette + dither. Cleared after each frame, so
+    // disabling the grading pass falls back to the built-in tonemapping.
+    void useGradedInput(TextureId texture) { m_graded = texture; }
+    float effectiveExposure() const { return exposure * exposureMultiplier; }
+
     float exposure = 1.0f;
+    float exposureMultiplier = 1.0f; // transient boosts (lightning flashes); multiplies exposure
     float contrast = 1.05f;
     float saturation = 1.1f;
     float vignette = 0.25f;
     glm::vec3 tint{1.0f}; // colour balance multiplier
     int tonemapper = 0;   // 0 = ACES (fitted), 1 = Reinhard, 2 = none
+
+private:
+    TextureId m_graded = kNoTexture;
 };
 
 } // namespace ve

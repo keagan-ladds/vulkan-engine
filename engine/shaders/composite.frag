@@ -11,6 +11,7 @@ layout(push_constant) uniform Push {
     float saturation;
     vec4 tint; // rgb, w = vignette strength
     int tonemapper;
+    uint graded; // 1 = input already graded + tonemapped (linear 0..1): only vignette + dither
 } pc;
 
 layout(location = 0) in vec2 inUV;
@@ -27,15 +28,19 @@ void main()
 {
     vec3 c = veSample(pc.sceneColor, inUV).rgb * pc.exposure * pc.tint.rgb;
 
-    if (pc.tonemapper == 0) c = acesFitted(c);
-    else if (pc.tonemapper == 1) c = c / (1.0 + c);
+    if (pc.graded == 0u) {
+        if (pc.tonemapper == 0) c = acesFitted(c);
+        else if (pc.tonemapper == 1) c = c / (1.0 + c);
+    }
     c = clamp(c, 0.0, 1.0);
 
     // Grade in a roughly perceptual space (gamma 2.2), then back to linear.
     vec3 g = pow(c, vec3(1.0 / 2.2));
-    g = (g - 0.5) * pc.contrast + 0.5;
-    float l = veLuminance(g);
-    g = mix(vec3(l), g, pc.saturation);
+    if (pc.graded == 0u) {
+        g = (g - 0.5) * pc.contrast + 0.5;
+        float l = veLuminance(g);
+        g = mix(vec3(l), g, pc.saturation);
+    }
     vec2 d = inUV - 0.5;
     g *= 1.0 - pc.tint.w * smoothstep(0.2, 0.8, dot(d, d) * 2.0);
     // Tiny dither to hide banding in skies/fog.
