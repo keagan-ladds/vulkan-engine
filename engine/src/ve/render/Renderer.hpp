@@ -76,6 +76,16 @@ struct Environment {
 
 enum class BuiltinShader { Standard, StandardCutout, StandardTransparent, Unlit, Impostor, Count };
 
+// Something that draws its own geometry into the directional shadow cascades
+// (e.g. GrassPass). ShadowPass calls drawShadow() for every directional
+// cascade while that cascade's depth target is bound, after the scene's
+// meshes and instances. Register with Renderer::addShadowCaster.
+class ShadowCaster {
+public:
+    virtual ~ShadowCaster() = default;
+    virtual void drawShadow(RenderContext& ctx, const ShadowView& view) = 0;
+};
+
 class Renderer {
 public:
     Renderer() = default;
@@ -128,6 +138,9 @@ public:
     // Thousands of copies of a mesh, culled and drawn on the GPU (see Instancing.hpp).
     std::shared_ptr<InstanceGroup> createInstanceGroup(InstanceGroupDesc desc, uint32_t capacity);
     InstanceSystem& instances() { return *m_instances; }
+    void addShadowCaster(ShadowCaster* caster) { m_shadowCasters.push_back(caster); }
+    void removeShadowCaster(ShadowCaster* caster) { std::erase(m_shadowCasters, caster); }
+    const std::vector<ShadowCaster*>& shadowCasters() const { return m_shadowCasters; }
     Material* fallbackMaterial() const { return m_fallbackMaterial.get(); }
     std::shared_ptr<StandardMaterial> createStandardMaterial(StandardMaterial::Mode mode = StandardMaterial::Mode::Opaque);
     const std::shared_ptr<Texture>& whiteTexture() const { return m_white; }
@@ -251,6 +264,7 @@ private:
     std::shared_ptr<Texture> m_white, m_black, m_flatNormal;
     std::shared_ptr<StandardMaterial> m_fallbackMaterial; // used when a MeshRenderer has no material
     std::unique_ptr<InstanceSystem> m_instances;
+    std::vector<ShadowCaster*> m_shadowCasters;
 };
 
 } // namespace ve

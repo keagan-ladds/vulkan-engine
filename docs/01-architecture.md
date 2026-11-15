@@ -132,6 +132,11 @@ indices in push constants.
 sampling, depth reconstruction). C++ mirrors are in `ve/render/GpuTypes.hpp`
 and must be kept in sync.
 
+**Custom shadow casters:** implement `ve::ShadowCaster::drawShadow(ctx, view)`
+and register it with `renderer.addShadowCaster(this)` to draw non-scene
+geometry into the directional cascades. The depth target is already bound;
+bind a `PassKind::ShadowDirectional` pipeline and push `viewIndex`.
+
 **Directional shadow casters:** shadow pipelines use depth clamp, so the
 cascade cull frustum has no near plane. Casters anywhere between the sun and
 the cascade (e.g. distant mountains at sunset) are pancaked to depth 0 and
@@ -358,7 +363,13 @@ stores nothing per blade.
   sequence is evenly spread and thinning never flickers. Far blades widen to
   keep coverage. Hidden clumps are moved outside the depth range.
 - **Wind and output.** Wind comes from `frame.globalParams[windSlot]`. Blades
-  write the thin G-buffer and cast no shadows.
+  write the thin G-buffer.
+- **Shadows.** `GrassPass` is a `ShadowCaster` (a `Renderer::addShadowCaster`
+  hook that `ShadowPass` calls for each directional cascade). It draws tiles
+  within `shadowDistance` into cascades with texels ≤ `shadowMaxTexel`, using
+  `grass_shadow.vert`. That shader shares placement and wind with the colour
+  pass (`veGrassPlace`), so shadows sway with the blades. Cards use the
+  alpha-tested `grass_card_shadow.frag`. Cost: about 0.5 ms at 30 m on Iris Xe.
 - **Variation.** Each clump has a random yaw, a random tilt around a horizontal
   axis (`maxTilt`) and a random width.
 - **Card mode.** With `cardMesh` set, the mesh is scaled uniformly by the clump

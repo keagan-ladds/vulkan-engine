@@ -262,7 +262,9 @@ renderer.graph().addPass<ve::GrassPass>(g);            // one pass per grass typ
 ```
 Tweak live via `pass.desc()` or F1. For a custom look, set `g.fragmentShader`
 to a shader with `grass_field.frag`'s inputs (the savanna's `grass.frag` adds
-wetness). Every clump gets a random yaw plus a tilt up to `g.maxTilt` radians.
+wetness). Every clump gets a random yaw plus a tilt up to `g.maxTilt` radians. Grass
+casts sun shadows within `g.shadowDistance` (default 30 m; `g.castShadows = false`
+turns them off).
 
 Alpha-clipped **grass cards** (Valheim-style) instead of procedural blades:
 ```cpp

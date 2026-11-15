@@ -260,9 +260,10 @@ million grass blades), scaling up on discrete GPUs.
 - [x] Rules: deterministic jittered grid per layer, probability, value-noise clustering, height/slope range, `density(FoliageSample)` callback (biomes), exclusion circles, `avoid` other layers, scale/tint/align-to-normal/sink; `query()` for gameplay
 - [x] Collider streaming: static bodies only near `colliderFocus` (budgeted, with hysteresis)
 - [x] `ve::GrassPass`: GPU grass from height/mask textures, CPU tile frustum culling, R2-sequence clumps with flicker-free distance thinning, wind from a global param, custom fragment shaders
+- [x] Grass extras (after review): random yaw + tilt per clump, alpha-clipped grass cards (`cardMesh`/`cardTexture`), grass shadows in the near cascades via the new `ShadowCaster` hook (about 0.5 ms)
 - [x] Savanna: all props are foliage layers (savannah/swamp/kopje rules); grass and reeds are GrassPasses; autotest teleports across the map and checks streaming
 - **Result:** preload about 110 ms for about 9.4k props; worker about 0.06 ms per (cell, layer); static bodies 3.3k → about 450 (near the player only); grass + reeds about 0.3–0.7 ms GPU; same visuals and draw counts as the old one-shot scatter
-- Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); removal/persistence API (felled trees); grass interaction (player bending blades); a multi-threaded worker pool; grass shadows
+- Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); removal/persistence API (felled trees); grass interaction (player bending blades); a multi-threaded worker pool
 
 ### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds)
 - [ ] Engine terrain module: chunked heightfield streaming, LOD (geomorphing or clipmaps), splat materials

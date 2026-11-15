@@ -110,4 +110,29 @@ vec3 veGrassVertexPosition(VeGrassClump c, vec3 position, vec3 bladeRoot, vec2 u
     return c.root + veGrassRotate(c, off);
 }
 
+// Full placement of a clump-mesh vertex: blades or cards (params[5].x), then
+// wind from frame.globalParams[windSlot]. Used by the colour and shadow
+// vertex shaders, so shadows match exactly. tip = sway weight (0 root .. 1 tip).
+vec3 veGrassPlace(VeMaterial m, VeGrassClump c, vec3 position, vec4 tangent, vec2 uv, vec4 color, out float tip)
+{
+    bool cards = m.params[5].x > 0.5;
+    vec3 world = cards ? veGrassCardPosition(c, position) : veGrassVertexPosition(c, position, tangent.xyz, uv, color.r);
+    tip = cards ? clamp(position.y, 0.0, 1.0) : uv.y;
+    float phase = cards ? veHash12(c.root.xz) : uv.x;
+
+    int windSlot = int(m.params[4].y);
+    if (windSlot >= 0) {
+        vec4 wind = frame.globalParams[windSlot];
+        float w = tip * tip * m.params[4].z;
+        float t = frame.time.x;
+        // Rolling gusts across the field + per-blade flutter.
+        float wave = sin(dot(world.xz, wind.xy) * 0.15 - t * 1.6) * 0.5 + 0.5;
+        float flutter = sin(t * 5.0 + phase * 30.0 + world.x * 0.7) * 0.25;
+        float bend = ((0.25 + wave * 0.75) * wind.z * 0.045 + flutter * 0.05) * c.height;
+        world.xz += wind.xy * bend * w;
+        world.y -= abs(bend) * w * 0.3;
+    }
+    return world;
+}
+
 #endif

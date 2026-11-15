@@ -16,6 +16,7 @@
 #include <ve/render/Texture.hpp>
 
 #include <cstdlib>
+#include <string>
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Scene.hpp>
@@ -391,6 +392,8 @@ void addGrass(ve::Renderer& r, const Terrain& terrain)
     grass.maxHeight = 1.05f;
     grass.bladeWidth = 0.06f;
     grass.fragmentShader = "grass.frag"; // engine placement + wind, savanna look (wetness, translucency)
+    grass.castShadows = !std::getenv("SAVANNA_GRASSSHADOWS") || std::string(std::getenv("SAVANNA_GRASSSHADOWS")) != "0";
+    grass.shadowDistance = 30.0f;
     if (std::getenv("SAVANNA_GRASSCARDS")) {
         // Alpha-clipped cards instead of procedural blades.
         ve::GrassDesc cards = grass;
@@ -424,6 +427,7 @@ void addGrass(ve::Renderer& r, const Terrain& terrain)
     reeds.bladeWidth = 0.03f;
     reeds.clumpRadius = 0.3f;
     reeds.radius = 140.0f;
+    reeds.shadowDistance = 40.0f;
     r.graph().addPass<ve::GrassPass>(reeds);
 }
 

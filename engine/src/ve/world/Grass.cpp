@@ -19,7 +19,10 @@ GrassPass::GrassPass(GrassDesc desc) : RenderPass(desc.name, RenderStage::Opaque
     if (!m_desc.height) throw std::runtime_error("GrassDesc::height is required");
 }
 
-GrassPass::~GrassPass() = default;
+GrassPass::~GrassPass()
+{
+    if (m_registered) renderer().removeShadowCaster(this);
+}
 
 MeshData GrassDesc::cardMeshCrossed(uint32_t quads, float width)
 {
@@ -140,13 +143,17 @@ void GrassPass::setup(RenderGraph&)
     sd.vertex = d.vertexShader;
     sd.fragment = !d.fragmentShader.empty() ? d.fragmentShader : cards ? "grass_card.frag" : "grass_field.frag";
     sd.cull = CullMode::None;
-    sd.castShadows = false;
+    sd.castShadows = d.castShadows;
+    sd.shadowVertex = "grass_shadow.vert";
+    sd.shadowFragment = cards ? "grass_card_shadow.frag" : ""; // blades: depth only
     m_shader = r.createShader(sd);
     m_material = r.createMaterial(m_shader);
     m_material->setTexture(0, m_height);
     m_material->setTexture(1, m_mask);
     if (d.cardTexture) m_material->setTexture(2, d.cardTexture);
     updateMaterial();
+    r.addShadowCaster(this);
+    m_registered = true;
     log::info("{}: {}x{} tiles, {} height samples, {} clumps per full tile", d.name, m_tilesX, m_tilesZ, res,
               uint32_t(std::pow(d.tileSize / d.spacing, 2.0f)));
 }
@@ -172,21 +179,18 @@ void GrassPass::declare(PassBuilder& b)
     b.use(r.sceneDepth(), Access::DepthAttachment);
 }
 
-void GrassPass::execute(RenderContext& ctx)
+glm::uvec2 GrassPass::drawTiles(RenderContext& ctx, const Frustum& frustum, float maxDistance, uint32_t viewIndex)
 {
     Renderer& r = renderer();
     const GrassDesc& d = m_desc;
-    const CameraData& cam = ctx.frame->camera;
-    updateMaterial();
-
-    const glm::vec2 eye(cam.position.x, cam.position.z);
+    const glm::vec3 camPos = ctx.frame->camera.position;
+    const glm::vec2 eye(camPos.x, camPos.z);
     const glm::vec2 rel = eye - d.boundsMin;
-    const int reach = int(std::ceil(d.radius / d.tileSize)) + 1;
+    const float radius = std::min(d.radius, maxDistance);
+    const int reach = int(std::ceil(radius / d.tileSize)) + 1;
     const int cx = int(std::floor(rel.x / d.tileSize)), cz = int(std::floor(rel.y / d.tileSize));
     const float perTile = std::floor(d.tileSize / d.spacing) * std::floor(d.tileSize / d.spacing);
 
-    ctx.beginRendering({{r.sceneColor()}, {r.sceneNormal()}}, {r.sceneDepth()});
-    ctx.bindPipeline(m_shader->pipeline(PassKind::Forward));
     VkBuffer vb = m_clump->vertexBuffer();
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
@@ -199,11 +203,11 @@ void GrassPass::execute(RenderContext& ctx)
             const glm::vec2 lo = d.boundsMin + glm::vec2(float(tx), float(tz)) * d.tileSize;
             const glm::vec2 nearest = glm::clamp(eye, lo, lo + d.tileSize);
             const float dist = glm::length(nearest - eye);
-            if (dist > d.radius) continue;
+            if (dist > radius) continue;
             const glm::vec2 hr = m_tileHeights[size_t(tz) * m_tilesX + tx];
             const AABB box{glm::vec3(lo.x - 1.0f, hr.x - 0.5f, lo.y - 1.0f),
                            glm::vec3(lo.x + d.tileSize + 1.0f, hr.y + d.maxHeight + 0.5f, lo.y + d.tileSize + 1.0f)};
-            if (!cam.frustum.intersects(box)) continue;
+            if (!frustum.intersects(box)) continue;
             // Clumps beyond the densest point of this tile are never visible: don't draw them.
             float keep = 1.0f;
             if (dist > d.fadeStart) {
@@ -215,6 +219,7 @@ void GrassPass::execute(RenderContext& ctx)
             DrawPush push{};
             push.model = glm::mat4(1.0f);
             push.materialIndex = m_material->gpuIndex();
+            push.viewIndex = viewIndex;
             push.custom = glm::vec4(lo, d.tileSize, perTile);
             vkCmdPushConstants(ctx.cmd, r.pipelineLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DrawPush), &push);
             vkCmdDrawIndexed(ctx.cmd, indexCount, count, 0, 0, 0);
@@ -222,14 +227,37 @@ void GrassPass::execute(RenderContext& ctx)
             clumps += count;
         }
     }
+    return {tiles, clumps};
+}
+
+void GrassPass::execute(RenderContext& ctx)
+{
+    Renderer& r = renderer();
+    updateMaterial();
+    ctx.beginRendering({{r.sceneColor()}, {r.sceneNormal()}}, {r.sceneDepth()});
+    ctx.bindPipeline(m_shader->pipeline(PassKind::Forward));
+    const glm::uvec2 n = drawTiles(ctx, ctx.frame->camera.frustum, FLT_MAX, 0);
     ctx.endRendering();
-    m_lastTiles = tiles;
-    m_lastClumps = clumps;
+    m_lastTiles = n.x;
+    m_lastClumps = n.y;
+    m_lastShadowClumps = m_shadowClumps; // drawn earlier this frame by drawShadow()
+    m_shadowClumps = 0;
+}
+
+void GrassPass::drawShadow(RenderContext& ctx, const ShadowView& view)
+{
+    if (!enabled || !m_desc.castShadows || view.texelSize > m_desc.shadowMaxTexel) return;
+    updateMaterial(); // shadows render before execute() in the frame
+    ctx.bindPipeline(m_shader->pipeline(PassKind::ShadowDirectional));
+    m_shadowClumps += drawTiles(ctx, view.frustum, m_desc.shadowDistance, view.viewIndex).y;
 }
 
 void GrassPass::onGui()
 {
-    ImGui::Text("%u tiles, %u clumps drawn", m_lastTiles, m_lastClumps);
+    ImGui::Text("%u tiles, %u clumps drawn, %u in shadows", m_lastTiles, m_lastClumps, m_lastShadowClumps);
+    ImGui::Checkbox("Cast shadows", &m_desc.castShadows);
+    ImGui::SliderFloat("Shadow distance", &m_desc.shadowDistance, 0.0f, 100.0f);
+    ImGui::SliderFloat("Shadow max texel", &m_desc.shadowMaxTexel, 0.01f, 0.5f);
     ImGui::SliderFloat("Radius", &m_desc.radius, 10.0f, 400.0f);
     ImGui::SliderFloat("Fade start", &m_desc.fadeStart, 0.0f, 200.0f);
     ImGui::SliderFloat("Far density", &m_desc.farDensity, 0.0f, 1.0f);

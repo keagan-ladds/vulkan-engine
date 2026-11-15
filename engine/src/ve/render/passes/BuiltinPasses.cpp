@@ -81,6 +81,9 @@ void ShadowPass::execute(RenderContext& ctx)
         if (!sv.point && sv.cullView != kInvalidIndex) {
             r.instances().draw(ctx, sv.cullView, PassKind::ShadowDirectional, sv.viewIndex);
         }
+        if (!sv.point) {
+            for (ShadowCaster* caster : r.shadowCasters()) caster->drawShadow(ctx, sv);
+        }
         ctx.endRendering();
     }
 }

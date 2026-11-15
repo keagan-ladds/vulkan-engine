@@ -29,6 +29,7 @@
 
 #include "ve/render/Mesh.hpp"
 #include "ve/render/RenderGraph.hpp"
+#include "ve/render/Renderer.hpp"
 
 #include <glm/glm.hpp>
 
@@ -79,13 +80,20 @@ struct GrassDesc {
     float alphaCutoff = 0.5f;
     static MeshData cardMeshCrossed(uint32_t quads = 3, float width = 1.0f);
     int windSlot = 0;          // frame.globalParams index with wind; -1 = no wind
+    // Shadows: clumps within shadowDistance of the camera are drawn into the
+    // sun's shadow cascades (cards alpha-tested), so grass shadows the ground,
+    // itself and anything under it. Cascades whose texels are coarser than
+    // shadowMaxTexel (m) are skipped: blades would be sub-texel there anyway.
+    bool castShadows = true;
+    float shadowDistance = 30.0f;
+    float shadowMaxTexel = 0.12f;
     float sway = 1.0f;
 
     std::string vertexShader = "grass_field.vert";
     std::string fragmentShader;        // empty = grass_field.frag (blades) or grass_card.frag (cards)
 };
 
-class GrassPass : public RenderPass {
+class GrassPass : public RenderPass, public ShadowCaster {
 public:
     explicit GrassPass(GrassDesc desc);
     ~GrassPass() override;
@@ -94,6 +102,7 @@ public:
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
     void onGui() override;
+    void drawShadow(RenderContext& ctx, const ShadowView& view) override;
 
     // Parameters are live: change them any time.
     GrassDesc& desc() { return m_desc; }
@@ -101,6 +110,8 @@ public:
 
 private:
     void updateMaterial();
+    // Draws the visible tiles; returns {tiles, clumps}.
+    glm::uvec2 drawTiles(RenderContext& ctx, const Frustum& frustum, float maxDistance, uint32_t viewIndex);
 
     GrassDesc m_desc;
     std::shared_ptr<Texture> m_height, m_mask;
@@ -109,7 +120,8 @@ private:
     std::shared_ptr<Material> m_material;
     std::vector<glm::vec2> m_tileHeights; // min/max ground height per tile
     int m_tilesX = 0, m_tilesZ = 0;
-    uint32_t m_lastTiles = 0, m_lastClumps = 0;
+    uint32_t m_lastTiles = 0, m_lastClumps = 0, m_shadowClumps = 0, m_lastShadowClumps = 0;
+    bool m_registered = false;
 };
 
 } // namespace ve
