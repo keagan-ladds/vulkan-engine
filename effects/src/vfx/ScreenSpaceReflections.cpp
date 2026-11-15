@@ -34,6 +34,8 @@ ScreenSpaceReflectionsPass::~ScreenSpaceReflectionsPass()
 void ScreenSpaceReflectionsPass::setup(ve::RenderGraph& g)
 {
     m_buffer = g.createTexture("SSRBuffer", {.format = VK_FORMAT_R16G16B16A16_SFLOAT, .scale = m_scale});
+    temporal.setup(renderer(), g, "SSR", m_scale);
+    temporal.blend = 0.2f; // reflections move with parallax: keep less history than GI
     ve::Renderer& r = renderer();
     m_trace = r.createFullscreenPipeline({.fragment = "ssr.frag", .colorFormats = {VK_FORMAT_R16G16B16A16_SFLOAT}});
     m_apply = r.createFullscreenPipeline({.fragment = "ssr_apply.frag",
@@ -48,6 +50,7 @@ void ScreenSpaceReflectionsPass::declare(ve::PassBuilder& b)
     b.use(r.sceneNormal(), ve::Access::Sampled);
     b.use(r.sceneColor(), ve::Access::Sampled); // becomes a colour attachment for the composite
     b.use(m_buffer, ve::Access::ColorAttachment);
+    temporal.declare(b);
 }
 
 void ScreenSpaceReflectionsPass::execute(ve::RenderContext& ctx)
@@ -68,13 +71,14 @@ void ScreenSpaceReflectionsPass::execute(ve::RenderContext& ctx)
     ctx.drawFullscreen();
     ctx.endRendering();
     g.transition(ctx.cmd, m_buffer, ve::Access::Sampled);
+    const ve::TextureId result = temporal.resolve(ctx, m_buffer);
 
     const VkExtent2D e = g.get(m_buffer).extent;
     g.transition(ctx.cmd, r.sceneColor(), ve::Access::ColorAttachment);
     ctx.beginRendering({{r.sceneColor()}});
     ctx.bindPipeline(m_apply);
     ctx.push(ApplyPush{{1.0f / static_cast<float>(e.width), 1.0f / static_cast<float>(e.height)},
-                       g.get(m_buffer).sampledIndex});
+                       g.get(result).sampledIndex});
     ctx.drawFullscreen();
     ctx.endRendering();
 }
@@ -87,6 +91,8 @@ void ScreenSpaceReflectionsPass::onGui()
     ImGui::SliderInt("Steps", &steps, 8, 128);
     ImGui::SliderFloat("Max roughness", &maxRoughness, 0.05f, 1.0f);
     ImGui::SliderFloat("Edge fade", &edgeFade, 0.0f, 0.5f);
+    ImGui::Checkbox("Temporal accumulation", &temporal.enabled);
+    if (temporal.enabled) ImGui::SliderFloat("New frame weight", &temporal.blend, 0.02f, 1.0f);
 }
 
 } // namespace vfx

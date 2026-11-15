@@ -16,6 +16,8 @@
 // remains).
 // =============================================================================
 
+#include "vfx/TemporalAccumulator.hpp"
+
 #include <ve/render/RenderGraph.hpp>
 
 namespace vfx {
@@ -28,6 +30,7 @@ public:
     void setup(ve::RenderGraph& graph) override;
     void declare(ve::PassBuilder& builder) override;
     void execute(ve::RenderContext& ctx) override;
+    void onResize(ve::RenderGraph&) override { temporal.invalidate(); }
     void onGui() override;
 
     float maxDistance = 40.0f;  // ray length (m)
@@ -36,6 +39,7 @@ public:
     float maxRoughness = 0.6f;  // rougher surfaces get no SSR
     float intensity = 1.0f;
     float edgeFade = 0.1f;      // fraction of the screen to fade reflections over at the edges
+    TemporalAccumulator temporal; // accumulates over frames (removes ray-step noise)
 
 private:
     float m_scale;

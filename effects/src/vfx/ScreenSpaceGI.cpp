@@ -4,6 +4,8 @@
 
 #include <imgui.h>
 
+#include <string>
+
 namespace vfx {
 
 namespace {
@@ -13,6 +15,12 @@ struct TracePush {
     uint32_t normalTex;
     uint32_t colorTex;
     uint32_t rays;
+};
+struct ApplyPush {
+    glm::vec2 size;
+    uint32_t ssgi;
+    uint32_t depthTex;
+    uint32_t normalTex;
 };
 } // namespace
 
@@ -30,10 +38,11 @@ ScreenSpaceGIPass::~ScreenSpaceGIPass()
 void ScreenSpaceGIPass::setup(ve::RenderGraph& g)
 {
     m_buffer = g.createTexture("SSGIBuffer", {.format = VK_FORMAT_R16G16B16A16_SFLOAT, .scale = m_scale});
+    temporal.setup(renderer(), g, "SSGI", m_scale);
     ve::Renderer& r = renderer();
     m_trace = r.createFullscreenPipeline({.fragment = "ssgi.frag", .colorFormats = {VK_FORMAT_R16G16B16A16_SFLOAT}});
-    // Same upsample + 4x4 box as the fog: dst = src.rgb + dst * src.a.
-    m_apply = r.createFullscreenPipeline({.fragment = "fog_apply.frag",
+    // Depth-aware 4x4 upsample; blend: dst = src.rgb + dst * src.a.
+    m_apply = r.createFullscreenPipeline({.fragment = "ssgi_apply.frag",
                                           .colorFormats = {ve::Renderer::kSceneColorFormat},
                                           .blend = ve::BlendMode::InscatterTransmittance});
 }
@@ -45,6 +54,7 @@ void ScreenSpaceGIPass::declare(ve::PassBuilder& b)
     b.use(r.sceneNormal(), ve::Access::Sampled);
     b.use(r.sceneColor(), ve::Access::Sampled); // becomes a colour attachment for the composite
     b.use(m_buffer, ve::Access::ColorAttachment);
+    temporal.declare(b);
 }
 
 void ScreenSpaceGIPass::execute(ve::RenderContext& ctx)
@@ -66,10 +76,15 @@ void ScreenSpaceGIPass::execute(ve::RenderContext& ctx)
     ctx.endRendering();
     g.transition(ctx.cmd, m_buffer, ve::Access::Sampled);
 
+    // Accumulate over frames (the trace's rays rotate every frame).
+    const ve::TextureId result = temporal.resolve(ctx, m_buffer);
+
     g.transition(ctx.cmd, r.sceneColor(), ve::Access::ColorAttachment);
     ctx.beginRendering({{r.sceneColor()}});
     ctx.bindPipeline(m_apply);
-    ctx.push(g.get(m_buffer).sampledIndex);
+    const VkExtent2D e = g.get(m_buffer).extent;
+    ctx.push(ApplyPush{{float(e.width), float(e.height)}, g.get(result).sampledIndex, g.get(r.sceneDepth()).sampledIndex,
+                       g.get(r.sceneNormal()).sampledIndex});
     ctx.drawFullscreen();
     ctx.endRendering();
 }
@@ -81,6 +96,8 @@ void ScreenSpaceGIPass::onGui()
     ImGui::SliderFloat("Radius", &radius, 0.25f, 10.0f);
     ImGui::SliderInt("Rays", &rays, 1, 16);
     ImGui::SliderInt("Steps", &steps, 2, 32);
+    ImGui::Checkbox("Temporal accumulation", &temporal.enabled);
+    if (temporal.enabled) ImGui::SliderFloat("New frame weight", &temporal.blend, 0.02f, 1.0f);
 }
 
 } // namespace vfx

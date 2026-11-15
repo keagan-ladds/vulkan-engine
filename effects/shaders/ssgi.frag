@@ -5,8 +5,8 @@
 // that pixel's lit SceneColor as bounce light and count as occlusion.
 // Output: rgb = bounce light to add, a = ambient occlusion (multiplier), for the
 // InscatterTransmittance blend (dst = src.rgb + dst * src.a).
-// The ray directions follow a 4x4 Bayer pattern so ssgi's composite (a 4x4
-// box filter, fog_apply.frag) sees all 16 rotations.
+// The ray directions follow a 4x4 Bayer pattern; ssgi_apply.frag averages
+// exactly 4x4 texels, which always contains all 16 rotations.
 #define VE_CUSTOM_PUSH_CONSTANTS
 #include "ve.glsl"
 
@@ -40,8 +40,11 @@ void main()
 
     const float bayer[16] = float[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
     ivec2 bp = ivec2(gl_FragCoord.xy) & 3;
-    float rotation = (bayer[bp.y * 4 + bp.x] + 0.5) / 16.0;
-    float stepJitter = veInterleavedGradientNoise(gl_FragCoord.xy);
+    // Both change every frame (golden-ratio sequence) so the temporal pass
+    // (ssgi_temporal.frag) accumulates new samples instead of the same ones.
+    float frameOffset = fract(frame.time.z * 0.6180340);
+    float rotation = fract((bayer[bp.y * 4 + bp.x] + 0.5) / 16.0 + frameOffset);
+    float stepJitter = fract(veInterleavedGradientNoise(gl_FragCoord.xy) + frameOffset * 1.618034);
 
     vec3 bounce = vec3(0.0);
     float occlusion = 0.0;
@@ -73,7 +76,9 @@ void main()
                 // Only light leaving the hit surface towards us bounces.
                 vec3 hitN = veSampleLod(pc.normalTex, uv, 0.0).xyz;
                 float facing = dot(hitN, hitN) > 0.0 ? clamp(dot(normalize(hitN), -dir) * 2.0, 0.0, 1.0) : 1.0;
-                vec3 c = min(veSampleLod(pc.colorTex, uv, 0.0).rgb, vec3(16.0));
+                // Clamp very bright hits (small emissive objects) to tame fireflies.
+                vec3 c = veSampleLod(pc.colorTex, uv, 0.0).rgb;
+                c *= min(1.0, 4.0 / max(veLuminance(c), 1e-4));
                 bounce += c * facing * falloff;
                 break;
             }

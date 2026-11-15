@@ -53,7 +53,8 @@ void main()
     float maxDist = pc.params.x;
     float thickness = pc.params.y;
     int steps = int(pc.params.z);
-    float jitter = veInterleavedGradientNoise(gl_FragCoord.xy);
+    // Varies every frame so the temporal accumulator averages it away.
+    float jitter = fract(veInterleavedGradientNoise(gl_FragCoord.xy) + frame.time.z * 0.6180340);
 
     // Start slightly off the surface to avoid self-hits.
     vec3 origin = P + N * (0.02 + 0.002 * -P.z);
