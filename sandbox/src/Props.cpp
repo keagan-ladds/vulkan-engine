@@ -19,6 +19,7 @@
 #include <ve/render/Primitives.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/world/Foliage.hpp>
+#include <ve/world/Vegetation.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Scene.hpp>
 #include <ve/render/Material.hpp>
@@ -435,7 +436,8 @@ void AutoTest::update(float dt)
         log("objects: " + std::to_string(scene().objectCount()) + ", draw calls: " +
             std::to_string(renderer().stats().drawCalls) + ", gpu ms: " + std::to_string(renderer().gpuFrameTimeMs()));
         // Foliage streaming: jump to the far corner and let cells stream.
-        auto* foliage = static_cast<ve::FoliageSystem*>(scene().find("Foliage"));
+        auto* foliageObject = dynamic_cast<ve::Foliage*>(scene().find("Foliage"));
+        auto* foliage = foliageObject ? foliageObject->system() : nullptr;
         auto* player = static_cast<Player*>(scene().find("Player"));
         if (foliage && player) {
             const ve::FoliageStats& fs = foliage->stats();
@@ -453,14 +455,15 @@ void AutoTest::update(float dt)
             m_step = 100;
         }
     } else if (m_step == 3 && m_t > 4.0f) {
-        auto* foliage = static_cast<ve::FoliageSystem*>(scene().find("Foliage"));
+        auto* foliageObject = dynamic_cast<ve::Foliage*>(scene().find("Foliage"));
+        ve::FoliageSystem* foliage = foliageObject->system();
         const ve::FoliageStats& fs = foliage->stats();
         log("foliage after teleport: " + std::to_string(fs.instances) + " instances, " + std::to_string(fs.cells) +
             " cells, " + std::to_string(fs.pending) + " pending, " + std::to_string(fs.bodies) + " bodies, " +
             std::to_string(fs.dropped) + " dropped, " + std::to_string(fs.generateMs) + " ms per cell");
         // Bushes are deterministic: the instances near the player must match a fresh query.
         const glm::vec3 p = static_cast<Player*>(scene().find("Player"))->transform().position();
-        log("bushes within 30 m (query): " + std::to_string(foliage->query(5, glm::vec2(p.x, p.z), 30.0f).size()));
+        log("bushes within 30 m (query): " + std::to_string(foliage->query(uint32_t(foliageObject->layerIndex("Bushes")), glm::vec2(p.x, p.z), 30.0f).size()));
         // Audio: step inside a hut (zone muffles the Weather bus) and check the fire's occlusion.
         if (auto* hutZone = scene().find("HutZone")) {
             const glm::vec3 hp = hutZone->transform().position();

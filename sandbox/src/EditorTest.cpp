@@ -6,7 +6,9 @@
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Scene.hpp>
 #include <ve/scene/SceneSerializer.hpp>
+#include <ve/world/Grass.hpp>
 #include <ve/world/Terrain.hpp>
+#include <ve/world/Vegetation.hpp>
 
 #include <cstdlib>
 #include <filesystem>
@@ -73,7 +75,17 @@ void EditorTest::update(float)
         log(std::string("selected for inspector: ") + (ed->selected() ? ed->selected()->name() : "(none)"));
     }
     // Terrain: move the kopje stamp 40 m east; the terrain must rebuild there.
+    auto boulders = [&](glm::vec2 p) -> size_t {
+        auto* f = dynamic_cast<ve::Foliage*>(s.find("Foliage"));
+        if (!f || !f->system() || f->layerIndex("Boulders") < 0) return 0;
+        return f->system()->query(uint32_t(f->layerIndex("Boulders")), p, 25.0f).size();
+    };
     if (m_frame == 125) {
+        if (auto* f = dynamic_cast<ve::Foliage*>(s.find("Foliage"))) m_foliageSystem = f->system();
+        if (auto* g = dynamic_cast<ve::GrassLayer*>(s.find("Grass")); g && g->pass()) m_grassPass = g->pass()->name();
+        m_bouldersNew = boulders({160.0f, -80.0f});
+        log("boulders near the kopje: " + std::to_string(boulders({120.0f, -80.0f})) + ", near the new spot " +
+            std::to_string(m_bouldersNew));
         if (auto* t = ve::Terrain::find(s)) {
             m_terrainVersion = t->version();
             log("kopje height before: old " + std::to_string(t->height(120, -80)) + ", new spot " + std::to_string(t->height(160, -80)));
@@ -94,7 +106,22 @@ void EditorTest::update(float)
             log("terrain rebuilt: " + std::string(t->version() > m_terrainVersion ? "yes" : "NO") + ", old " +
                 std::to_string(t->height(120, -80)) + ", new spot " + std::to_string(t->height(160, -80)));
     }
-    if (m_frame == 150 && std::string(std::getenv("SAVANNA_EDITORTEST")) != "hold") {
+    // Vegetation follows (its own throttle): wait for both to rebuild, at most ~450 frames.
+    if (m_frame > 145 && m_frame < 600 && m_foliageSystem) {
+        auto* f = dynamic_cast<ve::Foliage*>(s.find("Foliage"));
+        auto* g = dynamic_cast<ve::GrassLayer*>(s.find("Grass"));
+        const bool foliageNew = f && f->system() && f->system() != m_foliageSystem;
+        const bool grassNew = g && g->pass() && g->pass()->name() != m_grassPass;
+        if ((foliageNew && grassNew) || m_frame == 599) {
+            log(std::string("vegetation regenerated: foliage ") + (foliageNew ? "yes" : "NO") + ", grass " +
+                (grassNew ? "yes" : "NO") + "; boulders near the old spot " + std::to_string(boulders({120.0f, -80.0f})) +
+                ", near the new spot " + std::to_string(boulders({160.0f, -80.0f})) + " (was " +
+                std::to_string(m_bouldersNew) + ")");
+            m_foliageSystem = nullptr;
+            m_frame = 600;
+        }
+    }
+    if (m_frame == 601 && std::string(std::getenv("SAVANNA_EDITORTEST")) != "hold") {
         log("done");
         engine().quit();
     }

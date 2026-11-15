@@ -10,6 +10,7 @@
 #include "ve/scene/Reflection.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/ui/UiLayer.hpp"
+#include "ve/world/Vegetation.hpp"
 
 #include <SDL.h>
 
@@ -95,6 +96,7 @@ Engine::~Engine()
     if (m_editor) m_editor->shutdown();
     m_editor.reset();
     m_scene.reset();
+    MeshLibrary::releaseMeshes();
     m_assets.reset();
     if (m_ui) m_ui->shutdown(); // no-op if run() already did it
     m_ui.reset();

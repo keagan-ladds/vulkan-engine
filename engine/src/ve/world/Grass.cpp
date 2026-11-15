@@ -120,62 +120,79 @@ void GrassPass::setup(RenderGraph&)
         }
     }
 
-    const bool cards = !d.cardMesh.vertices.empty();
-    MeshData md;
-    if (cards) {
-        md = d.cardMesh;
-    } else {
-        // One clump: crossed blades around the origin, unit height. uv.x = per-blade
-        // random, uv.y = 0 root .. 1 tip; colour.r = blade height factor.
-        uint32_t seed = 12345u;
-        auto rnd = [&] {
-            seed = seed * 1664525u + 1013904223u;
-            return float(seed >> 8) / 16777216.0f;
-        };
-        for (uint32_t i = 0; i < std::max(d.bladesPerClump, 1u); ++i) {
-            const float a = (float(i) + rnd() * 0.6f) / float(d.bladesPerClump) * std::numbers::pi_v<float>;
-            const float r = std::sqrt(rnd()) * d.clumpRadius;
-            const float pa = rnd() * 2.0f * std::numbers::pi_v<float>;
-            const glm::vec3 base(std::cos(pa) * r, 0.0f, std::sin(pa) * r);
-            const glm::vec3 side(std::cos(a), 0.0f, std::sin(a));
-            const glm::vec3 lean = glm::vec3(-side.z, 0.0f, side.x) * (rnd() - 0.5f) * 0.5f;
-            const float hf = 0.7f + 0.3f * rnd();
-            const float br = rnd();
-            const auto first = static_cast<uint32_t>(md.vertices.size());
-            Vertex v[3];
-            v[0].position = base - side * 0.5f;
-            v[1].position = base + side * 0.5f;
-            v[2].position = base + glm::vec3(0.0f, 1.0f, 0.0f) + lean; // x/z of the side are scaled by bladeWidth in the shader
-            for (int k = 0; k < 3; ++k) {
-                v[k].normal = glm::vec3(0, 1, 0);
-                v[k].uv = {br, k == 2 ? 1.0f : 0.0f};
-                v[k].color = glm::vec4(hf, 0, 0, 1);
-                v[k].tangent = glm::vec4(base, 0.0f); // blade root (for width scaling)
-            }
-            md.vertices.insert(md.vertices.end(), {v[0], v[1], v[2]});
-            md.indices.insert(md.indices.end(), {first, first + 1, first + 2});
-        }
+    // LOD chain (or the single legacy LOD).
+    std::vector<GrassLod> lods = d.lods;
+    if (lods.empty()) lods.push_back({d.cardMesh, d.cardTexture, FLT_MAX, d.fragmentShader});
+    m_lods.clear();
+    float prev = 0.0f;
+    for (size_t i = 0; i < lods.size(); ++i) {
+        const GrassLod& src = lods[i];
+        Lod lod;
+        lod.cards = !src.mesh.vertices.empty();
+        lod.minDistance = prev;
+        lod.maxDistance = i + 1 == lods.size() ? FLT_MAX : std::max(src.maxDistance, prev);
+        prev = lod.maxDistance;
+        lod.mesh = Mesh::create(r, lod.cards ? src.mesh : bladeClump(), {}, d.name + " clump LOD" + std::to_string(i));
+        ShaderDesc sd;
+        sd.name = d.name;
+        sd.vertex = d.vertexShader;
+        sd.fragment = !src.fragmentShader.empty() ? src.fragmentShader : lod.cards ? "grass_card.frag" : "grass_field.frag";
+        sd.cull = CullMode::None;
+        sd.castShadows = d.castShadows;
+        sd.shadowVertex = "grass_shadow.vert";
+        sd.shadowFragment = lod.cards ? "grass_card_shadow.frag" : ""; // blades: depth only
+        // Share shaders between LODs that use the same programs.
+        for (const Lod& other : m_lods)
+            if (other.cards == lod.cards && other.shader->desc().fragment == sd.fragment) lod.shader = other.shader;
+        if (!lod.shader) lod.shader = r.createShader(sd);
+        lod.material = r.createMaterial(lod.shader);
+        lod.material->setTexture(0, m_height);
+        lod.material->setTexture(1, m_mask);
+        if (src.texture) lod.material->setTexture(2, src.texture);
+        m_lods.push_back(std::move(lod));
     }
-    m_clump = Mesh::create(r, md, {}, d.name + " clump");
-
-    ShaderDesc sd;
-    sd.name = d.name;
-    sd.vertex = d.vertexShader;
-    sd.fragment = !d.fragmentShader.empty() ? d.fragmentShader : cards ? "grass_card.frag" : "grass_field.frag";
-    sd.cull = CullMode::None;
-    sd.castShadows = d.castShadows;
-    sd.shadowVertex = "grass_shadow.vert";
-    sd.shadowFragment = cards ? "grass_card_shadow.frag" : ""; // blades: depth only
-    m_shader = r.createShader(sd);
-    m_material = r.createMaterial(m_shader);
-    m_material->setTexture(0, m_height);
-    m_material->setTexture(1, m_mask);
-    if (d.cardTexture) m_material->setTexture(2, d.cardTexture);
     updateMaterial();
     r.addShadowCaster(this);
     m_registered = true;
-    log::info("{}: {}x{} tiles, {} height samples, {} clumps per full tile", d.name, m_tilesX, m_tilesZ, res,
-              uint32_t(std::pow(d.tileSize / d.spacing, 2.0f)));
+    log::info("{}: {}x{} tiles, {} height samples, {} clumps per full tile, {} LOD{}", d.name, m_tilesX, m_tilesZ, res,
+              uint32_t(std::pow(d.tileSize / d.spacing, 2.0f)), m_lods.size(), m_lods.size() == 1 ? "" : "s");
+}
+
+MeshData GrassPass::bladeClump() const
+{
+    // One clump: crossed blades around the origin, unit height. uv.x = per-blade
+    // random, uv.y = 0 root .. 1 tip; colour.r = blade height factor.
+    const GrassDesc& d = m_desc;
+    MeshData md;
+    uint32_t seed = 12345u;
+    auto rnd = [&] {
+        seed = seed * 1664525u + 1013904223u;
+        return float(seed >> 8) / 16777216.0f;
+    };
+    for (uint32_t i = 0; i < std::max(d.bladesPerClump, 1u); ++i) {
+        const float a = (float(i) + rnd() * 0.6f) / float(d.bladesPerClump) * std::numbers::pi_v<float>;
+        const float r = std::sqrt(rnd()) * d.clumpRadius;
+        const float pa = rnd() * 2.0f * std::numbers::pi_v<float>;
+        const glm::vec3 base(std::cos(pa) * r, 0.0f, std::sin(pa) * r);
+        const glm::vec3 side(std::cos(a), 0.0f, std::sin(a));
+        const glm::vec3 lean = glm::vec3(-side.z, 0.0f, side.x) * (rnd() - 0.5f) * 0.5f;
+        const float hf = 0.7f + 0.3f * rnd();
+        const float br = rnd();
+        const auto first = static_cast<uint32_t>(md.vertices.size());
+        Vertex v[3];
+        v[0].position = base - side * 0.5f;
+        v[1].position = base + side * 0.5f;
+        v[2].position = base + glm::vec3(0.0f, 1.0f, 0.0f) + lean; // x/z of the side are scaled by bladeWidth in the shader
+        for (int k = 0; k < 3; ++k) {
+            v[k].normal = glm::vec3(0, 1, 0);
+            v[k].uv = {br, k == 2 ? 1.0f : 0.0f};
+            v[k].color = glm::vec4(hf, 0, 0, 1);
+            v[k].tangent = glm::vec4(base, 0.0f); // blade root (for width scaling)
+        }
+        md.vertices.insert(md.vertices.end(), {v[0], v[1], v[2]});
+        md.indices.insert(md.indices.end(), {first, first + 1, first + 2});
+    }
+    return md;
 }
 
 void GrassPass::updateMaterial()
@@ -183,12 +200,17 @@ void GrassPass::updateMaterial()
     const GrassDesc& d = m_desc;
     const glm::vec2 size = d.boundsMax - d.boundsMin;
     // Layout read by ve_grass.glsl.
-    m_material->setVector(0, {d.boundsMin, 1.0f / size});
-    m_material->setVector(1, {d.colorA, d.spacing});
-    m_material->setVector(2, {d.colorB, d.radius});
-    m_material->setVector(3, {d.minHeight, d.maxHeight, d.bladeWidth, d.fadeStart});
-    m_material->setVector(4, {d.farDensity, float(d.windSlot), d.sway, d.maxTilt});
-    m_material->setVector(5, {d.cardMesh.vertices.empty() ? 0.0f : 1.0f, d.alphaCutoff, 0.0f, 0.0f});
+    const float blend = m_lods.size() > 1 ? std::max(d.lodBlend, 0.0f) : 0.0f;
+    for (Lod& lod : m_lods) {
+        Material& m = *lod.material;
+        m.setVector(0, {d.boundsMin, 1.0f / size});
+        m.setVector(1, {d.colorA, d.spacing});
+        m.setVector(2, {d.colorB, d.radius});
+        m.setVector(3, {d.minHeight, d.maxHeight, d.bladeWidth, d.fadeStart});
+        m.setVector(4, {d.farDensity, float(d.windSlot), d.sway, d.maxTilt});
+        m.setVector(5, {lod.cards ? 1.0f : 0.0f, d.alphaCutoff, 0.0f, 0.0f});
+        m.setVector(6, {lod.minDistance, std::min(lod.maxDistance, 1e30f), blend, 0.0f});
+    }
 }
 
 void GrassPass::declare(PassBuilder& b)
@@ -199,7 +221,8 @@ void GrassPass::declare(PassBuilder& b)
     b.use(r.sceneDepth(), Access::DepthAttachment);
 }
 
-glm::uvec2 GrassPass::drawTiles(RenderContext& ctx, const Frustum& frustum, float maxDistance, uint32_t viewIndex)
+glm::uvec2 GrassPass::drawTiles(RenderContext& ctx, const Lod& lod, const Frustum& frustum, float maxDistance,
+                                 uint32_t viewIndex)
 {
     Renderer& r = renderer();
     const GrassDesc& d = m_desc;
@@ -211,11 +234,16 @@ glm::uvec2 GrassPass::drawTiles(RenderContext& ctx, const Frustum& frustum, floa
     const int cx = int(std::floor(rel.x / d.tileSize)), cz = int(std::floor(rel.y / d.tileSize));
     const float perTile = std::floor(d.tileSize / d.spacing) * std::floor(d.tileSize / d.spacing);
 
-    VkBuffer vb = m_clump->vertexBuffer();
+    // Tiles that may hold clumps of this LOD (its range widened by the dither).
+    const float halfBlend = m_lods.size() > 1 ? std::max(d.lodBlend, 0.0f) * 0.5f : 0.0f;
+    const float lodMin = lod.minDistance - halfBlend, lodMax = lod.maxDistance + halfBlend;
+    if (lodMin > radius) return {0, 0};
+
+    VkBuffer vb = lod.mesh->vertexBuffer();
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-    vkCmdBindIndexBuffer(ctx.cmd, m_clump->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
-    const auto indexCount = static_cast<uint32_t>(m_clump->submeshes()[0].indexCount);
+    vkCmdBindIndexBuffer(ctx.cmd, lod.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+    const auto indexCount = static_cast<uint32_t>(lod.mesh->submeshes()[0].indexCount);
 
     uint32_t tiles = 0, clumps = 0;
     for (int tz = std::max(0, cz - reach); tz <= std::min(m_tilesZ - 1, cz + reach); ++tz) {
@@ -223,7 +251,9 @@ glm::uvec2 GrassPass::drawTiles(RenderContext& ctx, const Frustum& frustum, floa
             const glm::vec2 lo = d.boundsMin + glm::vec2(float(tx), float(tz)) * d.tileSize;
             const glm::vec2 nearest = glm::clamp(eye, lo, lo + d.tileSize);
             const float dist = glm::length(nearest - eye);
-            if (dist > radius) continue;
+            if (dist > radius || dist > lodMax) continue;
+            const glm::vec2 farthest = glm::max(glm::abs(lo - eye), glm::abs(lo + d.tileSize - eye));
+            if (glm::length(farthest) < lodMin) continue;
             const glm::vec2 hr = m_tileHeights[size_t(tz) * m_tilesX + tx];
             const AABB box{glm::vec3(lo.x - 1.0f, hr.x - 0.5f, lo.y - 1.0f),
                            glm::vec3(lo.x + d.tileSize + 1.0f, hr.y + d.maxHeight + 0.5f, lo.y + d.tileSize + 1.0f)};
@@ -238,7 +268,7 @@ glm::uvec2 GrassPass::drawTiles(RenderContext& ctx, const Frustum& frustum, floa
             if (count == 0) continue;
             DrawPush push{};
             push.model = glm::mat4(1.0f);
-            push.materialIndex = m_material->gpuIndex();
+            push.materialIndex = lod.material->gpuIndex();
             push.viewIndex = viewIndex;
             push.custom = glm::vec4(lo, d.tileSize, perTile);
             vkCmdPushConstants(ctx.cmd, r.pipelineLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DrawPush), &push);
@@ -255,11 +285,15 @@ void GrassPass::execute(RenderContext& ctx)
     Renderer& r = renderer();
     updateMaterial();
     ctx.beginRendering({{r.sceneColor()}, {r.sceneNormal()}}, {r.sceneDepth()});
-    ctx.bindPipeline(m_shader->pipeline(PassKind::Forward));
-    const glm::uvec2 n = drawTiles(ctx, ctx.frame->camera.frustum, FLT_MAX, 0);
+    m_lastTiles = m_lastClumps = 0;
+    for (Lod& lod : m_lods) {
+        ctx.bindPipeline(lod.shader->pipeline(PassKind::Forward));
+        const glm::uvec2 n = drawTiles(ctx, lod, ctx.frame->camera.frustum, FLT_MAX, 0);
+        m_lastTiles += n.x;
+        m_lastClumps += n.y;
+        lod.clumps = n.y;
+    }
     ctx.endRendering();
-    m_lastTiles = n.x;
-    m_lastClumps = n.y;
     m_lastShadowClumps = m_shadowClumps; // drawn earlier this frame by drawShadow()
     m_shadowClumps = 0;
 }
@@ -268,13 +302,20 @@ void GrassPass::drawShadow(RenderContext& ctx, const ShadowView& view)
 {
     if (!enabled || !m_desc.castShadows || view.texelSize > m_desc.shadowMaxTexel) return;
     updateMaterial(); // shadows render before execute() in the frame
-    ctx.bindPipeline(m_shader->pipeline(PassKind::ShadowDirectional));
-    m_shadowClumps += drawTiles(ctx, view.frustum, m_desc.shadowDistance, view.viewIndex).y;
+    for (const Lod& lod : m_lods) {
+        ctx.bindPipeline(lod.shader->pipeline(PassKind::ShadowDirectional));
+        m_shadowClumps += drawTiles(ctx, lod, view.frustum, m_desc.shadowDistance, view.viewIndex).y;
+    }
 }
 
 void GrassPass::onGui()
 {
     ImGui::Text("%u tiles, %u clumps drawn, %u in shadows", m_lastTiles, m_lastClumps, m_lastShadowClumps);
+    if (m_lods.size() > 1) {
+        for (size_t i = 0; i < m_lods.size(); ++i)
+            ImGui::Text("LOD%zu: %u clumps (to %.0f m)", i, m_lods[i].clumps, std::min(m_lods[i].maxDistance, m_desc.radius));
+        ImGui::SliderFloat("LOD blend", &m_desc.lodBlend, 0.0f, 20.0f);
+    }
     ImGui::Checkbox("Cast shadows", &m_desc.castShadows);
     ImGui::SliderFloat("Shadow distance", &m_desc.shadowDistance, 0.0f, 100.0f);
     ImGui::SliderFloat("Shadow max texel", &m_desc.shadowMaxTexel, 0.01f, 0.5f);
@@ -286,7 +327,7 @@ void GrassPass::onGui()
     ImGui::SliderFloat("Blade width", &m_desc.bladeWidth, 0.005f, 0.2f);
     ImGui::SliderFloat("Sway", &m_desc.sway, 0.0f, 3.0f);
     ImGui::SliderFloat("Max tilt", &m_desc.maxTilt, 0.0f, 0.8f);
-    if (!m_desc.cardMesh.vertices.empty()) ImGui::SliderFloat("Alpha cutoff", &m_desc.alphaCutoff, 0.05f, 0.95f);
+    if (std::any_of(m_lods.begin(), m_lods.end(), [](const Lod& l) { return l.cards; })) ImGui::SliderFloat("Alpha cutoff", &m_desc.alphaCutoff, 0.05f, 0.95f);
     ImGui::ColorEdit3("Colour A", &m_desc.colorA.x);
     ImGui::ColorEdit3("Colour B", &m_desc.colorB.x);
 }

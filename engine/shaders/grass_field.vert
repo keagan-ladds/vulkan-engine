@@ -27,7 +27,7 @@ void main()
     vec3 world = veGrassPlace(m, c, inPosition, inTangent, inUV, inColor, tip);
     bool cards = m.params[5].x > 0.5;
     outWorldPos = world;
-    outColor = vec4(cards ? c.color : c.color * mix(0.7, 1.15, tip), c.mask.w);
+    outColor = vec4(cards ? c.color * inColor.rgb : c.color * mix(0.7, 1.15, tip), c.mask.w);
     outTip = tip;
     outUV = inUV;
     gl_Position = frame.viewProj * vec4(world, 1.0);

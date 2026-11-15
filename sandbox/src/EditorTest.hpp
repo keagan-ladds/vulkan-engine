@@ -14,6 +14,9 @@ private:
     int m_frame = 0;
     size_t m_persistentAtPlay = 0;
     uint64_t m_terrainVersion = 0;
+    const void* m_foliageSystem = nullptr; // W4: vegetation must regenerate after a terrain edit
+    std::string m_grassPass; // pass name (a new pass may reuse the old one's address)
+    size_t m_bouldersNew = 0;
 };
 
 } // namespace savanna

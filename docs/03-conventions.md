@@ -274,8 +274,13 @@ g.alphaCutoff = 0.5f;
 g.colorA = g.colorB = glm::vec3(1.0f);                  // tints multiply the texture
 ```
 The fragment shader defaults to `grass_card.frag`. Its alpha test is sharpened
-with `fwidth`, so thin blades survive mipmapping. Try it in the sandbox with
-`SAVANNA_GRASSCARDS=1`.
+with `fwidth`, so thin blades survive mipmapping.
+
+LOD chain: fill `GrassDesc::lods` nearest first (each a mesh, or empty for
+procedural blades, a texture and `maxDistance`). Each clump picks its LOD by
+its own jittered distance, dithered over `lodBlend` m. In a scene, a
+`ve::GrassLayer` builds this from a glTF file with `*_LOD0`, `*_LOD1`... nodes
+(see docs/06-world.md).
 
 ### Audio: 3D sounds, buses, indoor muffling, occlusion
 

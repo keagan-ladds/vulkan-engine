@@ -12,6 +12,8 @@
 
 namespace ve {
 
+void registerVegetationTypes(TypeRegistry& r); // world/Vegetation.cpp
+
 namespace detail {
 std::shared_ptr<AudioClip> loadAudioClip(const std::string& path)
 {
@@ -79,6 +81,7 @@ void registerBuiltinTypes()
     if (done) return;
     done = true;
     TypeRegistry& r = TypeRegistry::get();
+    registerVegetationTypes(r);
 
     r.add<GameObject>("GameObject", [](TypeBuilder<GameObject>& t) { t.category("General"); });
 
@@ -170,7 +173,6 @@ void registerBuiltinTypes()
                    [](Terrain& x, const Json& j) { x.setBiomesJson(j); })
             .tooltip("[{name, color, color2, patchColor, patchFrequency, minHeight, maxHeight, maxSlope, coverage, ...}]; "
                      "biome 0 fills the rest, later biomes paint over earlier ones");
-        t.onChanged([](Terrain& x) { x.markDirty(); });
     });
     r.add<TerrainStamp>("TerrainStamp", [](TypeBuilder<TerrainStamp>& t) {
         t.category("World");

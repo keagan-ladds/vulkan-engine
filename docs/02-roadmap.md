@@ -263,6 +263,7 @@ million grass blades), scaling up on discrete GPUs.
 - [x] `ve::GrassPass`: GPU grass from height/mask textures, CPU tile frustum culling, R2-sequence clumps with flicker-free distance thinning, wind from a global param, custom fragment shaders
 - [x] Grass extras (after review): random yaw + tilt per clump, alpha-clipped grass cards (`cardMesh`/`cardTexture`), grass shadows in the near cascades via the new `ShadowCaster` hook (about 0.5 ms)
 - [x] Savanna: all props are foliage layers (savannah/swamp/kopje rules); grass and reeds are GrassPasses; autotest teleports across the map and checks streaming
+- [x] Scene data (Phase W4/W5, docs/06-world.md): `Foliage` + `FoliageType`, `GrassLayer` (glTF LOD chains: mesh -> mesh -> cards), `FoliageExclusion`, `MeshLibrary`; per-biome densities; regenerates on terrain edits
 - **Result:** preload about 110 ms for about 9.4k props; worker about 0.06 ms per (cell, layer); static bodies 3.3k → about 450 (near the player only); grass + reeds about 0.3–0.7 ms GPU; same visuals and draw counts as the old one-shot scatter
 - Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); removal/persistence API (felled trees); grass interaction (player bending blades); a multi-threaded worker pool
 

@@ -102,6 +102,7 @@ public:
     void setTexture(uint32_t slot, std::shared_ptr<Texture> texture);
     void setTextureIndex(uint32_t slot, uint32_t bindlessIndex);
     uint32_t textureIndex(uint32_t slot) const;
+    const std::shared_ptr<Texture>& texture(uint32_t slot) const { return m_textures[slot]; }
 
     uint32_t gpuIndex() const { return m_index; }
 

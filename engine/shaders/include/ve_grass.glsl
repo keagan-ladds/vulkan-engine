@@ -7,12 +7,17 @@
 //   params[2] = colorB.rgb, radius
 //   params[3] = minHeight, maxHeight, bladeWidth, fadeStart
 //   params[4] = farDensity, windSlot (-1 none), sway, maxTilt (radians)
-//   params[5] = mode (0 blades, 1 cards), alphaCutoff      textures[2] = card texture (cards)
+//   params[5] = mode (0 blades, 1 mesh/cards), alphaCutoff  textures[2] = card / mesh texture
+//   params[6] = this LOD's camera distance range (min, max), dither width
 // draw.custom = tile origin x/z, tile size, clumps per full tile.
 //
 // Blade mode, the clump mesh: per blade 3 vertices; tangent.xyz = blade root in
 // the clump, uv.x = per-blade random, uv.y = 0 root .. 1 tip, color.r = height factor.
-// Card mode: any mesh, root at the origin, height 1, scaled uniformly by the clump height.
+// Mesh mode (cards or authored grass): any mesh, root at the origin, height 1,
+// scaled uniformly by the clump height; vertex colour multiplies the clump colour.
+// LODs: GrassPass draws each LOD with its own material. A clump belongs to the
+// LOD whose distance range holds its (per-clump jittered) distance, so the
+// switch is spread over params[6].z metres instead of a hard ring.
 // =============================================================================
 #ifndef VE_GRASS_GLSL
 #define VE_GRASS_GLSL
@@ -68,6 +73,8 @@ VeGrassClump veGrassClump(VeMaterial m)
     float margin = c.mask.x * keep - (i + 0.5) / tile.w;
     c.fade = clamp(margin / 0.02, 0.0, 1.0);
     c.visible = margin > 0.0 && all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+    float lodDistance = c.distance + (veHash12(xz * 4.37 + 2.9) - 0.5) * m.params[6].z;
+    c.visible = c.visible && lodDistance >= m.params[6].x && lodDistance < m.params[6].y;
 
     float r = veHash12(xz * 13.7 + 0.31);
     c.height = mix(m.params[3].x, m.params[3].y, r) * c.mask.z * mix(0.4, 1.0, c.fade);

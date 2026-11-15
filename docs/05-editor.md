@@ -36,7 +36,7 @@ in C++ (the Unity split). Press **F2** in any game built on the engine.
   decide what gets saved.
   - The editor sets them on what it creates.
   - The scene loader sets them on what it loads.
-  - Code-spawned objects (terrain, foliage, weather...) stay non-persistent.
+  - Code-spawned objects (a game's HUD, the player...) stay non-persistent.
     They can be selected and edited live, but changes aren't saved.
 - Components that a GameObject class creates itself (e.g. a Torch's own
   PointLight) stay non-persistent. The class exposes its own fields instead.
@@ -63,16 +63,16 @@ Load with `ve::SceneSerializer::load(scene, "scenes/x.json")`.
 ### How a game uses scene files (Savanna as the example)
 - **Level content goes in the file.** Anything placed by hand goes in
   `scenes/<level>.json`, made of registered GameObject classes
-  (`VE_REGISTER_TYPE`) plus engine components. Procedural systems stay in
-  code: terrain, foliage rules, grass, weather, the HUD.
+  (`VE_REGISTER_TYPE`) plus engine components. Terrain, vegetation, water,
+  weather and day/night are scene objects too (docs/06-world.md); code keeps
+  behaviour and generated meshes (`ve::MeshLibrary`).
 - **Classes stored in files must be default constructible.** They fetch shared
   resources themselves in `start()`, e.g. Savanna's `propMaterial()` or a lazily
   created shared mesh, and find other objects by name, e.g.
   `scene().find("Player")`.
 - **Load at startup:** `auto level = SceneSerializer::load(scene, "scenes/savanna.json");`.
   Then use the returned roots for anything code needs from the level: spawn
-  the player at the `PlayerStart` marker, collect grass clearings from objects
-  tagged `hut`.
+  the player at the `PlayerStart` marker.
 - **Variations are data.** `ModelInstance::hiddenNodes = "Door"` gives the hut
   without a door.
 - **Derive counters from the scene, don't hard-code them.** For example, the

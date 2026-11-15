@@ -99,7 +99,7 @@ std::shared_ptr<const TerrainData> Terrain::data() const
     std::lock_guard lock(m_mutex);
     if (!m_data) {
         m_data = const_cast<Terrain*>(this)->generate(); // first use (main thread)
-        const_cast<Terrain*>(this)->m_stampState = stampState().dump();
+        const_cast<Terrain*>(this)->m_editState = editState().dump();
     }
     return m_data;
 }
@@ -122,10 +122,13 @@ glm::vec2 Terrain::boundsMax() const
     return d->origin + glm::vec2(float(d->res - 1) * d->cellSize);
 }
 
-Json Terrain::stampState() const
+Json Terrain::editState() const
 {
-    // Everything about the stamps that affects the terrain (to notice edits).
+    // Everything that affects the terrain (to notice edits): its own fields and the stamps.
     Json j = Json::array();
+    if (const TypeInfo* self = TypeRegistry::get().find("Terrain")) j.push_back(SceneSerializer::serializeFields(*self, this));
+    const glm::vec3 c = transform().position();
+    j.push_back({c.x, c.y, c.z});
     const TypeInfo* t = TypeRegistry::get().find("TerrainStamp");
     scene().forEach<TerrainStamp>([&](TerrainStamp& s) {
         if (!s.isActive()) return;
@@ -247,8 +250,8 @@ void Terrain::start()
 void Terrain::update(float dt)
 {
     m_sinceRebuild += dt;
-    const std::string state = stampState().dump();
-    if (state != m_stampState) m_dirty = true;
+    const std::string state = editState().dump();
+    if (state != m_editState) m_dirty = true;
     if (m_dirty && m_sinceRebuild > 0.25f) rebuild();
 }
 
@@ -261,7 +264,7 @@ void Terrain::rebuild()
         std::lock_guard lock(m_mutex);
         m_data = fresh;
     }
-    m_stampState = stampState().dump();
+    m_editState = editState().dump();
     ++m_version;
     if (m_started) buildVisuals();
 }

@@ -18,7 +18,7 @@ vulkan-engine/
 │   ├── src/ve/assets/      AssetManager, texture loading (stb), glTF loading (cgltf), Model
 │   ├── src/ve/audio/       AudioSystem, AudioClip, AudioSource (miniaudio)
 │   ├── src/ve/ui/          ImGui integration + engine debug overlay
-│   ├── src/ve/world/       FoliageSystem (streamed rule-based scattering), GrassPass (GPU grass)
+│   ├── src/ve/world/       Terrain, FoliageSystem (streamed scattering), GrassPass (GPU grass), Vegetation (scene types), LodModel
 │   └── shaders/            engine shaders + include/ve.glsl (the shared shader interface)
 ├── effects/                ve_effects  – OPTIONAL static library (namespace vfx)
 │   ├── src/vfx/            Atmosphere (sky + volumetric clouds), VolumetricFog, Bloom,
@@ -543,15 +543,18 @@ Optional add-ons built only on public engine APIs:
 
 | File | What it demonstrates |
 |---|---|
-| `Terrain.*` | Heightfield chunks, biome vertex colours, **custom shader** (`terrain.frag`), heightfield collider |
-| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading), LOD chains + impostors, `FoliageSystem` layers (biome rules, avoid rules, streamed colliders), `GrassPass` grass + reeds with a custom fragment shader |
+| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading), LOD chains + impostors, registered in `ve::MeshLibrary` for the scene's `FoliageType` layers |
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Props.*` | Campfire/torches (point shadows, particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
-| `assets/scenes/savanna.json` | Hand-placed level content (edit with F2): campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
+| `assets/scenes/savanna.json` | The level (edit with F2): Terrain + biomes + stamps, Water, Weather, DayNight, Foliage (6 FoliageTypes) + GrassLayers (grass, reeds with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 
-Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..3`,
+Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..4`,
 `SAVANNA_DEBUG=1` (F1 overlay on), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
-camera), `SAVANNA_AUTOTEST=1` (scripted smoke test that exits), and
-`VE_VALIDATION=0/1`.
+camera), `SAVANNA_AUTOTEST=1` / `SAVANNA_EDITORTEST=1` (scripted smoke tests
+that exit), `SAVANNA_SCENE=file.json` (another scene), and
+`VE_VALIDATION=0/1`. Any engine game: `VE_HEADLESS=1` (no window shown,
+offscreen rendering) and `VE_CAPTURE=out.png` + `VE_CAPTURE_FRAME=N` (save
+a frame; headless only), e.g.
+`VE_HEADLESS=1 SAVANNA_AUTOTEST=1 ./build/bin/savanna`.

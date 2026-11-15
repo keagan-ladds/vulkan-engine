@@ -25,6 +25,13 @@
 // grass_field.vert and write your own fragment shader with the same inputs
 // (see grass_field.frag), or start your vertex shader from ve_grass.glsl.
 // Alpha-clipped grass cards: set GrassDesc::cardMesh + cardTexture.
+//
+// LOD chain (e.g. a detailed modelled clump near the camera, a simpler one
+// further out, cards beyond): fill GrassDesc::lods, nearest first, each with
+// its own mesh (empty = procedural blades), texture and switch distance.
+// Every clump picks its LOD from its own jittered distance, so the switch is
+// dithered over lodBlend metres. ve::GrassLayer builds this from a glTF file
+// with *_LOD0, *_LOD1... nodes.
 // =============================================================================
 
 #include "ve/render/Mesh.hpp"
@@ -44,6 +51,13 @@ class Material;
 class Mesh;
 class Shader;
 class Texture;
+
+struct GrassLod {
+    MeshData mesh;                     // empty = procedural blades; else root at origin, height 1 (like cardMesh)
+    std::shared_ptr<Texture> texture;  // RGBA (alpha = coverage); null = white
+    float maxDistance = FLT_MAX;       // camera distance up to which this LOD is drawn
+    std::string fragmentShader;        // empty = grass_field.frag (blades) / grass_card.frag (meshes)
+};
 
 struct GrassDesc {
     std::string name = "Grass";
@@ -91,6 +105,11 @@ struct GrassDesc {
 
     std::string vertexShader = "grass_field.vert";
     std::string fragmentShader;        // empty = grass_field.frag (blades) or grass_card.frag (cards)
+
+    // LOD chain, nearest first. Empty = one LOD from cardMesh / cardTexture /
+    // fragmentShader above (procedural blades if cardMesh is empty).
+    std::vector<GrassLod> lods;
+    float lodBlend = 4.0f; // m over which neighbouring LODs are dithered
 };
 
 class GrassPass : public RenderPass, public ShadowCaster {
@@ -104,20 +123,28 @@ public:
     void onGui() override;
     void drawShadow(RenderContext& ctx, const ShadowView& view) override;
 
-    // Parameters are live: change them any time.
+    // Parameters are live: change them any time (LOD meshes / shaders excepted).
     GrassDesc& desc() { return m_desc; }
-    Material& material() { return *m_material; }
+    Material& material(size_t lod = 0) { return *m_lods.at(lod).material; }
+    size_t lodCount() const { return m_lods.size(); }
 
 private:
+    struct Lod {
+        std::shared_ptr<Mesh> mesh;
+        std::shared_ptr<Shader> shader;
+        std::shared_ptr<Material> material;
+        bool cards = false;
+        float minDistance = 0.0f, maxDistance = FLT_MAX;
+        uint32_t clumps = 0;
+    };
     void updateMaterial();
-    // Draws the visible tiles; returns {tiles, clumps}.
-    glm::uvec2 drawTiles(RenderContext& ctx, const Frustum& frustum, float maxDistance, uint32_t viewIndex);
+    MeshData bladeClump() const;
+    // Draws the visible tiles of one LOD; returns {tiles, clumps}.
+    glm::uvec2 drawTiles(RenderContext& ctx, const Lod& lod, const Frustum& frustum, float maxDistance, uint32_t viewIndex);
 
     GrassDesc m_desc;
     std::shared_ptr<Texture> m_height, m_mask;
-    std::shared_ptr<Mesh> m_clump;
-    std::shared_ptr<Shader> m_shader;
-    std::shared_ptr<Material> m_material;
+    std::vector<Lod> m_lods;
     std::vector<glm::vec2> m_tileHeights; // min/max ground height per tile
     int m_tilesX = 0, m_tilesZ = 0;
     uint32_t m_lastTiles = 0, m_lastClumps = 0, m_shadowClumps = 0, m_lastShadowClumps = 0;

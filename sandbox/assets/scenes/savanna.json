@@ -247,6 +247,26 @@
                 "biomeFalloff": 18,
                 "biomeStrength": 0.8
               }
+            },
+            {
+              "type": "FoliageExclusion",
+              "enabled": true,
+              "fields": {
+                "radius": 26,
+                "falloff": 0,
+                "foliage": true,
+                "grass": false
+              }
+            },
+            {
+              "type": "FoliageExclusion",
+              "enabled": true,
+              "fields": {
+                "radius": 8,
+                "falloff": 6,
+                "foliage": false,
+                "grass": true
+              }
             }
           ]
         }
@@ -332,6 +352,403 @@
           640,
           640
         ]
+      }
+    },
+    {
+      "id": "0620f0877e5fe381",
+      "type": "Foliage",
+      "name": "Foliage",
+      "active": true,
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "fields": {
+        "edgeMargin": 45,
+        "colliderFocus": "Player",
+        "preload": true
+      },
+      "children": [
+        {
+          "id": "f2ed66ffdcc99396",
+          "type": "GameObject",
+          "name": "Baobabs",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "FoliageType",
+              "enabled": true,
+              "fields": {
+                "tint": 0.13,
+                "sink": 0.15,
+                "library": "baobab",
+                "spacing": 30,
+                "probability": 0.3,
+                "minScale": 0.9,
+                "maxScale": 1.3,
+                "viewDistance": 3000,
+                "maxInstances": 300,
+                "seed": 1001,
+                "biomes": "Savannah:1, Camp:1",
+                "biomeThreshold": 0.65,
+                "minHeight": 0.6,
+                "maxSlope": 0.34
+              }
+            }
+          ]
+        },
+        {
+          "id": "21bade026a6ae768",
+          "type": "GameObject",
+          "name": "Acacias",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "FoliageType",
+              "enabled": true,
+              "fields": {
+                "tint": 0.13,
+                "sink": 0.15,
+                "library": "acacia",
+                "spacing": 8.5,
+                "probability": 0.82,
+                "minScale": 0.8,
+                "maxScale": 1.3,
+                "clusterFrequency": 0.012,
+                "clusterCoverage": 0.5,
+                "avoid": "Baobabs:12",
+                "viewDistance": 3000,
+                "maxInstances": 5000,
+                "seed": 1002,
+                "biomes": "Savannah:1, Camp:1",
+                "biomeThreshold": 0.65,
+                "minHeight": 0.6,
+                "maxSlope": 0.34
+              }
+            }
+          ]
+        },
+        {
+          "id": "9dd8904f07489671",
+          "type": "GameObject",
+          "name": "Fever trees",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "FoliageType",
+              "enabled": true,
+              "fields": {
+                "tint": 0.13,
+                "sink": 0.15,
+                "library": "fever tree",
+                "spacing": 5.5,
+                "probability": 0.6,
+                "minScale": 0.8,
+                "maxScale": 1.2,
+                "minHeight": 0.2,
+                "biomes": "Swamp:1",
+                "biomeThreshold": 0.35,
+                "viewDistance": 3000,
+                "maxInstances": 2000,
+                "seed": 1003
+              }
+            }
+          ]
+        },
+        {
+          "id": "6102dd7063e8540e",
+          "type": "GameObject",
+          "name": "Boulders",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "FoliageType",
+              "enabled": true,
+              "fields": {
+                "tint": 0.13,
+                "sink": 0.15,
+                "library": "boulder",
+                "spacing": 6,
+                "probability": 0.35,
+                "minScale": 2,
+                "maxScale": 5,
+                "minHeight": 0.5,
+                "alignToNormal": 0.5,
+                "biomes": "Rocky:1.11",
+                "biomeThreshold": 0.5,
+                "viewDistance": 3000,
+                "maxInstances": 500,
+                "seed": 1004
+              }
+            }
+          ]
+        },
+        {
+          "id": "466de486522c4f8d",
+          "type": "GameObject",
+          "name": "Rocks",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "FoliageType",
+              "enabled": true,
+              "fields": {
+                "tint": 0.13,
+                "sink": 0.15,
+                "library": "rock",
+                "spacing": 6,
+                "probability": 0.18,
+                "minScale": 0.4,
+                "maxScale": 1.4,
+                "minHeight": 0.3,
+                "alignToNormal": 0.7,
+                "avoid": "Boulders:3",
+                "viewDistance": 450,
+                "shadowDistance": 50,
+                "colliderDistance": 40,
+                "seed": 1005
+              }
+            }
+          ]
+        },
+        {
+          "id": "83faac572f564652",
+          "type": "GameObject",
+          "name": "Bushes",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "components": [
+            {
+              "type": "FoliageType",
+              "enabled": true,
+              "fields": {
+                "tint": 0.13,
+                "sink": 0.15,
+                "library": "bush",
+                "spacing": 4.5,
+                "probability": 0.5,
+                "minScale": 0.7,
+                "maxScale": 1.4,
+                "minHeight": 0.3,
+                "avoid": "Baobabs:5, Acacias:2.5, Fever trees:1.5, Boulders:3",
+                "viewDistance": 350,
+                "shadowDistance": 60,
+                "colliderDistance": 40,
+                "seed": 1006
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "781b9a43d04ce50b",
+      "type": "GrassLayer",
+      "name": "Grass",
+      "active": true,
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "fields": {
+        "biomes": "*:1, Rocky:-1.2, Swamp:-0.8",
+        "biomeThreshold": 0.5,
+        "minGroundHeight": 0.25,
+        "maxSlope": 0.34,
+        "patchFrequency": 0.03,
+        "patchContrast": 2.0,
+        "patchOffset": 0.2,
+        "colorFrequency": 0.012,
+        "heightFrequency": 0.05,
+        "heightVariation": 0.3,
+        "colorA": [
+          0.78,
+          0.63,
+          0.32
+        ],
+        "colorB": [
+          0.55,
+          0.55,
+          0.26
+        ],
+        "spacing": 0.75,
+        "bladesPerClump": 6,
+        "clumpRadius": 0.3,
+        "minHeight": 0.45,
+        "maxHeight": 1.05,
+        "bladeWidth": 0.06,
+        "fragmentShader": "grass.frag",
+        "castShadows": true,
+        "shadowDistance": 30
+      }
+    },
+    {
+      "id": "27e47ffc284a2d4f",
+      "type": "GrassLayer",
+      "name": "Reeds",
+      "active": true,
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "fields": {
+        "biomes": "Swamp:1",
+        "biomeThreshold": 0.4,
+        "minGroundHeight": -0.5,
+        "maxGroundHeight": 0.6,
+        "colorFrequency": 0.05,
+        "heightVariation": 0.0,
+        "colorA": [
+          0.3,
+          0.4,
+          0.14
+        ],
+        "colorB": [
+          0.42,
+          0.46,
+          0.18
+        ],
+        "spacing": 1.2,
+        "bladesPerClump": 5,
+        "clumpRadius": 0.3,
+        "minHeight": 1.4,
+        "maxHeight": 2.3,
+        "bladeWidth": 0.03,
+        "radius": 140,
+        "shadowDistance": 40,
+        "fragmentShader": "grass.frag",
+        "castShadows": true
       }
     },
     {
@@ -423,6 +840,16 @@
             "staticColliders": true
           },
           "type": "ModelInstance"
+        },
+        {
+          "type": "FoliageExclusion",
+          "enabled": true,
+          "fields": {
+            "radius": 2.8,
+            "falloff": 0.8,
+            "foliage": false,
+            "grass": true
+          }
         }
       ],
       "id": "3ad5f25ae14bcc26",
@@ -535,6 +962,16 @@
             "staticColliders": true
           },
           "type": "ModelInstance"
+        },
+        {
+          "type": "FoliageExclusion",
+          "enabled": true,
+          "fields": {
+            "radius": 2.8,
+            "falloff": 0.8,
+            "foliage": false,
+            "grass": true
+          }
         }
       ],
       "id": "65af582feff09d1c",
@@ -647,6 +1084,16 @@
             "staticColliders": true
           },
           "type": "ModelInstance"
+        },
+        {
+          "type": "FoliageExclusion",
+          "enabled": true,
+          "fields": {
+            "radius": 2.8,
+            "falloff": 0.8,
+            "foliage": false,
+            "grass": true
+          }
         }
       ],
       "id": "ca94a2eeabec7633",

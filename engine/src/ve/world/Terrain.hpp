@@ -152,7 +152,7 @@ public:
 
 private:
     std::shared_ptr<TerrainData> generate() const;
-    Json stampState() const;
+    Json editState() const; // own fields + position + stamps: rebuild when it changes
     void rebuild();      // data + meshes + collider
     void buildVisuals(); // chunk meshes + heightfield collider from m_data
 
@@ -161,7 +161,7 @@ private:
     std::shared_ptr<Material> m_material;
     std::vector<GameObject*> m_chunks;
     Component* m_collider = nullptr;
-    std::string m_stampState;
+    std::string m_editState;
     uint64_t m_version = 0;
     bool m_dirty = false;
     bool m_started = false;

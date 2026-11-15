@@ -70,8 +70,12 @@ void buildWorld(ve::Engine& engine)
     // --- The level: scenes/savanna.json (edit it in the editor, F2) ------------------------
     // Terrain (shape, biomes, stamps), water, weather, day/night, the camp (huts +
     // audio zones, campfire, torches, crates, reed screens), sunstones, ambience
-    // and the player start. Vegetation rules are still code (below) until Phase W4.
-    std::vector<ve::GameObject*> level = ve::SceneSerializer::load(scene, "scenes/savanna.json");
+    // and the player start, plus the vegetation: a Foliage object with one
+    // FoliageType per prop (meshes from the MeshLibrary, registered first),
+    // GrassLayers for grass and reeds, FoliageExclusions around the camp and huts.
+    registerPropMeshes();
+    const char* sceneFile = std::getenv("SAVANNA_SCENE"); // another scene file (tests)
+    std::vector<ve::GameObject*> level = ve::SceneSerializer::load(scene, sceneFile ? sceneFile : "scenes/savanna.json");
     ve::Terrain* terrainPtr = ve::Terrain::find(scene);
     for (ve::GameObject* o : level) {
         if (!terrainPtr) terrainPtr = dynamic_cast<ve::Terrain*>(o);
@@ -79,18 +83,10 @@ void buildWorld(ve::Engine& engine)
     if (!terrainPtr) terrainPtr = &scene.spawn<ve::Terrain>(); // a scene without terrain: default one
     ve::Terrain& terrain = *terrainPtr;
 
-    const PropLibrary props = buildPropLibrary(r);
-    setPropMaterial(props.material); // shared by Campfire / Torch (scene objects)
-    auto& foliage = scatterProps(scene, terrain, props);
-    std::vector<glm::vec2> clearings; // no grass inside the huts
-    for (ve::GameObject* o : level) {
-        if (o->tag == "hut") clearings.emplace_back(o->transform().position().x, o->transform().position().z);
-    }
-    addGrass(r, terrain, clearings);
-
     // --- Player: spawns at the PlayerStart marker ------------------------------------------
     auto& player = scene.spawn<Player>();
-    player.setThrowable(props.rocks.variants[0][0].mesh, props.material, props.rocks.colliders[0]);
+    if (auto rocks = ve::MeshLibrary::get(r, "rock")) // throwable stones look like the scattered rocks
+        player.setThrowable(rocks->variants[0][0].mesh, propMaterial(), rocks->colliders[0]);
     glm::vec2 start = layout::kCamp + glm::vec2(9.0f, 5.0f);
     float startYaw = glm::radians(78.0f);
     for (ve::GameObject* o : level) {
@@ -125,11 +121,6 @@ void buildWorld(ve::Engine& engine)
         float x, y, z, yaw, pitch;
         if (std::sscanf(f, "%f,%f,%f,%f,%f", &x, &y, &z, &yaw, &pitch) == 5) player.setPose({x, y, z}, yaw, pitch);
     }
-
-    // Props stream around the camera; colliders around the player. Load the
-    // start area up front so nothing pops in on the first frames.
-    foliage.colliderFocus = &player;
-    foliage.preload(player.transform().position());
 }
 
 } // namespace
