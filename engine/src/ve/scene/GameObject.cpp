@@ -38,6 +38,13 @@ bool GameObject::activeInHierarchy() const
     return p ? p->gameObject().activeInHierarchy() : true;
 }
 
+void GameObject::setId(uint64_t id)
+{
+    const uint64_t old = m_id;
+    m_id = id;
+    if (m_scene) m_scene->reindex(this, old);
+}
+
 void GameObject::destroy()
 {
     if (m_destroyed) return;

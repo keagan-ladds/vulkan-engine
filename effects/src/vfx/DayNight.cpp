@@ -67,10 +67,11 @@ void DayNightCycle::start()
 void DayNightCycle::update(float dt)
 {
     ve::Input& in = input();
-    if (!weather) {
-        for (const auto& o : scene().objects()) {
-            if (auto* w = dynamic_cast<Weather*>(o.get()); w && !w->isDestroyed()) weather = w;
-        }
+    // By id: the editor can delete or replace the Weather at any time.
+    m_weather = dynamic_cast<Weather*>(scene().findById(m_weatherId));
+    if (!m_weather) {
+        m_weather = scene().findFirst<Weather>();
+        m_weatherId = m_weather ? m_weather->id() : 0;
     }
     float speed = 24.0f / (std::max(dayLengthMinutes, 0.01f) * 60.0f); // hours per second
     if (engine().editor() && engine().editor()->paused() && !advanceInEditor) speed = 0.0f;
@@ -86,10 +87,10 @@ void DayNightCycle::update(float dt)
     m_moonObject->transform().setRotation(glm::quatLookAt(-towardsMoon, glm::vec3(0, 1, 0)));
 
     // Sunlight colour = what survives the atmosphere: white at noon, deep orange at sunset.
-    const float haze = weather ? weather->current().haze : 1.5f;
+    const float haze = m_weather ? m_weather->current().haze : 1.5f;
     const glm::vec3 T = vfx::AtmospherePass::sunTransmittance(m_towardsSun, haze);
     const float maxT = std::max({T.r, T.g, T.b, 1e-4f});
-    const float weatherScale = weather ? weather->sunScale() : 1.0f;
+    const float weatherScale = m_weather ? m_weather->sunScale() : 1.0f;
     m_sun->color = T / maxT;
     m_sun->intensity = sunIntensity * maxT * weatherScale;
     m_sun->enabled = m_sun->intensity > 0.002f;

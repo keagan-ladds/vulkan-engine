@@ -134,8 +134,9 @@ public:
 private:
     void findEnvironment(); // the scene's Weather / DayNightCycle (scene objects)
     Player& m_player;
-    vfx::DayNightCycle* m_dayNight = nullptr;
+    vfx::DayNightCycle* m_dayNight = nullptr; // looked up by id every frame (the editor can delete them)
     vfx::Weather* m_weather = nullptr;
+    uint64_t m_dayNightId = 0, m_weatherId = 0;
     bool m_showHelp = true;
     bool m_combat = false; // M: stand-in for a fight (pushes the "Combat" music mood)
 };

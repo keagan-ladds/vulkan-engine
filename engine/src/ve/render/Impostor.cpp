@@ -40,53 +40,7 @@ void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
                   VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
                   VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
 {
-    VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-    b.srcStageMask = srcStage;
-    b.srcAccessMask = srcAccess;
-    b.dstStageMask = dstStage;
-    b.dstAccessMask = dstAccess;
-    b.oldLayout = from;
-    b.newLayout = to;
-    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = image;
-    b.subresourceRange = {aspect, baseMip, mipCount, 0, 1};
-    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    dep.imageMemoryBarrierCount = 1;
-    dep.pImageMemoryBarriers = &b;
-    vkCmdPipelineBarrier2(cmd, &dep);
-}
-
-// Mip chain for an image whose mip 0 is in COLOR_ATTACHMENT_OPTIMAL; leaves
-// every level READ_ONLY_OPTIMAL.
-void buildMips(VkCommandBuffer cmd, const Image& img)
-{
-    int32_t w = static_cast<int32_t>(img.extent.width), h = static_cast<int32_t>(img.extent.height);
-    imageBarrier(cmd, img.handle, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-    if (img.mipLevels > 1) {
-        imageBarrier(cmd, img.handle, VK_IMAGE_ASPECT_COLOR_BIT, 1, img.mipLevels - 1, VK_IMAGE_LAYOUT_UNDEFINED,
-                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
-                     VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    }
-    for (uint32_t mip = 1; mip < img.mipLevels; ++mip) {
-        const int32_t nw = std::max(1, w / 2), nh = std::max(1, h / 2);
-        VkImageBlit blit{};
-        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip - 1, 0, 1};
-        blit.srcOffsets[1] = {w, h, 1};
-        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 1};
-        blit.dstOffsets[1] = {nw, nh, 1};
-        vkCmdBlitImage(cmd, img.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, img.handle,
-                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-        imageBarrier(cmd, img.handle, VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
-                     VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-        w = nw;
-        h = nh;
-    }
-    imageBarrier(cmd, img.handle, VK_IMAGE_ASPECT_COLOR_BIT, 0, img.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                 VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-                 VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    vk::imageBarrier(cmd, image, {aspect, baseMip, mipCount, 0, 1}, from, to, srcStage, srcAccess, dstStage, dstAccess);
 }
 
 } // namespace
@@ -217,8 +171,10 @@ std::shared_ptr<Impostor> Impostor::bake(Renderer& renderer, const Mesh& mesh,
             }
         }
         vkCmdEndRendering(cmd);
-        buildMips(cmd, albedo);
-        buildMips(cmd, normal);
+        for (const Image* atlas : {&albedo, &normal}) {
+            recordMipChain(cmd, *atlas, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        }
     });
 
     vkDestroyPipeline(device.handle(), pipeline, nullptr);

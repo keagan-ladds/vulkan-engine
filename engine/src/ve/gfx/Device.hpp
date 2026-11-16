@@ -30,6 +30,12 @@ struct DeviceFeatures {
     bool fillModeNonSolid = false;
 };
 
+// Fills mips 1..n of `image` by successive half-size blits of mip 0 (which is
+// in `mip0Layout`, last written at mip0Stage/mip0Access); leaves every level
+// READ_ONLY_OPTIMAL.
+void recordMipChain(VkCommandBuffer cmd, const Image& image, VkImageLayout mip0Layout, VkPipelineStageFlags2 mip0Stage,
+                    VkAccessFlags2 mip0Access);
+
 class Device {
 public:
     static constexpr uint32_t kFramesInFlight = 2;

@@ -4,12 +4,12 @@
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Strings.hpp"
 
 #include <imgui.h>
 #include <miniaudio.h>
 
 #include <algorithm>
-#include <set>
 #include <sstream>
 
 namespace ve {
@@ -17,25 +17,6 @@ namespace ve {
 namespace {
 
 constexpr float kResumeWindow = 20.0f; // s a faded-out track stays paused (to resume) before it's freed
-
-void warnOnce(const std::string& message)
-{
-    static std::set<std::string> said;
-    if (said.insert(message).second) log::warn("{}", message);
-}
-
-std::vector<std::string> splitList(const std::string& list)
-{
-    std::vector<std::string> out;
-    std::stringstream ss(list);
-    std::string item;
-    while (std::getline(ss, item, ';')) {
-        item.erase(0, item.find_first_not_of(" \t\n"));
-        item.erase(item.find_last_not_of(" \t\n") + 1);
-        if (!item.empty()) out.push_back(item);
-    }
-    return out;
-}
 
 } // namespace
 
@@ -158,13 +139,13 @@ ma_sound* MusicPlayer::openTrack(const std::string& path)
     try {
         file = Engine::get().assets().resolve(path).string();
     } catch (const std::exception&) {
-        warnOnce("Music: track not found: " + path);
+        log::warnOnce("Music: track not found: " + path);
         return nullptr;
     }
     auto* sound = new ma_sound();
     if (ma_sound_init_from_file(m_audio.engine(), file.c_str(), MA_SOUND_FLAG_STREAM, m_audio.bus("Music").group,
                                 nullptr, sound) != MA_SUCCESS) {
-        warnOnce("Music: failed to load " + path);
+        log::warnOnce("Music: failed to load " + path);
         delete sound;
         return nullptr;
     }
@@ -236,13 +217,13 @@ void MusicPlayer::stinger(const std::string& path, float volume, float duck)
     try {
         file = Engine::get().assets().resolve(path).string();
     } catch (const std::exception&) {
-        warnOnce("Music: stinger not found: " + path);
+        log::warnOnce("Music: stinger not found: " + path);
         return;
     }
     auto* sound = new ma_sound();
     if (ma_sound_init_from_file(m_audio.engine(), file.c_str(), MA_SOUND_FLAG_DECODE, m_audio.bus("Music").group,
                                 nullptr, sound) != MA_SUCCESS) {
-        warnOnce("Music: failed to load " + path);
+        log::warnOnce("Music: failed to load " + path);
         delete sound;
         return;
     }
@@ -340,7 +321,7 @@ void MusicMood::apply()
     if (!m_registered.empty() && m_registered != name) music.removeMood(m_registered);
     MusicMoodDesc d;
     d.name = name;
-    d.tracks = splitList(tracks);
+    d.tracks = str::split(tracks, ';');
     d.shuffle = shuffle;
     d.volume = volume;
     d.fadeIn = fadeIn;

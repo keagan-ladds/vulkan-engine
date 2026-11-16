@@ -493,7 +493,10 @@ Optional add-ons built only on public engine APIs:
   and a matching 4-tap box upsample blends the result over SceneColor.
 - `BloomPass`: threshold + progressive downsample/upsample chain added back into SceneColor.
 - **Screen-space passes (opt-in; not added by `addDefaultEffects`).** They read
-  the thin G-buffer `SceneNormal` (§5.4):
+  the thin G-buffer `SceneNormal` (§5.4). SSGI and SSR share
+  `ScreenSpaceTracePass` (trace at reduced resolution → `TemporalAccumulator`
+  → upsample-and-blend over SceneColor); each only supplies its shaders and
+  push constants:
   - `ScreenSpaceGIPass`: 3 cosine rays × 8 steps per half-res pixel, marched
     through SceneDepth. Hits gather the lit SceneColor (one diffuse bounce,
     luminance-clamped against fireflies) and count as occlusion. The ray

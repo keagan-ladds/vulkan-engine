@@ -14,6 +14,8 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
+#include <initializer_list>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -23,6 +25,28 @@
 #include <stb_image_write.h>
 
 namespace ve {
+
+namespace {
+
+// Writes consecutive bindings of a set-0 copy: buffers or images (one each).
+void writeDescriptors(VkDevice dev, VkDescriptorSet set, uint32_t firstBinding, VkDescriptorType type,
+                      std::initializer_list<VkDescriptorBufferInfo> buffers,
+                      std::initializer_list<VkDescriptorImageInfo> images = {})
+{
+    std::array<VkWriteDescriptorSet, 8> writes{};
+    uint32_t n = 0;
+    for (const VkDescriptorBufferInfo& b : buffers) {
+        writes[n] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, firstBinding + n, 0, 1, type, nullptr, &b};
+        ++n;
+    }
+    for (const VkDescriptorImageInfo& img : images) {
+        writes[n] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, firstBinding + n, 0, 1, type, &img};
+        ++n;
+    }
+    vkUpdateDescriptorSets(dev, n, writes.data(), 0, nullptr);
+}
+
+} // namespace
 
 Renderer::~Renderer()
 {
@@ -207,21 +231,9 @@ void Renderer::createFrameSlots()
         setAlloc.pSetLayouts = &m_globalSetLayout;
         VK_CHECK(vkAllocateDescriptorSets(dev, &setAlloc, &s.set));
 
-        VkDescriptorBufferInfo bufs[3] = {
-            {s.globals.handle, 0, VK_WHOLE_SIZE},
-            {s.lights.handle, 0, VK_WHOLE_SIZE},
-            {s.materials.handle, 0, VK_WHOLE_SIZE},
-        };
-        VkWriteDescriptorSet writes[3]{};
-        for (uint32_t i = 0; i < 3; ++i) {
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = s.set;
-            writes[i].dstBinding = i;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[i].pBufferInfo = &bufs[i];
-        }
-        vkUpdateDescriptorSets(dev, 3, writes, 0, nullptr);
+        writeDescriptors(dev, s.set, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, {{s.globals.handle, 0, VK_WHOLE_SIZE}});
+        writeDescriptors(dev, s.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                         {{s.lights.handle, 0, VK_WHOLE_SIZE}, {s.materials.handle, 0, VK_WHOLE_SIZE}});
     }
 }
 
@@ -262,43 +274,21 @@ void Renderer::writeShadowDescriptors()
 {
     VkSampler cmp = m_samplers.get(SamplerType::ShadowCompare);
     for (FrameSlot& s : m_slots) {
-        VkDescriptorImageInfo imgs[2] = {
-            {cmp, m_graph->get(m_dirShadowMap).image.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL},
-            {cmp, m_graph->get(m_pointShadowMap).image.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL},
-        };
-        VkWriteDescriptorSet writes[2]{};
-        for (uint32_t i = 0; i < 2; ++i) {
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = s.set;
-            writes[i].dstBinding = 3 + i;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[i].pImageInfo = &imgs[i];
-        }
-        vkUpdateDescriptorSets(m_device.handle(), 2, writes, 0, nullptr);
+        writeDescriptors(m_device.handle(), s.set, 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, {},
+                         {{cmp, m_graph->get(m_dirShadowMap).image.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL},
+                          {cmp, m_graph->get(m_pointShadowMap).image.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL}});
     }
 }
 
 void Renderer::writeInstanceDescriptors()
 {
     for (uint32_t slot = 0; slot < Device::kFramesInFlight; ++slot) {
-        const VkDescriptorBufferInfo bufs[5] = {
-            {m_instances->instanceBuffer(), 0, VK_WHOLE_SIZE},
-            {m_instances->visibleBuffer(), 0, VK_WHOLE_SIZE},
-            {m_instances->commandBuffer(), 0, VK_WHOLE_SIZE},
-            {m_instances->groupBuffer(slot), 0, VK_WHOLE_SIZE},
-            {m_instances->viewBuffer(slot), 0, VK_WHOLE_SIZE},
-        };
-        VkWriteDescriptorSet writes[5]{};
-        for (uint32_t i = 0; i < 5; ++i) {
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = m_slots[slot].set;
-            writes[i].dstBinding = 5 + i;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[i].pBufferInfo = &bufs[i];
-        }
-        vkUpdateDescriptorSets(m_device.handle(), 5, writes, 0, nullptr);
+        writeDescriptors(m_device.handle(), m_slots[slot].set, 5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                         {{m_instances->instanceBuffer(), 0, VK_WHOLE_SIZE},
+                          {m_instances->visibleBuffer(), 0, VK_WHOLE_SIZE},
+                          {m_instances->commandBuffer(), 0, VK_WHOLE_SIZE},
+                          {m_instances->groupBuffer(slot), 0, VK_WHOLE_SIZE},
+                          {m_instances->viewBuffer(slot), 0, VK_WHOLE_SIZE}});
     }
 }
 
@@ -1058,6 +1048,23 @@ void Renderer::photoFinish()
     m_graph->resize(m_swapchain.extent());
 }
 
+void Renderer::saveCapture()
+{
+    vmaInvalidateAllocation(m_device.allocator(), m_captureBuffer.allocation, 0, VK_WHOLE_SIZE);
+    const VkExtent3D e = m_headlessTarget.extent;
+    std::vector<uint8_t> px(size_t(e.width) * e.height * 4);
+    std::memcpy(px.data(), m_captureBuffer.mapped, px.size());
+    const VkFormat f = m_headlessTarget.format;
+    if (f == VK_FORMAT_B8G8R8A8_SRGB || f == VK_FORMAT_B8G8R8A8_UNORM)
+        for (size_t i = 0; i < px.size(); i += 4) std::swap(px[i], px[i + 2]);
+    for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+    if (stbi_write_png(m_capturePath.c_str(), int(e.width), int(e.height), 4, px.data(), int(e.width) * 4))
+        log::info("Renderer: captured frame {} to {}", m_frameNumber, m_capturePath);
+    else
+        log::error("Renderer: failed to write {}", m_capturePath);
+    m_capturePath.clear();
+}
+
 bool Renderer::render(Scene& scene, const Time& time)
 {
     if (!m_initialized) return false;
@@ -1174,13 +1181,14 @@ bool Renderer::render(Scene& scene, const Time& time)
     m_instances->recordReadback(slot.cmd, slotIndex);
     slot.timestampsWritten = slot.timestamps != VK_NULL_HANDLE;
     m_graph->transition(slot.cmd, m_backbuffer, offscreen ? Access::TransferSrc : Access::Present);
-    if (photo) {
+    // Read the finished frame back: photo accumulation, or a headless capture.
+    auto readback = [&](const Image& image, const Buffer& buffer) {
         VkBufferImageCopy region{};
         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = m_photo.target.extent;
-        vkCmdCopyImageToBuffer(slot.cmd, m_photo.target.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               m_photo.readback.handle, 1, &region);
-    }
+        region.imageExtent = image.extent;
+        vkCmdCopyImageToBuffer(slot.cmd, image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer.handle, 1, &region);
+    };
+    if (photo) readback(m_photo.target, m_photo.readback);
     if (headless && !m_envCapturePath.empty() && m_frameNumber == m_envCaptureFrame) m_capturePath = m_envCapturePath;
     const bool capture = headless && !photo && !m_capturePath.empty();
     if (capture) {
@@ -1191,11 +1199,7 @@ bool Renderer::render(Scene& scene, const Time& time)
             m_captureBuffer = m_device.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryUsage::GpuToCpu,
                                                     "capture readback");
         }
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = {e.width, e.height, 1};
-        vkCmdCopyImageToBuffer(slot.cmd, m_headlessTarget.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               m_captureBuffer.handle, 1, &region);
+        readback(m_headlessTarget, m_captureBuffer);
     }
     VK_CHECK(vkEndCommandBuffer(slot.cmd));
 
@@ -1226,19 +1230,7 @@ bool Renderer::render(Scene& scene, const Time& time)
     if (offscreen) {
         if (capture) {
             VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
-            vmaInvalidateAllocation(m_device.allocator(), m_captureBuffer.allocation, 0, VK_WHOLE_SIZE);
-            const VkExtent3D e = m_headlessTarget.extent;
-            std::vector<uint8_t> px(size_t(e.width) * e.height * 4);
-            std::memcpy(px.data(), m_captureBuffer.mapped, px.size());
-            const VkFormat f = m_headlessTarget.format;
-            if (f == VK_FORMAT_B8G8R8A8_SRGB || f == VK_FORMAT_B8G8R8A8_UNORM)
-                for (size_t i = 0; i < px.size(); i += 4) std::swap(px[i], px[i + 2]);
-            for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
-            if (stbi_write_png(m_capturePath.c_str(), int(e.width), int(e.height), 4, px.data(), int(e.width) * 4))
-                log::info("Renderer: captured frame {} to {}", m_frameNumber, m_capturePath);
-            else
-                log::error("Renderer: failed to write {}", m_capturePath);
-            m_capturePath.clear();
+            saveCapture();
         }
         m_prevViewProj = m_frame.camera.viewProj;
         ++m_frameNumber;

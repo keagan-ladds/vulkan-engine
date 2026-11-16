@@ -1,5 +1,8 @@
 #include "ve/core/Log.hpp"
 
+#include <set>
+#include <string>
+
 #include <cstdio>
 
 namespace ve::log {
@@ -15,6 +18,14 @@ void write(Level level, std::string_view message)
     case Level::Error: tag = "\033[31m[error]\033[0m "; break;
     }
     std::fprintf(stderr, "%s%.*s\n", tag, static_cast<int>(message.size()), message.data());
+}
+
+void warnOnce(std::string_view message)
+{
+    static std::set<std::string, std::less<>> said;
+    if (said.find(message) != said.end()) return;
+    said.emplace(message);
+    write(Level::Warn, message);
 }
 
 } // namespace ve::log

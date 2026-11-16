@@ -15,11 +15,11 @@
 #include "ve/world/LodModel.hpp"
 #include "ve/world/Noise.hpp"
 #include "ve/world/Terrain.hpp"
+#include "ve/core/Strings.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <map>
-#include <set>
 #include <sstream>
 
 namespace ve {
@@ -37,19 +37,6 @@ std::map<std::string, LibraryEntry>& library()
 {
     static std::map<std::string, LibraryEntry> entries;
     return entries;
-}
-
-std::string trim(std::string s)
-{
-    s.erase(0, s.find_first_not_of(" \t\n"));
-    s.erase(s.find_last_not_of(" \t\n") + 1);
-    return s;
-}
-
-void warnOnce(const std::string& message)
-{
-    static std::set<std::string> said;
-    if (said.insert(message).second) log::warn("{}", message);
 }
 
 // Every Component of type T on `root` and its descendants, in hierarchy order.
@@ -86,16 +73,12 @@ std::string exclusionState(const Scene& scene, bool grass)
 std::vector<std::pair<std::string, float>> parseNameValues(const std::string& spec)
 {
     std::vector<std::pair<std::string, float>> out;
-    std::stringstream ss(spec);
-    std::string item;
-    while (std::getline(ss, item, ',')) {
-        item = trim(item);
-        if (item.empty()) continue;
+    for (const std::string& item : str::split(spec, ',')) {
         const size_t colon = item.rfind(':');
         float value = 1.0f;
         std::string name = item;
         if (colon != std::string::npos) {
-            name = trim(item.substr(0, colon));
+            name = str::trim(std::string_view(item).substr(0, colon));
             try {
                 value = std::stof(item.substr(colon + 1));
             } catch (const std::exception&) {
@@ -141,7 +124,7 @@ std::vector<std::pair<int, float>> parseBiomeWeights(const std::string& spec, co
     for (const auto& [name, value] : parseNameValues(spec)) {
         const int index = name == "*" ? -1 : terrain.biomeIndex(name);
         if (index < 0 && name != "*") {
-            warnOnce(owner + ": the terrain has no biome '" + name + "'");
+            log::warnOnce(owner + ": the terrain has no biome '" + name + "'");
             continue;
         }
         out.push_back({index, value});
@@ -177,7 +160,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
     if (!library.empty() && mesh.empty()) {
         auto lib = MeshLibrary::get(r, library);
         if (!lib) {
-            warnOnce(owner + ": no MeshLibrary entry '" + library + "'");
+            log::warnOnce(owner + ": no MeshLibrary entry '" + library + "'");
             return nullptr;
         }
         *out = *lib;
@@ -186,7 +169,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
         try {
             model = loadLodModel(assets(), mesh);
         } catch (const std::exception& e) {
-            warnOnce(owner + ": " + e.what());
+            log::warnOnce(owner + ": " + e.what());
             return nullptr;
         }
         auto threshold = [&](size_t level) {
@@ -238,7 +221,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
             if (authoredColliders.size() == model.variants.size() || authoredColliders.size() == 1)
                 for (const MeshData& c : authoredColliders) out->colliders.push_back(Collider::convexHull(c));
             else if (!authoredColliders.empty())
-                warnOnce(owner + ": some variants have *_COL shapes and some don't: colliders ignored");
+                log::warnOnce(owner + ": some variants have *_COL shapes and some don't: colliders ignored");
         }
         log::info("{}: {} variant(s) from {}, {} level(s){}, {} authored collider(s)", owner, model.variants.size(), mesh,
                   model.variants.front().levels.size(), impostor ? " + impostor" : "", authoredColliders.size());
@@ -268,7 +251,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
         break;
     case Collision::ConvexHull:
         if (hulls.empty()) {
-            warnOnce(owner + ": ConvexHull needs a glTF mesh (library meshes bring their own colliders)");
+            log::warnOnce(owner + ": ConvexHull needs a glTF mesh (library meshes bring their own colliders)");
         } else {
             out->colliders.clear();
             for (const MeshData& h : hulls) out->colliders.push_back(Collider::convexHull(h));
@@ -372,7 +355,7 @@ void Foliage::rebuild()
         const std::string layerName = t->gameObject().name();
         auto meshes = t->meshes(renderer());
         if (!meshes) {
-            if (t->mesh.empty() && t->library.empty()) warnOnce(self + ": layer '" + layerName + "' has no mesh or library");
+            if (t->mesh.empty() && t->library.empty()) log::warnOnce(self + ": layer '" + layerName + "' has no mesh or library");
             continue;
         }
         FoliageLayer l;
@@ -409,14 +392,14 @@ void Foliage::rebuild()
         }
         for (const auto& [other, radius] : parseNameValues(t->avoid)) {
             const int index = layerIndex(other);
-            if (index < 0) warnOnce(self + ": layer '" + layerName + "' avoids '" + other + "', which isn't an earlier layer");
+            if (index < 0) log::warnOnce(self + ": layer '" + layerName + "' avoids '" + other + "', which isn't an earlier layer");
             else l.avoid.push_back({uint32_t(index), radius});
         }
         try {
             sys.addLayer(std::move(l));
             m_layerNames.push_back(layerName);
         } catch (const std::exception& e) {
-            warnOnce(self + ": " + e.what());
+            log::warnOnce(self + ": " + e.what());
         }
     }
 
@@ -570,7 +553,7 @@ void GrassLayer::rebuild()
         try {
             const LodModel model = loadLodModel(assets(), mesh);
             const LodVariant& v = model.variants.front();
-            if (model.variants.size() > 1) warnOnce(self + ": " + mesh + " has several variants; grass uses the first");
+            if (model.variants.size() > 1) log::warnOnce(self + ": " + mesh + " has several variants; grass uses the first");
             log::info("{}: {} LOD(s) from {}", self, v.levels.size(), mesh);
             // Unit height: every level scaled like LOD0 (root at the origin).
             float top = 0.0f;
@@ -597,7 +580,7 @@ void GrassLayer::rebuild()
                 d.lods.push_back(std::move(lod));
             }
         } catch (const std::exception& e) {
-            warnOnce(self + ": " + e.what());
+            log::warnOnce(self + ": " + e.what());
         }
     } else if (cards > 0) {
         d.cardMesh = GrassDesc::cardMeshCrossed(uint32_t(cards), 1.1f);

@@ -1,6 +1,6 @@
 #include "Vegetation.hpp"
 
-#include "Noise2D.hpp"
+#include <ve/world/Noise.hpp>
 #include "Props.hpp"
 
 #include <ve/core/Log.hpp>
@@ -22,6 +22,8 @@
 namespace savanna {
 
 using ve::MeshData;
+using ve::noise::Rng;
+using ve::noise::valueNoise;
 namespace prim = ve::primitives;
 
 namespace {

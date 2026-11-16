@@ -1,6 +1,6 @@
 #include "Props.hpp"
 
-#include "Noise2D.hpp"
+#include <ve/world/Noise.hpp>
 #include "Player.hpp"
 #include "SavannaLayout.hpp"
 
@@ -53,7 +53,7 @@ namespace {
 float flicker(float t, float seed)
 {
     return 0.75f + 0.12f * std::sin(t * 9.1f + seed) + 0.08f * std::sin(t * 23.7f + seed * 3.0f) +
-           0.1f * (valueNoise(glm::vec2(t * 6.0f, seed)) - 0.5f);
+           0.1f * (ve::noise::valueNoise(glm::vec2(t * 6.0f, seed)) - 0.5f);
 }
 
 vfx::ParticleSettings flameSettings(float scale)
@@ -639,13 +639,13 @@ Hud::Hud(Player& player) : GameObject("HUD"), m_player(player)
 
 void Hud::findEnvironment()
 {
-    if (m_weather && m_weather->isDestroyed()) m_weather = nullptr;
-    if (m_dayNight && m_dayNight->isDestroyed()) m_dayNight = nullptr;
-    if (m_weather && m_dayNight) return;
-    for (const auto& o : scene().objects()) {
-        if (!m_weather) m_weather = dynamic_cast<vfx::Weather*>(o.get());
-        if (!m_dayNight) m_dayNight = dynamic_cast<vfx::DayNightCycle*>(o.get());
-    }
+    auto find = [&]<class T>(T*& ptr, uint64_t& id) {
+        ptr = dynamic_cast<T*>(scene().findById(id));
+        if (!ptr) ptr = scene().findFirst<T>();
+        id = ptr ? ptr->id() : 0;
+    };
+    find(m_weather, m_weatherId);
+    find(m_dayNight, m_dayNightId);
 }
 
 void Hud::update(float dt)

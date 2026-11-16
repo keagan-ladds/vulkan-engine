@@ -49,7 +49,21 @@ public:
     GameObject& instantiate(const Model& model, GameObject* parent = nullptr, bool staticColliders = false);
 
     GameObject* find(const std::string& name) const;
+    // O(1). An id is a safe way to remember an object across frames: unlike a
+    // pointer, it can't dangle once the object is destroyed (findById -> null).
     GameObject* findById(uint64_t id) const;
+    // First live object of class T (or a subclass), e.g. the scene's Weather.
+    template <class T>
+    T* findFirst() const
+    {
+        for (const auto* list : {&m_objects, &m_pending}) {
+            for (const auto& o : *list) {
+                if (o->isDestroyed()) continue;
+                if (auto* t = dynamic_cast<T*>(o.get())) return t;
+            }
+        }
+        return nullptr;
+    }
     std::vector<GameObject*> findAllWithTag(const std::string& tag) const;
     const std::vector<std::unique_ptr<GameObject>>& objects() const { return m_objects; }
     size_t objectCount() const { return m_objects.size() + m_pending.size(); }
@@ -115,8 +129,11 @@ private:
     template <class Fn>
     void forActive(uint8_t hook, bool editorOnly, Fn&& fn);
 
+    void reindex(GameObject* obj, uint64_t oldId); // GameObject::setId
+
     std::vector<std::unique_ptr<GameObject>> m_objects;
     std::vector<std::unique_ptr<GameObject>> m_pending;
+    std::unordered_map<uint64_t, GameObject*> m_byId;
     std::vector<std::unique_ptr<Bucket>> m_buckets; // stable addresses (cached in queries)
     std::unordered_map<std::type_index, Bucket*> m_bucketByType;
     mutable std::unordered_map<std::type_index, Query> m_queries;

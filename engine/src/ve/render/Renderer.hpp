@@ -334,6 +334,7 @@ private:
     void photoBegin();
     void photoAccumulate();
     void photoFinish();
+    void saveCapture(); // headless VE_CAPTURE / requestCapture: m_captureBuffer -> PNG
     uint64_t m_envCaptureFrame = 0;
     std::string m_envCapturePath;
     TextureId m_dirShadowMap = kNoTexture;

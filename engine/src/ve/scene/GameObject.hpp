@@ -139,7 +139,7 @@ public:
 
     // --- Editor / scene files ---------------------------------------------------
     uint64_t id() const { return m_id; } // random, stable across save/load
-    void setId(uint64_t id) { m_id = id; }
+    void setId(uint64_t id);
     bool persistent = false;      // saved in scene files (editor-created / loaded objects)
     bool runInEditor = false;     // keeps updating while the editor has the game paused
     bool hideInHierarchy = false; // editor internals (editor camera)

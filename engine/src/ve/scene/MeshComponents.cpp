@@ -9,6 +9,7 @@
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
+#include "ve/core/Strings.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -31,13 +32,7 @@ void ModelInstance::rebuild()
         auto model = assets().loadModel(path);
         m_root = &gameObject().scene().instantiate(*model, &gameObject(), staticColliders);
         if (!hiddenNodes.empty()) {
-            std::vector<std::string> names;
-            std::stringstream ss(hiddenNodes);
-            for (std::string n; std::getline(ss, n, ',');) {
-                n.erase(0, n.find_first_not_of(' '));
-                n.erase(n.find_last_not_of(' ') + 1);
-                if (!n.empty()) names.push_back(n);
-            }
+            const std::vector<std::string> names = str::split(hiddenNodes, ',');
             // Destroyed before they start: no colliders or draws for hidden nodes.
             std::function<void(Transform&)> hide = [&](Transform& t) {
                 for (Transform* c : t.children()) {

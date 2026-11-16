@@ -1,10 +1,6 @@
 #include "vfx/ScreenSpaceGI.hpp"
 
-#include <ve/render/Renderer.hpp>
-
 #include <imgui.h>
-
-#include <string>
 
 namespace vfx {
 
@@ -25,68 +21,24 @@ struct ApplyPush {
 } // namespace
 
 ScreenSpaceGIPass::ScreenSpaceGIPass(float resolutionScale)
-    : RenderPass("Screen-space GI", ve::RenderStage::AfterOpaque, 0), m_scale(resolutionScale)
-{
-}
-
-ScreenSpaceGIPass::~ScreenSpaceGIPass()
-{
-    renderer().destroyPipeline(m_trace);
-    renderer().destroyPipeline(m_apply);
-}
-
-void ScreenSpaceGIPass::setup(ve::RenderGraph& g)
-{
-    m_buffer = g.createTexture("SSGIBuffer", {.format = VK_FORMAT_R16G16B16A16_SFLOAT, .scale = m_scale});
-    temporal.setup(renderer(), g, "SSGI", m_scale);
-    ve::Renderer& r = renderer();
-    m_trace = r.createFullscreenPipeline({.fragment = "ssgi.frag", .colorFormats = {VK_FORMAT_R16G16B16A16_SFLOAT}});
     // Depth-aware 4x4 upsample; blend: dst = src.rgb + dst * src.a.
-    m_apply = r.createFullscreenPipeline({.fragment = "ssgi_apply.frag",
-                                          .colorFormats = {ve::Renderer::kSceneColorFormat},
-                                          .blend = ve::BlendMode::InscatterTransmittance});
+    : ScreenSpaceTracePass("Screen-space GI", 0, resolutionScale,
+                           {"SSGI", "ssgi.frag", "ssgi_apply.frag", ve::BlendMode::InscatterTransmittance})
+{
 }
 
-void ScreenSpaceGIPass::declare(ve::PassBuilder& b)
+void ScreenSpaceGIPass::pushTrace(ve::RenderContext& ctx, const Inputs& in)
 {
-    ve::Renderer& r = renderer();
-    b.use(r.sceneDepth(), ve::Access::Sampled);
-    b.use(r.sceneNormal(), ve::Access::Sampled);
-    b.use(r.sceneColor(), ve::Access::Sampled); // becomes a colour attachment for the composite
-    b.use(m_buffer, ve::Access::ColorAttachment);
-    temporal.declare(b);
+    ctx.push(TracePush{{radius, intensity, aoStrength, static_cast<float>(steps)},
+                       in.depth,
+                       in.normal,
+                       in.color,
+                       static_cast<uint32_t>(rays)});
 }
 
-void ScreenSpaceGIPass::execute(ve::RenderContext& ctx)
+void ScreenSpaceGIPass::pushApply(ve::RenderContext& ctx, const Inputs& in, uint32_t result, glm::vec2 size)
 {
-    ve::Renderer& r = renderer();
-    ve::RenderGraph& g = graph();
-
-    TracePush p{};
-    p.params = {radius, intensity, aoStrength, static_cast<float>(steps)};
-    p.depthTex = g.get(r.sceneDepth()).sampledIndex;
-    p.normalTex = g.get(r.sceneNormal()).sampledIndex;
-    p.colorTex = g.get(r.sceneColor()).sampledIndex;
-    p.rays = static_cast<uint32_t>(rays);
-
-    ctx.beginRendering({{m_buffer}});
-    ctx.bindPipeline(m_trace);
-    ctx.push(p);
-    ctx.drawFullscreen();
-    ctx.endRendering();
-    g.transition(ctx.cmd, m_buffer, ve::Access::Sampled);
-
-    // Accumulate over frames (the trace's rays rotate every frame).
-    const ve::TextureId result = temporal.resolve(ctx, m_buffer);
-
-    g.transition(ctx.cmd, r.sceneColor(), ve::Access::ColorAttachment);
-    ctx.beginRendering({{r.sceneColor()}});
-    ctx.bindPipeline(m_apply);
-    const VkExtent2D e = g.get(m_buffer).extent;
-    ctx.push(ApplyPush{{float(e.width), float(e.height)}, g.get(result).sampledIndex, g.get(r.sceneDepth()).sampledIndex,
-                       g.get(r.sceneNormal()).sampledIndex});
-    ctx.drawFullscreen();
-    ctx.endRendering();
+    ctx.push(ApplyPush{size, result, in.depth, in.normal});
 }
 
 void ScreenSpaceGIPass::onGui()

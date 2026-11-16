@@ -13,6 +13,13 @@
 namespace ve::vk {
 const char* resultToString(VkResult result);
 bool isDepthFormat(VkFormat format);
+
+// One image layout transition / memory dependency (synchronization2).
+void imageBarrier(VkCommandBuffer cmd, VkImage image, const VkImageSubresourceRange& range, VkImageLayout from,
+                  VkImageLayout to, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                  VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess);
+void memoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                   VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess);
 } // namespace ve::vk
 
 // Evaluate a VkResult-returning call and throw a descriptive error if it failed.

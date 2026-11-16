@@ -17,22 +17,13 @@
 // pixel's own colour (an approximation).
 // =============================================================================
 
-#include "vfx/TemporalAccumulator.hpp"
-
-#include <ve/render/PipelineHandle.hpp>
-#include <ve/render/RenderGraph.hpp>
+#include "vfx/ScreenSpaceTrace.hpp"
 
 namespace vfx {
 
-class ScreenSpaceGIPass : public ve::RenderPass {
+class ScreenSpaceGIPass : public ScreenSpaceTracePass {
 public:
     explicit ScreenSpaceGIPass(float resolutionScale = 0.5f);
-    ~ScreenSpaceGIPass() override;
-
-    void setup(ve::RenderGraph& graph) override;
-    void declare(ve::PassBuilder& builder) override;
-    void execute(ve::RenderContext& ctx) override;
-    void onResize(ve::RenderGraph&) override { temporal.invalidate(); }
     void onGui() override;
 
     float radius = 2.5f;     // ray length (m)
@@ -40,13 +31,10 @@ public:
     float aoStrength = 0.7f; // 0 = no occlusion
     int rays = 3;            // per pixel per frame (x 16 rotations in the 4x4 upsample, x ~10 frames accumulated)
     int steps = 8;           // per ray
-    TemporalAccumulator temporal; // accumulates over frames (much less noise); temporal.enabled = false to disable
 
-private:
-    float m_scale;
-    ve::TextureId m_buffer = ve::kNoTexture;
-    ve::PipelineHandle m_trace;
-    ve::PipelineHandle m_apply;
+protected:
+    void pushTrace(ve::RenderContext& ctx, const Inputs& in) override;
+    void pushApply(ve::RenderContext& ctx, const Inputs& in, uint32_t result, glm::vec2 size) override;
 };
 
 } // namespace vfx

@@ -6,23 +6,17 @@
 #include "ve/scene/Scene.hpp"
 #include "ve/world/Terrain.hpp"
 #include "ve/world/Vegetation.hpp"
+#include "ve/core/Strings.hpp"
 
 #include <miniaudio.h>
 
 #include <algorithm>
 #include <cmath>
-#include <set>
 #include <sstream>
 
 namespace ve {
 
 namespace {
-
-void warnOnce(const std::string& message)
-{
-    static std::set<std::string> said;
-    if (said.insert(message).second) log::warn("{}", message);
-}
 
 float smooth01(float edge0, float edge1, float x)
 {
@@ -111,7 +105,7 @@ void AmbientLayer::update(float dt)
         m_loop = new ma_sound();
         if (ma_sound_init_from_file(sys.engine(), loop->path().c_str(), MA_SOUND_FLAG_STREAM, sys.bus(bus).group, nullptr,
                                     m_loop) != MA_SUCCESS) {
-            warnOnce("AmbientLayer: failed to load " + loop->path());
+            log::warnOnce("AmbientLayer: failed to load " + loop->path());
             delete m_loop;
             m_loop = nullptr;
         } else {
@@ -135,16 +129,11 @@ void AmbientLayer::update(float dt)
     if (oneShots != m_shotsSpec) {
         m_shotsSpec = oneShots;
         m_shots.clear();
-        std::stringstream ss(oneShots);
-        std::string item;
-        while (std::getline(ss, item, ';')) {
-            item.erase(0, item.find_first_not_of(" \t\n"));
-            item.erase(item.find_last_not_of(" \t\n") + 1);
-            if (item.empty()) continue;
+        for (const std::string& item : str::split(oneShots, ';')) {
             try {
                 m_shots.push_back(assets().loadAudio(item));
             } catch (const std::exception&) {
-                warnOnce("AmbientLayer '" + gameObject().name() + "': sound not found: " + item);
+                log::warnOnce("AmbientLayer '" + gameObject().name() + "': sound not found: " + item);
             }
         }
     }

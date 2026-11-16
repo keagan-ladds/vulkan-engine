@@ -18,6 +18,7 @@ Scene::~Scene()
 void Scene::adopt(std::unique_ptr<GameObject> obj)
 {
     obj->m_scene = this;
+    m_byId[obj->id()] = obj.get();
     for (const auto& c : obj->m_components) registerComponent(c.get());
     m_pending.push_back(std::move(obj));
 }
@@ -50,13 +51,14 @@ GameObject* Scene::find(const std::string& name) const
 
 GameObject* Scene::findById(uint64_t id) const
 {
-    for (const auto& o : m_objects) {
-        if (!o->m_destroyed && o->id() == id) return o.get();
-    }
-    for (const auto& o : m_pending) {
-        if (!o->m_destroyed && o->id() == id) return o.get();
-    }
-    return nullptr;
+    const auto it = m_byId.find(id);
+    return it != m_byId.end() && !it->second->m_destroyed ? it->second : nullptr;
+}
+
+void Scene::reindex(GameObject* obj, uint64_t oldId)
+{
+    if (auto it = m_byId.find(oldId); it != m_byId.end() && it->second == obj) m_byId.erase(it);
+    m_byId[obj->id()] = obj;
 }
 
 std::vector<GameObject*> Scene::findAllWithTag(const std::string& tag) const
@@ -195,7 +197,11 @@ void Scene::flushDestroyed()
                 destroyNow(o);
             }
         }
-        std::erase_if(list, [](const auto& o) { return o->m_tornDown; });
+        std::erase_if(list, [&](const auto& o) {
+            if (!o->m_tornDown) return false;
+            if (auto it = m_byId.find(o->id()); it != m_byId.end() && it->second == o.get()) m_byId.erase(it);
+            return true;
+        });
     };
     sweep(m_objects);
     sweep(m_pending);
@@ -210,6 +216,7 @@ void Scene::clear()
         m_hasDestroyed = true;
         flushDestroyed();
     }
+    m_byId.clear();
     m_buckets.clear();
     m_bucketByType.clear();
     m_queries.clear();

@@ -33,20 +33,6 @@ glm::mat4 unpack(const GpuInstance& g)
     return m;
 }
 
-void memoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
-                   VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
-{
-    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
-    b.srcStageMask = srcStage;
-    b.srcAccessMask = srcAccess;
-    b.dstStageMask = dstStage;
-    b.dstAccessMask = dstAccess;
-    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    dep.memoryBarrierCount = 1;
-    dep.pMemoryBarriers = &b;
-    vkCmdPipelineBarrier2(cmd, &dep);
-}
-
 struct CullPush {
     uint32_t groupIndex;
     uint32_t batchCount;
@@ -434,7 +420,7 @@ void InstanceSystem::recordCulling(VkCommandBuffer cmd, uint32_t slotIndex)
 
     // Previous frames read these buffers (indirect draws, vertex shaders,
     // stats copy): wait for that before overwriting them.
-    memoryBarrier(cmd,
+    vk::memoryBarrier(cmd,
                   VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                   VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
@@ -452,7 +438,7 @@ void InstanceSystem::recordCulling(VkCommandBuffer cmd, uint32_t slotIndex)
     // 2. Reset the indirect commands (instanceCount = 0).
     const VkBufferCopy reset{0, 0, VkDeviceSize(s.viewCount) * s.batchCount * sizeof(DrawIndexedIndirect)};
     vkCmdCopyBuffer(cmd, s.commands.handle, m_commands.handle, 1, &reset);
-    memoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+    vk::memoryBarrier(cmd, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                   VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
@@ -469,7 +455,7 @@ void InstanceSystem::recordCulling(VkCommandBuffer cmd, uint32_t slotIndex)
     }
 
     // 4. Make the results visible to indirect draws, vertex shaders and the stats copy.
-    memoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+    vk::memoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT,
                   VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
                   VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
                       VK_PIPELINE_STAGE_2_TRANSFER_BIT,

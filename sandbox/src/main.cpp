@@ -9,7 +9,6 @@
 // =============================================================================
 
 #include "EditorTest.hpp"
-#include "Noise2D.hpp"
 #include "Player.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
