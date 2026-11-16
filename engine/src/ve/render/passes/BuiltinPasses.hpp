@@ -37,6 +37,8 @@ public:
 
 private:
     std::vector<uint32_t> m_scratch;
+    std::vector<uint64_t> m_pointFaceHash; // per point-shadow layer: inputs of its last render (0 = none)
+    uint32_t m_pointFacesRendered = 0, m_pointFacesCached = 0;
 };
 
 class OpaquePass : public RenderPass {

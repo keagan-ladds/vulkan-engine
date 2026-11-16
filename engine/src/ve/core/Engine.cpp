@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <cstdlib>
 #include <fstream>
 
@@ -28,12 +29,29 @@ Engine* g_engine = nullptr;
 
 // Benchmark mode (VE_BENCH=<frames>[,<warmup>], usually with VE_HEADLESS=1):
 // skips `warmup` frames (default 30: streaming, pipeline creation), then
-// averages `frames` frames and logs one summary, then quits. CPU time is the
-// whole frame minus the time spent waiting on GPU fences, so it measures the
-// engine's own work; GPU times are the per-pass timestamps.
+// averages `frames` frames and logs one summary, then quits.
+// - frame: wall time minus GPU fence waits and the driver's submit/present
+// - main thread: CPU time the main thread actually consumed (the engine's
+//   own cost, unaffected by other threads, e.g. a software GPU driver)
+// - gpu: the per-pass timestamps.
+// CPU time consumed by the calling thread (not wall time): on a software
+// Vulkan driver the GPU work runs on the same cores and would otherwise be
+// counted as engine time through preemption.
+double threadCpuMs()
+{
+#if defined(__linux__) || defined(__APPLE__)
+    timespec ts{};
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+    return double(ts.tv_sec) * 1e3 + double(ts.tv_nsec) * 1e-6;
+#else
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
+}
+
 struct Engine::Benchmark {
     uint32_t warmup = 30, frames = 120, seen = 0;
-    double cpuMs = 0, waitMs = 0, physicsMs = 0, gpuMs = 0, cpuMax = 0;
+    double cpuMs = 0, threadMs = 0, waitMs = 0, submitMs = 0, physicsMs = 0, gpuMs = 0, cpuMax = 0;
+    double frameStart = 0; // main-thread CPU time at the start of the frame
     std::vector<std::pair<std::string, double>> passMs;
 };
 
@@ -112,10 +130,13 @@ void Engine::benchFrame(float cpuMs)
     Benchmark& b = *m_bench;
     if (b.seen++ < b.warmup) return;
     const float wait = m_renderer->lastFenceWaitMs();
-    const double cpu = std::max(0.0f, cpuMs - wait);
+    const float submit = m_renderer->lastSubmitMs();
+    const double cpu = std::max(0.0f, cpuMs - wait - submit);
     b.cpuMs += cpu;
+    b.threadMs += threadCpuMs() - b.frameStart;
     b.cpuMax = std::max(b.cpuMax, cpu);
     b.waitMs += wait;
+    b.submitMs += submit;
     b.physicsMs += m_physics->lastStepMs;
     b.gpuMs += m_renderer->lastGpuFrameTimeMs();
     for (const auto& p : m_renderer->graph().passes()) {
@@ -126,8 +147,9 @@ void Engine::benchFrame(float cpuMs)
     }
     const uint32_t n = b.seen - b.warmup;
     if (n < b.frames) return;
-    log::info("[bench] {} frames: cpu {:.3f} ms (max {:.3f}), gpu wait {:.3f} ms, physics step {:.3f} ms, gpu {:.3f} ms",
-              n, b.cpuMs / n, b.cpuMax, b.waitMs / n, b.physicsMs / n, b.gpuMs / n);
+    log::info("[bench] {} frames: main thread {:.3f} ms, frame {:.3f} ms (max {:.3f}), gpu wait {:.3f} ms, submit {:.3f} ms, "
+              "physics step {:.3f} ms, gpu {:.3f} ms",
+              n, b.threadMs / n, b.cpuMs / n, b.cpuMax, b.waitMs / n, b.submitMs / n, b.physicsMs / n, b.gpuMs / n);
     for (const auto& [name, ms] : b.passMs) log::info("[bench]   {:<28} {:8.3f} ms", name, ms / n);
     quit();
 }
@@ -195,6 +217,7 @@ void Engine::run()
         m_time.time += m_time.deltaTime;
         m_time.realTime = std::chrono::duration<float>(now - startTime).count();
         m_time.fixedDeltaTime = m_config.fixedTimestep;
+        if (m_bench) m_bench->frameStart = threadCpuMs();
         tickFrame();
         if (m_bench) benchFrame(std::chrono::duration<float, std::milli>(Clock::now() - now).count());
         ++m_time.frameCount;

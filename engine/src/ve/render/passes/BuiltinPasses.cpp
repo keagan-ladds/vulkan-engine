@@ -4,7 +4,36 @@
 
 #include <imgui.h>
 
+#include <cstring>
+
 namespace ve {
+
+namespace {
+
+// 64-bit hash of a point-shadow face's inputs (see RendererSettings::cachePointShadows).
+struct FaceHash {
+    uint64_t h = 0x9E3779B97F4A7C15ull;
+    void add(uint64_t v)
+    {
+        h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+        h *= 0xFF51AFD7ED558CCDull;
+        h ^= h >> 33;
+    }
+    void addBytes(const void* data, size_t size)
+    {
+        const auto* p = static_cast<const unsigned char*>(data);
+        for (; size >= 8; size -= 8, p += 8) {
+            uint64_t v;
+            std::memcpy(&v, p, 8);
+            add(v);
+        }
+        uint64_t tail = 0;
+        std::memcpy(&tail, p, size);
+        add(tail);
+    }
+};
+
+} // namespace
 
 // -----------------------------------------------------------------------------
 // InstanceCullPass
@@ -65,6 +94,33 @@ void ShadowPass::execute(RenderContext& ctx)
             m_scratch.push_back(i);
         }
 
+        if (sv.point && s.cachePointShadows) {
+            // Same light, same casters in the same places as last time: the
+            // cube face still holds exactly what we'd render. Keep it.
+            FaceHash fh;
+            fh.add(r.contentEpoch());
+            fh.addBytes(&sv.viewProj, sizeof(sv.viewProj));
+            fh.add(uint64_t(sv.range * 1000.0f));
+            for (uint32_t i : m_scratch) {
+                const DrawItem& it = frame.items[i];
+                fh.add(reinterpret_cast<uintptr_t>(it.mesh));
+                fh.add(reinterpret_cast<uintptr_t>(it.submesh));
+                fh.add(reinterpret_cast<uintptr_t>(&it.material->shader()));
+                fh.addBytes(&it.world, sizeof(it.world));
+                fh.addBytes(&r.materialData(it.material->gpuIndex()), sizeof(GpuMaterial)); // cutout textures/params
+            }
+            const uint64_t hash = fh.h | 1; // never 0 (= nothing cached)
+            if (m_pointFaceHash.size() <= sv.layer) m_pointFaceHash.resize(sv.layer + 1, 0);
+            if (m_pointFaceHash[sv.layer] == hash) {
+                ++m_pointFacesCached;
+                continue;
+            }
+            m_pointFaceHash[sv.layer] = hash;
+            ++m_pointFacesRendered;
+        } else if (sv.point && sv.layer < m_pointFaceHash.size()) {
+            m_pointFaceHash[sv.layer] = 0;
+        }
+
         DepthTarget depth;
         depth.texture = sv.point ? r.pointShadowMap() : r.dirShadowMap();
         depth.clear = true;
@@ -92,6 +148,8 @@ void ShadowPass::onGui()
 {
     RendererSettings& s = renderer().settings();
     ImGui::Checkbox("Visualize cascades", &s.debugCascades);
+    ImGui::Checkbox("Cache static point shadows", &s.cachePointShadows);
+    ImGui::Text("Point faces: %u rendered, %u reused (since start)", m_pointFacesRendered, m_pointFacesCached);
     ImGui::SliderFloat("Normal bias (texels)", &s.shadowNormalBias, 0.0f, 5.0f);
     ImGui::SliderFloat("Depth bias constant", &s.shadowDepthBiasConstant, 0.0f, 10.0f);
     ImGui::SliderFloat("Depth bias slope", &s.shadowDepthBiasSlope, 0.0f, 10.0f);

@@ -58,6 +58,11 @@ struct RendererSettings {
     // --- Point light shadows: cube maps ---
     uint32_t maxShadowedPointLights = 4;
     uint32_t pointShadowResolution = 512;
+    // Re-render a point light's cube face only when something it depends on
+    // changed (light position/range, or any caster in range moved, appeared or
+    // changed material). Static lights over a static camp then cost nothing;
+    // intensity flicker doesn't affect the depth cubes.
+    bool cachePointShadows = true;
     // --- Bias (tweak in the F1 overlay) ---
     float shadowNormalBias = 1.5f;   // in shadow texels
     float shadowDepthBiasConstant = 1.0f;
@@ -127,6 +132,10 @@ public:
     float gpuFrameTimeMs() const { return m_gpuFrameMs; }
     float lastGpuFrameTimeMs() const { return m_lastGpuFrameMs; } // raw, latest read back
     float lastFenceWaitMs() const { return m_lastFenceWaitMs; }  // CPU time spent waiting for the GPU in render()
+    float lastSubmitMs() const { return m_lastSubmitMs; }        // CPU time inside queue submit + present (driver)
+    // Bumped whenever cached GPU content may be stale (shadow maps recreated,
+    // shaders hot-reloaded). Passes that keep results across frames compare it.
+    uint64_t contentEpoch() const { return m_contentEpoch; }
     Window& window() { return *m_window; }
 
     RendererSettings& settings() { return m_settings; }
@@ -340,6 +349,8 @@ private:
     float m_gpuFrameMs = 0.0f;
     float m_lastGpuFrameMs = 0.0f;
     float m_lastFenceWaitMs = 0.0f;
+    float m_lastSubmitMs = 0.0f;
+    uint64_t m_contentEpoch = 1;
 
     std::array<std::shared_ptr<Shader>, size_t(BuiltinShader::Count)> m_builtinShaders;
     std::shared_ptr<Texture> m_white, m_black, m_flatNormal;

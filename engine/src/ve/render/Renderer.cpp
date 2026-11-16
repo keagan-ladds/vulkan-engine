@@ -369,6 +369,7 @@ void Renderer::applySettings()
     m_device.waitIdle();
     createShadowMaps();
     writeShadowDescriptors();
+    ++m_contentEpoch;
     m_swapchainDirty = true; // picks up vsync changes
 }
 
@@ -553,6 +554,7 @@ void Renderer::reloadShaders(const std::vector<std::string>& names)
             ++rebuilt;
         }
     }
+    ++m_contentEpoch;
     log::info("Shader hot-reload: {} pipeline(s) rebuilt", rebuilt);
 }
 
@@ -1215,7 +1217,9 @@ bool Renderer::render(Scene& scene, const Time& time)
     submit.pCommandBufferInfos = &cmdInfo;
     submit.signalSemaphoreInfoCount = offscreen ? 0 : 1;
     submit.pSignalSemaphoreInfos = &signal;
+    const auto submitStart = std::chrono::steady_clock::now();
     VK_CHECK(vkQueueSubmit2(m_device.graphicsQueue(), 1, &submit, slot.inFlight));
+    m_lastSubmitMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - submitStart).count();
     if (photo) {
         VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
         photoAccumulate(); // may finish the photo
@@ -1249,7 +1253,9 @@ bool Renderer::render(Scene& scene, const Time& time)
     present.swapchainCount = 1;
     present.pSwapchains = &sc;
     present.pImageIndices = &imageIndex;
+    const auto presentStart = std::chrono::steady_clock::now();
     const VkResult pres = vkQueuePresentKHR(m_device.graphicsQueue(), &present);
+    m_lastSubmitMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - presentStart).count();
     if (pres == VK_ERROR_OUT_OF_DATE_KHR || pres == VK_SUBOPTIMAL_KHR) m_swapchainDirty = true;
     else VK_CHECK(pres);
 
