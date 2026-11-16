@@ -34,7 +34,10 @@
 namespace ve {
 
 class Material;
+class MeshRenderer;
 class Scene;
+class Shader;
+class TerrainLod;
 
 struct TerrainBiome {
     std::string name = "Biome";
@@ -100,6 +103,16 @@ struct TerrainShape {
     float borderNoiseFrequency = 0.009f;
 };
 
+// How the ground is coloured (plain data: the mesh builder thread copies it).
+struct TerrainLook {
+    float waterLevel = 0.0f;
+    glm::vec3 rockColor{0.50f, 0.46f, 0.41f};
+    glm::vec3 mudColor{0.23f, 0.18f, 0.12f};
+    float steepStart = 0.3f, steepEnd = 0.5f; // slope (1 - n.y) where rock takes over
+    float borderRockStart = 230.0f, borderRockEnd = 300.0f, borderRock = 0.6f;
+    float brightnessVariation = 0.2f;
+};
+
 // An immutable snapshot of a terrain: its generator inputs plus a cache of
 // sample tiles generated on demand, so worlds of any size cost memory only
 // where something looks (rendering, physics, foliage, grass, audio).
@@ -133,8 +146,13 @@ public:
     float sampleBiome(int biome, int i, int j) const;
     glm::vec2 samplePosition(int i, int j) const { return origin + glm::vec2(float(i), float(j)) * cellSize; }
 
-    // The generator itself: height at any world point (exact at sample points).
+    // The generator itself: height at any world point (exact at sample points),
+    // and the biome weights for a point of that height and slope (1 - normal.y).
     float generateHeight(glm::vec2 p) const;
+    void generateBiomes(glm::vec2 p, float height, float slope, float* weights) const; // biomeNames.size() weights
+    // Vertex colour of the ground (biome colours, mud, rock) for these weights.
+    glm::vec3 groundColor(const TerrainLook& look, glm::vec2 p, float height, glm::vec3 normal, const float* weights) const;
+    glm::vec3 centre() const { return m_centre; }
 
     size_t cachedTiles() const;
 
@@ -169,8 +187,9 @@ private:
     size_t m_maxTiles;
 };
 
-// Shape fields (seed, size, cellSize, noise, border...) come from TerrainShape.
-class Terrain : public GameObject, public TerrainShape {
+// Shape fields (seed, size, cellSize, noise, border...) come from TerrainShape,
+// colours (rock, mud, waterLevel...) from TerrainLook.
+class Terrain : public GameObject, public TerrainShape, public TerrainLook {
 public:
     Terrain();
     ~Terrain() override;
@@ -178,17 +197,13 @@ public:
     void update(float dt) override;
     void onDestroy() override;
 
-    // ---- Shape: see TerrainShape ----
-    int chunkCells = 32;        // cells per render chunk side
-    float waterLevel = 0.0f;
+    // ---- Streaming / LOD ----
+    int chunkCells = 32;        // cells per LOD node side (finest level)
+    float lodFactor = 2.5f;     // a node splits within lodFactor x its size of the camera (higher = more detail)
+    float colliderDistance = 256.0f; // physics tiles around the camera, characters and dynamic bodies
     float tileCacheMB = 96.0f;  // sample tiles kept in memory (regenerated on demand beyond that)
 
-    // ---- Look ----
-    glm::vec3 rockColor{0.50f, 0.46f, 0.41f};
-    glm::vec3 mudColor{0.23f, 0.18f, 0.12f};
-    float steepStart = 0.3f, steepEnd = 0.5f; // slope (1 - n.y) where rock takes over
-    float borderRockStart = 230.0f, borderRockEnd = 300.0f, borderRock = 0.6f;
-    float brightnessVariation = 0.2f;
+    // ---- Look (see TerrainLook for the colours) ----
     std::string detailTexture = "textures/ground_detail.png";
     glm::vec2 detailScales{0.31f, 0.043f};
     int wetnessSlot = 1; // frame.globalParams slot whose .x is wetness (effects' weather); -1 none
@@ -213,17 +228,27 @@ public:
     Json biomesJson() const;
     void setBiomesJson(const Json& j);
 
+    // Streaming state (F1 overlay / tests).
+    uint32_t drawnNodes() const;
+    size_t colliderTiles() const { return m_colliderTiles.size(); }
+
 private:
     std::shared_ptr<TerrainData> generate() const;
     Json editState() const; // own fields + position + stamps: rebuild when it changes
-    void rebuild();      // data + meshes + collider
-    void buildVisuals(); // chunk meshes + heightfield collider from m_data
+    void rebuild();         // new data snapshot; meshes and colliders follow
+    void updateMaterials(); // one material per LOD level (morph range), sharing the look
+    void updateNodes(bool preload);
+    void updateColliders(bool force);
 
     mutable std::mutex m_mutex;
     mutable std::shared_ptr<const TerrainData> m_data;
-    std::shared_ptr<Material> m_material;
-    std::vector<GameObject*> m_chunks;
-    Component* m_collider = nullptr;
+    std::unique_ptr<TerrainLod> m_lod;
+    std::shared_ptr<Shader> m_shader;
+    std::vector<std::shared_ptr<Material>> m_levelMaterials;
+    GameObject* m_nodeObject = nullptr;           // child holding one MeshRenderer per drawn node
+    std::vector<MeshRenderer*> m_nodeRenderers;
+    std::unordered_map<int64_t, Component*> m_colliderTiles; // tile key -> Rigidbody (heightfield)
+    float m_sinceColliders = 1e9f;
     std::string m_editState;
     uint64_t m_version = 0;
     bool m_dirty = false;

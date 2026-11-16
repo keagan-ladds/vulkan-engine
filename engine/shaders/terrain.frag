@@ -4,6 +4,7 @@
 //   params[1].w = global param slot holding wetness in .x (-1 = none; the
 //   effects' weather uses slot 1), params[2].x = water level
 //   textures[0]  = greyscale detail noise
+//   params[3].xy = LOD morph range (ve_terrain.glsl)
 // Biome colours come from the vertex colour (computed by ve::Terrain).
 #include "ve_lighting.glsl"
 

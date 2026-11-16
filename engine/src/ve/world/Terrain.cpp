@@ -11,6 +11,7 @@
 #include "ve/scene/Scene.hpp"
 #include "ve/scene/SceneSerializer.hpp"
 #include "ve/world/Noise.hpp"
+#include "ve/world/TerrainLod.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -86,6 +87,67 @@ float TerrainData::generateHeight(glm::vec2 p) const
     return h + m_centre.y;
 }
 
+void TerrainData::generateBiomes(glm::vec2 p, float h, float slope, float* w) const
+{
+    const size_t nb = biomeNames.size();
+    if (m_biomes.size() <= 1) {
+        w[0] = 1.0f;
+        return;
+    }
+    // Biome rules: height range, slope, noise coverage, then stamps paint over them.
+    for (size_t b = 1; b < m_biomes.size(); ++b) {
+        const TerrainBiome& bio = m_biomes[b];
+        float r = 0.0f;
+        if (bio.coverage > 0.0f) {
+            r = smooth(bio.minHeight - 0.5f, bio.minHeight + 0.5f, h) * (1.0f - smooth(bio.maxHeight - 0.5f, bio.maxHeight + 0.5f, h)) *
+                (1.0f - smooth(bio.maxSlope - 0.05f, bio.maxSlope + 0.05f, slope));
+            if (bio.coverageFrequency > 0.0f && bio.coverage < 1.0f) {
+                const float nz = noise::fbm(p * bio.coverageFrequency, 3, static_cast<uint32_t>(bio.coverageSeed));
+                r *= smooth(1.0f - bio.coverage - 0.05f, 1.0f - bio.coverage + 0.05f, nz);
+            }
+        }
+        w[b] = r;
+    }
+    for (const Stamp& st : m_stamps) {
+        if (st.biome <= 0) continue;
+        const float dist = glm::length(p - glm::vec2(st.pos.x, st.pos.z));
+        const float k = st.s.biomeStrength * (1.0f - smooth(st.s.biomeRadius, st.s.biomeRadius + std::max(st.s.biomeFalloff, 0.01f), dist));
+        w[size_t(st.biome)] = std::max(w[size_t(st.biome)], k);
+    }
+    // Later biomes paint over earlier ones; biome 0 gets what's left.
+    float remaining = 1.0f;
+    for (size_t b = nb - 1; b >= 1; --b) {
+        const float v = std::clamp(w[b], 0.0f, 1.0f) * remaining;
+        w[b] = v;
+        remaining -= v;
+    }
+    w[0] = remaining;
+}
+
+glm::vec3 TerrainData::groundColor(const TerrainLook& look, glm::vec2 p, float h, glm::vec3 n, const float* weights) const
+{
+    glm::vec3 c(0.0f);
+    for (size_t b = 0; b < m_biomes.size(); ++b) {
+        const float w = weights[b];
+        if (w <= 0.0f) continue;
+        const TerrainBiome& bio = m_biomes[b];
+        glm::vec3 bc = bio.color;
+        if (bio.color2 != bio.color && bio.colorNoiseFrequency > 0.0f)
+            bc = glm::mix(bio.color, bio.color2, smooth(0.45f, 0.7f, noise::fbm(p * bio.colorNoiseFrequency, 3, static_cast<uint32_t>(bio.colorNoiseSeed))));
+        if (bio.patchFrequency > 0.0f) {
+            const float n2 = noise::fbm(p * bio.patchFrequency + 3.0f, 3, static_cast<uint32_t>(bio.patchSeed));
+            bc = glm::mix(bc, bio.patchColor, smooth(1.0f - bio.patchCoverage - 0.05f, 1.0f - bio.patchCoverage + 0.05f, n2) * bio.patchStrength);
+        }
+        c += bc * w;
+    }
+    if (m_biomes.empty()) c = glm::vec3(0.5f);
+    c *= 1.0f - look.brightnessVariation * 0.5f + look.brightnessVariation * noise::fbm(p * 0.15f, 2, 51);
+    c = glm::mix(c, look.mudColor, smooth(look.waterLevel + 1.0f, look.waterLevel - 0.2f, h));
+    const float steep = smooth(look.steepStart, look.steepEnd, 1.0f - n.y);
+    const float edge = smooth(look.borderRockStart, look.borderRockEnd, std::max(std::abs(p.x - m_centre.x), std::abs(p.y - m_centre.z)));
+    return glm::mix(c, look.rockColor, std::max(steep, edge * look.borderRock));
+}
+
 std::shared_ptr<const TerrainData::Tile> TerrainData::generateTile(int tx, int tz) const
 {
     // Heights with a one-sample apron (for the slopes at the tile's border).
@@ -113,37 +175,10 @@ std::shared_ptr<const TerrainData::Tile> TerrainData::generateTile(int tx, int t
                 tile->biomes[0][idx] = 1.0f;
                 continue;
             }
-            // Biome rules: height range, slope, noise coverage, then stamps paint over them.
             const glm::vec2 p = samplePosition(clampIdx(i0 + ii), clampIdx(j0 + jj));
             const glm::vec3 n = glm::normalize(glm::vec3(ah(ii - 1, jj) - ah(ii + 1, jj), 2.0f * e, ah(ii, jj - 1) - ah(ii, jj + 1)));
-            const float slope = 1.0f - n.y;
-            for (size_t b = 1; b < m_biomes.size(); ++b) {
-                const TerrainBiome& bio = m_biomes[b];
-                float r = 0.0f;
-                if (bio.coverage > 0.0f) {
-                    r = smooth(bio.minHeight - 0.5f, bio.minHeight + 0.5f, h) * (1.0f - smooth(bio.maxHeight - 0.5f, bio.maxHeight + 0.5f, h)) *
-                        (1.0f - smooth(bio.maxSlope - 0.05f, bio.maxSlope + 0.05f, slope));
-                    if (bio.coverageFrequency > 0.0f && bio.coverage < 1.0f) {
-                        const float nz = noise::fbm(p * bio.coverageFrequency, 3, static_cast<uint32_t>(bio.coverageSeed));
-                        r *= smooth(1.0f - bio.coverage - 0.05f, 1.0f - bio.coverage + 0.05f, nz);
-                    }
-                }
-                w[b] = r;
-            }
-            for (const Stamp& st : m_stamps) {
-                if (st.biome <= 0) continue;
-                const float dist = glm::length(p - glm::vec2(st.pos.x, st.pos.z));
-                const float k = st.s.biomeStrength * (1.0f - smooth(st.s.biomeRadius, st.s.biomeRadius + std::max(st.s.biomeFalloff, 0.01f), dist));
-                w[size_t(st.biome)] = std::max(w[size_t(st.biome)], k);
-            }
-            // Later biomes paint over earlier ones; biome 0 gets what's left.
-            float remaining = 1.0f;
-            for (size_t b = nb - 1; b >= 1; --b) {
-                const float v = std::clamp(w[b], 0.0f, 1.0f) * remaining;
-                tile->biomes[b][idx] = v;
-                remaining -= v;
-            }
-            tile->biomes[0][idx] = remaining;
+            generateBiomes(p, h, 1.0f - n.y, w.data());
+            for (size_t b = 0; b < nb; ++b) tile->biomes[b][idx] = w[b];
         }
     }
     return tile;
@@ -228,10 +263,11 @@ float TerrainData::height(float x, float z) const
     const float tx = fx - float(ix), tz = fz - float(iz);
     const auto t = tileFor(ix, iz); // the cell's four samples are all in this tile
     auto at = [&](int i, int j) { return t->heights[size_t(j) * kTileSamples + size_t(i)]; };
-    // Same triangulation as the mesh (split along the i,j+1 -> i+1,j diagonal).
-    if (tx + tz < 1.0f) return at(ix, iz) + (at(ix + 1, iz) - at(ix, iz)) * tx + (at(ix, iz + 1) - at(ix, iz)) * tz;
-    return at(ix + 1, iz + 1) + (at(ix, iz + 1) - at(ix + 1, iz + 1)) * (1.0f - tx) +
-           (at(ix + 1, iz) - at(ix + 1, iz + 1)) * (1.0f - tz);
+    // Same triangles as the render mesh and Jolt's heightfield: each cell is
+    // split along its (i, j) -> (i + 1, j + 1) diagonal.
+    const float h00 = at(ix, iz), h11 = at(ix + 1, iz + 1);
+    if (tx >= tz) return h00 + (at(ix + 1, iz) - h00) * tx + (h11 - at(ix + 1, iz)) * tz;
+    return h00 + (at(ix, iz + 1) - h00) * tz + (h11 - at(ix, iz + 1)) * tx;
 }
 
 glm::vec3 TerrainData::normal(float x, float z) const
@@ -366,13 +402,15 @@ void Terrain::start()
 {
     m_started = true;
     data();
-    buildVisuals();
+    m_lod = std::make_unique<TerrainLod>(renderer());
+    rebuild(); // materials, LOD data, colliders; preloads the view
 }
 
 void Terrain::update(float dt)
 {
     m_sinceRebuild += dt;
     m_sinceCheck += dt;
+    m_sinceColliders += dt;
     // Serializing every field (stamps, biomes) is too costly for every frame;
     // edits are picked up within a quarter second (code can call markDirty()).
     if (m_sinceCheck >= 0.25f) {
@@ -380,6 +418,8 @@ void Terrain::update(float dt)
         if (editState().dump() != m_editState) m_dirty = true;
     }
     if (m_dirty && m_sinceRebuild > 0.25f) rebuild();
+    updateNodes(false);
+    if (m_sinceColliders >= 0.1f) updateColliders(false);
 }
 
 void Terrain::rebuild()
@@ -393,25 +433,40 @@ void Terrain::rebuild()
     }
     m_editState = editState().dump();
     ++m_version;
-    if (m_started) buildVisuals();
+    if (!m_started) return;
+    TerrainLod::Settings ls;
+    ls.nodeCells = chunkCells;
+    ls.lodFactor = std::max(lodFactor, 1.1f);
+    m_lod->setData(fresh, *this, ls);
+    updateMaterials();
+    updateColliders(true);
+    updateNodes(true);
 }
 
 void Terrain::onDestroy()
 {
-    for (GameObject* c : m_chunks) c->destroy();
-    m_chunks.clear();
+    if (m_nodeObject) m_nodeObject->destroy();
+    m_nodeObject = nullptr;
+    m_nodeRenderers.clear();
+    m_colliderTiles.clear(); // components die with this object
+    m_lod.reset();
 }
 
-void Terrain::buildVisuals()
+uint32_t Terrain::drawnNodes() const
+{
+    return m_lod ? m_lod->stats().drawn : 0;
+}
+
+void Terrain::updateMaterials()
 {
     Renderer& r = renderer();
-    const auto d = data();
-    if (!m_material) {
+    if (!m_shader) {
         ShaderDesc desc;
         desc.name = "Terrain";
         desc.vertex = "terrain.vert";
         desc.fragment = "terrain.frag";
-        m_material = r.createMaterial(r.createShader(desc));
+        desc.shadowVertex = "terrain_shadow.vert"; // same geomorph as the colour pass
+        m_shader = r.createShader(desc);
     }
     std::shared_ptr<Texture> detail;
     if (!detailTexture.empty()) {
@@ -421,86 +476,118 @@ void Terrain::buildVisuals()
             log::warn("Terrain: {}", e.what());
         }
     }
-    m_material->setTexture(0, detail);
-    m_material->setVector(0, {detailScales, 0.0f, 0.0f});
-    m_material->setVector(1, {rockColor, float(wetnessSlot)});
-    m_material->setVector(2, {waterLevel, 0.0f, 0.0f, 0.0f});
+    m_levelMaterials.resize(size_t(m_lod->levels()));
+    for (int level = 0; level < m_lod->levels(); ++level) {
+        auto& m = m_levelMaterials[size_t(level)];
+        if (!m) m = r.createMaterial(m_shader);
+        m->setTexture(0, detail);
+        m->setVector(0, {detailScales, 0.0f, 0.0f});
+        m->setVector(1, {rockColor, float(wetnessSlot)});
+        m->setVector(2, {waterLevel, 0.0f, 0.0f, 0.0f});
+        const glm::vec2 morph = m_lod->morphRange(level);
+        m->setVector(3, {morph, 0.0f, 0.0f});
+    }
+}
 
-    // Vertex colours: blended biome colours, mud near water, rock on steep slopes / the border.
-    const int res = d->res;
-    const glm::vec3 centre = transform().position();
-    std::vector<glm::vec3> biomeColorScratch(biomes.size());
-    auto colorAt = [&](const glm::vec2& p, float h, const glm::vec3& n, int gi, int gj) {
-        glm::vec3 c(0.0f);
-        for (size_t b = 0; b < biomes.size(); ++b) {
-            const float w = d->sampleBiome(int(b), gi, gj);
-            if (w <= 0.0f) continue;
-            const TerrainBiome& bio = biomes[b];
-            glm::vec3 bc = bio.color;
-            if (bio.color2 != bio.color && bio.colorNoiseFrequency > 0.0f)
-                bc = glm::mix(bio.color, bio.color2, smooth(0.45f, 0.7f, noise::fbm(p * bio.colorNoiseFrequency, 3, static_cast<uint32_t>(bio.colorNoiseSeed))));
-            if (bio.patchFrequency > 0.0f) {
-                const float n2 = noise::fbm(p * bio.patchFrequency + 3.0f, 3, static_cast<uint32_t>(bio.patchSeed));
-                bc = glm::mix(bc, bio.patchColor, smooth(1.0f - bio.patchCoverage - 0.05f, 1.0f - bio.patchCoverage + 0.05f, n2) * bio.patchStrength);
-            }
-            c += bc * w;
-        }
-        if (biomes.empty()) c = glm::vec3(0.5f);
-        c *= 1.0f - brightnessVariation * 0.5f + brightnessVariation * noise::fbm(p * 0.15f, 2, 51);
-        c = glm::mix(c, mudColor, smooth(waterLevel + 1.0f, waterLevel - 0.2f, h));
-        const float steep = smooth(steepStart, steepEnd, 1.0f - n.y);
-        const float edge = smooth(borderRockStart, borderRockEnd, std::max(std::abs(p.x - centre.x), std::abs(p.y - centre.z)));
-        c = glm::mix(c, rockColor, std::max(steep, edge * borderRock));
-        return glm::vec4(c, 1.0f);
-    };
+void Terrain::updateNodes(bool preload)
+{
+    if (!m_lod) return;
+    glm::vec3 eye = transform().position();
+    if (Camera* cam = scene().mainCamera()) eye = cam->transform().position();
+    m_lod->update(eye, preload);
 
-    for (GameObject* c : m_chunks) c->destroy();
-    m_chunks.clear();
-    const int cells = std::max(chunkCells, 4);
-    const int chunks = std::max(1, (res - 1 + cells - 1) / cells);
-    for (int cz = 0; cz < chunks; ++cz) {
-        for (int cx = 0; cx < chunks; ++cx) {
-            const int i0 = cx * cells, j0 = cz * cells;
-            const int ni = std::min(cells, res - 1 - i0) + 1, nj = std::min(cells, res - 1 - j0) + 1;
-            if (ni < 2 || nj < 2) continue;
-            MeshData md;
-            md.vertices.reserve(size_t(ni) * size_t(nj));
-            for (int j = 0; j < nj; ++j) {
-                for (int i = 0; i < ni; ++i) {
-                    const int gi = i0 + i, gj = j0 + j;
-                    const glm::vec2 p = d->origin + glm::vec2(float(gi), float(gj)) * d->cellSize;
-                    Vertex v;
-                    v.position = {p.x, d->sampleHeight(gi, gj), p.y};
-                    v.normal = d->normal(p.x, p.y);
-                    v.uv = p;
-                    v.color = colorAt(p, v.position.y, v.normal, gi, gj);
-                    md.vertices.push_back(v);
-                }
-            }
-            for (int j = 0; j < nj - 1; ++j) {
-                for (int i = 0; i < ni - 1; ++i) {
-                    const auto a = static_cast<uint32_t>(j * ni + i);
-                    const auto n = static_cast<uint32_t>(ni);
-                    md.indices.insert(md.indices.end(), {a, a + n, a + 1, a + 1, a + n, a + n + 1});
-                }
-            }
-            auto& chunk = scene().spawn("TerrainChunk");
-            chunk.hideInHierarchy = true;
-            chunk.addComponent<MeshRenderer>(Mesh::create(r, md, {}, "terrain chunk"), m_material);
-            chunk.setParent(this, true); // world-space vertices: keep the identity world transform
-            m_chunks.push_back(&chunk);
+    // The drawn nodes go to pooled MeshRenderers on a child object. Node
+    // vertices are in world space, so the child keeps an identity transform.
+    if (!m_nodeObject) {
+        m_nodeObject = &scene().spawn("TerrainNodes");
+        m_nodeObject->hideInHierarchy = true;
+        m_nodeObject->setParent(this, false);
+    }
+    const glm::mat4& world = m_nodeObject->transform().worldMatrix();
+    if (world != glm::mat4(1.0f)) {
+        m_nodeObject->setParent(nullptr, false); // the terrain moved: back to the origin
+        m_nodeObject->transform().setLocalPosition(glm::vec3(0.0f));
+        m_nodeObject->transform().setLocalRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+        m_nodeObject->transform().setLocalScale(glm::vec3(1.0f));
+        m_nodeObject->setParent(this, true);
+    }
+    const auto& drawn = m_lod->drawn();
+    while (m_nodeRenderers.size() < drawn.size()) m_nodeRenderers.push_back(&m_nodeObject->addComponent<MeshRenderer>());
+    for (size_t i = 0; i < m_nodeRenderers.size(); ++i) {
+        MeshRenderer& mr = *m_nodeRenderers[i];
+        if (i < drawn.size()) {
+            mr.mesh = drawn[i].mesh;
+            mr.materials = {m_levelMaterials[size_t(std::min<int>(drawn[i].level, int(m_levelMaterials.size()) - 1))]};
+        } else {
+            mr.mesh = nullptr;
+            mr.materials.clear();
         }
     }
+}
 
-    // Physics: the same samples as a heightfield (relative to this object's position).
-    if (m_collider) removeComponent(m_collider);
-    std::vector<float> rel(size_t(res) * size_t(res));
-    for (int j = 0; j < res; ++j)
-        for (int i = 0; i < res; ++i) rel[size_t(j) * size_t(res) + size_t(i)] = d->sampleHeight(i, j) - centre.y;
-    auto& rb = addComponent<Rigidbody>(Collider::heightfield(rel, static_cast<uint32_t>(res), d->cellSize,
-                                                             {d->origin.x - centre.x, 0.0f, d->origin.y - centre.z}),
-                                       BodyType::Static);
-    m_collider = &rb;
+void Terrain::updateColliders(bool force)
+{
+    m_sinceColliders = 0.0f;
+    const auto d = data();
+    const glm::vec3 centre = transform().position();
+    if (force) {
+        for (auto& [key, rb] : m_colliderTiles) removeComponent(rb);
+        m_colliderTiles.clear();
+    }
+    // Ground is needed under the camera, every character and every dynamic body.
+    std::vector<glm::vec2> focus;
+    if (Camera* cam = scene().mainCamera()) {
+        const glm::vec3 p = cam->transform().position();
+        focus.push_back({p.x, p.z});
+    }
+    scene().forEach<CharacterController>([&](CharacterController& c) {
+        if (c.isActive()) focus.push_back({c.transform().position().x, c.transform().position().z});
+    });
+    scene().forEach<Rigidbody>([&](Rigidbody& rb) {
+        if (rb.isActive() && rb.type == BodyType::Dynamic) focus.push_back({rb.transform().position().x, rb.transform().position().z});
+    });
+
+    const int cells = TerrainData::kTileCells;
+    const float tileSize = float(cells) * d->cellSize;
+    const int tiles = (d->res - 2) / cells + 1;
+    auto distToTile = [&](glm::vec2 p, int tx, int tz) {
+        const glm::vec2 lo = d->origin + glm::vec2(float(tx), float(tz)) * tileSize;
+        const glm::vec2 q = glm::max(glm::max(lo - p, p - (lo + tileSize)), glm::vec2(0.0f));
+        return glm::length(q);
+    };
+    const float keep = colliderDistance * 1.25f; // hysteresis
+    // Drop tiles nothing is near any more.
+    for (auto it = m_colliderTiles.begin(); it != m_colliderTiles.end();) {
+        const int tx = int(uint32_t(it->first)), tz = int(it->first >> 32);
+        bool needed = false;
+        for (glm::vec2 p : focus) needed = needed || distToTile(p, tx, tz) < keep;
+        if (needed) {
+            ++it;
+        } else {
+            removeComponent(it->second);
+            it = m_colliderTiles.erase(it);
+        }
+    }
+    // Add the ones within range.
+    const int reach = int(std::ceil(colliderDistance / tileSize)) + 1;
+    for (glm::vec2 p : focus) {
+        const int cx = int(std::floor((p.x - d->origin.x) / tileSize)), cz = int(std::floor((p.y - d->origin.y) / tileSize));
+        for (int tz = std::max(0, cz - reach); tz <= std::min(tiles - 1, cz + reach); ++tz) {
+            for (int tx = std::max(0, cx - reach); tx <= std::min(tiles - 1, cx + reach); ++tx) {
+                const int64_t key = (int64_t(tz) << 32) | int64_t(uint32_t(tx));
+                if (m_colliderTiles.count(key) || distToTile(p, tx, tz) >= colliderDistance) continue;
+                // 65 x 65 samples (heights relative to this object, which the body follows).
+                const int n = cells + 1;
+                std::vector<float> rel(size_t(n) * n);
+                for (int j = 0; j < n; ++j)
+                    for (int i = 0; i < n; ++i) rel[size_t(j) * n + i] = d->sampleHeight(tx * cells + i, tz * cells + j) - centre.y;
+                const glm::vec2 lo = d->samplePosition(tx * cells, tz * cells);
+                auto& rb = addComponent<Rigidbody>(Collider::heightfield(rel, uint32_t(n), d->cellSize, {lo.x - centre.x, 0.0f, lo.y - centre.z}),
+                                                   BodyType::Static);
+                m_colliderTiles[key] = &rb;
+            }
+        }
+    }
 }
 
 Json Terrain::biomesJson() const
@@ -558,6 +645,9 @@ void registerTerrainTypes(TypeRegistry& r)
         t.field("cellSize", &Terrain::cellSize).range(0.25f, 16.0f).speed(0.05f);
         t.field("chunkCells", &Terrain::chunkCells).range(4.0f, 128.0f);
         t.field("tileCacheMB", &Terrain::tileCacheMB).range(1.0f, 4096.0f).tooltip("sample tiles kept in memory");
+        t.field("lodFactor", &Terrain::lodFactor).range(1.1f, 8.0f).speed(0.01f).tooltip("higher = finer ground further away");
+        t.field("colliderDistance", &Terrain::colliderDistance).range(32.0f, 4096.0f)
+            .tooltip("physics tiles around the camera, characters and dynamic bodies");
         t.field("baseHeight", &Terrain::baseHeight);
         t.field("noiseFrequency", &Terrain::noiseFrequency).range(0.0f, 0.1f).speed(0.0001f);
         t.field("noiseAmplitude", &Terrain::noiseAmplitude).range(0.0f, 500.0f);

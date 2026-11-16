@@ -42,7 +42,7 @@ struct VeGrassClump {
 
 // Ground height from exact samples (texelFetch: R32F needn't be filterable),
 // interpolated over the same two triangles per cell as the terrain mesh
-// (split along the (i, j+1) -> (i+1, j) diagonal), so roots sit on the
+// (split along the (i, j) -> (i+1, j+1) diagonal, like the physics heightfield), so roots sit on the
 // rendered surface instead of a bilinear one that floats or sinks mid-cell.
 float veGrassGroundHeight(VeMaterial m, vec2 xz)
 {
@@ -54,8 +54,8 @@ float veGrassGroundHeight(VeMaterial m, vec2 xz)
     float h10 = texelFetch(veTextures[nonuniformEXT(m.textures[0])], i + ivec2(1, 0), 0).r;
     float h01 = texelFetch(veTextures[nonuniformEXT(m.textures[0])], i + ivec2(0, 1), 0).r;
     float h11 = texelFetch(veTextures[nonuniformEXT(m.textures[0])], i + ivec2(1, 1), 0).r;
-    if (f.x + f.y < 1.0) return h00 + (h10 - h00) * f.x + (h01 - h00) * f.y;
-    return h11 + (h01 - h11) * (1.0 - f.x) + (h10 - h11) * (1.0 - f.y);
+    if (f.x >= f.y) return h00 + (h10 - h00) * f.x + (h11 - h10) * f.y;
+    return h00 + (h01 - h00) * f.y + (h11 - h01) * f.x;
 }
 
 VeGrassClump veGrassClump(VeMaterial m)
