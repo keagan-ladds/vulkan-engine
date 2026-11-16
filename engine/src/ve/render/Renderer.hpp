@@ -208,6 +208,26 @@ public:
     // Env: VE_CAPTURE=out.png [VE_CAPTURE_FRAME=N, default 150].
     void requestCapture(const std::string& pngPath) { m_capturePath = pngPath; }
 
+    // --- Photo capture -------------------------------------------------------------
+    // Renders the next frames offscreen at width x height (0 = the window's
+    // size), moving the camera by a sub-pixel amount each frame and averaging
+    // `samples` frames (in linear colour, after `warmupFrames` that let temporal
+    // effects settle), then writes a PNG. Anti-aliases edges and converges the
+    // noisy effects (fog, clouds, SSGI). The UI (RenderStage::Overlay) is left
+    // out. Each frame waits for the GPU and the window isn't updated meanwhile.
+    struct PhotoCaptureSettings {
+        uint32_t width = 0, height = 0;
+        uint32_t samples = 64;
+        uint32_t warmupFrames = 12;
+        std::string path = "photo.png";
+    };
+    void beginPhotoCapture(const PhotoCaptureSettings& settings);
+    bool photoCaptureActive() const { return m_photo.active; }
+    float photoCaptureProgress() const;
+    const std::string& lastPhotoPath() const { return m_photo.lastPath; } // empty until one was written
+    // The size the scene is rendered at (the window, or a photo being captured).
+    VkExtent2D renderExtent() const;
+
     // Built-in graph textures.
     TextureId sceneColor() const { return m_sceneColor; }
     TextureId sceneDepth() const { return m_sceneDepth; }
@@ -287,6 +307,21 @@ private:
     Image m_headlessTarget; // headless: stands in for the swapchain image
     Buffer m_captureBuffer;
     std::string m_capturePath;
+    struct PhotoState {
+        bool active = false;
+        bool started = false;
+        PhotoCaptureSettings settings;
+        uint32_t frame = 0;
+        Image target;
+        Buffer readback;
+        std::vector<float> accum; // linear RGB sums
+        std::string lastPath;
+    };
+    PhotoState m_photo;
+    glm::vec2 m_jitter{0.0f}; // sub-pixel camera offset this frame (pixels)
+    void photoBegin();
+    void photoAccumulate();
+    void photoFinish();
     uint64_t m_envCaptureFrame = 0;
     std::string m_envCapturePath;
     TextureId m_dirShadowMap = kNoTexture;

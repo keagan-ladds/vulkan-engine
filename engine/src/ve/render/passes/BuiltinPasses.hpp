@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 // =============================================================================
 // The engine's built-in render passes (always present, can be disabled):
 //
@@ -66,10 +68,11 @@ public:
     // composite then only adds vignette + dither. Cleared after each frame, so
     // disabling the grading pass falls back to the built-in tonemapping.
     void useGradedInput(TextureId texture) { m_graded = texture; }
-    float effectiveExposure() const { return exposure * exposureMultiplier; }
+    float effectiveExposure() const { return exposure * exposureMultiplier * std::exp2(exposureCompensation); }
 
     float exposure = 1.0f;
     float exposureMultiplier = 1.0f; // transient boosts (lightning flashes); multiplies exposure
+    float exposureCompensation = 0.0f; // EV stops on top of everything (photo mode, brightness setting)
     float contrast = 1.05f;
     float saturation = 1.1f;
     float vignette = 0.25f;

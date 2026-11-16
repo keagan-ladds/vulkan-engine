@@ -289,6 +289,13 @@ million grass blades), scaling up on discrete GPUs.
 
 ---
 
+### Photo mode ✅
+- [x] `vfx::PhotoMode` (F12): pause + frozen time, free camera, FOV / exposure / time of day / depth of field panel
+- [x] `Renderer::beginPhotoCapture`: offscreen at any resolution, sub-pixel jitter, N frames averaged in linear colour, PNG; max-quality effect preset for the shot
+- Later: EXR/HDR output, a "hide the player" toggle, tiled rendering beyond the GPU's max image size
+
+---
+
 ## Known issues / tech debt
 
 Ordered roughly by how much they'll bite while building a game.

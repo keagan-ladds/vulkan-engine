@@ -377,6 +377,36 @@ Rules:
 - Queries skip characters and triggers unless the `QueryFilter` asks for them;
   `raycast(origin, dir, dist, ignore, hitCharacters)` still works.
 
+### Photo mode (promotional screenshots)
+
+```cpp
+scene.spawn<vfx::PhotoMode>();   // F12 in game
+```
+
+F12 pauses the game and freezes time, including wind, water and particles. A
+free camera takes over:
+- right mouse: look; WASD: move; Q/E: down/up; Shift/Ctrl: speed
+- Enter: take photo; F12 or Esc: leave
+
+The panel has FOV, exposure (EV), time of day, depth of field (autofocus,
+"focus on what's in the centre", aperture) and capture settings.
+
+**Take photo** raises every effect to maximum quality: 4096 shadow maps,
+`lodBias` 4, 128-step clouds, 96-step fog, more SSR/SSGI steps and DOF taps.
+`Renderer::beginPhotoCapture` then renders offscreen at the chosen resolution
+(window, ×2, 1080p, 1440p or 4K). It averages 16–256 frames, each with the
+camera shifted by a fraction of a pixel. Edges come out anti-aliased and fog,
+clouds and GI come out noise-free.
+
+A 64-sample 3200×1800 shot takes about 2 s in Release. The window doesn't
+update meanwhile. The PNG goes to `screenshots/photo_<date>_<time>.png`
+next to the executable.
+
+Games hide their HUD while `vfx::PhotoMode::anyActive()`; captures never
+include UI. Scripted shots: `enter()`, `setView(pos, yaw, pitch)`,
+`takePhoto()`, wait for `lastPhoto()`. In the sandbox,
+`SAVANNA_PHOTO=64,1,4` does this headless (samples, resolution, DOF aperture).
+
 ### Shadows configuration
 
 ```cpp

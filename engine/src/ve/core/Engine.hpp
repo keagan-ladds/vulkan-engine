@@ -81,6 +81,11 @@ public:
     Editor* editor() { return m_editor.get(); } // null if EngineConfig::enableEditor is false
     const EngineConfig& config() const { return m_config; }
 
+    // Pauses gameplay like the editor's Edit mode: no fixed steps or physics,
+    // and only runInEditor objects update (photo mode, pause menus). Rendering,
+    // UI and audio keep running.
+    bool gamePaused = false;
+
 private:
     void pollEvents();
     void tickFrame();

@@ -166,7 +166,7 @@ void Engine::tickFrame()
 
     if (m_editor) m_editor->beginFrame(m_time.unscaledDeltaTime);
     // Editor "Edit" mode: the game is paused; only runInEditor objects update.
-    const bool paused = m_editor && m_editor->paused();
+    const bool paused = (m_editor && m_editor->paused()) || gamePaused;
 
     m_scene->startPending();
 

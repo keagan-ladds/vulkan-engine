@@ -26,6 +26,7 @@
 #include <ve/scene/Scene.hpp>
 #include <ve/render/Material.hpp>
 #include <ve/scene/Reflection.hpp>
+#include <vfx/PhotoMode.hpp>
 #include <vfx/Particles.hpp>
 #include <vfx/DayNight.hpp>
 #include <vfx/Water.hpp>
@@ -645,6 +646,7 @@ void Hud::update(float dt)
 void Hud::onGui()
 {
     if (engine().editor() && engine().editor()->paused()) return; // the editor's panels take the screen
+    if (vfx::PhotoMode::anyActive()) return;                         // a clean view to compose the shot
     ImGuiIO& io = ImGui::GetIO();
     ImDrawList* dl = ImGui::GetForegroundDrawList();
     const ImVec2 c(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
@@ -692,7 +694,7 @@ void Hud::onGui()
 
     if (m_showHelp) {
         const char* help = "WASD move  Shift sprint  Space jump  F fly  E pick up  Q/RMB throw\n"
-                           "T/G time +/-  R weather  M combat music  Tab mouse  F1 debug  H hide help";
+                           "T/G time +/-  R weather  M combat music  Tab mouse  F1 debug  F12 photo mode  H hide help";
         const ImVec2 hs = ImGui::CalcTextSize(help);
         const ImVec2 hp(16.0f, io.DisplaySize.y - hs.y - 16.0f);
         dl->AddRectFilled({hp.x - 8, hp.y - 6}, {hp.x + hs.x + 8, hp.y + hs.y + 6}, IM_COL32(20, 14, 8, 120), 6.0f);

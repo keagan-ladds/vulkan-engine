@@ -24,6 +24,7 @@
 #include <vfx/Bloom.hpp>
 #include <vfx/ColorGrading.hpp>
 #include <vfx/DepthOfField.hpp>
+#include <vfx/PhotoMode.hpp>
 #include <vfx/Particles.hpp>
 #include <vfx/ScreenSpaceGI.hpp>
 #include <vfx/ScreenSpaceReflections.hpp>
@@ -44,6 +45,61 @@
 using namespace savanna;
 
 namespace {
+
+// SAVANNA_PHOTO test hook: enters photo mode after the world settled, takes a
+// 1-sample normal-quality reference shot and then the real one (same frozen
+// view), then quits.
+class PhotoShot : public ve::GameObject {
+public:
+    PhotoShot(vfx::PhotoMode& pm, int samples, int resolution, float aperture)
+        : GameObject("PhotoShot"), m_pm(pm), m_samples(samples), m_resolution(resolution), m_aperture(aperture)
+    {
+        runInEditor = true;
+    }
+    void update(float) override
+    {
+        m_t += time().unscaledDeltaTime;
+        if (m_state == 0 && m_t > 4.0f) {
+            m_pm.enter();
+            // A fixed view of the camp (the headless player's view isn't stable).
+            const glm::vec3 eye(layout::kCamp.x - 8.0f, 4.8f, layout::kCamp.y + 12.0f);
+            const glm::vec3 d = glm::vec3(layout::kCamp.x, 3.6f, layout::kCamp.y) - eye;
+            m_pm.setView(eye, glm::degrees(std::atan2(-d.x, -d.z)), glm::degrees(std::asin(d.y / glm::length(d))));
+            if (m_aperture > 0.0f)
+                if (auto* dof = renderer().graph().findPass<vfx::DepthOfFieldPass>()) {
+                    dof->enabled = true;
+                    dof->aperture = m_aperture;
+                }
+            m_pm.samples = 1;
+            m_pm.resolution = 0;
+            m_pm.maxQuality = false;
+            m_pm.takePhoto();
+            m_state = 1;
+        } else if (m_state == 1 && !m_pm.lastPhoto().empty()) {
+            m_reference = m_pm.lastPhoto();
+            m_pm.samples = m_samples;
+            m_pm.resolution = m_resolution;
+            m_pm.maxQuality = true;
+            m_t = 0.0f;
+            m_state = 2;
+        } else if (m_state == 2 && m_t > 1.2f) { // file names have 1 s resolution
+            m_pm.takePhoto();
+            m_state = 3;
+        } else if (m_state == 3 && m_pm.lastPhoto() != m_reference) {
+            m_pm.exit();
+            engine().quit();
+            m_state = 4;
+        }
+    }
+
+private:
+    vfx::PhotoMode& m_pm;
+    int m_samples, m_resolution;
+    float m_aperture;
+    std::string m_reference;
+    float m_t = 0.0f;
+    int m_state = 0;
+};
 
 void buildWorld(ve::Engine& engine)
 {
@@ -99,6 +155,7 @@ void buildWorld(ve::Engine& engine)
     player.teleport({start.x, terrain.height(start.x, start.y), start.y}, startYaw);
 
     scene.spawn<Hud>(player);
+    auto& photoMode = scene.spawn<vfx::PhotoMode>(); // F12: free camera, DOF, max-quality screenshots
 
     // Environment objects from the scene file (Weather, DayNightCycle, Water).
     vfx::Weather* weather = nullptr;
@@ -109,7 +166,7 @@ void buildWorld(ve::Engine& engine)
     }
 
     // Test hooks (handy for screenshots / automated checks):
-    //   SAVANNA_TIME=21.5  SAVANNA_WEATHER=0..4 (4 = thunderstorm)  SAVANNA_DEBUG=1  SAVANNA_FLY=x,y,z,yawDeg,pitchDeg
+    //   SAVANNA_TIME=21.5  SAVANNA_WEATHER=0..4 (4 = thunderstorm)  SAVANNA_DEBUG=1  SAVANNA_POSE=x,y,z,yawDeg,pitchDeg
     if (const char* t = std::getenv("SAVANNA_TIME"); t && dayNight) dayNight->timeOfDay = std::strtof(t, nullptr);
     if (const char* w = std::getenv("SAVANNA_WEATHER"); w && weather) {
         weather->setWeather(static_cast<vfx::Weather::Type>(std::atoi(w) % int(vfx::Weather::Type::Count)), 0.01f);
@@ -117,6 +174,13 @@ void buildWorld(ve::Engine& engine)
     if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
     if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser
     if (std::getenv("SAVANNA_AUTOTEST")) scene.spawn<AutoTest>(terrain);
+    // SAVANNA_PHOTO=<samples>[,<resolution 0..4>[,<dof aperture>]]: take a photo-mode shot of the start view and quit.
+    if (const char* p = std::getenv("SAVANNA_PHOTO")) {
+        int samples = 32, res = 0;
+        float aperture = 0.0f;
+        std::sscanf(p, "%d,%d,%f", &samples, &res, &aperture);
+        scene.spawn<PhotoShot>(photoMode, samples, res, aperture);
+    }
     if (const char* f = std::getenv("SAVANNA_POSE")) {
         float x, y, z, yaw, pitch;
         if (std::sscanf(f, "%f,%f,%f,%f,%f", &x, &y, &z, &yaw, &pitch) == 5) player.setPose({x, y, z}, yaw, pitch);

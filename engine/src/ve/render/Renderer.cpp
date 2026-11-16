@@ -14,6 +14,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -115,6 +116,8 @@ void Renderer::shutdown()
     vkDestroyDescriptorSetLayout(dev, m_globalSetLayout, nullptr);
     if (m_headlessTarget.handle) m_device.destroyImage(m_headlessTarget);
     if (m_captureBuffer.handle) m_device.destroyBuffer(m_captureBuffer);
+    if (m_photo.target.handle) m_device.destroyImage(m_photo.target);
+    if (m_photo.readback.handle) m_device.destroyBuffer(m_photo.readback);
     m_swapchain.destroy(m_device);
     m_bindless.shutdown();
     m_samplers.shutdown(m_device);
@@ -667,7 +670,7 @@ void Renderer::drawItems(RenderContext& ctx, const std::vector<uint32_t>& indice
 void Renderer::setupCamera(Scene& scene)
 {
     CameraData& cam = m_frame.camera;
-    const VkExtent2D ext = m_swapchain.extent();
+    const VkExtent2D ext = renderExtent();
     cam.aspect = static_cast<float>(ext.width) / static_cast<float>(std::max(1u, ext.height));
 
     glm::vec3 pos(0.0f, 2.0f, 5.0f);
@@ -689,6 +692,9 @@ void Renderer::setupCamera(Scene& scene)
     // near plane and 0 at the far plane. Then flip Y for Vulkan's clip space.
     cam.proj = glm::perspective(cam.fovY, cam.aspect, cam.farPlane, cam.nearPlane);
     cam.proj[1][1] *= -1.0f;
+    // Sub-pixel jitter (photo capture): shift the image by a fraction of a pixel.
+    cam.proj[2][0] += m_jitter.x * 2.0f / float(std::max(1u, ext.width));
+    cam.proj[2][1] += m_jitter.y * 2.0f / float(std::max(1u, ext.height));
     cam.viewProj = cam.proj * cam.view;
     cam.frustum = Frustum::fromMatrix(cam.viewProj);
 }
@@ -921,7 +927,7 @@ void Renderer::fillGlobals(const Time& time)
 {
     const CameraData& cam = m_frame.camera;
     FrameGlobals& g = m_frame.globals;
-    const VkExtent2D ext = m_swapchain.extent();
+    const VkExtent2D ext = renderExtent();
     g.view = cam.view;
     g.proj = cam.proj;
     g.viewProj = cam.viewProj;
@@ -948,6 +954,108 @@ void Renderer::fillGlobals(const Time& time)
 // Frame
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// Photo capture
+// -----------------------------------------------------------------------------
+
+VkExtent2D Renderer::renderExtent() const
+{
+    if (m_photo.active && m_photo.started) return {m_photo.target.extent.width, m_photo.target.extent.height};
+    return m_swapchain.extent();
+}
+
+void Renderer::beginPhotoCapture(const PhotoCaptureSettings& settings)
+{
+    if (m_photo.active) return;
+    m_photo.settings = settings;
+    m_photo.settings.samples = std::max(settings.samples, 1u);
+    m_photo.active = true;
+    m_photo.started = false;
+}
+
+float Renderer::photoCaptureProgress() const
+{
+    if (!m_photo.active) return 0.0f;
+    const float total = float(m_photo.settings.warmupFrames + m_photo.settings.samples);
+    return std::min(float(m_photo.frame) / total, 1.0f);
+}
+
+void Renderer::photoBegin()
+{
+    PhotoCaptureSettings& s = m_photo.settings;
+    const VkExtent2D win = m_swapchain.extent();
+    const uint32_t limit = m_device.properties().limits.maxImageDimension2D;
+    const uint32_t w = std::clamp(s.width ? s.width : win.width, 16u, limit);
+    const uint32_t h = std::clamp(s.height ? s.height : win.height, 16u, limit);
+    m_device.waitIdle();
+    m_photo.target = m_device.createImage({.format = m_swapchain.format(),
+                                           .extent = {w, h, 1},
+                                           .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                           .debugName = "photo target"});
+    m_photo.readback = m_device.createBuffer(VkDeviceSize(w) * h * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                             MemoryUsage::GpuToCpu, "photo readback");
+    m_photo.accum.assign(size_t(w) * h * 3, 0.0f);
+    m_photo.frame = 0;
+    m_photo.started = true;
+    m_graph->resize({w, h}); // screen-sized textures follow the photo's size
+    log::info("Renderer: photo {}x{}, {} samples (+{} warm-up frames)", w, h, s.samples, s.warmupFrames);
+}
+
+void Renderer::photoAccumulate()
+{
+    const uint32_t frame = m_photo.frame++;
+    if (frame < m_photo.settings.warmupFrames) return;
+    vmaInvalidateAllocation(m_device.allocator(), m_photo.readback.allocation, 0, VK_WHOLE_SIZE);
+    // sRGB bytes -> linear, so the average is physically right (edges, bright highlights).
+    static const std::array<float, 256> toLinear = [] {
+        std::array<float, 256> t{};
+        for (int i = 0; i < 256; ++i) {
+            const float c = float(i) / 255.0f;
+            t[size_t(i)] = c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+        }
+        return t;
+    }();
+    const VkFormat f = m_photo.target.format;
+    const bool bgr = f == VK_FORMAT_B8G8R8A8_SRGB || f == VK_FORMAT_B8G8R8A8_UNORM;
+    const auto* px = static_cast<const uint8_t*>(m_photo.readback.mapped);
+    float* acc = m_photo.accum.data();
+    const size_t n = m_photo.accum.size() / 3;
+    for (size_t i = 0; i < n; ++i) {
+        const uint8_t* p = px + i * 4;
+        acc[i * 3 + 0] += toLinear[bgr ? p[2] : p[0]];
+        acc[i * 3 + 1] += toLinear[p[1]];
+        acc[i * 3 + 2] += toLinear[bgr ? p[0] : p[2]];
+    }
+    if (frame + 1 >= m_photo.settings.warmupFrames + m_photo.settings.samples) photoFinish();
+}
+
+void Renderer::photoFinish()
+{
+    const VkExtent3D e = m_photo.target.extent;
+    const float inv = 1.0f / float(m_photo.settings.samples);
+    std::vector<uint8_t> out(size_t(e.width) * e.height * 3);
+    for (size_t i = 0; i < out.size(); ++i) {
+        const float c = std::clamp(m_photo.accum[i] * inv, 0.0f, 1.0f);
+        const float srgb = c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+        out[i] = static_cast<uint8_t>(std::lround(srgb * 255.0f));
+    }
+    const std::filesystem::path path(m_photo.settings.path);
+    std::error_code ec;
+    if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
+    if (stbi_write_png(path.string().c_str(), int(e.width), int(e.height), 3, out.data(), int(e.width) * 3)) {
+        m_photo.lastPath = std::filesystem::absolute(path, ec).string();
+        log::info("Renderer: photo saved to {}", m_photo.lastPath);
+    } else {
+        log::error("Renderer: failed to write {}", path.string());
+    }
+    m_device.waitIdle();
+    m_device.destroyImage(m_photo.target);
+    m_device.destroyBuffer(m_photo.readback);
+    m_photo.accum = {};
+    m_photo.active = m_photo.started = false;
+    m_graph->resize(m_swapchain.extent());
+}
+
 bool Renderer::render(Scene& scene, const Time& time)
 {
     if (!m_initialized) return false;
@@ -957,6 +1065,9 @@ bool Renderer::render(Scene& scene, const Time& time)
     if (m_hotReload) {
         if (auto changed = m_hotReload->poll(); !changed.empty()) reloadShaders(changed);
     }
+
+    const bool photo = m_photo.active;
+    if (photo && !m_photo.started) photoBegin();
 
     VkDevice dev = m_device.handle();
     const uint32_t slotIndex = static_cast<uint32_t>(m_frameNumber % Device::kFramesInFlight);
@@ -979,7 +1090,8 @@ bool Renderer::render(Scene& scene, const Time& time)
 
     uint32_t imageIndex = 0;
     const bool headless = m_settings.headless;
-    if (!headless) {
+    const bool offscreen = headless || photo; // nothing to acquire or present
+    if (!offscreen) {
         const VkResult acquire = vkAcquireNextImageKHR(dev, m_swapchain.handle(), UINT64_MAX, slot.imageAvailable,
                                                        VK_NULL_HANDLE, &imageIndex);
         if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -996,6 +1108,21 @@ bool Renderer::render(Scene& scene, const Time& time)
     m_frame.deltaTime = time.deltaTime;
     m_frame.time = time.time;
     m_frame.frameNumber = m_frameNumber;
+    m_jitter = glm::vec2(0.0f);
+    if (photo && m_photo.frame >= m_photo.settings.warmupFrames) {
+        // Halton (2, 3): evenly spread sub-pixel offsets for any sample count.
+        auto halton = [](uint32_t i, uint32_t base) {
+            float f = 1.0f, r = 0.0f;
+            for (; i > 0; i /= base) {
+                f /= float(base);
+                r += f * float(i % base);
+            }
+            return r;
+        };
+        const uint32_t k = m_photo.frame - m_photo.settings.warmupFrames + 1;
+        m_jitter = glm::vec2(halton(k, 2), halton(k, 3)) - 0.5f;
+    }
+    m_graph->maxStage = photo ? int(RenderStage::Overlay) : (1 << 30);
     gatherScene(scene);
     fillGlobals(time);
     m_instances->prepare(slotIndex, m_frame); // also assigns ShadowView::cullView
@@ -1014,7 +1141,11 @@ bool Renderer::render(Scene& scene, const Time& time)
     // The swapchain image's previous contents are irrelevant (UNDEFINED). Its
     // first use must wait for the acquire semaphore, which the submit below
     // waits on at COLOR_ATTACHMENT_OUTPUT, so the barrier chains from that stage.
-    if (headless) {
+    if (photo) {
+        m_graph->setImported(m_backbuffer, m_photo.target.handle, m_photo.target.view, m_photo.target.format,
+                             {m_photo.target.extent.width, m_photo.target.extent.height},
+                             {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_NONE});
+    } else if (headless) {
         m_graph->setImported(m_backbuffer, m_headlessTarget.handle, m_headlessTarget.view, m_headlessTarget.format,
                              {m_headlessTarget.extent.width, m_headlessTarget.extent.height},
                              {VK_IMAGE_LAYOUT_UNDEFINED, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_NONE});
@@ -1037,9 +1168,16 @@ bool Renderer::render(Scene& scene, const Time& time)
     slot.timedPasses = m_graph->lastExecuted();
     m_instances->recordReadback(slot.cmd, slotIndex);
     slot.timestampsWritten = slot.timestamps != VK_NULL_HANDLE;
-    m_graph->transition(slot.cmd, m_backbuffer, headless ? Access::TransferSrc : Access::Present);
+    m_graph->transition(slot.cmd, m_backbuffer, offscreen ? Access::TransferSrc : Access::Present);
+    if (photo) {
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = m_photo.target.extent;
+        vkCmdCopyImageToBuffer(slot.cmd, m_photo.target.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               m_photo.readback.handle, 1, &region);
+    }
     if (headless && !m_envCapturePath.empty() && m_frameNumber == m_envCaptureFrame) m_capturePath = m_envCapturePath;
-    const bool capture = headless && !m_capturePath.empty();
+    const bool capture = headless && !photo && !m_capturePath.empty();
     if (capture) {
         const VkExtent3D e = m_headlessTarget.extent;
         const VkDeviceSize bytes = VkDeviceSize(e.width) * e.height * 4;
@@ -1060,21 +1198,25 @@ bool Renderer::render(Scene& scene, const Time& time)
     VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
     wait.semaphore = slot.imageAvailable;
     wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    const VkSemaphore finished = headless ? VK_NULL_HANDLE : m_swapchain.renderFinished(imageIndex);
+    const VkSemaphore finished = offscreen ? VK_NULL_HANDLE : m_swapchain.renderFinished(imageIndex);
     VkSemaphoreSubmitInfo signal{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
     signal.semaphore = finished;
     signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     VkCommandBufferSubmitInfo cmdInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
     cmdInfo.commandBuffer = slot.cmd;
     VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-    submit.waitSemaphoreInfoCount = headless ? 0 : 1;
+    submit.waitSemaphoreInfoCount = offscreen ? 0 : 1;
     submit.pWaitSemaphoreInfos = &wait;
     submit.commandBufferInfoCount = 1;
     submit.pCommandBufferInfos = &cmdInfo;
-    submit.signalSemaphoreInfoCount = headless ? 0 : 1;
+    submit.signalSemaphoreInfoCount = offscreen ? 0 : 1;
     submit.pSignalSemaphoreInfos = &signal;
     VK_CHECK(vkQueueSubmit2(m_device.graphicsQueue(), 1, &submit, slot.inFlight));
-    if (headless) {
+    if (photo) {
+        VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
+        photoAccumulate(); // may finish the photo
+    }
+    if (offscreen) {
         if (capture) {
             VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
             vmaInvalidateAllocation(m_device.allocator(), m_captureBuffer.allocation, 0, VK_WHOLE_SIZE);

@@ -247,6 +247,8 @@ public:
     // Called by the renderer with the resolved timings of a previous frame.
     void applyTimings(const std::vector<uint64_t>& timestamps, const std::vector<RenderPass*>& order, float periodNs);
     const std::vector<RenderPass*>& lastExecuted() const { return m_executed; }
+    // Passes at this stage or later are skipped (photo capture leaves out the UI).
+    int maxStage = 1 << 30;
     // Transitions a texture outside of any pass (e.g. backbuffer -> present).
     void transition(VkCommandBuffer cmd, TextureId id, Access access);
     void clearPasses();
