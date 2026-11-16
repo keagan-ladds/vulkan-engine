@@ -21,6 +21,11 @@
 // Hook order each frame:  start() (once, before the first update)
 //   -> fixedUpdate(fixedDt) x N -> update(dt) -> lateUpdate(dt) -> onGui()
 // destroy() is deferred to the end of the frame; onDestroy() is then called.
+//
+// Hooks you don't override cost nothing: the base versions of update,
+// fixedUpdate, lateUpdate and onGui mark themselves as "not overridden" the
+// first time they run, and the Scene stops calling them. (So don't call the
+// base class's empty hook, e.g. ve::GameObject::update(dt), from an override.)
 // =============================================================================
 
 #include "ve/scene/Transform.hpp"
@@ -33,6 +38,9 @@
 namespace ve {
 
 struct Collision; // ve/physics/Physics.hpp
+
+// Per-frame hooks the Scene dispatches; used as bits in "not overridden" masks.
+enum HookBit : uint8_t { kHookUpdate = 1, kHookFixedUpdate = 2, kHookLateUpdate = 4, kHookGui = 8 };
 
 class Scene;
 class GameObject;
@@ -61,10 +69,10 @@ public:
     virtual ~Component() = default;
 
     virtual void start() {}
-    virtual void update(float /*dt*/) {}
-    virtual void fixedUpdate(float /*dt*/) {}
-    virtual void lateUpdate(float /*dt*/) {}
-    virtual void onGui() {}
+    virtual void update(float /*dt*/) { m_noHook |= kHookUpdate; }
+    virtual void fixedUpdate(float /*dt*/) { m_noHook |= kHookFixedUpdate; }
+    virtual void lateUpdate(float /*dt*/) { m_noHook |= kHookLateUpdate; }
+    virtual void onGui() { m_noHook |= kHookGui; }
     virtual void onDestroy() {}
     // Physics events (ve/physics/Physics.hpp), sent during the fixed update to
     // the components (and the GameObject) on both sides of a contact.
@@ -89,6 +97,7 @@ private:
     friend class Scene;
     GameObject* m_owner = nullptr;
     bool m_started = false;
+    uint8_t m_noHook = 0; // HookBits whose base (empty) version ran: not overridden
     std::type_index m_type = typeid(Component);
 };
 
@@ -102,10 +111,10 @@ public:
 
     // --- Lifecycle hooks (override these) ------------------------------------
     virtual void start() {}
-    virtual void update(float /*dt*/) {}
-    virtual void fixedUpdate(float /*dt*/) {}
-    virtual void lateUpdate(float /*dt*/) {}
-    virtual void onGui() {}
+    virtual void update(float /*dt*/) { m_noHook |= kHookUpdate; }
+    virtual void fixedUpdate(float /*dt*/) { m_noHook |= kHookFixedUpdate; }
+    virtual void lateUpdate(float /*dt*/) { m_noHook |= kHookLateUpdate; }
+    virtual void onGui() { m_noHook |= kHookGui; }
     virtual void onDestroy() {}
     // Physics events, like Component's (the object's components get them too).
     virtual void onCollisionEnter(const Collision&) {}
@@ -125,6 +134,7 @@ public:
     void destroy(); // deferred to end of frame, also destroys children
     bool isDestroyed() const { return m_destroyed; }
     Scene& scene() const { return *m_scene; }
+    bool inScene(const Scene& scene) const { return m_scene == &scene; } // false until spawned
     std::string tag; // free-form label for gameplay queries
 
     // --- Editor / scene files ---------------------------------------------------
@@ -181,6 +191,9 @@ private:
     bool m_active = true;
     bool m_started = false;
     bool m_destroyed = false;
+    bool m_tornDown = false;      // onDestroy() has run (Scene::flushDestroyed)
+    uint8_t m_noHook = 0;         // HookBits not overridden by this object
+    uint8_t m_componentsNoHook = 0; // HookBits no component of this object overrides
 };
 
 } // namespace ve

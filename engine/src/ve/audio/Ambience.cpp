@@ -61,7 +61,11 @@ float AmbientLayer::computeTarget()
 
     if (!parameters.empty() && t > 0.0f) {
         float base = 1.0f, sum = 0.0f;
-        for (const auto& [name, k] : parseNameValues(parameters)) {
+        if (parameters != m_paramsSpec) {
+            m_paramsSpec = parameters;
+            m_params = parseNameValues(parameters);
+        }
+        for (const auto& [name, k] : m_params) {
             if (name == "*") base = k;
             else sum += k * sys.parameter(name);
         }
@@ -72,9 +76,9 @@ float AmbientLayer::computeTarget()
         const Terrain* terrain = Terrain::find(gameObject().scene());
         const std::shared_ptr<const TerrainData> td = terrain ? terrain->data() : nullptr;
         if (td) {
-            const std::string key = biomes + '|' + std::to_string(terrain->version());
-            if (key != m_biomeKey) {
-                m_biomeKey = key;
+            if (biomes != m_biomeSpec || terrain->version() != m_biomeVersion) {
+                m_biomeSpec = biomes;
+                m_biomeVersion = terrain->version();
                 m_biomeWeights = parseBiomeWeights(biomes, *td, "AmbientLayer '" + gameObject().name() + "'");
             }
             // The listener and four points around it: borders crossfade over ~biomeRadius.
@@ -100,7 +104,8 @@ void AmbientLayer::update(float dt)
     if (!sys.available()) return;
 
     // ---- Loop ----
-    const std::string loopPath = loop ? loop->path() : std::string();
+    static const std::string kNoLoop;
+    const std::string& loopPath = loop ? loop->path() : kNoLoop;
     if (loopPath != m_loopPath) releaseLoop();
     if (loop && m_level > 1e-3f && !m_loop) {
         m_loop = new ma_sound();

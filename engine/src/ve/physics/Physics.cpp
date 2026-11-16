@@ -507,6 +507,10 @@ void PhysicsWorld::interpolate(Scene& scene, float alpha)
 {
     scene.forEach<Rigidbody>([&](Rigidbody& rb) {
         if (!rb.created() || rb.type != BodyType::Dynamic) return;
+        // Resting (asleep) bodies: already in place, don't dirty their transforms.
+        if (rb.m_prevPos == rb.m_currPos && rb.m_prevRot == rb.m_currRot && rb.transform().position() == rb.m_currPos &&
+            rb.transform().rotation() == rb.m_currRot)
+            return;
         const float a = rb.interpolate ? alpha : 1.0f;
         rb.transform().setPosition(glm::mix(rb.m_prevPos, rb.m_currPos, a));
         rb.transform().setRotation(glm::slerp(rb.m_prevRot, rb.m_currRot, a));

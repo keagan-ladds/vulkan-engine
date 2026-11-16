@@ -120,6 +120,7 @@ private:
     bool m_throwPending = false;
     bool m_inTrigger = false;
     glm::vec3 m_triggerCenter{0.0f}, m_triggerFeet{0.0f};
+    ve::GameObject* m_destroyProbe = nullptr;
     float m_t = 0.0f;
     int m_step = 0;
 };

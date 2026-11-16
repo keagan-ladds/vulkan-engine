@@ -364,8 +364,8 @@ Rules:
   that, move dynamic bodies with `teleport()`/forces (not the Transform), and
   static ones with `syncFromTransform()`.
 - `Collider::mesh` and `heightfield` are static-only. Use `convexHull` for moving things.
-- Add physics components as their exact type (`addComponent<ve::Rigidbody>`).
-  The world finds them through the typed registry.
+- The world finds physics components through the typed registry, which also
+  matches subclasses (`class Door : public ve::Rigidbody` works).
 - Events are sent after each physics step on the main thread, to every
   component of both objects (`Collision::normal` points from the other object
   towards you; `impactSpeed` is the closing speed when the contact began).

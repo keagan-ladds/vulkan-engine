@@ -166,6 +166,7 @@ private:
     bool m_dirty = false;
     bool m_started = false;
     float m_sinceRebuild = 0.0f;
+    float m_sinceCheck = 0.0f; // edit-state checks are throttled (they serialize the fields)
 };
 
 } // namespace ve

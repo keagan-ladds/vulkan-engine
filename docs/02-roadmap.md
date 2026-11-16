@@ -313,9 +313,6 @@ Ordered roughly by how much they'll bite while building a game.
    Jolt also quantises heights to 8 bits per 2×2 block. Characters can't
    climb up onto dynamic crates reliably (a CharacterVirtual limitation unless
    you tune `mMaxStrength` and the supporting volume).
-5. `Scene::forEach<T>()` only finds components registered under exactly `T`
-   (a `class MyLight : public PointLight` added as `MyLight` is not seen by the
-   renderer). Add as `addComponent<PointLight>` or extend the registry.
 
 ---
 

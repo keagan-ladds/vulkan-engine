@@ -24,13 +24,17 @@ void Scene::adopt(std::unique_ptr<GameObject> obj)
 
 void Scene::registerComponent(Component* c)
 {
-    m_registry[c->m_type].push_back(c);
+    Bucket*& bucket = m_bucketByType[c->m_type];
+    if (!bucket) bucket = m_buckets.emplace_back(std::make_unique<Bucket>(Bucket{c->m_type, {}})).get();
+    // Queries skip empty buckets (they can't test the type), so re-check them.
+    if (bucket->items.empty()) ++m_generation;
+    bucket->items.push_back(c);
 }
 
 void Scene::unregisterComponent(Component* c)
 {
-    auto it = m_registry.find(c->m_type);
-    if (it != m_registry.end()) std::erase(it->second, c);
+    auto it = m_bucketByType.find(c->m_type);
+    if (it != m_bucketByType.end()) std::erase(it->second->items, c);
 }
 
 GameObject* Scene::find(const std::string& name) const
@@ -74,19 +78,39 @@ Camera* Scene::mainCamera() const
 }
 
 template <class Fn>
-void Scene::forActive(Fn&& fn)
+void Scene::forActive(uint8_t hook, bool editorOnly, Fn&& fn)
 {
     // Index loop: objects spawned during iteration go to m_pending, so this
     // vector does not change size while we iterate.
     for (size_t i = 0; i < m_objects.size(); ++i) {
         GameObject* o = m_objects[i].get();
-        if (o->m_destroyed || !o->activeInHierarchy()) continue;
+        if (o->m_destroyed || (editorOnly && !o->runInEditor)) continue;
+        // Nothing here implements this hook (most objects: terrain chunks,
+        // model nodes, static props): skip without walking the hierarchy.
+        if (o->m_started && (o->m_noHook & hook) && (o->m_componentsNoHook & hook)) continue;
+        if (!o->activeInHierarchy()) continue;
         if (!o->m_started) {
             o->m_started = true;
             o->start();
         }
         fn(*o);
     }
+}
+
+// Calls `hook` on o's started, enabled components, and remembers when none of
+// them implements it.
+template <class Hook>
+void Scene::callComponents(GameObject& o, uint8_t bit, Hook&& hook)
+{
+    if (o.m_componentsNoHook & bit) return;
+    uint8_t none = bit;
+    for (size_t i = 0; i < o.m_components.size(); ++i) {
+        Component* c = o.m_components[i].get();
+        if (c->enabled && c->m_started) hook(*c);
+        none &= c->m_noHook; // unknown (not run yet) counts as implemented
+    }
+    // (Components added during the loop reset the mask in attachComponent.)
+    o.m_componentsNoHook |= none;
 }
 
 void Scene::startPending()
@@ -116,47 +140,33 @@ void Scene::startPending()
 
 void Scene::fixedUpdate(float dt)
 {
-    forActive([dt](GameObject& o) {
-        o.fixedUpdate(dt);
-        for (size_t i = 0; i < o.m_components.size(); ++i) {
-            Component* c = o.m_components[i].get();
-            if (c->enabled && c->m_started) c->fixedUpdate(dt);
-        }
+    forActive(kHookFixedUpdate, false, [dt](GameObject& o) {
+        if (!(o.m_noHook & kHookFixedUpdate)) o.fixedUpdate(dt);
+        callComponents(o, kHookFixedUpdate, [dt](Component& c) { c.fixedUpdate(dt); });
     });
 }
 
 void Scene::update(float dt, bool editorOnly)
 {
-    forActive([dt, editorOnly](GameObject& o) {
-        if (editorOnly && !o.runInEditor) return;
-        o.update(dt);
-        for (size_t i = 0; i < o.m_components.size(); ++i) {
-            Component* c = o.m_components[i].get();
-            if (c->enabled && c->m_started) c->update(dt);
-        }
+    forActive(kHookUpdate, editorOnly, [dt](GameObject& o) {
+        if (!(o.m_noHook & kHookUpdate)) o.update(dt);
+        callComponents(o, kHookUpdate, [dt](Component& c) { c.update(dt); });
     });
 }
 
 void Scene::lateUpdate(float dt, bool editorOnly)
 {
-    forActive([dt, editorOnly](GameObject& o) {
-        if (editorOnly && !o.runInEditor) return;
-        o.lateUpdate(dt);
-        for (size_t i = 0; i < o.m_components.size(); ++i) {
-            Component* c = o.m_components[i].get();
-            if (c->enabled && c->m_started) c->lateUpdate(dt);
-        }
+    forActive(kHookLateUpdate, editorOnly, [dt](GameObject& o) {
+        if (!(o.m_noHook & kHookLateUpdate)) o.lateUpdate(dt);
+        callComponents(o, kHookLateUpdate, [dt](Component& c) { c.lateUpdate(dt); });
     });
 }
 
 void Scene::onGui()
 {
-    forActive([](GameObject& o) {
-        o.onGui();
-        for (size_t i = 0; i < o.m_components.size(); ++i) {
-            Component* c = o.m_components[i].get();
-            if (c->enabled && c->m_started) c->onGui();
-        }
+    forActive(kHookGui, false, [](GameObject& o) {
+        if (!(o.m_noHook & kHookGui)) o.onGui();
+        callComponents(o, kHookGui, [](Component& c) { c.onGui(); });
     });
 }
 
@@ -175,10 +185,17 @@ void Scene::flushDestroyed()
     if (!m_hasDestroyed) return;
     m_hasDestroyed = false;
     auto sweep = [&](std::vector<std::unique_ptr<GameObject>>& list) {
-        for (auto& o : list) {
-            if (o->m_destroyed) destroyNow(o.get());
+        // Index loop: onDestroy() may spawn (appends to m_pending) or destroy
+        // more objects. Only objects whose onDestroy() ran are freed; anything
+        // destroyed during the sweep sets m_hasDestroyed and goes next frame.
+        for (size_t i = 0; i < list.size(); ++i) {
+            GameObject* o = list[i].get();
+            if (o->m_destroyed && !o->m_tornDown) {
+                o->m_tornDown = true;
+                destroyNow(o);
+            }
         }
-        std::erase_if(list, [](const auto& o) { return o->m_destroyed; });
+        std::erase_if(list, [](const auto& o) { return o->m_tornDown; });
     };
     sweep(m_objects);
     sweep(m_pending);
@@ -186,11 +203,17 @@ void Scene::flushDestroyed()
 
 void Scene::clear()
 {
-    for (auto& o : m_objects) o->m_destroyed = true;
-    for (auto& o : m_pending) o->m_destroyed = true;
-    m_hasDestroyed = true;
-    flushDestroyed();
-    m_registry.clear();
+    // onDestroy() hooks may spawn or destroy more objects: repeat until empty.
+    for (int pass = 0; pass < 8 && (!m_objects.empty() || !m_pending.empty()); ++pass) {
+        for (auto& o : m_objects) o->m_destroyed = true;
+        for (auto& o : m_pending) o->m_destroyed = true;
+        m_hasDestroyed = true;
+        flushDestroyed();
+    }
+    m_buckets.clear();
+    m_bucketByType.clear();
+    m_queries.clear();
+    ++m_generation;
 }
 
 GameObject& Scene::instantiate(const Model& model, GameObject* parent, bool staticColliders)

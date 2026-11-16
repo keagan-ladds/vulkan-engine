@@ -79,17 +79,32 @@ bool TerrainData::inBounds(float x, float z, float margin) const
 // Terrain
 // -----------------------------------------------------------------------------
 
+namespace {
+// Live terrains, so find() (called every frame by ambience, foliage, the
+// player...) doesn't scan every scene object with dynamic_cast. Main thread only.
+std::vector<Terrain*>& liveTerrains()
+{
+    static std::vector<Terrain*> list;
+    return list;
+}
+} // namespace
+
 Terrain::Terrain() : GameObject("Terrain")
 {
     runInEditor = true; // rebuilds while you edit stamps / fields
+    liveTerrains().push_back(this);
 }
 
-Terrain::~Terrain() = default;
+Terrain::~Terrain()
+{
+    std::erase(liveTerrains(), this);
+}
 
 Terrain* Terrain::find(const Scene& scene)
 {
-    for (const auto& o : scene.objects()) {
-        if (auto* t = dynamic_cast<Terrain*>(o.get()); t && !t->isDestroyed()) return t;
+    // The first one spawned wins, as when scanning the scene's objects.
+    for (Terrain* t : liveTerrains()) {
+        if (!t->isDestroyed() && t->inScene(scene)) return t;
     }
     return nullptr;
 }
@@ -250,8 +265,13 @@ void Terrain::start()
 void Terrain::update(float dt)
 {
     m_sinceRebuild += dt;
-    const std::string state = editState().dump();
-    if (state != m_editState) m_dirty = true;
+    m_sinceCheck += dt;
+    // Serializing every field (stamps, biomes) is too costly for every frame;
+    // edits are picked up within a quarter second (code can call markDirty()).
+    if (m_sinceCheck >= 0.25f) {
+        m_sinceCheck = 0.0f;
+        if (editState().dump() != m_editState) m_dirty = true;
+    }
     if (m_dirty && m_sinceRebuild > 0.25f) rebuild();
 }
 

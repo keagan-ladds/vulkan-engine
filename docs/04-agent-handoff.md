@@ -91,7 +91,9 @@ north (-Z), 90 looks west (-X).
 - **FoliageSystem callbacks run on a worker thread.** `FoliageWorld::height`,
   `normal` and every `FoliageLayer::density` must only read immutable data.
   Add layers and exclusions before the first `update()`/`preload()`.
-- **Components are registered by their exact type** (see Known issue 9).
+- **Don't call a base class's empty hook** (`ve::GameObject::update(dt)`,
+  `ve::Component::onGui()`) from an override. The base versions mark the hook
+  as "not overridden" and the Scene stops calling it for that object.
 - **glm + GCC "most vexing parse":** `glm::mat3 m(glm::vec3(x[0]) / s, ...)` can
   parse as a declaration. Use brace initialisation.
 - **ImGui**: `ImGui::Render()` is called inside `UiPass::execute`. If a frame

@@ -96,8 +96,16 @@ loop:
   `Camera`, `MeshRenderer`, `DirectionalLight`, `PointLight`, `AudioSource`
   (plus `vfx::ParticleEmitter` in effects).
 - **`Scene`** owns objects (`std::unique_ptr`). It provides
-  `spawn<T>(args...)`, `find(name)`, and `components<T>()`, a typed registry
-  so the renderer can iterate e.g. all `MeshRenderer`s without scanning every object.
+  `spawn<T>(args...)`, `find(name)`, and `forEach<T>()`, a typed registry
+  so the renderer can iterate e.g. all `MeshRenderer`s without scanning every
+  object. Components are bucketed by their exact type; a query for `T` caches
+  the list of buckets whose type is `T` or derives from it, and rebuilds it only
+  when a new component type appears.
+- **Hooks cost nothing unless overridden.** The base `update`, `fixedUpdate`,
+  `lateUpdate` and `onGui` set a "not overridden" bit the first time they run.
+  The Scene then skips them, and skips objects with no such hook on themselves
+  or any component without walking their hierarchy (terrain chunks, model
+  nodes, static props).
 - Spawning during an update is safe: new objects get `start()` at the start of the next frame.
   `destroy()` is deferred to end of frame and also destroys children.
 - Global access: `ve::Engine::get()` and helper accessors on GameObject

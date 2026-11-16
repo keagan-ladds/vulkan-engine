@@ -54,13 +54,14 @@ public:
     const std::vector<std::unique_ptr<GameObject>>& objects() const { return m_objects; }
     size_t objectCount() const { return m_objects.size() + m_pending.size(); }
 
-    // Iterates all registered components of exactly type T (as added with addComponent<T>).
+    // Iterates all registered components of type T, including subclasses of T
+    // (a `class FlickerLight : public PointLight` is seen as a PointLight).
     template <class T, class F>
     void forEach(F&& fn) const
     {
-        const auto it = m_registry.find(typeid(T));
-        if (it == m_registry.end()) return;
-        for (Component* c : it->second) fn(static_cast<T&>(*c));
+        for (const Bucket* b : bucketsFor(typeid(T), [](Component* c) { return dynamic_cast<T*>(c) != nullptr; })) {
+            for (Component* c : b->items) fn(static_cast<T&>(*c));
+        }
     }
 
     // Highest-priority active Camera (see Camera::priority).
@@ -78,17 +79,48 @@ public:
 
     void registerComponent(Component* c);
     void unregisterComponent(Component* c);
+    template <class Hook>
+    static void callComponents(GameObject& o, uint8_t bit, Hook&& hook);
 
 private:
     friend class GameObject;
+    // Components registered under one exact type.
+    struct Bucket {
+        std::type_index type;
+        std::vector<Component*> items;
+    };
+    // Buckets whose type is T or derives from it; cached per queried type and
+    // rebuilt only when a new component type shows up (registry generation).
+    struct Query {
+        uint64_t generation = 0;
+        std::vector<const Bucket*> buckets;
+    };
+    template <class Matches>
+    const std::vector<const Bucket*>& bucketsFor(std::type_index type, Matches&& matches) const
+    {
+        Query& q = m_queries[type];
+        if (q.generation != m_generation) {
+            q.buckets.clear();
+            for (const auto& b : m_buckets) {
+                if (!b->items.empty() && (b->type == type || matches(b->items.front()))) q.buckets.push_back(b.get());
+            }
+            q.generation = m_generation;
+        }
+        return q.buckets;
+    }
+
     void adopt(std::unique_ptr<GameObject> obj);
     void destroyNow(GameObject* obj);
+    // Runs `fn` on every active object that may implement `hook` (itself or a component).
     template <class Fn>
-    void forActive(Fn&& fn);
+    void forActive(uint8_t hook, bool editorOnly, Fn&& fn);
 
     std::vector<std::unique_ptr<GameObject>> m_objects;
     std::vector<std::unique_ptr<GameObject>> m_pending;
-    std::unordered_map<std::type_index, std::vector<Component*>> m_registry;
+    std::vector<std::unique_ptr<Bucket>> m_buckets; // stable addresses (cached in queries)
+    std::unordered_map<std::type_index, Bucket*> m_bucketByType;
+    mutable std::unordered_map<std::type_index, Query> m_queries;
+    uint64_t m_generation = 1; // bumped when a bucket goes from empty to non-empty
     bool m_hasDestroyed = false;
 };
 

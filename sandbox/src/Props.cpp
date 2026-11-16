@@ -377,6 +377,17 @@ public:
     void onTriggerExit(ve::GameObject&) override { ++triggerExits; }
 };
 
+// A PointLight subclass added under its own type: Scene::forEach<PointLight>
+// (which the renderer uses) must still find it.
+class ProbeLight : public ve::PointLight {};
+
+// Spawns another object from onDestroy() (Scene::flushDestroyed must cope).
+class SpawnOnDestroy : public ve::GameObject {
+public:
+    SpawnOnDestroy() : GameObject("SpawnOnDestroy") {}
+    void onDestroy() override { scene().spawn("SpawnedFromOnDestroy"); }
+};
+
 } // namespace
 
 void AutoTest::update(float dt)
@@ -400,6 +411,16 @@ void AutoTest::update(float dt)
         log("sunstones in scene: " + std::to_string(stones.size()));
         if (!stones.empty()) static_cast<Sunstone*>(stones.front())->collect();
         ++m_step;
+        // Scene registry: subclass components, and spawning from onDestroy().
+        {
+            ve::GameObject& probe = scene().spawn("ProbeLight");
+            probe.addComponent<ProbeLight>().intensity = 0.0f;
+            int seen = 0;
+            scene().forEach<ve::PointLight>([&](ve::PointLight& l) { seen += &l.gameObject() == &probe; });
+            log("PointLight subclass seen by forEach<PointLight>: " + std::string(seen == 1 ? "yes" : "NO"));
+            probe.destroy();
+            m_destroyProbe = &scene().spawn<SpawnOnDestroy>();
+        }
         // Physics: ray straight down onto the terrain, player standing, crates resting.
         const glm::vec3 above(layout::kCamp.x + 3.0f, 200.0f, layout::kCamp.y + 3.0f);
         if (auto hit = physics().raycast(above, {0, -1, 0}, 400.0f)) {
@@ -471,6 +492,8 @@ void AutoTest::update(float dt)
             ", default raycast through it hit " + (ray && ray->gameObject ? ray->gameObject->name() : std::string("nothing")));
         m_inTrigger = true;
     } else if (m_step == 1 && m_t > 4.0f) {
+        if (m_destroyProbe) m_destroyProbe->destroy(); // checked at step 2
+        m_destroyProbe = nullptr;
         if (auto* probe = scene().find("TestTrigger") ? scene().find("TestTrigger")->getComponent<EventProbe>() : nullptr)
             log("trigger after standing in it: " + std::to_string(probe->triggerEnters) + " enter(s): " + probe->lastTrigger);
         log("after pickup: " + std::to_string(scene().findAllWithTag("collectible").size()) + " left, collected " +
@@ -508,6 +531,8 @@ void AutoTest::update(float dt)
             if (glm::length(crates[i]->transform().position() - m_crateStart[i]) > 0.2f) ++moved;
         }
         log("crates knocked by the thrown rock: " + std::to_string(moved) + " / " + std::to_string(crates.size()));
+        log(std::string("object spawned from onDestroy(): ") + (scene().find("SpawnedFromOnDestroy") ? "yes" : "NO") +
+            ", destroyed one gone: " + (scene().find("SpawnOnDestroy") ? "NO" : "yes"));
         int enters = 0, stays = 0, exits = 0;
         float impact = 0.0f;
         for (auto* c : crates) {
