@@ -26,6 +26,8 @@
 
 #include <memory>
 #include <mutex>
+#include <unordered_map>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -56,24 +58,8 @@ struct TerrainBiome {
     int coverageSeed = 61;
 };
 
-// Immutable sample grids (shared with worker threads).
-struct TerrainData {
-    glm::vec2 origin{0.0f}; // world x/z of sample (0, 0)
-    float cellSize = 2.0f;
-    int res = 0;            // samples per side
-    std::vector<float> heights;
-    std::vector<std::string> biomeNames;
-    std::vector<std::vector<float>> biomeWeights; // [biome][sample]
-
-    float height(float x, float z) const;
-    glm::vec3 normal(float x, float z) const;
-    float biomeWeight(int biome, float x, float z) const;
-    int biomeIndex(const std::string& name) const;
-    bool inBounds(float x, float z, float margin = 0.0f) const;
-};
-
-class TerrainStamp : public Component {
-public:
+// The shape of a TerrainStamp (plain data, so terrain snapshots can copy it).
+struct TerrainStampShape {
     enum class Mode { Flatten, Raise };
     Mode mode = Mode::Flatten;
     float radius = 10.0f;   // full effect inside
@@ -95,19 +81,13 @@ public:
     float biomeStrength = 1.0f;
 };
 
-class Terrain : public GameObject {
-public:
-    Terrain();
-    ~Terrain() override;
-    void start() override;
-    void update(float dt) override;
-    void onDestroy() override;
+class TerrainStamp : public Component, public TerrainStampShape {};
 
-    // ---- Shape ----
+// The terrain's shape parameters (plain data, copied into every TerrainData).
+struct TerrainShape {
     int seed = 1;
     float size = 640.0f;        // world extent (centred on the object), m
     float cellSize = 2.0f;      // m between height samples
-    int chunkCells = 32;        // cells per render chunk side
     float baseHeight = 2.5f;
     float noiseFrequency = 0.0035f;
     float noiseAmplitude = 16.0f;
@@ -118,7 +98,90 @@ public:
     float borderHeight = 55.0f;
     float borderNoise = 60.0f;
     float borderNoiseFrequency = 0.009f;
+};
+
+// An immutable snapshot of a terrain: its generator inputs plus a cache of
+// sample tiles generated on demand, so worlds of any size cost memory only
+// where something looks (rendering, physics, foliage, grass, audio).
+// All queries are thread-safe; keep the shared_ptr while using it.
+//
+// Samples lie on a grid of `res` x `res` points `cellSize` apart from
+// `origin`. Heights between samples follow the render mesh's triangles.
+class TerrainData {
+public:
+    static constexpr int kTileCells = 64; // cells per cache tile side (65 x 65 samples)
+
+    TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vector<TerrainBiome> biomes,
+                std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes);
+    TerrainData(const TerrainData&) = delete;
+    TerrainData& operator=(const TerrainData&) = delete;
+
+    glm::vec2 origin{0.0f}; // world x/z of sample (0, 0)
+    float cellSize = 2.0f;
+    int res = 0;            // samples per side
+    std::vector<std::string> biomeNames;
+
+    float height(float x, float z) const;
+    glm::vec3 normal(float x, float z) const;
+    float biomeWeight(int biome, float x, float z) const;
+    int biomeIndex(const std::string& name) const;
+    bool inBounds(float x, float z, float margin = 0.0f) const;
+    glm::vec2 boundsMax() const { return origin + glm::vec2(float(res - 1) * cellSize); }
+
+    // Grid samples (indices clamped to the grid).
+    float sampleHeight(int i, int j) const;
+    float sampleBiome(int biome, int i, int j) const;
+    glm::vec2 samplePosition(int i, int j) const { return origin + glm::vec2(float(i), float(j)) * cellSize; }
+
+    // The generator itself: height at any world point (exact at sample points).
+    float generateHeight(glm::vec2 p) const;
+
+    size_t cachedTiles() const;
+
+private:
+    struct Tile {
+        std::vector<float> heights;              // 65 x 65
+        std::vector<std::vector<float>> biomes;  // [biome][65 x 65]
+    };
+    struct Stamp {
+        glm::vec3 pos;
+        TerrainStampShape s;
+        int biome; // -1 = none
+    };
+    std::shared_ptr<const Tile> tile(int tx, int tz) const;
+    std::shared_ptr<const Tile> generateTile(int tx, int tz) const;
+    // Tile and local sample index holding grid sample (i, j) (clamped).
+    std::shared_ptr<const Tile> tileFor(int& i, int& j) const;
+
+    TerrainShape m_shape;
+    glm::vec3 m_centre;
+    std::vector<TerrainBiome> m_biomes;
+    std::vector<Stamp> m_stamps;
+    uint64_t m_uid; // tells thread-local lookup caches apart
+
+    mutable std::mutex m_mutex;
+    struct Cached {
+        std::shared_ptr<const Tile> tile;
+        uint64_t lastUse;
+    };
+    mutable std::unordered_map<int64_t, Cached> m_tiles;
+    mutable uint64_t m_clock = 0;
+    size_t m_maxTiles;
+};
+
+// Shape fields (seed, size, cellSize, noise, border...) come from TerrainShape.
+class Terrain : public GameObject, public TerrainShape {
+public:
+    Terrain();
+    ~Terrain() override;
+    void start() override;
+    void update(float dt) override;
+    void onDestroy() override;
+
+    // ---- Shape: see TerrainShape ----
+    int chunkCells = 32;        // cells per render chunk side
     float waterLevel = 0.0f;
+    float tileCacheMB = 96.0f;  // sample tiles kept in memory (regenerated on demand beyond that)
 
     // ---- Look ----
     glm::vec3 rockColor{0.50f, 0.46f, 0.41f};

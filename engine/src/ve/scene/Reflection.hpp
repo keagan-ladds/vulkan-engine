@@ -190,10 +190,11 @@ public:
         return push(std::move(fi));
     }
 
-    template <class E>
-    FieldRef enumField(const char* name, E T::*member, std::vector<std::string> names)
+    template <class E, class C>
+    FieldRef enumField(const char* name, E C::*member, std::vector<std::string> names)
     {
         static_assert(std::is_enum_v<E>, "enumField needs an enum member");
+        static_assert(std::is_base_of_v<C, T>, "enumField(): member of an unrelated class");
         FieldInfo fi;
         fi.name = name;
         fi.kind = FieldKind::Enum;

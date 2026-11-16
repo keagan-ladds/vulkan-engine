@@ -13,6 +13,7 @@
 #include "ve/world/Noise.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 
@@ -27,14 +28,206 @@ glm::vec3 vec3From(const Json& j, glm::vec3 fallback) { return detail::vecFromJs
 // TerrainData
 // -----------------------------------------------------------------------------
 
+namespace {
+
+std::atomic<uint64_t> g_terrainUid{1};
+
+constexpr int kTileSamples = TerrainData::kTileCells + 1; // per tile side (neighbours share their border)
+
+int64_t tileKey(int tx, int tz) { return (int64_t(tz) << 32) | int64_t(uint32_t(tx)); }
+
+} // namespace
+
+TerrainData::TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vector<TerrainBiome> biomes,
+                         std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes)
+    : m_shape(shape), m_centre(centre), m_biomes(std::move(biomes)), m_uid(g_terrainUid++)
+{
+    cellSize = std::max(shape.cellSize, 0.1f);
+    res = std::max(2, int(std::round(shape.size / cellSize)) + 1);
+    origin = glm::vec2(centre.x, centre.z) - glm::vec2(float(res - 1) * cellSize * 0.5f);
+    for (const auto& b : m_biomes) biomeNames.push_back(b.name);
+    if (biomeNames.empty()) biomeNames.push_back("Default");
+    for (auto& [pos, st] : stamps) {
+        const int biome = st.biome.empty() ? -1 : biomeIndex(st.biome);
+        m_stamps.push_back({pos, std::move(st), biome});
+    }
+    const size_t tileBytes = size_t(kTileSamples) * kTileSamples * sizeof(float) * (1 + biomeNames.size());
+    m_maxTiles = std::max<size_t>(16, cacheBytes / tileBytes);
+}
+
+float TerrainData::generateHeight(glm::vec2 p) const
+{
+    const TerrainShape& t = m_shape;
+    const auto seedU = static_cast<uint32_t>(t.seed);
+    float h = t.baseHeight + (noise::fbm(p * t.noiseFrequency, t.noiseOctaves, seedU) - 0.5f) * t.noiseAmplitude +
+              std::sin(p.x * t.waves.y) * std::cos(p.y * t.waves.z) * t.waves.x;
+    for (const Stamp& st : m_stamps) {
+        const TerrainStampShape& s = st.s;
+        const float dist = glm::length(p - glm::vec2(st.pos.x, st.pos.z));
+        const float w = 1.0f - smooth(s.radius, s.radius + std::max(s.falloff, 0.01f), dist);
+        if (w <= 0.0f) continue;
+        if (s.mode == TerrainStampShape::Mode::Flatten) {
+            float target = st.pos.y;
+            if (s.noiseAmplitude != 0.0f)
+                target += noise::fbm(p * s.noiseFrequency, 3, static_cast<uint32_t>(s.noiseSeed)) * s.noiseAmplitude;
+            h = glm::mix(h, target, w);
+        } else {
+            float add = std::pow(w, std::max(s.exponent, 0.01f)) * s.height;
+            if (s.ridgeAmount != 0.0f) {
+                const float ridges = 1.0f - std::abs(noise::fbm(p * s.ridgeFrequency, 3, static_cast<uint32_t>(s.ridgeSeed)) * 2.0f - 1.0f);
+                add += w * ridges * s.ridgeAmount;
+            }
+            h += add;
+        }
+    }
+    const float edgeDist = std::max(std::abs(p.x - m_centre.x), std::abs(p.y - m_centre.z));
+    const float edge = smooth(t.borderStart, t.borderEnd, edgeDist);
+    if (edge > 0.0f) h += edge * edge * (t.borderHeight + noise::fbm(p * t.borderNoiseFrequency, 3, seedU + 22u) * t.borderNoise);
+    return h + m_centre.y;
+}
+
+std::shared_ptr<const TerrainData::Tile> TerrainData::generateTile(int tx, int tz) const
+{
+    // Heights with a one-sample apron (for the slopes at the tile's border).
+    constexpr int N = kTileSamples, A = N + 2;
+    const int i0 = tx * kTileCells, j0 = tz * kTileCells;
+    auto clampIdx = [&](int v) { return std::clamp(v, 0, res - 1); };
+    std::vector<float> apron(size_t(A) * A);
+    for (int jj = 0; jj < A; ++jj)
+        for (int ii = 0; ii < A; ++ii)
+            apron[size_t(jj) * A + ii] = generateHeight(samplePosition(clampIdx(i0 + ii - 1), clampIdx(j0 + jj - 1)));
+    auto ah = [&](int ii, int jj) { return apron[size_t(jj + 1) * A + size_t(ii + 1)]; }; // ii, jj in -1..N
+
+    auto tile = std::make_shared<Tile>();
+    tile->heights.resize(size_t(N) * N);
+    const size_t nb = biomeNames.size();
+    tile->biomes.assign(nb, std::vector<float>(size_t(N) * N, 0.0f));
+    std::vector<float> w(nb);
+    const float e = cellSize;
+    for (int jj = 0; jj < N; ++jj) {
+        for (int ii = 0; ii < N; ++ii) {
+            const size_t idx = size_t(jj) * N + ii;
+            const float h = ah(ii, jj);
+            tile->heights[idx] = h;
+            if (m_biomes.size() <= 1) {
+                tile->biomes[0][idx] = 1.0f;
+                continue;
+            }
+            // Biome rules: height range, slope, noise coverage, then stamps paint over them.
+            const glm::vec2 p = samplePosition(clampIdx(i0 + ii), clampIdx(j0 + jj));
+            const glm::vec3 n = glm::normalize(glm::vec3(ah(ii - 1, jj) - ah(ii + 1, jj), 2.0f * e, ah(ii, jj - 1) - ah(ii, jj + 1)));
+            const float slope = 1.0f - n.y;
+            for (size_t b = 1; b < m_biomes.size(); ++b) {
+                const TerrainBiome& bio = m_biomes[b];
+                float r = 0.0f;
+                if (bio.coverage > 0.0f) {
+                    r = smooth(bio.minHeight - 0.5f, bio.minHeight + 0.5f, h) * (1.0f - smooth(bio.maxHeight - 0.5f, bio.maxHeight + 0.5f, h)) *
+                        (1.0f - smooth(bio.maxSlope - 0.05f, bio.maxSlope + 0.05f, slope));
+                    if (bio.coverageFrequency > 0.0f && bio.coverage < 1.0f) {
+                        const float nz = noise::fbm(p * bio.coverageFrequency, 3, static_cast<uint32_t>(bio.coverageSeed));
+                        r *= smooth(1.0f - bio.coverage - 0.05f, 1.0f - bio.coverage + 0.05f, nz);
+                    }
+                }
+                w[b] = r;
+            }
+            for (const Stamp& st : m_stamps) {
+                if (st.biome <= 0) continue;
+                const float dist = glm::length(p - glm::vec2(st.pos.x, st.pos.z));
+                const float k = st.s.biomeStrength * (1.0f - smooth(st.s.biomeRadius, st.s.biomeRadius + std::max(st.s.biomeFalloff, 0.01f), dist));
+                w[size_t(st.biome)] = std::max(w[size_t(st.biome)], k);
+            }
+            // Later biomes paint over earlier ones; biome 0 gets what's left.
+            float remaining = 1.0f;
+            for (size_t b = nb - 1; b >= 1; --b) {
+                const float v = std::clamp(w[b], 0.0f, 1.0f) * remaining;
+                tile->biomes[b][idx] = v;
+                remaining -= v;
+            }
+            tile->biomes[0][idx] = remaining;
+        }
+    }
+    return tile;
+}
+
+std::shared_ptr<const TerrainData::Tile> TerrainData::tile(int tx, int tz) const
+{
+    // Per-thread memo of the last few tiles: most queries hit the same one, without the lock.
+    struct Memo {
+        uint64_t uid = 0;
+        int64_t key = 0;
+        std::shared_ptr<const Tile> tile;
+    };
+    thread_local Memo memo[4];
+    thread_local unsigned next = 0;
+    const int64_t key = tileKey(tx, tz);
+    for (const Memo& m : memo)
+        if (m.uid == m_uid && m.key == key) return m.tile;
+
+    std::shared_ptr<const Tile> t;
+    {
+        std::lock_guard lock(m_mutex);
+        if (auto it = m_tiles.find(key); it != m_tiles.end()) {
+            it->second.lastUse = ++m_clock;
+            t = it->second.tile;
+        }
+    }
+    if (!t) {
+        t = generateTile(tx, tz); // outside the lock: other threads keep querying
+        std::lock_guard lock(m_mutex);
+        auto [it, fresh] = m_tiles.try_emplace(key, Cached{t, ++m_clock});
+        if (!fresh) t = it->second.tile; // another thread was faster
+        if (m_tiles.size() > m_maxTiles) {
+            // Evict the least recently used tile (holders keep theirs alive).
+            auto oldest = m_tiles.begin();
+            for (auto i = m_tiles.begin(); i != m_tiles.end(); ++i)
+                if (i->second.lastUse < oldest->second.lastUse) oldest = i;
+            if (oldest->first != key) m_tiles.erase(oldest);
+        }
+    }
+    memo[next] = {m_uid, key, t};
+    next = (next + 1) % 4;
+    return t;
+}
+
+std::shared_ptr<const TerrainData::Tile> TerrainData::tileFor(int& i, int& j) const
+{
+    // The tile whose 65 x 65 samples contain (i, j) and (i + 1, j + 1) for i < res - 1.
+    i = std::clamp(i, 0, res - 1);
+    j = std::clamp(j, 0, res - 1);
+    const int tx = std::min(i, res - 2) / kTileCells, tz = std::min(j, res - 2) / kTileCells;
+    i -= tx * kTileCells;
+    j -= tz * kTileCells;
+    return tile(tx, tz);
+}
+
+size_t TerrainData::cachedTiles() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_tiles.size();
+}
+
+float TerrainData::sampleHeight(int i, int j) const
+{
+    const auto t = tileFor(i, j);
+    return t->heights[size_t(j) * kTileSamples + size_t(i)];
+}
+
+float TerrainData::sampleBiome(int biome, int i, int j) const
+{
+    if (biome < 0 || biome >= int(biomeNames.size())) return 0.0f;
+    const auto t = tileFor(i, j);
+    return t->biomes[size_t(biome)][size_t(j) * kTileSamples + size_t(i)];
+}
+
 float TerrainData::height(float x, float z) const
 {
     if (res < 2) return 0.0f;
     const float fx = std::clamp((x - origin.x) / cellSize, 0.0f, float(res - 1) - 0.001f);
     const float fz = std::clamp((z - origin.y) / cellSize, 0.0f, float(res - 1) - 0.001f);
-    const int ix = static_cast<int>(fx), iz = static_cast<int>(fz);
+    int ix = static_cast<int>(fx), iz = static_cast<int>(fz);
     const float tx = fx - float(ix), tz = fz - float(iz);
-    auto at = [&](int i, int j) { return heights[size_t(j) * size_t(res) + size_t(i)]; };
+    const auto t = tileFor(ix, iz); // the cell's four samples are all in this tile
+    auto at = [&](int i, int j) { return t->heights[size_t(j) * kTileSamples + size_t(i)]; };
     // Same triangulation as the mesh (split along the i,j+1 -> i+1,j diagonal).
     if (tx + tz < 1.0f) return at(ix, iz) + (at(ix + 1, iz) - at(ix, iz)) * tx + (at(ix, iz + 1) - at(ix, iz)) * tz;
     return at(ix + 1, iz + 1) + (at(ix, iz + 1) - at(ix + 1, iz + 1)) * (1.0f - tx) +
@@ -51,13 +244,14 @@ glm::vec3 TerrainData::normal(float x, float z) const
 
 float TerrainData::biomeWeight(int biome, float x, float z) const
 {
-    if (biome < 0 || biome >= int(biomeWeights.size()) || res < 2) return 0.0f;
+    if (biome < 0 || biome >= int(biomeNames.size()) || res < 2) return 0.0f;
     const float fx = std::clamp((x - origin.x) / cellSize, 0.0f, float(res - 1) - 0.001f);
     const float fz = std::clamp((z - origin.y) / cellSize, 0.0f, float(res - 1) - 0.001f);
-    const int ix = static_cast<int>(fx), iz = static_cast<int>(fz);
+    int ix = static_cast<int>(fx), iz = static_cast<int>(fz);
     const float tx = fx - float(ix), tz = fz - float(iz);
-    const auto& w = biomeWeights[size_t(biome)];
-    auto at = [&](int i, int j) { return w[size_t(j) * size_t(res) + size_t(i)]; };
+    const auto t = tileFor(ix, iz);
+    const auto& w = t->biomes[size_t(biome)];
+    auto at = [&](int i, int j) { return w[size_t(j) * kTileSamples + size_t(i)]; };
     return glm::mix(glm::mix(at(ix, iz), at(ix + 1, iz), tx), glm::mix(at(ix, iz + 1), at(ix + 1, iz + 1), tx), tz);
 }
 
@@ -155,103 +349,16 @@ Json Terrain::editState() const
 
 std::shared_ptr<TerrainData> Terrain::generate() const
 {
-    const auto t0 = std::chrono::steady_clock::now();
-    auto d = std::make_shared<TerrainData>();
-    const glm::vec3 centre = transform().position();
-    d->cellSize = std::max(cellSize, 0.1f);
-    d->res = std::max(2, int(std::round(size / d->cellSize)) + 1);
-    d->origin = glm::vec2(centre.x, centre.z) - glm::vec2(float(d->res - 1) * d->cellSize * 0.5f);
-    const int res = d->res;
-    const auto seedU = static_cast<uint32_t>(seed);
-
-    struct Stamp {
-        glm::vec3 pos;
-        const TerrainStamp* s;
-        int biome;
-    };
-    std::vector<Stamp> stamps;
+    // A snapshot of the inputs: samples are generated lazily, tile by tile.
+    std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps;
     scene().forEach<TerrainStamp>([&](TerrainStamp& s) {
-        if (s.isActive()) stamps.push_back({s.transform().position(), &s, -1});
+        if (s.isActive()) stamps.push_back({s.transform().position(), s});
     });
-    for (const auto& b : biomes) d->biomeNames.push_back(b.name);
-    for (auto& st : stamps) st.biome = st.s->biome.empty() ? -1 : d->biomeIndex(st.s->biome);
-
-    // ---- Heights ----
-    d->heights.resize(size_t(res) * size_t(res));
-    for (int j = 0; j < res; ++j) {
-        for (int i = 0; i < res; ++i) {
-            const glm::vec2 p = d->origin + glm::vec2(float(i), float(j)) * d->cellSize;
-            float h = baseHeight + (noise::fbm(p * noiseFrequency, noiseOctaves, seedU) - 0.5f) * noiseAmplitude +
-                      std::sin(p.x * waves.y) * std::cos(p.y * waves.z) * waves.x;
-            for (const Stamp& st : stamps) {
-                const TerrainStamp& s = *st.s;
-                const float dist = glm::length(p - glm::vec2(st.pos.x, st.pos.z));
-                const float w = 1.0f - smooth(s.radius, s.radius + std::max(s.falloff, 0.01f), dist);
-                if (w <= 0.0f) continue;
-                if (s.mode == TerrainStamp::Mode::Flatten) {
-                    float target = st.pos.y;
-                    if (s.noiseAmplitude != 0.0f)
-                        target += noise::fbm(p * s.noiseFrequency, 3, static_cast<uint32_t>(s.noiseSeed)) * s.noiseAmplitude;
-                    h = glm::mix(h, target, w);
-                } else {
-                    float add = std::pow(w, std::max(s.exponent, 0.01f)) * s.height;
-                    if (s.ridgeAmount != 0.0f) {
-                        const float ridges = 1.0f - std::abs(noise::fbm(p * s.ridgeFrequency, 3, static_cast<uint32_t>(s.ridgeSeed)) * 2.0f - 1.0f);
-                        add += w * ridges * s.ridgeAmount;
-                    }
-                    h += add;
-                }
-            }
-            const float edgeDist = std::max(std::abs(p.x - centre.x), std::abs(p.y - centre.z));
-            const float edge = smooth(borderStart, borderEnd, edgeDist);
-            if (edge > 0.0f)
-                h += edge * edge * (borderHeight + noise::fbm(p * borderNoiseFrequency, 3, seedU + 22u) * borderNoise);
-            d->heights[size_t(j) * size_t(res) + size_t(i)] = h + centre.y;
-        }
-    }
-
-    // ---- Biome weights ----
-    const size_t nb = std::max<size_t>(biomes.size(), 1);
-    d->biomeWeights.assign(nb, std::vector<float>(size_t(res) * size_t(res), 0.0f));
-    if (d->biomeNames.empty()) d->biomeNames.push_back("Default");
-    std::vector<float> w(nb);
-    for (int j = 0; j < res; ++j) {
-        for (int i = 0; i < res; ++i) {
-            const glm::vec2 p = d->origin + glm::vec2(float(i), float(j)) * d->cellSize;
-            const size_t idx = size_t(j) * size_t(res) + size_t(i);
-            const float h = d->heights[idx];
-            const float slope = 1.0f - d->normal(p.x, p.y).y;
-            for (size_t b = 1; b < biomes.size(); ++b) {
-                const TerrainBiome& bio = biomes[b];
-                float r = 0.0f;
-                if (bio.coverage > 0.0f) {
-                    r = smooth(bio.minHeight - 0.5f, bio.minHeight + 0.5f, h) * (1.0f - smooth(bio.maxHeight - 0.5f, bio.maxHeight + 0.5f, h)) *
-                        (1.0f - smooth(bio.maxSlope - 0.05f, bio.maxSlope + 0.05f, slope));
-                    if (bio.coverageFrequency > 0.0f && bio.coverage < 1.0f) {
-                        const float n = noise::fbm(p * bio.coverageFrequency, 3, static_cast<uint32_t>(bio.coverageSeed));
-                        r *= smooth(1.0f - bio.coverage - 0.05f, 1.0f - bio.coverage + 0.05f, n);
-                    }
-                }
-                w[b] = r;
-            }
-            for (const Stamp& st : stamps) {
-                if (st.biome <= 0) continue;
-                const float dist = glm::length(p - glm::vec2(st.pos.x, st.pos.z));
-                const float s = st.s->biomeStrength * (1.0f - smooth(st.s->biomeRadius, st.s->biomeRadius + std::max(st.s->biomeFalloff, 0.01f), dist));
-                w[size_t(st.biome)] = std::max(w[size_t(st.biome)], s);
-            }
-            // Later biomes paint over earlier ones; biome 0 gets what's left.
-            float remaining = 1.0f;
-            for (size_t b = nb - 1; b >= 1; --b) {
-                const float v = std::clamp(w[b], 0.0f, 1.0f) * remaining;
-                d->biomeWeights[b][idx] = v;
-                remaining -= v;
-            }
-            d->biomeWeights[0][idx] = remaining;
-        }
-    }
-    log::info("Terrain: {}x{} samples, {} biomes, {} stamps in {:.0f} ms", res, res, nb, stamps.size(),
-              std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    const size_t stampCount = stamps.size();
+    auto d = std::make_shared<TerrainData>(*this, transform().position(), biomes, std::move(stamps),
+                                           size_t(std::max(tileCacheMB, 1.0f) * 1024.0f * 1024.0f));
+    log::info("Terrain: {:.0f} m, {}x{} samples in tiles of {} cells (generated on demand), {} biomes, {} stamps",
+              float(d->res - 1) * d->cellSize, d->res, d->res, TerrainData::kTileCells, d->biomeNames.size(), stampCount);
     return d;
 }
 
@@ -323,10 +430,10 @@ void Terrain::buildVisuals()
     const int res = d->res;
     const glm::vec3 centre = transform().position();
     std::vector<glm::vec3> biomeColorScratch(biomes.size());
-    auto colorAt = [&](const glm::vec2& p, float h, const glm::vec3& n, size_t idx) {
+    auto colorAt = [&](const glm::vec2& p, float h, const glm::vec3& n, int gi, int gj) {
         glm::vec3 c(0.0f);
         for (size_t b = 0; b < biomes.size(); ++b) {
-            const float w = d->biomeWeights[b][idx];
+            const float w = d->sampleBiome(int(b), gi, gj);
             if (w <= 0.0f) continue;
             const TerrainBiome& bio = biomes[b];
             glm::vec3 bc = bio.color;
@@ -361,13 +468,12 @@ void Terrain::buildVisuals()
             for (int j = 0; j < nj; ++j) {
                 for (int i = 0; i < ni; ++i) {
                     const int gi = i0 + i, gj = j0 + j;
-                    const size_t idx = size_t(gj) * size_t(res) + size_t(gi);
                     const glm::vec2 p = d->origin + glm::vec2(float(gi), float(gj)) * d->cellSize;
                     Vertex v;
-                    v.position = {p.x, d->heights[idx], p.y};
+                    v.position = {p.x, d->sampleHeight(gi, gj), p.y};
                     v.normal = d->normal(p.x, p.y);
                     v.uv = p;
-                    v.color = colorAt(p, v.position.y, v.normal, idx);
+                    v.color = colorAt(p, v.position.y, v.normal, gi, gj);
                     md.vertices.push_back(v);
                 }
             }
@@ -388,8 +494,9 @@ void Terrain::buildVisuals()
 
     // Physics: the same samples as a heightfield (relative to this object's position).
     if (m_collider) removeComponent(m_collider);
-    std::vector<float> rel(d->heights.size());
-    for (size_t i = 0; i < rel.size(); ++i) rel[i] = d->heights[i] - centre.y;
+    std::vector<float> rel(size_t(res) * size_t(res));
+    for (int j = 0; j < res; ++j)
+        for (int i = 0; i < res; ++i) rel[size_t(j) * size_t(res) + size_t(i)] = d->sampleHeight(i, j) - centre.y;
     auto& rb = addComponent<Rigidbody>(Collider::heightfield(rel, static_cast<uint32_t>(res), d->cellSize,
                                                              {d->origin.x - centre.x, 0.0f, d->origin.y - centre.z}),
                                        BodyType::Static);
@@ -436,6 +543,66 @@ void Terrain::setBiomesJson(const Json& j)
         biomes.push_back(b);
     }
     if (biomes.empty()) biomes.push_back(TerrainBiome{});
+}
+
+// -----------------------------------------------------------------------------
+// Reflection
+// -----------------------------------------------------------------------------
+
+void registerTerrainTypes(TypeRegistry& r)
+{
+    r.add<Terrain>("Terrain", [](TypeBuilder<Terrain>& t) {
+        t.category("World");
+        t.field("seed", &Terrain::seed);
+        t.field("size", &Terrain::size).range(16.0f, 16384.0f).speed(1.0f);
+        t.field("cellSize", &Terrain::cellSize).range(0.25f, 16.0f).speed(0.05f);
+        t.field("chunkCells", &Terrain::chunkCells).range(4.0f, 128.0f);
+        t.field("tileCacheMB", &Terrain::tileCacheMB).range(1.0f, 4096.0f).tooltip("sample tiles kept in memory");
+        t.field("baseHeight", &Terrain::baseHeight);
+        t.field("noiseFrequency", &Terrain::noiseFrequency).range(0.0f, 0.1f).speed(0.0001f);
+        t.field("noiseAmplitude", &Terrain::noiseAmplitude).range(0.0f, 500.0f);
+        t.field("noiseOctaves", &Terrain::noiseOctaves).range(1.0f, 8.0f);
+        t.field("waves", &Terrain::waves).tooltip("amplitude, x frequency, z frequency");
+        t.field("borderStart", &Terrain::borderStart).range(0.0f, 10000.0f);
+        t.field("borderEnd", &Terrain::borderEnd).range(0.0f, 10000.0f);
+        t.field("borderHeight", &Terrain::borderHeight).range(0.0f, 1000.0f);
+        t.field("borderNoise", &Terrain::borderNoise).range(0.0f, 1000.0f);
+        t.field("borderNoiseFrequency", &Terrain::borderNoiseFrequency).range(0.0f, 0.1f).speed(0.0001f);
+        t.field("waterLevel", &Terrain::waterLevel);
+        t.field("rockColor", &Terrain::rockColor).color();
+        t.field("mudColor", &Terrain::mudColor).color();
+        t.field("steepStart", &Terrain::steepStart).range(0.0f, 1.0f).speed(0.005f);
+        t.field("steepEnd", &Terrain::steepEnd).range(0.0f, 1.0f).speed(0.005f);
+        t.field("borderRockStart", &Terrain::borderRockStart);
+        t.field("borderRockEnd", &Terrain::borderRockEnd);
+        t.field("borderRock", &Terrain::borderRock).range(0.0f, 1.0f).speed(0.01f);
+        t.field("brightnessVariation", &Terrain::brightnessVariation).range(0.0f, 1.0f).speed(0.01f);
+        t.field("detailTexture", &Terrain::detailTexture).assets(".png .jpg .jpeg .tga");
+        t.field("detailScales", &Terrain::detailScales);
+        t.field("wetnessSlot", &Terrain::wetnessSlot).range(-1.0f, 7.0f);
+        t.property("biomes", FieldKind::Json, [](const Terrain& x) { return x.biomesJson(); },
+                   [](Terrain& x, const Json& j) { x.setBiomesJson(j); })
+            .tooltip("[{name, color, color2, patchColor, patchFrequency, minHeight, maxHeight, maxSlope, coverage, ...}]; "
+                     "biome 0 fills the rest, later biomes paint over earlier ones");
+    });
+    r.add<TerrainStamp>("TerrainStamp", [](TypeBuilder<TerrainStamp>& t) {
+        t.category("World");
+        t.enumField("mode", &TerrainStamp::mode, {"Flatten (to this height)", "Raise"});
+        t.field("radius", &TerrainStamp::radius).range(0.0f, 10000.0f);
+        t.field("falloff", &TerrainStamp::falloff).range(0.0f, 10000.0f);
+        t.field("noiseAmplitude", &TerrainStamp::noiseAmplitude).tooltip("Flatten: noisy pools / bumps added to the target height");
+        t.field("noiseFrequency", &TerrainStamp::noiseFrequency).range(0.0f, 1.0f).speed(0.001f);
+        t.field("noiseSeed", &TerrainStamp::noiseSeed);
+        t.field("height", &TerrainStamp::height).tooltip("Raise: peak height (negative = pit)");
+        t.field("exponent", &TerrainStamp::exponent).range(0.1f, 8.0f).speed(0.01f);
+        t.field("ridgeAmount", &TerrainStamp::ridgeAmount);
+        t.field("ridgeFrequency", &TerrainStamp::ridgeFrequency).range(0.0f, 1.0f).speed(0.001f);
+        t.field("ridgeSeed", &TerrainStamp::ridgeSeed);
+        t.field("biome", &TerrainStamp::biome).tooltip("Paint this biome (by name) around the stamp");
+        t.field("biomeRadius", &TerrainStamp::biomeRadius).range(0.0f, 10000.0f);
+        t.field("biomeFalloff", &TerrainStamp::biomeFalloff).range(0.0f, 10000.0f);
+        t.field("biomeStrength", &TerrainStamp::biomeStrength).range(0.0f, 1.0f).speed(0.01f);
+    });
 }
 
 } // namespace ve
