@@ -328,6 +328,10 @@ No feature or quality setting was removed; shader changes give the same image
   bodies don't rewrite transforms, transforms don't re-walk dirty subtrees,
   grass material set once per frame, hot-reload stats each file once per poll,
   primitives of the same shape share a mesh
+- [x] Consolidation: `ve::Behaviour` declares the hooks `GameObject` and
+  `Component` share; `FoliageRules` holds the fields `FoliageType` and
+  `FoliageLayer` both declared; `ctx.fullscreen(...)` and `graph.sampled(id)`
+  replace repeated pass boilerplate
 - [x] Simplification: `ve/core/Strings.hpp` + `log::warnOnce` (5 copies),
   `vk::imageBarrier`/`memoryBarrier`/`recordMipChain` (3 copies),
   `vfx::ScreenSpaceTracePass` (SSGI + SSR shared their whole pass), one
@@ -335,7 +339,22 @@ No feature or quality setting was removed; shader changes give the same image
   `ve/world/Noise.hpp`)
 - [x] Tooling: `VE_BENCH`, headless testing on GPU-less machines (lavapipe +
   Xvfb), see 04-agent-handoff.md §4
-- **Result:** see the before/after table below (Release, 1600×900, lavapipe).
+- **Result** (Release, 1600×900, Mesa lavapipe on 4 CPU cores, 3 alternating
+  runs each; lavapipe weighs GPU work very differently from real GPUs, so
+  re-measure the GPU side on hardware):
+
+  | | camp at dusk | vista |
+  |---|---|---|
+  | Main thread (engine CPU) | 2.00 → 1.77 ms (−11 %) | 1.53 → 1.51 ms |
+  | GPU total | −5.5 % | −4.2 % |
+  | Shadows | −7.6 % | −6.3 % |
+  | Volumetric fog | −7.0 % | −10.7 % |
+  | SSGI | −5.1 % | −4.2 % |
+  | Instance culling | −17.5 % | −3.8 % |
+  | Atmosphere | +11.5 % | +9.7 % |
+
+  On lavapipe the cloud early-outs made Atmosphere slower; whether to keep
+  them depends on real-GPU numbers.
 - Not done (measured or judged not worth it yet): depth prepass for foliage
   overdraw (bigger change; measure on real GPUs first), caching distant
   shadow cascades (would lag a frame), subgroup-aggregated cull atomics, a
