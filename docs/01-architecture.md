@@ -91,7 +91,8 @@ loop:
   parent/children, cached world matrix), an active flag, and a list of
   components. It is *subclassable*: override the lifecycle hooks to write
   behaviour (`class Player : public ve::GameObject`).
-- **`Component`** is the same set of hooks, attached with
+- **`Component`** is the same set of hooks (both derive from `ve::Behaviour`,
+  which declares them once), attached with
   `go.addComponent<T>(args...)`. Engine components:
   `Camera`, `MeshRenderer`, `DirectionalLight`, `PointLight`, `AudioSource`
   (plus `vfx::ParticleEmitter` in effects).

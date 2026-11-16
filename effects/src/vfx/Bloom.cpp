@@ -66,11 +66,7 @@ void BloomPass::execute(ve::RenderContext& ctx)
     ve::TextureId src = renderer().sceneColor();
     for (int i = 0; i < m_levels; ++i) {
         const ve::TextureId dst = m_chain[i];
-        ctx.beginRendering({{dst}});
-        ctx.bindPipeline(m_down);
-        ctx.push(DownPush{texel(src), g.get(src).sampledIndex, i == 0 ? 1u : 0u, threshold, knee});
-        ctx.drawFullscreen();
-        ctx.endRendering();
+        ctx.fullscreen({{dst}}, m_down, DownPush{texel(src), g.sampled(src), i == 0 ? 1u : 0u, threshold, knee});
         g.transition(ctx.cmd, dst, ve::Access::Sampled);
         src = dst;
     }
@@ -78,20 +74,12 @@ void BloomPass::execute(ve::RenderContext& ctx)
     for (int i = m_levels - 1; i > 0; --i) {
         const ve::TextureId dst = m_chain[i - 1];
         g.transition(ctx.cmd, dst, ve::Access::ColorAttachment);
-        ctx.beginRendering({{dst}});
-        ctx.bindPipeline(m_up);
-        ctx.push(UpPush{texel(m_chain[i]), g.get(m_chain[i]).sampledIndex, 1.0f, radius});
-        ctx.drawFullscreen();
-        ctx.endRendering();
+        ctx.fullscreen({{dst}}, m_up, UpPush{texel(m_chain[i]), g.sampled(m_chain[i]), 1.0f, radius});
         g.transition(ctx.cmd, dst, ve::Access::Sampled);
     }
     // Composite onto the scene.
     g.transition(ctx.cmd, renderer().sceneColor(), ve::Access::ColorAttachment);
-    ctx.beginRendering({{renderer().sceneColor()}});
-    ctx.bindPipeline(m_composite);
-    ctx.push(UpPush{texel(m_chain[0]), g.get(m_chain[0]).sampledIndex, intensity, radius});
-    ctx.drawFullscreen();
-    ctx.endRendering();
+    ctx.fullscreen({{renderer().sceneColor()}}, m_composite, UpPush{texel(m_chain[0]), g.sampled(m_chain[0]), intensity, radius});
 }
 
 void BloomPass::onGui()

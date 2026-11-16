@@ -86,8 +86,12 @@ public:
 
 // One foliage layer, on a child of a Foliage object. Its object's name is the
 // layer name (used by `avoid`).
-class FoliageType : public Component {
+// The placement / streaming fields (spacing, scale, viewDistance...) come
+// from FoliageRules, the same struct FoliageLayer uses.
+class FoliageType : public Component, public FoliageRules {
 public:
+    FoliageType();
+
     enum class Collision { Auto, None, Capsule, Cylinder, Sphere, Box, ConvexHull };
     enum class LodMode { ScreenSize, Distance };
 
@@ -107,26 +111,7 @@ public:
     // ---- Where ----
     std::string biomes;          // "Savannah:1, Swamp:0.2" (empty = everywhere)
     float biomeThreshold = 0.0f; // 0 = density is a probability; >0 = all-or-nothing at this density
-    float spacing = 6.0f;
-    float jitter = 0.8f;
-    float probability = 1.0f;
-    float minHeight = -1e6f, maxHeight = 1e6f;
-    float maxSlope = 1.0f;
-    float clusterFrequency = 0.0f;
-    float clusterCoverage = 0.5f;
     std::string avoid;           // "Acacias:2.5, Rocks:1" (earlier layers of the same Foliage)
-
-    // ---- How ----
-    float minScale = 1.0f, maxScale = 1.0f;
-    float tint = 0.1f;
-    float alignToNormal = 0.0f;
-    float sink = 0.0f;
-    float viewDistance = 500.0f;
-    float shadowDistance = 1e6f;
-    bool castShadows = true;
-    float colliderDistance = 60.0f;
-    int maxInstances = 0;
-    int seed = 0;
 
     // Meshes for the current settings (cached while mesh / LOD settings stay the same).
     std::shared_ptr<const FoliageMeshes> meshes(Renderer& renderer);

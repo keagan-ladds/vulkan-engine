@@ -144,9 +144,11 @@ public:
         return *this;
     }
 
-    template <class M>
-    FieldRef field(const char* name, M T::*member)
+    // `member` may belong to T or to a base of T (shared settings structs).
+    template <class M, class C>
+    FieldRef field(const char* name, M C::*member)
     {
+        static_assert(std::is_base_of_v<C, T>, "field(): member of an unrelated class");
         FieldInfo fi;
         fi.name = name;
         auto addr = [member](void* o) -> void* { return &(static_cast<T*>(o)->*member); };

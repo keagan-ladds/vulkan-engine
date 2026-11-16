@@ -288,6 +288,7 @@ private:
         FullscreenPipelineDesc fullscreen;
         std::string computeShader;
     };
+    PipelineHandle addRawPipeline(RawPipeline raw); // reuses a free handle id
     std::vector<RawPipeline> m_rawPipelines; // PipelineHandle id - 1
     std::vector<uint32_t> m_freeRawPipelines;
     std::vector<std::weak_ptr<Shader>> m_shaders; // for hot-reload

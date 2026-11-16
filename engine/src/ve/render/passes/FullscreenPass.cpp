@@ -64,7 +64,7 @@ void FullscreenPass::execute(RenderContext& ctx)
 
 uint32_t FullscreenPass::inputIndex(size_t i) const
 {
-    return graph().get(m_inputs[i]).sampledIndex;
+    return graph().sampled(m_inputs[i]);
 }
 
 } // namespace ve

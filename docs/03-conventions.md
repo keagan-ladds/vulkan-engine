@@ -173,6 +173,16 @@ push constants, and draw. You can reuse `renderer.drawItems(ctx, indices, PassKi
 to draw scene meshes. If you need to switch a texture from writing to
 sampling inside one pass, call `graph().transition(ctx.cmd, tex, Access::Sampled)`.
 
+Multi-step full-screen passes (downsample chains, trace + apply) don't need
+`FullscreenPass`: create pipelines with `renderer.createFullscreenPipeline(...)`
+and record each step as one call, with `graph().sampled(tex)` giving the
+bindless index a shader samples:
+```cpp
+ctx.fullscreen({{m_half}}, m_trace, TracePush{graph().sampled(r.sceneDepth())});
+graph().transition(ctx.cmd, m_half, ve::Access::Sampled);
+ctx.fullscreen({{r.sceneColor()}}, m_apply, ApplyPush{graph().sampled(m_half)});
+```
+
 ### Global shader parameters
 
 `renderer.setGlobalParam(i, vec4)` appears as `frame.globalParams[i]` in every

@@ -234,16 +234,12 @@ void AtmospherePass::execute(ve::RenderContext& ctx)
 {
     ve::Renderer& r = renderer();
     ve::RenderGraph& g = graph();
-    const uint32_t lutIndex = g.get(m_lut).sampledIndex;
+    const uint32_t lutIndex = g.sampled(m_lut);
     const float night = glm::smoothstep(0.05f, -0.15f, m_sunDir.y);
 
     // 1. Sky-view LUT.
-    ctx.beginRendering({{m_lut}});
-    ctx.bindPipeline(m_lutPipeline);
-    ctx.push(LutPush{glm::vec4(m_sunDir, sunIlluminance * (1.0f - 0.5f * overcast)),
+    ctx.fullscreen({{m_lut}}, m_lutPipeline, LutPush{glm::vec4(m_sunDir, sunIlluminance * (1.0f - 0.5f * overcast)),
                      glm::vec4(m_cameraHeight, haze, mieAnisotropy, multipleScattering), glm::vec4(groundAlbedo, overcast)});
-    ctx.drawFullscreen();
-    ctx.endRendering();
     g.transition(ctx.cmd, m_lut, ve::Access::Sampled);
 
     // 2. Clouds at reduced resolution.
@@ -260,7 +256,7 @@ void AtmospherePass::execute(ve::RenderContext& ctx)
         p.ambient = glm::vec4(m_ambientSky + nightAmbient * night * 2.0f, cloudForwardScattering);
         p.wind = m_windOffset;
         p.noiseTex = m_noise->index();
-        p.depthTex = g.get(r.sceneDepth()).sampledIndex;
+        p.depthTex = g.sampled(r.sceneDepth());
         p.skyLut = lutIndex;
         ctx.bindPipeline(m_cloudPipeline);
         ctx.push(p);
@@ -283,7 +279,7 @@ void AtmospherePass::execute(ve::RenderContext& ctx)
     }
     p.night = glm::vec4(starBrightness * night, night, 0, 0);
     p.skyLut = lutIndex;
-    p.clouds = g.get(m_clouds).sampledIndex;
+    p.clouds = g.sampled(m_clouds);
     ctx.bindPipeline(m_skyPipeline);
     ctx.push(p);
     ctx.drawFullscreen();

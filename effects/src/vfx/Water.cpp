@@ -30,7 +30,7 @@ void Water::rebuild()
         // The atmosphere's sky LUT is a render-graph texture; it's in the bindless
         // table like any other, so the material can just reference its index.
         const ve::TextureId lut = r.graph().texture("SkyViewLUT");
-        m_material->setTextureIndex(0, lut != ve::kNoTexture ? r.graph().get(lut).sampledIndex : ve::kInvalidIndex);
+        m_material->setTextureIndex(0, lut != ve::kNoTexture ? r.graph().sampled(lut) : ve::kInvalidIndex);
     }
     m_material->setVector(0, deepColor);
     m_material->setVector(1, shallowColor);

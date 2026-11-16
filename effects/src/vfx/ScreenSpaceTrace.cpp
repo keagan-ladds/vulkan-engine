@@ -39,8 +39,8 @@ void ScreenSpaceTracePass::execute(ve::RenderContext& ctx)
 {
     ve::Renderer& r = renderer();
     ve::RenderGraph& g = graph();
-    const Inputs in{g.get(r.sceneDepth()).sampledIndex, g.get(r.sceneNormal()).sampledIndex,
-                    g.get(r.sceneColor()).sampledIndex};
+    const Inputs in{g.sampled(r.sceneDepth()), g.sampled(r.sceneNormal()),
+                    g.sampled(r.sceneColor())};
 
     // 1. Trace (the shaders write every pixel, so no clear).
     ctx.beginRendering({{m_buffer}});
@@ -58,7 +58,7 @@ void ScreenSpaceTracePass::execute(ve::RenderContext& ctx)
     ctx.beginRendering({{r.sceneColor()}});
     ctx.bindPipeline(m_apply);
     const VkExtent2D e = g.get(m_buffer).extent;
-    pushApply(ctx, in, g.get(result).sampledIndex, {float(e.width), float(e.height)});
+    pushApply(ctx, in, g.sampled(result), {float(e.width), float(e.height)});
     ctx.drawFullscreen();
     ctx.endRendering();
 }

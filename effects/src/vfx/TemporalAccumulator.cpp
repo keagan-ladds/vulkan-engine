@@ -57,15 +57,11 @@ ve::TextureId TemporalAccumulator::resolve(ve::RenderContext& ctx, ve::TextureId
     p.blend = blend;
     p.clipGamma = clipGamma;
     p.historyValid = m_valid ? 1u : 0u;
-    p.current = g.get(current).sampledIndex;
-    p.history = g.get(m_history[w ^ 1u]).sampledIndex;
-    p.historyDepth = g.get(m_depth[w ^ 1u]).sampledIndex;
-    p.depthTex = g.get(m_renderer->sceneDepth()).sampledIndex;
-    ctx.beginRendering({{m_history[w]}, {m_depth[w]}});
-    ctx.bindPipeline(m_pipeline);
-    ctx.push(p);
-    ctx.drawFullscreen();
-    ctx.endRendering();
+    p.current = g.sampled(current);
+    p.history = g.sampled(m_history[w ^ 1u]);
+    p.historyDepth = g.sampled(m_depth[w ^ 1u]);
+    p.depthTex = g.sampled(m_renderer->sceneDepth());
+    ctx.fullscreen({{m_history[w]}, {m_depth[w]}}, m_pipeline, p);
     // Both become next frame's (sampled) history.
     g.transition(ctx.cmd, m_history[w], ve::Access::Sampled);
     g.transition(ctx.cmd, m_depth[w], ve::Access::Sampled);

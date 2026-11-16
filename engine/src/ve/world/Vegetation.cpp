@@ -144,6 +144,16 @@ float biomeDensity(const std::vector<std::pair<int, float>>& weights, const Terr
 // FoliageType
 // -----------------------------------------------------------------------------
 
+FoliageType::FoliageType()
+{
+    // Scene-file defaults (they differ from FoliageLayer's code defaults:
+    // finite bounds keep the JSON tidy, and props are usually sparser).
+    spacing = 6.0f;
+    minHeight = -1e6f;
+    maxHeight = 1e6f;
+    shadowDistance = 1e6f;
+}
+
 std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
 {
     std::ostringstream key;
@@ -363,25 +373,10 @@ void Foliage::rebuild()
         l.variants = meshes->variants;
         l.colliders = meshes->colliders;
         l.colliderUserValue = meshes->colliderUserValue;
-        l.spacing = std::max(t->spacing, 0.1f);
-        l.jitter = t->jitter;
-        l.probability = t->probability;
-        l.minHeight = t->minHeight;
-        l.maxHeight = t->maxHeight;
-        l.maxSlope = t->maxSlope;
-        l.clusterFrequency = t->clusterFrequency;
-        l.clusterCoverage = t->clusterCoverage;
-        l.minScale = t->minScale;
-        l.maxScale = std::max(t->maxScale, t->minScale);
-        l.tint = t->tint;
-        l.alignToNormal = t->alignToNormal;
-        l.sink = t->sink;
-        l.viewDistance = t->viewDistance;
-        l.shadowDistance = t->shadowDistance;
-        l.castShadows = t->castShadows;
-        l.colliderDistance = t->colliderDistance;
-        l.maxInstances = uint32_t(std::max(t->maxInstances, 0));
-        l.seed = t->seed != 0 ? uint32_t(t->seed) : uint32_t(std::hash<std::string>{}(layerName));
+        static_cast<FoliageRules&>(l) = *t; // the shared placement / streaming fields
+        l.spacing = std::max(l.spacing, 0.1f);
+        l.maxScale = std::max(l.maxScale, l.minScale);
+        if (l.seed == 0) l.seed = uint32_t(std::hash<std::string>{}(layerName));
         auto weights = parseBiomeWeights(t->biomes, *td, "FoliageType '" + layerName + "'");
         if (!weights.empty() || t->biomeThreshold > 0.0f) {
             const float threshold = t->biomeThreshold;

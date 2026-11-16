@@ -74,14 +74,9 @@ struct FoliageSample {
     glm::vec3 normal;
 };
 
-struct FoliageLayer {
-    std::string name = "foliage";
-
-    // ---- What ----
-    std::vector<std::vector<InstanceLod>> variants; // one LOD chain per mesh variant (picked at random)
-    std::vector<Collider> colliders;                // none / one shared / one per variant
-    uint32_t colliderUserValue = 0;                 // RaycastHit::userValue of this layer's colliders
-
+// Placement and streaming rules: shared by FoliageLayer (code) and the
+// FoliageType scene component (editor / scene files), which derive from it.
+struct FoliageRules {
     // ---- Where (all optional except spacing) ----
     float spacing = 4.0f;    // one candidate per spacing x spacing square
     float jitter = 0.8f;     // 0 = perfect grid, 1 = anywhere in the square (can touch neighbours)
@@ -92,14 +87,6 @@ struct FoliageLayer {
     // coverage = rough fraction of the world the clusters cover.
     float clusterFrequency = 0.0f;
     float clusterCoverage = 0.5f;
-    // Biome rules: return the chance (0..1) of keeping a candidate.
-    std::function<float(const FoliageSample&)> density;
-    // Keep at least `radius` metres from instances of an earlier layer.
-    struct Avoid {
-        uint32_t layer;
-        float radius;
-    };
-    std::vector<Avoid> avoid;
 
     // ---- How ----
     float minScale = 1.0f, maxScale = 1.0f;
@@ -114,6 +101,25 @@ struct FoliageLayer {
     float colliderDistance = 60.0f;  // colliders exist within this distance of colliderFocus
     uint32_t maxInstances = 0;       // loaded at once; 0 = estimate from viewDistance/spacing
     uint32_t seed = 0;
+};
+
+struct FoliageLayer : FoliageRules {
+    std::string name = "foliage";
+
+    // ---- What ----
+    std::vector<std::vector<InstanceLod>> variants; // one LOD chain per mesh variant (picked at random)
+    std::vector<Collider> colliders;                // none / one shared / one per variant
+    uint32_t colliderUserValue = 0;                 // RaycastHit::userValue of this layer's colliders
+
+    // ---- More "where" ----
+    // Biome rules: return the chance (0..1) of keeping a candidate.
+    std::function<float(const FoliageSample&)> density;
+    // Keep at least `radius` metres from instances of an earlier layer.
+    struct Avoid {
+        uint32_t layer;
+        float radius;
+    };
+    std::vector<Avoid> avoid;
 };
 
 struct FoliageSettings {

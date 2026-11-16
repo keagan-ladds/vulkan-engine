@@ -64,9 +64,11 @@ public:
     static PhysicsWorld& physics();
 };
 
-class Component : public EngineAccess {
+// The lifecycle and physics hooks GameObject and Component share. Override
+// the ones you need; see the hook order at the top of this file.
+class Behaviour : public EngineAccess {
 public:
-    virtual ~Component() = default;
+    virtual ~Behaviour() = default;
 
     virtual void start() {}
     virtual void update(float /*dt*/) { m_noHook |= kHookUpdate; }
@@ -75,12 +77,20 @@ public:
     virtual void onGui() { m_noHook |= kHookGui; }
     virtual void onDestroy() {}
     // Physics events (ve/physics/Physics.hpp), sent during the fixed update to
-    // the components (and the GameObject) on both sides of a contact.
+    // the GameObjects on both sides of a contact and all their components.
     virtual void onCollisionEnter(const Collision&) {}
     virtual void onCollisionStay(const Collision&) {}
     virtual void onCollisionExit(const Collision&) {}
     virtual void onTriggerEnter(GameObject& /*other*/) {}
     virtual void onTriggerExit(GameObject& /*other*/) {}
+
+private:
+    friend class Scene;
+    uint8_t m_noHook = 0; // HookBits whose base (empty) version ran: not overridden
+};
+
+class Component : public Behaviour {
+public:
 
     GameObject& gameObject() const { return *m_owner; }
     Transform& transform() const;
@@ -97,11 +107,10 @@ private:
     friend class Scene;
     GameObject* m_owner = nullptr;
     bool m_started = false;
-    uint8_t m_noHook = 0; // HookBits whose base (empty) version ran: not overridden
     std::type_index m_type = typeid(Component);
 };
 
-class GameObject : public EngineAccess {
+class GameObject : public Behaviour {
 public:
     explicit GameObject(std::string name = "GameObject");
     virtual ~GameObject();
@@ -109,19 +118,7 @@ public:
     GameObject(const GameObject&) = delete;
     GameObject& operator=(const GameObject&) = delete;
 
-    // --- Lifecycle hooks (override these) ------------------------------------
-    virtual void start() {}
-    virtual void update(float /*dt*/) { m_noHook |= kHookUpdate; }
-    virtual void fixedUpdate(float /*dt*/) { m_noHook |= kHookFixedUpdate; }
-    virtual void lateUpdate(float /*dt*/) { m_noHook |= kHookLateUpdate; }
-    virtual void onGui() { m_noHook |= kHookGui; }
-    virtual void onDestroy() {}
-    // Physics events, like Component's (the object's components get them too).
-    virtual void onCollisionEnter(const Collision&) {}
-    virtual void onCollisionStay(const Collision&) {}
-    virtual void onCollisionExit(const Collision&) {}
-    virtual void onTriggerEnter(GameObject& /*other*/) {}
-    virtual void onTriggerExit(GameObject& /*other*/) {}
+    // Lifecycle and physics hooks: see Behaviour.
 
     // --- Identity & state -------------------------------------------------------
     const std::string& name() const { return m_name; }
@@ -192,7 +189,6 @@ private:
     bool m_started = false;
     bool m_destroyed = false;
     bool m_tornDown = false;      // onDestroy() has run (Scene::flushDestroyed)
-    uint8_t m_noHook = 0;         // HookBits not overridden by this object
     uint8_t m_componentsNoHook = 0; // HookBits no component of this object overrides
 };
 

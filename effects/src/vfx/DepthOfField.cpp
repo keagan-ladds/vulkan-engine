@@ -57,34 +57,22 @@ void DepthOfFieldPass::execute(ve::RenderContext& ctx)
     DofPush p{};
     p.params = {focusDistance, focusRange, maxBlur, autoFocus ? 1.0f : 0.0f};
     p.params2 = {static_cast<float>(taps), nearBlur, aperture, 0.0f};
-    p.depthTex = g.get(r.sceneDepth()).sampledIndex;
-    p.colorTex = g.get(r.sceneColor()).sampledIndex;
+    p.depthTex = g.sampled(r.sceneDepth());
+    p.colorTex = g.sampled(r.sceneColor());
 
     // 1. Colour + linear depth at reduced resolution.
-    ctx.beginRendering({{m_prep}});
-    ctx.bindPipeline(m_prepPipeline);
-    ctx.push(p);
-    ctx.drawFullscreen();
-    ctx.endRendering();
+    ctx.fullscreen({{m_prep}}, m_prepPipeline, p);
     g.transition(ctx.cmd, m_prep, ve::Access::Sampled);
 
     // 2. Gather.
-    p.blurTex = g.get(m_prep).sampledIndex;
-    ctx.beginRendering({{m_buffer}});
-    ctx.bindPipeline(m_gather);
-    ctx.push(p);
-    ctx.drawFullscreen();
-    ctx.endRendering();
+    p.blurTex = g.sampled(m_prep);
+    ctx.fullscreen({{m_buffer}}, m_gather, p);
     g.transition(ctx.cmd, m_buffer, ve::Access::Sampled);
 
     // 3. Blend over the scene by full-resolution CoC.
-    p.blurTex = g.get(m_buffer).sampledIndex;
+    p.blurTex = g.sampled(m_buffer);
     g.transition(ctx.cmd, r.sceneColor(), ve::Access::ColorAttachment);
-    ctx.beginRendering({{r.sceneColor()}});
-    ctx.bindPipeline(m_apply);
-    ctx.push(p);
-    ctx.drawFullscreen();
-    ctx.endRendering();
+    ctx.fullscreen({{r.sceneColor()}}, m_apply, p);
 }
 
 void DepthOfFieldPass::onGui()

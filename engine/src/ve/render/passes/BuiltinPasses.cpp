@@ -248,7 +248,7 @@ CompositePass::CompositePass()
 void CompositePass::prepare(FrameData&)
 {
     if (m_graded != kNoTexture) {
-        setPush(CompositePush{graph().get(m_graded).sampledIndex, 1.0f, 1.0f, 1.0f, glm::vec4(1.0f, 1.0f, 1.0f, vignette), 2, 1u});
+        setPush(CompositePush{graph().sampled(m_graded), 1.0f, 1.0f, 1.0f, glm::vec4(1.0f, 1.0f, 1.0f, vignette), 2, 1u});
     } else {
         setPush(CompositePush{inputIndex(0), effectiveExposure(), contrast, saturation, glm::vec4(tint, vignette), tonemapper, 0u});
     }

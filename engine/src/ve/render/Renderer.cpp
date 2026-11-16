@@ -476,23 +476,16 @@ VkPipeline Renderer::pipeline(const PipelineHandle& h) const
 
 PipelineHandle Renderer::createFullscreenPipeline(const FullscreenPipelineDesc& desc)
 {
-    RawPipeline raw{buildFullscreenPipeline(desc), false, desc, {}};
-    PipelineHandle h;
-    h.m_renderer = this;
-    if (!m_freeRawPipelines.empty()) {
-        h.m_id = m_freeRawPipelines.back();
-        m_freeRawPipelines.pop_back();
-        m_rawPipelines[h.m_id - 1] = std::move(raw);
-    } else {
-        m_rawPipelines.push_back(std::move(raw));
-        h.m_id = static_cast<uint32_t>(m_rawPipelines.size());
-    }
-    return h;
+    return addRawPipeline({buildFullscreenPipeline(desc), false, desc, {}});
 }
 
 PipelineHandle Renderer::createComputePipeline(const std::string& shaderName)
 {
-    RawPipeline raw{buildComputePipeline(shaderName), true, {}, shaderName};
+    return addRawPipeline({buildComputePipeline(shaderName), true, {}, shaderName});
+}
+
+PipelineHandle Renderer::addRawPipeline(RawPipeline raw)
+{
     PipelineHandle h;
     h.m_renderer = this;
     if (!m_freeRawPipelines.empty()) {
@@ -940,8 +933,8 @@ void Renderer::fillGlobals(const Time& time)
     g.lightCounts.w = m_settings.debugCascades ? 1u : 0u;
     g.shadowParams = glm::vec4(m_settings.shadowNormalBias, m_settings.shadowPcfRadius,
                                float(m_settings.directionalShadowResolution), float(m_settings.pointShadowResolution));
-    g.builtinTextures = glm::uvec4(m_graph->get(m_sceneDepth).sampledIndex, m_graph->get(m_sceneColor).sampledIndex,
-                                   m_graph->get(m_sceneNormal).sampledIndex, 0);
+    g.builtinTextures = glm::uvec4(m_graph->sampled(m_sceneDepth), m_graph->sampled(m_sceneColor),
+                                   m_graph->sampled(m_sceneNormal), 0);
     for (uint32_t i = 0; i < kGlobalParamCount; ++i) g.globalParams[i] = m_globalParams[i];
 }
 
