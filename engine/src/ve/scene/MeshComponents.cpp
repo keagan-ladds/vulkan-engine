@@ -3,17 +3,18 @@
 #include "ve/assets/AssetManager.hpp"
 #include "ve/assets/Model.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Strings.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Primitives.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
-#include "ve/core/Strings.hpp"
 
 #include <algorithm>
 #include <functional>
-#include <sstream>
+#include <map>
+#include <tuple>
 
 namespace ve {
 
@@ -63,12 +64,21 @@ void PrimitiveRenderer::rebuild()
 {
     Renderer& r = renderer();
     const glm::vec3 s = glm::max(size, glm::vec3(0.001f));
-    MeshData md;
-    switch (shape) {
-    case Shape::Cube: md = primitives::cube(s); break;
-    case Shape::Sphere: md = primitives::sphere(s.x * 0.5f); break;
-    case Shape::Cylinder: md = primitives::cylinder(s.x * 0.5f, s.x * 0.5f, s.y, 24); break;
-    case Shape::Plane: md = primitives::plane(s.x, s.z); break;
+    // Primitives of the same shape and size share one mesh (a crate pyramid is
+    // one cube), kept alive by the renderers using it.
+    static std::map<std::tuple<Shape, float, float, float>, std::weak_ptr<Mesh>> shared;
+    std::weak_ptr<Mesh>& slot = shared[{shape, s.x, s.y, s.z}];
+    std::shared_ptr<Mesh> mesh = slot.lock();
+    if (!mesh) {
+        MeshData md;
+        switch (shape) {
+        case Shape::Cube: md = primitives::cube(s); break;
+        case Shape::Sphere: md = primitives::sphere(s.x * 0.5f); break;
+        case Shape::Cylinder: md = primitives::cylinder(s.x * 0.5f, s.x * 0.5f, s.y, 24); break;
+        case Shape::Plane: md = primitives::plane(s.x, s.z); break;
+        }
+        mesh = Mesh::create(r, md, {}, "primitive");
+        slot = mesh;
     }
     if (!m_material) m_material = r.createStandardMaterial();
     m_material->setBaseColor(color).setRoughness(roughness).setMetallic(metallic).setUvScale(uvScale);
@@ -82,7 +92,7 @@ void PrimitiveRenderer::rebuild()
     }
     m_material->setAlbedoTexture(tex);
     if (!m_renderer) m_renderer = &gameObject().addComponent<MeshRenderer>();
-    m_renderer->mesh = Mesh::create(r, md, {}, "primitive");
+    m_renderer->mesh = mesh;
     m_renderer->materials = {m_material};
     m_renderer->castShadows = castShadows;
 }

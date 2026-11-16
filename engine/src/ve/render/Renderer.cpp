@@ -598,6 +598,9 @@ void Renderer::freeMaterialSlot(uint32_t index)
 
 void Renderer::uploadMaterialsNow()
 {
+    // Both frame slots are rewritten, including one the GPU may still be
+    // reading: wait for it first (load-time path: impostor baking).
+    m_device.waitIdle();
     for (FrameSlot& s : m_slots) {
         std::memcpy(s.materials.mapped, m_materials.data(), sizeof(GpuMaterial) * m_materialHighWater);
     }

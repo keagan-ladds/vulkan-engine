@@ -64,6 +64,8 @@ struct GrassDesc {
     glm::vec2 boundsMin{-256.0f}, boundsMax{256.0f};
     uint32_t resolution = 513; // height samples per side (include both edges)
     uint32_t maskResolution = 512;
+    // Sampled once in setup() into textures, then released (with whatever they
+    // capture, e.g. a terrain snapshot).
     std::function<float(glm::vec2)> height;   // required; must match the rendered ground
     std::function<glm::vec4(glm::vec2)> mask; // x density 0..1, y colour mix A->B, z height scale, w free; null = full
     glm::vec3 colorA{0.55f, 0.6f, 0.25f};
@@ -118,6 +120,7 @@ public:
     ~GrassPass() override;
 
     void setup(RenderGraph& graph) override;
+    void prepare(FrameData&) override { updateMaterial(); } // before the shadow and colour draws
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
     void onGui() override;

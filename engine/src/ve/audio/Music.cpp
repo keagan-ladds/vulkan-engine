@@ -10,7 +10,6 @@
 #include <miniaudio.h>
 
 #include <algorithm>
-#include <sstream>
 
 namespace ve {
 

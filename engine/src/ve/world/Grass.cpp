@@ -79,6 +79,9 @@ void GrassPass::setup(RenderGraph&)
     m_mask = Texture::create2D(r, mres, mres, VK_FORMAT_R8G8B8A8_UNORM, mask.data(), mask.size(), false,
                                SamplerType::LinearClamp, d.name + " mask");
 
+    m_desc.height = nullptr; // sampled: release the callbacks and what they captured
+    m_desc.mask = nullptr;
+
     // Ground height range per tile, for frustum culling.
     m_tilesX = std::max(1, int(std::ceil(size.x / d.tileSize)));
     m_tilesZ = std::max(1, int(std::ceil(size.y / d.tileSize)));
@@ -283,7 +286,6 @@ glm::uvec2 GrassPass::drawTiles(RenderContext& ctx, const Lod& lod, const Frustu
 void GrassPass::execute(RenderContext& ctx)
 {
     Renderer& r = renderer();
-    updateMaterial();
     ctx.beginRendering({{r.sceneColor()}, {r.sceneNormal()}}, {r.sceneDepth()});
     m_lastTiles = m_lastClumps = 0;
     for (Lod& lod : m_lods) {
@@ -301,7 +303,6 @@ void GrassPass::execute(RenderContext& ctx)
 void GrassPass::drawShadow(RenderContext& ctx, const ShadowView& view)
 {
     if (!enabled || !m_desc.castShadows || view.texelSize > m_desc.shadowMaxTexel) return;
-    updateMaterial(); // shadows render before execute() in the frame
     for (const Lod& lod : m_lods) {
         ctx.bindPipeline(lod.shader->pipeline(PassKind::ShadowDirectional));
         m_shadowClumps += drawTiles(ctx, lod, view.frustum, m_desc.shadowDistance, view.viewIndex).y;

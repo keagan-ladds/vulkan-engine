@@ -2,8 +2,8 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/assets/Model.hpp"
-#include "ve/render/Material.hpp"
 #include "ve/core/Strings.hpp"
+#include "ve/render/Material.hpp"
 
 #include <algorithm>
 #include <cctype>

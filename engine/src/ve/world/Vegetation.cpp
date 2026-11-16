@@ -2,6 +2,7 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Strings.hpp"
 #include "ve/render/Impostor.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/Mesh.hpp"
@@ -15,7 +16,6 @@
 #include "ve/world/LodModel.hpp"
 #include "ve/world/Noise.hpp"
 #include "ve/world/Terrain.hpp"
-#include "ve/core/Strings.hpp"
 
 #include <algorithm>
 #include <cmath>

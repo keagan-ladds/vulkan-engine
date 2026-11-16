@@ -268,7 +268,9 @@ g.mask = [&](glm::vec2 p) { return glm::vec4(density, colourMix, heightScale, 0.
 g.colorA = {...}; g.colorB = {...};
 renderer.graph().addPass<ve::GrassPass>(g);            // one pass per grass type (e.g. grass + reeds)
 ```
-Tweak live via `pass.desc()` or F1. For a custom look, set `g.fragmentShader`
+Tweak live via `pass.desc()` or F1. `height` and `mask` are sampled once into
+textures when the pass is set up and then released (so whatever they capture,
+e.g. a terrain snapshot, is freed); to change the ground, add a new pass. For a custom look, set `g.fragmentShader`
 to a shader with `grass_field.frag`'s inputs (the savanna's `grass.frag` adds
 wetness). Every clump gets a random yaw plus a tilt up to `g.maxTilt` radians. Grass
 casts sun shadows within `g.shadowDistance` (default 30 m; `g.castShadows = false`

@@ -3,16 +3,15 @@
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Strings.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/world/Terrain.hpp"
 #include "ve/world/Vegetation.hpp"
-#include "ve/core/Strings.hpp"
 
 #include <miniaudio.h>
 
 #include <algorithm>
 #include <cmath>
-#include <sstream>
 
 namespace ve {
 
