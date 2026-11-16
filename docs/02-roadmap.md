@@ -163,13 +163,15 @@ too. Next up: physics follow-ups, F2 (animation) and building/gameplay systems. 
 - [x] Game template: static/kinematic/dynamic example
 
 **Still to do for physics** (roughly in priority order for the game):
-- [ ] **Collision & trigger events**: Jolt `ContactListener` → queued and
-  dispatched on the main thread as `Component::onCollisionEnter/Stay/Exit(other, contact)`.
-  Sensor bodies (`Rigidbody::isTrigger`) → `onTriggerEnter/Exit`. Needed for
-  pickups, damage zones, water volumes and doors.
-- [ ] **Shape casts & overlap queries**: `sphereCast`, `boxCast` and
-  `overlapSphere/Box` (with layer masks). Needed for melee hit detection, AI
-  senses and building placement validity.
+- [x] **Collision & trigger events**: Jolt contacts are queued and dispatched
+  on the main thread as `onCollisionEnter/Stay/Exit(const Collision&)` (other
+  object, point, normal, impact speed) to components and GameObjects on both
+  sides. `Rigidbody::isTrigger` sensors send `onTriggerEnter/Exit`, including
+  for characters. Autotest: trigger box + crate impact counts.
+- [x] **Shape casts & overlap queries**: `sphereCast`, `boxCast`, `shapeCast`,
+  `overlapSphere/Box`, `overlap`, with a `QueryFilter` (statics, dynamics,
+  characters, triggers, ignore). Per-game layer masks come with the
+  configurable collision layers below.
 - [ ] **Collider debug drawing**: implement Jolt's `DebugRenderer` on top of a
   new engine line/wireframe renderer (also useful for AI paths, nav, bounds).
   F1 toggle.

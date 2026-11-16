@@ -340,6 +340,23 @@ void fixedUpdate(float dt) override { if (jumpPressed) m_cc->jump(5.5f); m_cc->m
 
 // Queries:
 if (auto hit = physics().raycast(eye, forward, 30.0f)) { /* hit->gameObject, hit->point, hit->normal */ }
+auto hit = physics().sphereCast(eye, 0.3f, forward, 3.0f);         // a fat ray (melee reach, camera collision)
+auto box = physics().boxCast(center, half, rotation, dir, 5.0f);
+for (const ve::RaycastHit& h : physics().overlapSphere(swordTip, 0.4f, {.ignore = myBody})) { /* h.gameObject */ }
+ve::QueryFilter f{.statics = false, .characters = true};           // only moving bodies and characters
+auto near = physics().overlapBox(center, half, rotation, f);       // also: shapeCast / overlap with any Collider
+
+// Trigger volume (pickup, damage zone, door sensor): no collision response.
+auto& zone = pickup.addComponent<ve::Rigidbody>(ve::Collider::sphere(1.0f), ve::BodyType::Static);
+zone.isTrigger = true;
+
+// Events: override in any Component (or GameObject subclass) on either object.
+class Pickup : public ve::Component {
+    void onTriggerEnter(ve::GameObject& other) override { if (other.tag == "player") gameObject().destroy(); }
+};
+class Breakable : public ve::Component {
+    void onCollisionEnter(const ve::Collision& c) override { if (c.impactSpeed > 8.0f) shatter(c.point); }
+};
 ```
 
 Rules:
@@ -349,6 +366,16 @@ Rules:
 - `Collider::mesh` and `heightfield` are static-only. Use `convexHull` for moving things.
 - Add physics components as their exact type (`addComponent<ve::Rigidbody>`).
   The world finds them through the typed registry.
+- Events are sent after each physics step on the main thread, to every
+  component of both objects (`Collision::normal` points from the other object
+  towards you; `impactSpeed` is the closing speed when the contact began).
+  `onCollisionStay` runs every step while touching. Exit also fires when two
+  bodies fall asleep against each other, and Enter fires again when they wake.
+  Triggers only send Enter/Exit.
+- Characters enter triggers but don't get collision events (their movement is
+  a sweep, not a contact). Triggers need a convex shape to see characters.
+- Queries skip characters and triggers unless the `QueryFilter` asks for them;
+  `raycast(origin, dir, dist, ignore, hitCharacters)` still works.
 
 ### Shadows configuration
 

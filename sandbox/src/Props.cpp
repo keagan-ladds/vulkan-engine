@@ -353,6 +353,31 @@ void ReedScreen::start()
 // AutoTest
 // -----------------------------------------------------------------------------
 
+namespace {
+
+// Counts physics events on its object (autotest).
+class EventProbe : public ve::Component {
+public:
+    int enters = 0, stays = 0, exits = 0, triggerEnters = 0, triggerExits = 0;
+    float maxImpact = 0.0f;
+    std::string lastTrigger;
+    void onCollisionEnter(const ve::Collision& c) override
+    {
+        ++enters;
+        maxImpact = std::max(maxImpact, c.impactSpeed);
+    }
+    void onCollisionStay(const ve::Collision&) override { ++stays; }
+    void onCollisionExit(const ve::Collision&) override { ++exits; }
+    void onTriggerEnter(ve::GameObject& other) override
+    {
+        ++triggerEnters;
+        lastTrigger += (lastTrigger.empty() ? "" : ", ") + other.name();
+    }
+    void onTriggerExit(ve::GameObject&) override { ++triggerExits; }
+};
+
+} // namespace
+
 void AutoTest::update(float dt)
 {
     m_t += dt;
@@ -392,6 +417,38 @@ void AutoTest::update(float dt)
                                         : std::string("nothing")));
             p->throwRock();
         }
+        // Physics queries, and a trigger box the player is teleported into.
+        {
+            const glm::vec2 tp = layout::kCamp + glm::vec2(-4.0f, 4.0f); // clear ground between the fire and the reed screens
+            const glm::vec3 center(tp.x, m_terrain->height(tp.x, tp.y) + 1.0f, tp.y);
+            auto& trigger = scene().spawn("TestTrigger");
+            trigger.transform().setPosition(center);
+            auto& rb = trigger.addComponent<ve::Rigidbody>(ve::Collider::box({1.5f, 1.5f, 1.5f}), ve::BodyType::Static);
+            rb.isTrigger = true;
+            trigger.addComponent<EventProbe>();
+            if (auto* p = scene().find("Player")) {
+                p->addComponent<EventProbe>();
+                m_triggerFeet = center - glm::vec3(0.0f, 1.0f, 0.0f);
+            }
+            const auto down = physics().sphereCast(above, 0.5f, {0, -1, 0}, 400.0f);
+            log("sphereCast down: " + (down ? (down->gameObject ? down->gameObject->name() : std::string("?")) + " at y=" +
+                                                  std::to_string(down->point.y) + ", normal.y " + std::to_string(down->normal.y)
+                                           : std::string("MISSED")));
+            auto crateList = scene().findAllWithTag("crate");
+            if (!crateList.empty()) {
+                const glm::vec3 c = crateList.front()->transform().position();
+                int crateHits = 0;
+                for (const auto& h : physics().overlapSphere(c, 2.0f))
+                    if (h.gameObject && h.gameObject->tag == "crate") ++crateHits;
+                const auto box = physics().boxCast(c + glm::vec3(0.0f, 0.0f, 6.0f), glm::vec3(0.2f), glm::quat(1, 0, 0, 0),
+                                                   {0, 0, -1}, 10.0f);
+                log("overlapSphere(2 m) at a crate: " + std::to_string(crateHits) + " crates; boxCast towards it hit " +
+                    (box ? (box->gameObject ? box->gameObject->name() : std::string("?")) + " at " +
+                               std::to_string(box->distance) + " m"
+                         : std::string("nothing")));
+            }
+            m_triggerCenter = center;
+        }
         auto crates = scene().findAllWithTag("crate");
         float minY = 1e9f, maxY = -1e9f;
         for (auto* c : crates) {
@@ -400,12 +457,28 @@ void AutoTest::update(float dt)
         }
         log("crates: " + std::to_string(crates.size()) + ", y range " + std::to_string(minY) + " .. " + std::to_string(maxY));
         logAudio("start (camp)");
+    } else if (m_step == 1 && !m_inTrigger && m_t > 3.3f) {
+        // The thrown rock is away: stand in the trigger box for a moment.
+        if (auto* p = static_cast<Player*>(scene().find("Player"))) p->teleport(m_triggerFeet, 0.0f);
+        ve::QueryFilter f;
+        f.triggers = true;
+        f.statics = f.dynamics = false;
+        const auto inside = physics().overlapSphere(m_triggerCenter, 0.5f, f);
+        const auto ray = physics().raycast(m_triggerCenter + glm::vec3(0.0f, 5.0f, 0.0f), {0, -1, 0}, 10.0f);
+        log("trigger queries: overlap(triggers only) found " + std::to_string(inside.size()) +
+            (inside.empty() || !inside[0].gameObject ? std::string() : " (" + inside[0].gameObject->name() + ")") +
+            ", default raycast through it hit " + (ray && ray->gameObject ? ray->gameObject->name() : std::string("nothing")));
+        m_inTrigger = true;
     } else if (m_step == 1 && m_t > 4.0f) {
+        if (auto* probe = scene().find("TestTrigger") ? scene().find("TestTrigger")->getComponent<EventProbe>() : nullptr)
+            log("trigger after standing in it: " + std::to_string(probe->triggerEnters) + " enter(s): " + probe->lastTrigger);
         log("after pickup: " + std::to_string(scene().findAllWithTag("collectible").size()) + " left, collected " +
             std::to_string(gameState().collected) + "/" + std::to_string(gameState().total));
         if (auto* w = static_cast<vfx::Weather*>(scene().find("Weather"))) w->setWeather(vfx::Weather::Type::Rain, 2.0f);
-        // Throw a rock at the crate pyramid from 6 m away.
+        // Throw a rock at the crate pyramid from 6 m away (crates count their collisions).
         auto crates = scene().findAllWithTag("crate");
+        for (auto* c : crates)
+            if (!c->getComponent<EventProbe>()) c->addComponent<EventProbe>();
         m_crateStart.clear();
         glm::vec3 top(0.0f, -1e9f, 0.0f); // the top crate: nothing resting on it
         for (auto* c : crates) {
@@ -434,6 +507,26 @@ void AutoTest::update(float dt)
             if (glm::length(crates[i]->transform().position() - m_crateStart[i]) > 0.2f) ++moved;
         }
         log("crates knocked by the thrown rock: " + std::to_string(moved) + " / " + std::to_string(crates.size()));
+        int enters = 0, stays = 0, exits = 0;
+        float impact = 0.0f;
+        for (auto* c : crates) {
+            if (auto* probe = c->getComponent<EventProbe>()) {
+                enters += probe->enters;
+                stays += probe->stays;
+                exits += probe->exits;
+                impact = std::max(impact, probe->maxImpact);
+            }
+        }
+        log("crate collision events: " + std::to_string(enters) + " enter, " + std::to_string(stays) + " stay, " +
+            std::to_string(exits) + " exit, max impact " + std::to_string(impact) + " m/s");
+        if (auto* t = scene().find("TestTrigger"))
+            if (auto* probe = t->getComponent<EventProbe>())
+                log("trigger box: " + std::to_string(probe->triggerEnters) + " enter(s) (" + probe->lastTrigger + "), " +
+                    std::to_string(probe->triggerExits) + " exit(s)");
+        if (auto* pl = scene().find("Player"))
+            if (auto* probe = pl->getComponent<EventProbe>())
+                log("player saw " + std::to_string(probe->triggerEnters) + " trigger enter(s) ('" + probe->lastTrigger +
+                    "'), " + std::to_string(probe->triggerExits) + " exit(s)");
         if (auto* w = static_cast<vfx::Weather*>(scene().find("Weather"))) {
             log(std::string("weather now: ") + vfx::Weather::name(w->weather()) + ", rain=" + std::to_string(w->current().rain));
         }

@@ -118,6 +118,8 @@ private:
     const ve::Terrain* m_terrain;
     std::vector<glm::vec3> m_crateStart;
     bool m_throwPending = false;
+    bool m_inTrigger = false;
+    glm::vec3 m_triggerCenter{0.0f}, m_triggerFeet{0.0f};
     float m_t = 0.0f;
     int m_step = 0;
 };

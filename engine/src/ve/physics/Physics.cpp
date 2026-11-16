@@ -27,6 +27,10 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollideShape.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
@@ -44,7 +48,9 @@
 #include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <mutex>
 #include <thread>
+#include <unordered_map>
 
 namespace ve {
 
@@ -64,6 +70,7 @@ namespace Layers {
 constexpr JPH::ObjectLayer NonMoving = 0; // static bodies
 constexpr JPH::ObjectLayer Moving = 1;    // dynamic + kinematic bodies
 constexpr JPH::ObjectLayer Character = 2; // the capsule that lets bodies hit characters
+constexpr JPH::ObjectLayer Sensor = 3;    // trigger volumes (Rigidbody::isTrigger)
 } // namespace Layers
 namespace BPLayers {
 constexpr JPH::BroadPhaseLayer NonMoving(0);
@@ -90,9 +97,9 @@ class ObjectVsBroadPhaseFilter final : public JPH::ObjectVsBroadPhaseLayerFilter
 public:
     bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer bp) const override
     {
-        // Static things only need to test against moving things.
-        if (layer == Layers::NonMoving || layer == Layers::Character) return bp == BPLayers::Moving;
-        return true;
+        // Static things, characters and triggers only need to test against moving things.
+        if (layer == Layers::Moving) return true;
+        return bp == BPLayers::Moving;
     }
 };
 
@@ -102,18 +109,28 @@ public:
     {
         if (a == Layers::NonMoving) return b == Layers::Moving;
         if (a == Layers::Moving) return true;
-        return b == Layers::Moving; // character capsule: only hit by moving bodies
+        if (a == Layers::Character) return b == Layers::Moving || b == Layers::Sensor; // hit by bodies, enters triggers
+        return b == Layers::Moving || b == Layers::Character;                         // triggers
     }
 };
 
-// Ray filter that optionally ignores character capsules.
-class RayLayerFilter final : public JPH::ObjectLayerFilter {
+// Query filter by layer (QueryFilter's statics / dynamics / characters / triggers).
+class QueryLayerFilter final : public JPH::ObjectLayerFilter {
 public:
-    explicit RayLayerFilter(bool characters) : m_characters(characters) {}
-    bool ShouldCollide(JPH::ObjectLayer layer) const override { return m_characters || layer != Layers::Character; }
+    explicit QueryLayerFilter(const QueryFilter& f) : m_f(f) {}
+    bool ShouldCollide(JPH::ObjectLayer layer) const override
+    {
+        switch (layer) {
+        case Layers::NonMoving: return m_f.statics;
+        case Layers::Moving: return m_f.dynamics;
+        case Layers::Character: return m_f.characters;
+        case Layers::Sensor: return m_f.triggers;
+        default: return false;
+        }
+    }
 
 private:
-    bool m_characters;
+    const QueryFilter& m_f;
 };
 
 void joltTrace(const char* fmt, ...)
@@ -138,9 +155,61 @@ bool g_joltInitialized = false;
 
 } // namespace
 
+struct Collider::Impl {
+    JPH::RefConst<JPH::Shape> shape;
+};
+
 // =============================================================================
 // PhysicsWorld
 // =============================================================================
+
+// Collects contact callbacks (from Jolt's worker threads) for main-thread dispatch.
+class ContactQueue final : public JPH::ContactListener {
+public:
+    enum class Kind : uint8_t { Added, Persisted, Removed };
+    struct Event {
+        Kind kind;
+        bool sensor;
+        JPH::BodyID a, b; // a < b
+        glm::vec3 point{0.0f};
+        glm::vec3 normal{0.0f}; // from a to b
+        float speed = 0.0f;
+    };
+
+    void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& m, JPH::ContactSettings&) override
+    {
+        push(Kind::Added, a, b, m);
+    }
+    void OnContactPersisted(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& m,
+                            JPH::ContactSettings&) override
+    {
+        push(Kind::Persisted, a, b, m);
+    }
+    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override
+    {
+        std::lock_guard lock(mutex);
+        events.push_back({Kind::Removed, false, pair.GetBody1ID(), pair.GetBody2ID()});
+    }
+
+    std::mutex mutex;
+    std::vector<Event> events;
+
+private:
+    void push(Kind kind, const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& m)
+    {
+        Event e{kind, a.IsSensor() || b.IsSensor(), a.GetID(), b.GetID()};
+        const JPH::RVec3 p = m.GetWorldSpaceContactPointOn1(0);
+        e.point = glm::vec3(float(p.GetX()), float(p.GetY()), float(p.GetZ()));
+        e.normal = toG(m.mWorldSpaceNormal);
+        if (kind == Kind::Added) {
+            // Closing speed before the solver runs (bodies are locked: no lock calls here).
+            const JPH::Vec3 rel = b.GetPointVelocity(p) - a.GetPointVelocity(p);
+            e.speed = std::max(0.0f, -rel.Dot(m.mWorldSpaceNormal));
+        }
+        std::lock_guard lock(mutex);
+        events.push_back(e);
+    }
+};
 
 struct PhysicsWorld::Impl {
     std::unique_ptr<JPH::TempAllocatorImpl> temp;
@@ -150,6 +219,19 @@ struct PhysicsWorld::Impl {
     ObjectPairFilter objectPairs;
     std::unique_ptr<JPH::PhysicsSystem> system;
     uint32_t addedSinceOptimize = 0;
+
+    // Contact pairs (body level; Jolt reports sub-shape pairs, so count them).
+    ContactQueue contacts;
+    struct Pair {
+        int count = 0;
+        bool sensor = false;
+        bool persisted = false;
+        glm::vec3 point{0.0f}, normal{0.0f};
+    };
+    std::unordered_map<uint64_t, Pair> pairs;
+    std::vector<ContactQueue::Event> scratch;
+
+    void dispatchContacts();
 };
 
 namespace {
@@ -163,12 +245,53 @@ bool physicsAlive()
     return g_joltInitialized && Engine::exists() && Engine::get().physics().impl().system;
 }
 
-// Body user data: a Rigidbody* (always even, it's aligned), or (value << 1) | 1
-// for GameObject-less static bodies.
+// Body user data, tagged in the low 2 bits (pointers are 8-byte aligned):
+//   0: Rigidbody*   1: (value << 2) for GameObject-less static bodies
+//   2: CharacterController* (its inner body)
 JPH::uint64 staticUserData(uint32_t value)
 {
-    return (JPH::uint64(value) << 1) | 1u;
+    return (JPH::uint64(value) << 2) | 1u;
 }
+
+JPH::uint64 characterUserData(const CharacterController* c)
+{
+    return reinterpret_cast<JPH::uint64>(c) | 2u;
+}
+
+struct BodyOwner {
+    GameObject* gameObject = nullptr;
+    Rigidbody* body = nullptr;
+    uint32_t userValue = 0;
+};
+
+BodyOwner ownerOf(JPH::uint64 ud)
+{
+    BodyOwner o;
+    switch (ud & 3u) {
+    case 1: o.userValue = static_cast<uint32_t>(ud >> 2); break;
+    case 2: o.gameObject = &reinterpret_cast<CharacterController*>(ud & ~JPH::uint64(3))->gameObject(); break;
+    default:
+        o.body = reinterpret_cast<Rigidbody*>(ud);
+        if (o.body) o.gameObject = &o.body->gameObject();
+        break;
+    }
+    return o;
+}
+
+// Filters a query's bodies: the ignored body / character.
+class QueryBodyFilter final : public JPH::BodyFilter {
+public:
+    explicit QueryBodyFilter(const QueryFilter& f, JPH::BodyID character) : m_f(f), m_character(character) {}
+    bool ShouldCollide(const JPH::BodyID& id) const override
+    {
+        if (m_f.ignore && m_f.ignore->created() && id == JPH::BodyID(m_f.ignore->bodyId())) return false;
+        return m_character.IsInvalid() || id != m_character;
+    }
+
+private:
+    const QueryFilter& m_f;
+    JPH::BodyID m_character;
+};
 
 } // namespace
 
@@ -200,6 +323,7 @@ void PhysicsWorld::init()
                          /*maxContactConstraints*/ 16384, m_impl->broadPhaseLayers, m_impl->objectVsBroadPhase,
                          m_impl->objectPairs);
     m_impl->system->SetGravity(JPH::Vec3(0.0f, -9.81f, 0.0f));
+    m_impl->system->SetContactListener(&m_impl->contacts);
     log::info("Physics: Jolt {}.{}.{}, {} worker threads", JPH_VERSION_MAJOR, JPH_VERSION_MINOR, JPH_VERSION_PATCH,
               threads);
 }
@@ -263,6 +387,120 @@ void PhysicsWorld::step(Scene& scene, float dt)
         rb.m_currPos = toG(p);
         rb.m_currRot = toG(q);
     });
+
+    m_impl->dispatchContacts();
+}
+
+namespace {
+
+void sendCollision(GameObject* to, void (Component::*componentHook)(const Collision&),
+                   void (GameObject::*objectHook)(const Collision&), const Collision& c)
+{
+    if (!to || to->isDestroyed()) return;
+    (to->*objectHook)(c);
+    // Index loop: a handler may add components.
+    for (size_t i = 0; i < to->components().size(); ++i) {
+        Component* comp = to->components()[i].get();
+        if (comp->enabled) (comp->*componentHook)(c);
+    }
+}
+
+void sendTrigger(GameObject* to, GameObject* other, bool enter)
+{
+    if (!to || !other || to->isDestroyed() || other->isDestroyed()) return;
+    enter ? to->onTriggerEnter(*other) : to->onTriggerExit(*other);
+    for (size_t i = 0; i < to->components().size(); ++i) {
+        Component* comp = to->components()[i].get();
+        if (!comp->enabled) continue;
+        enter ? comp->onTriggerEnter(*other) : comp->onTriggerExit(*other);
+    }
+}
+
+} // namespace
+
+void PhysicsWorld::Impl::dispatchContacts()
+{
+    {
+        std::lock_guard lock(contacts.mutex);
+        scratch.swap(contacts.events);
+        contacts.events.clear();
+    }
+    if (scratch.empty() && pairs.empty()) return;
+
+    enum class Phase { Enter, Stay, Exit };
+    struct Out {
+        Phase phase;
+        bool sensor;
+        JPH::BodyID a, b;
+        glm::vec3 point, normal;
+        float speed;
+    };
+    std::vector<Out> out;
+    auto key = [](JPH::BodyID a, JPH::BodyID b) {
+        return (uint64_t(a.GetIndexAndSequenceNumber()) << 32) | b.GetIndexAndSequenceNumber();
+    };
+    std::vector<uint64_t> entered;
+    for (const ContactQueue::Event& e : scratch) {
+        const uint64_t k = key(e.a, e.b);
+        if (e.kind == ContactQueue::Kind::Removed) {
+            auto it = pairs.find(k);
+            if (it == pairs.end()) continue;
+            if (--it->second.count <= 0) {
+                out.push_back({Phase::Exit, it->second.sensor, e.a, e.b, it->second.point, it->second.normal, 0.0f});
+                pairs.erase(it);
+            }
+            continue;
+        }
+        Pair& p = pairs[k];
+        p.sensor = p.sensor || e.sensor;
+        p.point = e.point;
+        p.normal = e.normal;
+        if (e.kind == ContactQueue::Kind::Added) {
+            if (p.count++ == 0) {
+                out.push_back({Phase::Enter, p.sensor, e.a, e.b, e.point, e.normal, e.speed});
+                entered.push_back(k);
+            }
+        } else {
+            p.persisted = true;
+        }
+    }
+    scratch.clear();
+    for (auto& [k, p] : pairs) {
+        if (p.persisted && !p.sensor && std::find(entered.begin(), entered.end(), k) == entered.end()) {
+            out.push_back({Phase::Stay, false, JPH::BodyID(uint32_t(k >> 32)), JPH::BodyID(uint32_t(k)), p.point, p.normal, 0.0f});
+        }
+        p.persisted = false;
+    }
+    if (out.empty()) return;
+
+    // Resolve owners now (main thread, outside the update); removed bodies resolve to nothing.
+    const JPH::BodyLockInterfaceNoLock& locks = system->GetBodyLockInterfaceNoLock();
+    auto owner = [&](JPH::BodyID id) {
+        JPH::BodyLockRead lock(locks, id);
+        return lock.Succeeded() ? ownerOf(lock.GetBody().GetUserData()) : BodyOwner{};
+    };
+    for (const Out& o : out) {
+        const BodyOwner a = owner(o.a), b = owner(o.b);
+        if (!a.gameObject && !b.gameObject) continue;
+        if (o.sensor) {
+            if (o.phase == Phase::Stay) continue;
+            sendTrigger(a.gameObject, b.gameObject, o.phase == Phase::Enter);
+            sendTrigger(b.gameObject, a.gameObject, o.phase == Phase::Enter);
+            continue;
+        }
+        auto hooks = [&](Phase ph) {
+            switch (ph) {
+            case Phase::Enter: return std::pair{&Component::onCollisionEnter, &GameObject::onCollisionEnter};
+            case Phase::Stay: return std::pair{&Component::onCollisionStay, &GameObject::onCollisionStay};
+            default: return std::pair{&Component::onCollisionExit, &GameObject::onCollisionExit};
+            }
+        };
+        const auto [ch, oh] = hooks(o.phase);
+        Collision ca{b.gameObject, b.body, b.userValue, o.point, -o.normal, o.speed}; // seen from a
+        Collision cb{a.gameObject, a.body, a.userValue, o.point, o.normal, o.speed};  // seen from b
+        sendCollision(a.gameObject, ch, oh, ca);
+        sendCollision(b.gameObject, ch, oh, cb);
+    }
 }
 
 void PhysicsWorld::interpolate(Scene& scene, float alpha)
@@ -283,41 +521,146 @@ void PhysicsWorld::interpolate(Scene& scene, float alpha)
 std::optional<RaycastHit> PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
                                                 const Rigidbody* ignore, bool hitCharacters) const
 {
-    if (!m_impl->system || maxDistance <= 0.0f) return std::nullopt;
+    QueryFilter f;
+    f.ignore = ignore;
+    f.characters = hitCharacters;
+    return raycast(origin, direction, maxDistance, f);
+}
+
+namespace {
+
+JPH::BodyID characterBody(const QueryFilter& f)
+{
+    return f.ignoreCharacter ? JPH::BodyID(f.ignoreCharacter->innerBodyId()) : JPH::BodyID();
+}
+
+// Fills body / gameObject / userValue (and the normal, when asked) from a body.
+void fillHit(const JPH::PhysicsSystem& system, JPH::BodyID id, const JPH::SubShapeID& subShape, RaycastHit& hit,
+             bool surfaceNormal)
+{
+    JPH::BodyLockRead lock(system.GetBodyLockInterface(), id);
+    if (!lock.Succeeded()) return;
+    const JPH::Body& body = lock.GetBody();
+    if (surfaceNormal) hit.normal = toG(body.GetWorldSpaceSurfaceNormal(subShape, toJ(hit.point)));
+    const BodyOwner o = ownerOf(body.GetUserData());
+    hit.body = o.body;
+    hit.gameObject = o.gameObject;
+    hit.userValue = o.userValue;
+}
+
+} // namespace
+
+std::optional<RaycastHit> PhysicsWorld::raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
+                                                const QueryFilter& filter) const
+{
+    if (!m_impl->system || maxDistance <= 0.0f || glm::dot(direction, direction) < 1e-12f) return std::nullopt;
     const glm::vec3 dir = glm::normalize(direction);
     const JPH::RRayCast ray{toJ(origin), toJ(dir * maxDistance)};
     JPH::RayCastResult hit;
-    RayLayerFilter layerFilter(hitCharacters);
-    JPH::BodyFilter anyBody;
-    JPH::IgnoreSingleBodyFilter ignoreBody(ignore && ignore->created() ? JPH::BodyID(ignore->bodyId()) : JPH::BodyID());
-    const JPH::BodyFilter& bodyFilter = (ignore && ignore->created()) ? static_cast<const JPH::BodyFilter&>(ignoreBody) : anyBody;
+    QueryLayerFilter layerFilter(filter);
+    QueryBodyFilter bodyFilter(filter, characterBody(filter));
     if (!m_impl->system->GetNarrowPhaseQuery().CastRay(ray, hit, {}, layerFilter, bodyFilter)) return std::nullopt;
 
     RaycastHit result;
     result.distance = hit.mFraction * maxDistance;
     result.point = origin + dir * result.distance;
-    JPH::BodyLockRead lock(m_impl->system->GetBodyLockInterface(), hit.mBodyID);
-    if (lock.Succeeded()) {
-        const JPH::Body& body = lock.GetBody();
-        result.normal = toG(body.GetWorldSpaceSurfaceNormal(hit.mSubShapeID2, toJ(result.point)));
-        const JPH::uint64 ud = body.GetUserData();
-        if (ud & 1u) {
-            result.userValue = static_cast<uint32_t>(ud >> 1);
+    fillHit(*m_impl->system, hit.mBodyID, hit.mSubShapeID2, result, true);
+    return result;
+}
+
+std::optional<RaycastHit> PhysicsWorld::sphereCast(const glm::vec3& origin, float radius, const glm::vec3& direction,
+                                                   float maxDistance, const QueryFilter& filter) const
+{
+    return shapeCast(Collider::sphere(std::max(radius, 1e-3f)), origin, glm::quat(1, 0, 0, 0), direction, maxDistance, filter);
+}
+
+std::optional<RaycastHit> PhysicsWorld::boxCast(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation,
+                                                const glm::vec3& direction, float maxDistance, const QueryFilter& filter) const
+{
+    return shapeCast(Collider::box(glm::max(halfExtents, glm::vec3(1e-3f))), center, rotation, direction, maxDistance, filter);
+}
+
+std::optional<RaycastHit> PhysicsWorld::shapeCast(const Collider& shape, const glm::vec3& position, const glm::quat& rotation,
+                                                  const glm::vec3& direction, float maxDistance, const QueryFilter& filter) const
+{
+    if (!m_impl->system || !shape.valid() || maxDistance < 0.0f || glm::dot(direction, direction) < 1e-12f) return std::nullopt;
+    const glm::vec3 dir = glm::normalize(direction);
+    const JPH::RMat44 start = JPH::RMat44::sRotationTranslation(toJ(rotation), toJ(position));
+    const JPH::RShapeCast cast = JPH::RShapeCast::sFromWorldTransform(shape.impl->shape, JPH::Vec3::sReplicate(1.0f), start,
+                                                                      toJ(dir * maxDistance));
+    JPH::ShapeCastSettings settings;
+    settings.mReturnDeepestPoint = true; // starts inside: report the way out
+    settings.mBackFaceModeTriangles = JPH::EBackFaceMode::IgnoreBackFaces;
+    settings.mBackFaceModeConvex = JPH::EBackFaceMode::CollideWithBackFaces;
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    QueryLayerFilter layerFilter(filter);
+    QueryBodyFilter bodyFilter(filter, characterBody(filter));
+    m_impl->system->GetNarrowPhaseQuery().CastShape(cast, settings, JPH::RVec3::sZero(), collector, {}, layerFilter, bodyFilter);
+    if (!collector.HadHit()) return std::nullopt;
+
+    const JPH::ShapeCastResult& h = collector.mHit;
+    RaycastHit result;
+    result.distance = h.mFraction * maxDistance;
+    result.point = toG(h.mContactPointOn2);
+    // The penetration axis points from the cast shape into what it hit.
+    const glm::vec3 axis = toG(h.mPenetrationAxis);
+    result.normal = glm::dot(axis, axis) > 1e-12f ? -glm::normalize(axis) : -dir;
+    fillHit(*m_impl->system, h.mBodyID2, h.mSubShapeID2, result, false);
+    return result;
+}
+
+std::vector<RaycastHit> PhysicsWorld::overlapSphere(const glm::vec3& center, float radius, const QueryFilter& filter) const
+{
+    return overlap(Collider::sphere(std::max(radius, 1e-3f)), center, glm::quat(1, 0, 0, 0), filter);
+}
+
+std::vector<RaycastHit> PhysicsWorld::overlapBox(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation,
+                                                 const QueryFilter& filter) const
+{
+    return overlap(Collider::box(glm::max(halfExtents, glm::vec3(1e-3f))), center, rotation, filter);
+}
+
+std::vector<RaycastHit> PhysicsWorld::overlap(const Collider& shape, const glm::vec3& position, const glm::quat& rotation,
+                                              const QueryFilter& filter) const
+{
+    std::vector<RaycastHit> hits;
+    if (!m_impl->system || !shape.valid()) return hits;
+    const JPH::Shape& s = *shape.impl->shape;
+    // CollideShape wants the centre-of-mass transform.
+    const JPH::RMat44 com = JPH::RMat44::sRotationTranslation(toJ(rotation), toJ(position)).PreTranslated(s.GetCenterOfMass());
+    JPH::CollideShapeSettings settings;
+    settings.mBackFaceMode = JPH::EBackFaceMode::CollideWithBackFaces;
+    JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+    QueryLayerFilter layerFilter(filter);
+    QueryBodyFilter bodyFilter(filter, characterBody(filter));
+    m_impl->system->GetNarrowPhaseQuery().CollideShape(&s, JPH::Vec3::sReplicate(1.0f), com, settings, JPH::RVec3::sZero(),
+                                                       collector, {}, layerFilter, bodyFilter);
+    // One hit per body: the deepest contact.
+    std::unordered_map<uint32_t, size_t> byBody;
+    std::vector<float> depth;
+    for (const JPH::CollideShapeResult& r : collector.mHits) {
+        const uint32_t id = r.mBodyID2.GetIndexAndSequenceNumber();
+        auto [it, inserted] = byBody.try_emplace(id, hits.size());
+        if (!inserted && r.mPenetrationDepth <= depth[it->second]) continue;
+        RaycastHit h;
+        h.point = toG(r.mContactPointOn2);
+        const glm::vec3 axis = toG(r.mPenetrationAxis);
+        h.normal = glm::dot(axis, axis) > 1e-12f ? -glm::normalize(axis) : glm::vec3(0, 1, 0);
+        fillHit(*m_impl->system, r.mBodyID2, r.mSubShapeID2, h, false);
+        if (inserted) {
+            hits.push_back(h);
+            depth.push_back(r.mPenetrationDepth);
         } else {
-            result.body = reinterpret_cast<Rigidbody*>(ud);
-            if (result.body) result.gameObject = &result.body->gameObject();
+            hits[it->second] = h;
+            depth[it->second] = r.mPenetrationDepth;
         }
     }
-    return result;
+    return hits;
 }
 
 // =============================================================================
 // Collider
 // =============================================================================
-
-struct Collider::Impl {
-    JPH::RefConst<JPH::Shape> shape;
-};
 
 namespace {
 
@@ -507,11 +850,25 @@ void Rigidbody::start()
 
     const glm::vec3 pos = transform().position();
     const glm::quat rot = transform().rotation();
-    const JPH::EMotionType motion = type == BodyType::Static      ? JPH::EMotionType::Static
-                                    : type == BodyType::Kinematic ? JPH::EMotionType::Kinematic
-                                                                  : JPH::EMotionType::Dynamic;
+    JPH::EMotionType motion = type == BodyType::Static      ? JPH::EMotionType::Static
+                              : type == BodyType::Kinematic ? JPH::EMotionType::Kinematic
+                                                            : JPH::EMotionType::Dynamic;
+    // A static sensor only sees awake bodies; a kinematic one that never
+    // sleeps (and may touch non-dynamic bodies) sees characters and sleepers too.
+    const bool sensorAsKinematic = isTrigger && motion == JPH::EMotionType::Static && !shape->MustBeStatic();
+    if (sensorAsKinematic) motion = JPH::EMotionType::Kinematic;
+    if (isTrigger && shape->MustBeStatic())
+        log::warn("Rigidbody on '{}': mesh/heightfield triggers only detect awake dynamic bodies; use a convex shape",
+                  gameObject().name());
     JPH::BodyCreationSettings s(shape, toJ(pos), toJ(rot), motion,
-                                type == BodyType::Static ? Layers::NonMoving : Layers::Moving);
+                                isTrigger                    ? Layers::Sensor
+                                : type == BodyType::Static ? Layers::NonMoving
+                                                           : Layers::Moving);
+    if (isTrigger) {
+        s.mIsSensor = true;
+        s.mCollideKinematicVsNonDynamic = true;
+        s.mAllowSleeping = false;
+    }
     s.mFriction = friction;
     s.mRestitution = restitution;
     s.mLinearDamping = linearDamping;
@@ -526,7 +883,7 @@ void Rigidbody::start()
 
     auto& impl = physics().impl();
     const JPH::BodyID id = impl.system->GetBodyInterface().CreateAndAddBody(
-        s, type == BodyType::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
+        s, motion == JPH::EMotionType::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
     if (id.IsInvalid()) {
         log::error("Rigidbody on '{}': out of physics bodies", gameObject().name());
         return;
@@ -674,7 +1031,9 @@ void CharacterController::start()
     s.mInnerBodyLayer = Layers::Character;
 
     const glm::vec3 feet = transform().position();
-    m_impl->character = new JPH::CharacterVirtual(&s, toJ(feet), JPH::Quat::sIdentity(), 0, world.system.get());
+    // The inner body carries the same user data, so contacts and queries find us.
+    m_impl->character = new JPH::CharacterVirtual(&s, toJ(feet), JPH::Quat::sIdentity(), characterUserData(this),
+                                                  world.system.get());
     m_prevPos = m_currPos = feet;
 }
 
@@ -713,6 +1072,11 @@ void CharacterController::move(const glm::vec3& horizontalVelocity, float dt)
 
     m_prevPos = m_currPos;
     m_currPos = toG(c.GetPosition());
+}
+
+uint32_t CharacterController::innerBodyId() const
+{
+    return m_impl ? m_impl->character->GetInnerBodyID().GetIndexAndSequenceNumber() : Rigidbody::kInvalidBody;
 }
 
 bool CharacterController::grounded() const

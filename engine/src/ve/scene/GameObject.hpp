@@ -32,6 +32,8 @@
 
 namespace ve {
 
+struct Collision; // ve/physics/Physics.hpp
+
 class Scene;
 class GameObject;
 class Engine;
@@ -64,6 +66,13 @@ public:
     virtual void lateUpdate(float /*dt*/) {}
     virtual void onGui() {}
     virtual void onDestroy() {}
+    // Physics events (ve/physics/Physics.hpp), sent during the fixed update to
+    // the components (and the GameObject) on both sides of a contact.
+    virtual void onCollisionEnter(const Collision&) {}
+    virtual void onCollisionStay(const Collision&) {}
+    virtual void onCollisionExit(const Collision&) {}
+    virtual void onTriggerEnter(GameObject& /*other*/) {}
+    virtual void onTriggerExit(GameObject& /*other*/) {}
 
     GameObject& gameObject() const { return *m_owner; }
     Transform& transform() const;
@@ -98,6 +107,12 @@ public:
     virtual void lateUpdate(float /*dt*/) {}
     virtual void onGui() {}
     virtual void onDestroy() {}
+    // Physics events, like Component's (the object's components get them too).
+    virtual void onCollisionEnter(const Collision&) {}
+    virtual void onCollisionStay(const Collision&) {}
+    virtual void onCollisionExit(const Collision&) {}
+    virtual void onTriggerEnter(GameObject& /*other*/) {}
+    virtual void onTriggerExit(GameObject& /*other*/) {}
 
     // --- Identity & state -------------------------------------------------------
     const std::string& name() const { return m_name; }

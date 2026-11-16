@@ -14,6 +14,18 @@
 //   crate.addComponent<ve::Rigidbody>(ve::Collider::box({0.5f, 0.5f, 0.5f}));   // dynamic by default
 //
 //   if (auto hit = physics().raycast(eye, forward, 50.0f)) log::info("looking at {}", hit->gameObject->name());
+//   auto hits = physics().overlapSphere(swordTip, 0.4f);           // melee, AI senses, placement checks
+//   auto hit = physics().sphereCast(eye, 0.3f, forward, 3.0f);     // a fat ray
+//
+// Events: override these in any Component (or GameObject subclass) on an
+// object with a Rigidbody (or a CharacterController):
+//   void onCollisionEnter(const ve::Collision& c) override;  // c.other, c.point, c.normal, c.impactSpeed
+//   void onCollisionStay(const ve::Collision& c) override;   // every step while touching
+//   void onCollisionExit(const ve::Collision& c) override;   // also when the bodies fall asleep
+//   void onTriggerEnter(ve::GameObject& other) override;     // Rigidbody::isTrigger volumes
+//   void onTriggerExit(ve::GameObject& other) override;
+// They're sent after each physics step, on the main thread; destroying objects
+// from them is fine (destruction is deferred to the end of the frame).
 //
 // The world steps once per fixed update (after the scene's fixedUpdate hooks).
 // Dynamic bodies write their pose back to their Transform, interpolated
@@ -35,6 +47,7 @@ namespace ve {
 struct MeshData;
 class Scene;
 class Rigidbody;
+class CharacterController;
 
 // A collision shape. Create with the static functions (after the Engine exists).
 // Shapes are immutable and reference counted, so share one Collider between
@@ -73,13 +86,34 @@ enum class BodyType {
     Dynamic,   // simulated: gravity, collisions, forces
 };
 
+// A hit from a raycast, shape cast or overlap query.
 struct RaycastHit {
     glm::vec3 point{0.0f};
-    glm::vec3 normal{0.0f, 1.0f, 0.0f};
-    float distance = 0.0f;
-    Rigidbody* body = nullptr;          // null for characters and createStaticBody() bodies
-    GameObject* gameObject = nullptr;
-    uint32_t userValue = 0;             // the value given to createStaticBody()
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};   // surface normal of what was hit
+    float distance = 0.0f;                 // along the ray / cast (0 for overlaps, or casts that start inside)
+    Rigidbody* body = nullptr;             // null for characters and createStaticBody() bodies
+    GameObject* gameObject = nullptr;      // null for createStaticBody() bodies
+    uint32_t userValue = 0;                // the value given to createStaticBody()
+};
+
+// What a query can hit.
+struct QueryFilter {
+    bool statics = true;       // static bodies (terrain, buildings, foliage colliders)
+    bool dynamics = true;      // dynamic and kinematic bodies
+    bool characters = false;   // CharacterController capsules
+    bool triggers = false;     // Rigidbody::isTrigger volumes
+    const Rigidbody* ignore = nullptr;
+    const CharacterController* ignoreCharacter = nullptr;
+};
+
+// A contact, as seen from one of the two objects.
+struct Collision {
+    GameObject* other = nullptr;     // null for createStaticBody() bodies (foliage)
+    Rigidbody* otherBody = nullptr;  // null for characters and createStaticBody() bodies
+    uint32_t otherUserValue = 0;     // createStaticBody()'s userValue
+    glm::vec3 point{0.0f};           // world-space contact point
+    glm::vec3 normal{0.0f, 1.0f, 0.0f}; // pointing from `other` towards this object
+    float impactSpeed = 0.0f;        // closing speed along the normal when the contact began (m/s)
 };
 
 class PhysicsWorld {
@@ -100,6 +134,24 @@ public:
     // unless hitCharacters is true.
     std::optional<RaycastHit> raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
                                       const Rigidbody* ignore = nullptr, bool hitCharacters = false) const;
+    std::optional<RaycastHit> raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance,
+                                      const QueryFilter& filter) const;
+
+    // Sweeps a shape along `direction` and returns the first hit. A cast that
+    // starts inside something hits it at distance 0 (normal = way out).
+    std::optional<RaycastHit> sphereCast(const glm::vec3& origin, float radius, const glm::vec3& direction,
+                                         float maxDistance, const QueryFilter& filter = {}) const;
+    std::optional<RaycastHit> boxCast(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation,
+                                      const glm::vec3& direction, float maxDistance, const QueryFilter& filter = {}) const;
+    std::optional<RaycastHit> shapeCast(const Collider& shape, const glm::vec3& position, const glm::quat& rotation,
+                                        const glm::vec3& direction, float maxDistance, const QueryFilter& filter = {}) const;
+
+    // Everything touching a shape (one hit per body, `point` = deepest point).
+    std::vector<RaycastHit> overlapSphere(const glm::vec3& center, float radius, const QueryFilter& filter = {}) const;
+    std::vector<RaycastHit> overlapBox(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation,
+                                       const QueryFilter& filter = {}) const;
+    std::vector<RaycastHit> overlap(const Collider& shape, const glm::vec3& position, const glm::quat& rotation,
+                                    const QueryFilter& filter = {}) const;
 
     // Static bodies without a GameObject: for instanced props (trees, rocks)
     // where a GameObject per instance would be wasteful. `userValue` comes
@@ -150,6 +202,11 @@ public:
     float linearDamping = 0.05f;
     float angularDamping = 0.05f;
     bool continuousCollision = false; // for fast objects (projectiles): no tunnelling
+    // A trigger volume: no collision response, sends onTriggerEnter/Exit when
+    // bodies or characters enter or leave it (pickups, damage zones, doors).
+    // Use a convex shape (box, sphere, capsule, hull); Static triggers still
+    // detect everything, including characters and sleeping bodies.
+    bool isTrigger = false;
     bool interpolate = true;          // smooth the Transform between fixed steps
 
     // --- Runtime (dynamic bodies) ------------------------------------------------------
@@ -219,6 +276,7 @@ public:
     void onDestroy() override;
 
     // Engine internal.
+    uint32_t innerBodyId() const; // the capsule body bodies collide with (kInvalidBody before start())
     glm::vec3 m_prevPos{0.0f}, m_currPos{0.0f};
     struct Impl;
 

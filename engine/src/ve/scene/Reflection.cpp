@@ -140,6 +140,7 @@ void registerBuiltinTypes()
         t.field("linearDamping", &Rigidbody::linearDamping).range(0.0f, 10.0f).speed(0.01f);
         t.field("angularDamping", &Rigidbody::angularDamping).range(0.0f, 10.0f).speed(0.01f);
         t.field("continuousCollision", &Rigidbody::continuousCollision);
+        t.field("isTrigger", &Rigidbody::isTrigger).tooltip("Trigger volume: no collision, sends onTriggerEnter/Exit");
         t.onChanged([](Rigidbody& rb) { rb.rebuild(); });
     });
 
