@@ -279,13 +279,14 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
   `custom` is a free vec4 per instance; `standard.vert` uses `w > 0` to tint vertex colours.
 - Storage: one device-local instance buffer (64 B per instance), sub-allocated
   per group. Only changed slot ranges are uploaded, through a per-frame staging buffer.
-- Each frame `InstanceCullPass` dispatches `instance_cull.comp` per group, with
-  one row per **cull view**: view 0 is the camera, then every directional
-  shadow cascade (`ShadowView::cullView`). For each instance it tests the
-  distance limits, a minimum size (shadow views skip casters smaller than
-  `shadowMinCasterTexels` cascade texels) and the frustum. It then picks the LOD
-  by camera distance and appends the instance to that LOD's batches, with an
-  atomic on the indirect command's `instanceCount`.
+- Each frame `InstanceCullPass` dispatches `instance_cull.comp` per group, one
+  thread per instance. The thread computes the bounding sphere and LOD (by
+  camera distance) once, then tests every **cull view**: view 0 is the camera,
+  then every directional shadow cascade (`ShadowView::cullView`). Per view it
+  tests the distance limits, a minimum size (shadow views skip casters smaller
+  than `shadowMinCasterTexels` cascade texels) and the frustum, and appends the
+  instance to that LOD's batches with an atomic on the indirect command's
+  `instanceCount`.
 - **LOD:** each group has up to 4 `InstanceLod`s, selected per instance by
   screen size (`radius · cot(fov/2) / distance`, if `screenSize` is set) or
   distance, scaled by `RendererSettings::lodBias`. Shadow views use
@@ -302,13 +303,16 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
   its pipeline uses clockwise front faces (otherwise normals bake inverted).
 - Draw batches are (group × LOD × submesh). Opaque and shadow passes call
   `instances().draw(ctx, cullView, kind, shadowViewIndex)`, which issues one
-  `vkCmdDrawIndexedIndirect` per batch with `DrawPush::flags = INSTANCED`. In
+  `vkCmdDrawIndexedIndirect` per batch with `DrawPush::flags = INSTANCED`, from
+  per-pass batch lists (forward / shadow casters) sorted by shader and mesh. In
   the vertex shader `veModelMatrix()` resolves
   `veInstances[veVisibleInstances[gl_InstanceIndex]]`.
 - Limits: `RendererSettings::maxInstances`, `maxVisibleInstancesPerView`
-  (sum of batch capacities; the visible buffer is sized for camera + all
-  cascades), 1024 groups, 2048 batches. Point-light shadows and transparent
-  materials don't draw instances.
+  (cap on the sum of batch capacities), 1024 groups, 2048 batches, cull views
+  for every possible cascade (`kMaxDirectionalLights × kMaxCascades`). The
+  visible buffer holds active views × the sum of batch capacities and grows
+  when groups are added. Point-light shadows and transparent materials don't
+  draw instances.
 - Stats (visible camera/shadow instance draws) are read back from the GPU one
   frame-slot later and shown in the F1 overlay.
 - Cutout materials (`StandardMaterial::Mode::Cutout`) use `shadow_cutout.frag` /

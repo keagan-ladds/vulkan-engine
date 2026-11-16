@@ -75,8 +75,7 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
 
     createDefaults();
     m_instances = std::make_unique<InstanceSystem>();
-    m_instances->init(*this, m_settings.maxInstances, m_settings.maxVisibleInstancesPerView,
-                      1 + m_settings.maxShadowedDirectionalLights * m_settings.cascadeCount);
+    m_instances->init(*this, m_settings.maxInstances, m_settings.maxVisibleInstancesPerView);
     writeInstanceDescriptors();
     createDefaultPasses();
     m_hotReload = std::make_unique<ShaderHotReload>(m_shaderDirs);

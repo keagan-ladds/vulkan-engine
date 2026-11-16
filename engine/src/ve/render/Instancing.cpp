@@ -54,6 +54,7 @@ struct CullPush {
     float lodBias;
     uint32_t shadowLodBias;
     float fadeBand;
+    uint32_t viewCount;
 };
 
 } // namespace
@@ -165,20 +166,21 @@ glm::mat4 InstanceGroup::transform(Handle h) const
 // InstanceSystem
 // =============================================================================
 
-void InstanceSystem::init(Renderer& renderer, uint32_t maxInstances, uint32_t maxVisiblePerView, uint32_t maxViews)
+void InstanceSystem::init(Renderer& renderer, uint32_t maxInstances, uint32_t maxVisiblePerView)
 {
     m_renderer = &renderer;
     if (maxInstances > (1u << 23)) throw std::runtime_error("maxInstances is limited to 8M (23-bit visible entries)");
     m_maxInstances = maxInstances;
     m_maxVisiblePerView = maxVisiblePerView;
-    m_maxViews = maxViews;
     Device& d = renderer.device();
 
     m_instances = d.createBuffer(VkDeviceSize(maxInstances) * sizeof(GpuInstance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                  MemoryUsage::GpuOnly, "instances");
-    m_visible = d.createBuffer(VkDeviceSize(maxViews) * maxVisiblePerView * sizeof(uint32_t),
-                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, MemoryUsage::GpuOnly, "visible instances");
-    const VkDeviceSize commandBytes = VkDeviceSize(maxViews) * kMaxBatches * sizeof(DrawIndexedIndirect);
+    // The visible list starts small and grows with the groups (ensureVisibleCapacity).
+    m_visibleCapacity = 1u << 16;
+    m_visible = d.createBuffer(VkDeviceSize(m_visibleCapacity) * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                               MemoryUsage::GpuOnly, "visible instances");
+    const VkDeviceSize commandBytes = VkDeviceSize(kMaxViews) * kMaxBatches * sizeof(DrawIndexedIndirect);
     m_commands = d.createBuffer(commandBytes,
                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
                                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -186,7 +188,7 @@ void InstanceSystem::init(Renderer& renderer, uint32_t maxInstances, uint32_t ma
     for (Slot& s : m_slots) {
         s.groups = d.createBuffer(kMaxGroups * sizeof(GpuInstanceGroup), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                   MemoryUsage::CpuToGpu, "instance groups");
-        s.views = d.createBuffer(VkDeviceSize(maxViews) * sizeof(GpuCullView), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+        s.views = d.createBuffer(VkDeviceSize(kMaxViews) * sizeof(GpuCullView), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                  MemoryUsage::CpuToGpu, "cull views");
         s.commands = d.createBuffer(commandBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::CpuToGpu,
                                     "instance command template");
@@ -250,6 +252,11 @@ void InstanceSystem::release(InstanceGroup* group)
 {
     std::erase(m_groups, group);
     m_layoutDirty = true;
+    // Batches point at the group: drop them now (not at the next prepare) so a
+    // group destroyed mid-frame is never dereferenced by culling or drawing.
+    m_batches.clear();
+    m_forwardBatches.clear();
+    m_shadowBatches.clear();
     if (!m_renderer) return;
     // The GPU may still be culling/drawing this range for in-flight frames.
     const Range range{group->m_firstInstance, std::max(1u, group->m_capacity)};
@@ -280,6 +287,44 @@ void InstanceSystem::rebuildLayout()
                                  " visible slots per view: raise RendererSettings::maxVisibleInstancesPerView");
     }
     m_visiblePerView = visibleOffset;
+
+    // Per-pass draw lists, sorted by pipeline (shader) then mesh.
+    m_forwardBatches.clear();
+    m_shadowBatches.clear();
+    for (uint32_t b = 0; b < m_batches.size(); ++b) {
+        const Batch& bt = m_batches[b];
+        const Shader& shader = bt.material->shader();
+        if (shader.transparent()) {
+            log::warn("Instance group '{}': transparent materials aren't supported for instancing; skipped",
+                      bt.group->m_desc.name);
+        } else {
+            m_forwardBatches.push_back(b);
+        }
+        if (bt.group->m_desc.castShadows && shader.desc().castShadows) m_shadowBatches.push_back(b);
+    }
+    auto byState = [&](uint32_t a, uint32_t b) {
+        const Batch &x = m_batches[a], &y = m_batches[b];
+        const Shader *sx = &x.material->shader(), *sy = &y.material->shader();
+        return sx != sy ? sx < sy : x.mesh < y.mesh;
+    };
+    std::sort(m_forwardBatches.begin(), m_forwardBatches.end(), byState);
+    std::sort(m_shadowBatches.begin(), m_shadowBatches.end(), byState);
+}
+
+void InstanceSystem::ensureVisibleCapacity(uint32_t entries)
+{
+    if (entries <= m_visibleCapacity) return;
+    // Only happens when groups are added or more shadow views appear (level
+    // load, settings change), so simply wait for the GPU and swap the buffer.
+    Device& d = m_renderer->device();
+    d.waitIdle();
+    d.destroyBuffer(m_visible);
+    m_visibleCapacity = std::max(entries, m_visibleCapacity + m_visibleCapacity / 2);
+    m_visible = d.createBuffer(VkDeviceSize(m_visibleCapacity) * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                               MemoryUsage::GpuOnly, "visible instances");
+    m_renderer->writeInstanceDescriptors();
+    log::info("InstanceSystem: visible list grown to {} entries ({:.1f} MB)", m_visibleCapacity,
+              m_visibleCapacity * 4.0 / (1024.0 * 1024.0));
 }
 
 void InstanceSystem::prepare(uint32_t slotIndex, FrameData& frame)
@@ -298,7 +343,7 @@ void InstanceSystem::prepare(uint32_t slotIndex, FrameData& frame)
     uint32_t v = 1;
     for (ShadowView& sv : frame.shadowViews) {
         sv.cullView = kInvalidIndex;
-        if (sv.point || v >= m_maxViews) continue; // point-light shadows don't draw instances
+        if (sv.point || v >= kMaxViews) continue; // point-light shadows don't draw instances
         for (int p = 0; p < 6; ++p) views[v].planes[p] = sv.frustum.planes[p];
         // Casters smaller than ~2 texels of this cascade can't cast a visible shadow.
         views[v].position = glm::vec4(frame.camera.position, sv.texelSize * m_renderer->settings().shadowMinCasterTexels);
@@ -306,6 +351,7 @@ void InstanceSystem::prepare(uint32_t slotIndex, FrameData& frame)
     }
     m_activeViews = v;
     s.viewCount = v;
+    ensureVisibleCapacity(v * m_visiblePerView);
     s.batchCount = static_cast<uint32_t>(m_batches.size());
     s.batchLods.resize(m_batches.size());
     for (size_t b = 0; b < m_batches.size(); ++b) s.batchLods[b] = static_cast<uint8_t>(m_batches[b].lod);
@@ -410,15 +456,16 @@ void InstanceSystem::recordCulling(VkCommandBuffer cmd, uint32_t slotIndex)
                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                   VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
 
-    // 3. Cull: one dispatch per group, one row per view.
+    // 3. Cull: one dispatch per group, one thread per instance (it tests every view).
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullPipeline);
     for (uint32_t gi = 0; gi < m_groups.size(); ++gi) {
         const uint32_t count = m_groups[gi]->count();
         if (count == 0) continue;
         const RendererSettings& rs = m_renderer->settings();
-        const CullPush push{gi, s.batchCount, m_lodScale, rs.lodBias, rs.shadowLodBias, rs.lodCrossfade ? rs.lodFadeBand : 0.0f};
+        const CullPush push{gi,          s.batchCount, m_lodScale, rs.lodBias, rs.shadowLodBias,
+                            rs.lodCrossfade ? rs.lodFadeBand : 0.0f, s.viewCount};
         vkCmdPushConstants(cmd, m_renderer->pipelineLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(push), &push);
-        vkCmdDispatch(cmd, (count + 63) / 64, s.viewCount, 1);
+        vkCmdDispatch(cmd, (count + 63) / 64, 1, 1);
     }
 
     // 4. Make the results visible to indirect draws, vertex shaders and the stats copy.
@@ -436,24 +483,11 @@ void InstanceSystem::draw(RenderContext& ctx, uint32_t cullView, PassKind kind, 
     const uint32_t batchCount = static_cast<uint32_t>(m_batches.size());
     VkPipeline bound = VK_NULL_HANDLE;
     const Mesh* boundMesh = nullptr;
-    for (uint32_t b = 0; b < batchCount; ++b) {
+    for (uint32_t b : kind == PassKind::Forward ? m_forwardBatches : m_shadowBatches) {
         const Batch& bt = m_batches[b];
-        Shader& shader = bt.material->shader();
-        if (kind == PassKind::Forward) {
-            if (shader.transparent()) {
-                if (!m_warnedTransparent) {
-                    log::warn("Instance group '{}': transparent materials aren't supported for instancing; skipped",
-                              bt.group->m_desc.name);
-                    m_warnedTransparent = true;
-                }
-                continue;
-            }
-        } else if (!bt.group->m_desc.castShadows || !shader.desc().castShadows) {
-            continue;
-        }
         if (bt.group->count() == 0) continue;
 
-        VkPipeline p = shader.pipeline(kind);
+        VkPipeline p = bt.material->shader().pipeline(kind);
         if (p != bound) {
             vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
             bound = p;

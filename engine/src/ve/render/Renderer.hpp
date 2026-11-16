@@ -268,6 +268,7 @@ private:
     void createFrameSlots();
     void createShadowMaps();
     void writeShadowDescriptors();
+    friend class InstanceSystem; // rewrites its descriptors when the visible list grows
     void writeInstanceDescriptors();
     void createDefaults();
     void createDefaultPasses();

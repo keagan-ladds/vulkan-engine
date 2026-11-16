@@ -112,7 +112,11 @@ struct InstanceStats {
 // Engine-internal manager (owned by the Renderer).
 class InstanceSystem {
 public:
-    void init(Renderer& renderer, uint32_t maxInstances, uint32_t maxVisiblePerView, uint32_t maxViews);
+    // Cull views: the camera + every possible directional shadow cascade, so
+    // shadowed lights added at runtime (applySettings) still get instances.
+    static constexpr uint32_t kMaxViews = 1 + kMaxDirectionalLights * kMaxCascades;
+
+    void init(Renderer& renderer, uint32_t maxInstances, uint32_t maxVisiblePerView);
     void shutdown();
 
     std::shared_ptr<InstanceGroup> createGroup(InstanceGroupDesc desc, uint32_t capacity);
@@ -170,25 +174,29 @@ private:
     };
 
     void rebuildLayout();
+    void ensureVisibleCapacity(uint32_t entries);
     uint32_t allocateRange(uint32_t count);
 
     Renderer* m_renderer = nullptr;
-    uint32_t m_maxInstances = 0, m_maxVisiblePerView = 0, m_maxViews = 0;
+    uint32_t m_maxInstances = 0, m_maxVisiblePerView = 0;
     static constexpr uint32_t kMaxGroups = 1024;
     static constexpr uint32_t kMaxBatches = 2048;
     Buffer m_instances; // GpuInstance[maxInstances], device local
-    Buffer m_visible;   // uint[maxViews * maxVisiblePerView]
-    Buffer m_commands;  // DrawIndexedIndirect[maxViews * kMaxBatches]
+    Buffer m_visible;   // uint[m_visibleCapacity]: active views x m_visiblePerView, grown on demand
+    Buffer m_commands;  // DrawIndexedIndirect[kMaxViews * kMaxBatches]
+    uint32_t m_visibleCapacity = 0;
     Slot m_slots[2];
     std::vector<InstanceGroup*> m_groups;
     std::vector<Batch> m_batches;
+    // Batches each kind of pass draws (opaque/cutout for the camera, casters
+    // for shadows), sorted by pipeline then mesh to minimise binds.
+    std::vector<uint32_t> m_forwardBatches, m_shadowBatches;
     std::vector<Range> m_freeRanges;
     uint32_t m_visiblePerView = 0;
     uint32_t m_activeViews = 1;
     uint32_t m_drawsThisFrame = 0;
     float m_lodScale = 1.0f;
     bool m_layoutDirty = true;
-    bool m_warnedTransparent = false;
     PipelineHandle m_cullPipeline;
     InstanceStats m_stats;
 };
