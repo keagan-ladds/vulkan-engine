@@ -95,7 +95,12 @@ void VolumetricFogPass::execute(ve::RenderContext& ctx)
     // 2. Upsample + blend over the scene.
     ctx.beginRendering({{r.sceneColor()}});
     ctx.bindPipeline(m_apply);
-    ctx.push(g.get(m_fog).sampledIndex);
+    struct ApplyPush {
+        glm::vec2 size;
+        uint32_t fog;
+    };
+    const ve::GraphTexture& fog = g.get(m_fog);
+    ctx.push(ApplyPush{{float(fog.extent.width), float(fog.extent.height)}, fog.sampledIndex});
     ctx.drawFullscreen();
     ctx.endRendering();
 }

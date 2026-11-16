@@ -81,6 +81,16 @@ void main()
     float farVisSum = 0.0, farVisWeight = 0.0;
     float nearVis = vfxSunShadow(ro + sunDir * 0.5);
 
+    // Sun shadow along the ray without a cascade search and a mat4 per step:
+    // view depth grows linearly with t, so the cascade index only ever moves
+    // forward, and the (orthographic) shadow projection of ro + rd * t is
+    // sOrigin + sDir * t. Both are only recomputed when the cascade changes.
+    // Same result as vfxSunShadowCascade(p).
+    float depthPerT = dot(rd, frame.cameraForward.xyz);
+    int cascade = 0;
+    int cascadeReady = -1; // cascade sOrigin/sDir belong to
+    vec3 sOrigin = vec3(0.0), sDir = vec3(0.0);
+
     vec3 scattered = vec3(0.0);
     float T = 1.0;
     float prevT = 0.0;
@@ -94,9 +104,23 @@ void main()
         float sigma = fogDensity(p);
         if (sigma <= 1e-6) continue;
 
-        int cascade;
-        float vis = vfxSunShadowCascade(p, cascade);
-        if (cascade < 0 && lastCascade >= 0) {
+        float vis = 1.0;
+        if (lastCascade >= 0) {
+            VeDirectionalLight SL = lights.directional[0];
+            float viewDepth = t * depthPerT;
+            while (cascade <= lastCascade && viewDepth > SL.cascadeSplits[cascade]) ++cascade;
+            if (cascade <= lastCascade) {
+                if (cascadeReady != cascade) {
+                    mat4 M = lights.shadowViews[SL.shadow.x + cascade];
+                    sOrigin = (M * vec4(ro, 1.0)).xyz;
+                    sDir = mat3(M) * rd;
+                    cascadeReady = cascade;
+                }
+                vec3 ndc = sOrigin + sDir * t;
+                vis = texture(veDirShadowMap, vec4(ndc.xy * 0.5 + 0.5, float(SL.shadow.z + cascade), ndc.z));
+            }
+        }
+        if (cascade > lastCascade && lastCascade >= 0) {
             vis = farVisWeight > 0.0 ? farVisSum / farVisWeight : nearVis;
         } else if (cascade == lastCascade) {
             farVisSum += vis * ds;

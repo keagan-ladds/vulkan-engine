@@ -1,5 +1,5 @@
 #version 460
-// Upsamples the accumulated SSGI (see ssgi_temporal.frag) and applies it (blend: dst = src.rgb + dst * src.a).
+// Upsamples the accumulated SSGI (see temporal_accumulate.frag) and applies it (blend: dst = src.rgb + dst * src.a).
 // ssgi.frag rotates its rays by a 4x4 Bayer pattern over the half-res pixels,
 // so ANY 4x4 window of them holds all 16 rotations: averaging exactly 4x4
 // texels removes the pattern. Texels at a different depth are down-weighted

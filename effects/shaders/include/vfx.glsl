@@ -54,7 +54,8 @@ float vfxPhaseRayleigh(float c) { return 3.0 / (16.0 * VE_PI) * (1.0 + c * c); }
 float vfxPhaseHG(float c, float g)
 {
     float g2 = g * g;
-    return (1.0 - g2) / (4.0 * VE_PI * pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5));
+    float x = max(1.0 + g2 - 2.0 * g * c, 1e-4);
+    return (1.0 - g2) / (4.0 * VE_PI * x * sqrt(x)); // x^1.5
 }
 
 // Mie phase used for the sky (Cornette-Shanks).
@@ -62,7 +63,8 @@ float vfxPhaseMie(float c, float g)
 {
     float g2 = g * g;
     float k = 3.0 / (8.0 * VE_PI) * (1.0 - g2) / (2.0 + g2);
-    return k * (1.0 + c * c) / pow(max(1.0 + g2 - 2.0 * g * c, 1e-4), 1.5);
+    float x = max(1.0 + g2 - 2.0 * g * c, 1e-4);
+    return k * (1.0 + c * c) / (x * sqrt(x)); // x^1.5
 }
 
 // ---- Sky-view LUT lookup ----------------------------------------------------------
@@ -110,18 +112,8 @@ int vfxSunCascadeCount()
 
 float vfxSunShadow(vec3 p)
 {
-    if (frame.lightCounts.x == 0u) return 1.0;
-    VeDirectionalLight L = lights.directional[0];
-    if (L.shadow.x < 0) return 1.0;
-    float viewDepth = dot(p - frame.cameraPosition.xyz, frame.cameraForward.xyz);
-    int c = -1;
-    for (int i = 0; i < L.shadow.y; ++i) {
-        if (viewDepth <= L.cascadeSplits[i]) { c = i; break; }
-    }
-    if (c < 0) return 1.0;
-    vec4 sp = lights.shadowViews[L.shadow.x + c] * vec4(p, 1.0);
-    vec3 ndc = sp.xyz / sp.w;
-    return texture(veDirShadowMap, vec4(ndc.xy * 0.5 + 0.5, float(L.shadow.z + c), ndc.z));
+    int cascade;
+    return vfxSunShadowCascade(p, cascade);
 }
 
 float vfxRemap(float v, float lo, float hi, float newLo, float newHi)

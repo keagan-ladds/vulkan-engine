@@ -23,9 +23,8 @@ vec3 viewPos(vec2 uv, float depth)
     return v.xyz / v.w;
 }
 
-vec2 projectUV(vec3 viewPos)
+vec2 clipToUV(vec4 c)
 {
-    vec4 c = frame.proj * vec4(viewPos, 1.0);
     return c.xy / c.w * 0.5 + 0.5;
 }
 
@@ -58,6 +57,9 @@ void main()
 
     // Start slightly off the surface to avoid self-hits.
     vec3 origin = P + N * (0.02 + 0.002 * -P.z);
+    // The ray's clip position is affine in t: project origin and direction once.
+    vec4 clip0 = frame.proj * vec4(origin, 1.0);
+    vec4 clipDir = frame.proj * vec4(R, 0.0);
     float prevT = 0.0;
     float hitT = -1.0;
     vec2 hitUV = vec2(0.0);
@@ -67,7 +69,7 @@ void main()
         float t = maxDist * f * f;
         vec3 Q = origin + R * t;
         if (Q.z > -frame.cameraPosition.w) break; // went behind the camera
-        vec2 uv = projectUV(Q);
+        vec2 uv = clipToUV(clip0 + clipDir * t);
         if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;
         float rayDepth = -Q.z;
         float diff = rayDepth - sceneViewDepth(uv);
@@ -76,12 +78,11 @@ void main()
             float lo = prevT, hi = t;
             for (int k = 0; k < 5; ++k) {
                 float mid = 0.5 * (lo + hi);
-                vec3 M = origin + R * mid;
-                vec2 muv = projectUV(M);
-                if (-M.z - sceneViewDepth(muv) > 0.0) hi = mid; else lo = mid;
+                vec4 mc = clip0 + clipDir * mid;
+                if (-(origin.z + R.z * mid) - sceneViewDepth(clipToUV(mc)) > 0.0) hi = mid; else lo = mid;
             }
             hitT = hi;
-            hitUV = projectUV(origin + R * hi);
+            hitUV = clipToUV(clip0 + clipDir * hi);
             break;
         }
         prevT = t;

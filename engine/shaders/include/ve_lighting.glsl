@@ -60,6 +60,25 @@ float veSampleCascade(VeDirectionalLight L, int c, vec3 P, vec3 N)
     float layer = float(L.shadow.z + c);
 
     // 3x3 PCF; each tap is itself a bilinear 2x2 comparison in hardware.
+    // With the default 1-texel spacing the 9 taps weigh the texels around the
+    // sample as [1-f, 1, 1, f] per axis (f = sub-texel position), which 2x2
+    // bilinear taps reproduce exactly when each is placed at the weighted
+    // centre of its texel pair (Castano's "optimized PCF"): same result,
+    // 4 fetches instead of 9.
+    if (frame.shadowParams.y == 1.0) {
+        float size = frame.shadowParams.z;
+        vec2 s = uv * size - 0.5;
+        vec2 base = floor(s);
+        vec2 f = s - base;
+        vec2 wA = 2.0 - f, wB = 1.0 + f;              // weights of texel pairs (base-1, base) and (base+1, base+2)
+        vec2 uA = (base - 0.5 + 1.0 / wA) / size;     // weighted centre of each pair
+        vec2 uB = (base + 1.5 + f / wB) / size;
+        float sum = wA.x * wA.y * texture(veDirShadowMap, vec4(uA.x, uA.y, layer, ndc.z))
+                  + wB.x * wA.y * texture(veDirShadowMap, vec4(uB.x, uA.y, layer, ndc.z))
+                  + wA.x * wB.y * texture(veDirShadowMap, vec4(uA.x, uB.y, layer, ndc.z))
+                  + wB.x * wB.y * texture(veDirShadowMap, vec4(uB.x, uB.y, layer, ndc.z));
+        return sum / 9.0;
+    }
     vec2 texel = vec2(frame.shadowParams.y / frame.shadowParams.z);
     float sum = 0.0;
     for (int y = -1; y <= 1; ++y) {
@@ -214,17 +233,22 @@ vec3 veAmbient(VeSurface s, vec3 V)
     return (diffuse + specular) * s.ao;
 }
 
-vec3 veEvaluateLighting(VeSurface s)
+// `sun0Shadow` returns the shadow of directional light 0 at the surface if it
+// was computed (the light faces the surface), or -1, so shaders that add their
+// own sun terms (grass translucency) don't sample the shadow map twice.
+vec3 veEvaluateLighting(VeSurface s, out float sun0Shadow)
 {
     vec3 V = normalize(frame.cameraPosition.xyz - s.position);
     float viewDepth = dot(s.position - frame.cameraPosition.xyz, frame.cameraForward.xyz);
     vec3 color = vec3(0.0);
+    sun0Shadow = -1.0;
 
     for (uint i = 0; i < frame.lightCounts.x; ++i) {
         VeDirectionalLight L = lights.directional[i];
         vec3 l = -L.direction.xyz;
         if (dot(s.normal, l) <= 0.0) continue;
         float shadow = veDirectionalShadow(i, s.position, s.normal, viewDepth);
+        if (i == 0u) sun0Shadow = shadow;
         color += veBRDF(s, V, l, L.color.rgb * shadow);
     }
     for (uint i = 0; i < frame.lightCounts.y; ++i) {
@@ -246,6 +270,12 @@ vec3 veEvaluateLighting(VeSurface s)
         if (c >= 0) color *= tints[c];
     }
     return color;
+}
+
+vec3 veEvaluateLighting(VeSurface s)
+{
+    float sun0Shadow;
+    return veEvaluateLighting(s, sun0Shadow);
 }
 
 #endif // VE_LIGHTING_GLSL
