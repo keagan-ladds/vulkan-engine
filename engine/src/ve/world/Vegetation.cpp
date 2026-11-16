@@ -159,12 +159,31 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
     std::ostringstream key;
     key << mesh << '|' << library << '|' << int(lodMode) << '|' << lodThresholds.x << ',' << lodThresholds.y << ','
         << lodThresholds.z << '|' << autoLods << '|' << impostor << '|' << int(collision) << '|' << colliderSize.x << ','
-        << colliderSize.y << ',' << colliderSize.z << '|' << colliderUserValue;
+        << colliderSize.y << ',' << colliderSize.z << '|' << colliderUserValue << '|' << states;
     if (key.str() == m_meshKey) return m_meshes;
     m_meshKey = key.str();
-    m_meshes = nullptr;
     const std::string owner = "FoliageType '" + gameObject().name() + "'";
+    m_meshes = buildMeshes(r, mesh, library, owner);
+    // Extra states: "Name = library name or glTF path(s)"; a spec with a '.' is a file.
+    m_stateMeshes.clear();
+    for (const std::string& entry : str::split(states, ';')) {
+        const size_t eq = entry.find('=');
+        const std::string name = str::trim(std::string_view(entry).substr(0, eq));
+        const std::string spec = eq == std::string::npos ? std::string() : str::trim(std::string_view(entry).substr(eq + 1));
+        std::shared_ptr<const FoliageMeshes> sm;
+        if (!spec.empty()) {
+            const bool file = spec.find('.') != std::string::npos;
+            sm = buildMeshes(r, file ? spec : std::string(), file ? std::string() : spec, owner + " state '" + name + "'");
+            if (!sm) log::warnOnce(owner + ": state '" + name + "' has no meshes (" + spec + ")");
+        }
+        m_stateMeshes.push_back({name, sm ? sm : std::make_shared<FoliageMeshes>()});
+    }
+    return m_meshes;
+}
 
+std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const std::string& mesh, const std::string& library,
+                                                              const std::string& owner)
+{
     auto out = std::make_shared<FoliageMeshes>();
     std::vector<MeshData> hulls; // per variant, for ConvexHull
     if (!library.empty() && mesh.empty()) {
@@ -269,8 +288,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
         break;
     }
     if (colliderUserValue != 0) out->colliderUserValue = uint32_t(colliderUserValue);
-    m_meshes = out;
-    return m_meshes;
+    return out;
 }
 
 // -----------------------------------------------------------------------------
@@ -373,6 +391,19 @@ void Foliage::rebuild()
         l.variants = meshes->variants;
         l.colliders = meshes->colliders;
         l.colliderUserValue = meshes->colliderUserValue;
+        for (const auto& [stateName, sm] : t->stateMeshes()) l.states.push_back({stateName, sm->variants, sm->colliders});
+        l.promoteDistance = t->promoteDistance;
+        if (!t->promoteType.empty()) {
+            const std::string type = t->promoteType;
+            l.promote = [type, self](Scene& s, const FoliageInstanceInfo&) -> GameObject* {
+                const TypeInfo* info = TypeRegistry::get().find(type);
+                if (!info || !info->spawn) {
+                    log::warnOnce(self + ": promoteType '" + type + "' isn't a registered GameObject type");
+                    return &s.spawn(type);
+                }
+                return info->spawn(s);
+            };
+        }
         static_cast<FoliageRules&>(l) = *t; // the shared placement / streaming fields
         l.spacing = std::max(l.spacing, 0.1f);
         l.maxScale = std::max(l.maxScale, l.minScale);
@@ -643,6 +674,10 @@ void registerVegetationTypes(TypeRegistry& r)
         t.field("colliderDistance", &FoliageType::colliderDistance).range(0.0f, 10000.0f);
         t.field("maxInstances", &FoliageType::maxInstances).range(0.0f, 1e7f);
         t.field("seed", &FoliageType::seed).tooltip("0 = from the object name");
+        t.field("states", &FoliageType::states).tooltip("extra looks: 'Stump = library name; Picked = model.glb'");
+        t.field("promoteDistance", &FoliageType::promoteDistance).range(0.0f, 200.0f)
+            .tooltip("> 0: instances this close to the player become GameObjects (with a FoliageLink)");
+        t.field("promoteType", &FoliageType::promoteType).tooltip("registered GameObject type to promote to (empty = plain)");
     });
     r.add<Foliage>("Foliage", [](TypeBuilder<Foliage>& t) {
         t.category("World");

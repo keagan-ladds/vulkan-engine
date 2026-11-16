@@ -609,7 +609,10 @@
                 "biomeThreshold": 0.65,
                 "minHeight": 0.6,
                 "maxSlope": 0.34,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "states": "Stump = acacia stump",
+                "promoteDistance": 8,
+                "promoteType": "ChoppableTree"
               }
             }
           ]
@@ -788,6 +791,56 @@
                 "colliderDistance": 40,
                 "seed": 1006,
                 "biomes": "*:1, Desert:-0.85, Jungle:-1"
+              }
+            }
+          ]
+        },
+        {
+          "id": "5a1e00000d00e001",
+          "type": "GameObject",
+          "name": "Berry bushes",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "fields": {},
+          "components": [
+            {
+              "type": "FoliageType",
+              "enabled": true,
+              "fields": {
+                "tint": 0.1,
+                "sink": 0.15,
+                "library": "berry bush",
+                "states": "Picked = berry bush (picked)",
+                "promoteDistance": 6,
+                "promoteType": "BerryBush",
+                "spacing": 18,
+                "probability": 0.35,
+                "minScale": 0.8,
+                "maxScale": 1.1,
+                "minHeight": 0.4,
+                "maxSlope": 0.3,
+                "avoid": "Baobabs:5, Acacias:3",
+                "biomes": "Savannah:1, Camp:1",
+                "biomeThreshold": 0.6,
+                "viewDistance": 300,
+                "shadowDistance": 60,
+                "colliderDistance": 40,
+                "seed": 1106
               }
             }
           ]

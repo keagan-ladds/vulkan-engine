@@ -263,9 +263,41 @@ foliage.colliderFocus = &player;
 foliage.preload(player.transform().position());
 ```
 Rules are deterministic, so the same world appears every run without saving
-anything. To make a change persistent (e.g. a felled tree), keep your own
-"removed" set and exclude it, either in `density` or by `addExclusion` before
-loading. A built-in removal API is a roadmap item.
+anything.
+
+### Interactive foliage: chop trees, pick fruit
+
+The engine keeps per-instance state; what it means is up to the game.
+```cpp
+// Scene file (FoliageType): an extra look, and promotion near the player.
+//   "states": "Stump = acacia stump",        // MeshLibrary name or glTF path(s)
+//   "promoteDistance": 8, "promoteType": "ChoppableTree"
+// Code (FoliageLayer): layer.states = {{"Stump", stumpChains, stumpColliders}};
+//                      layer.promoteDistance = 8; layer.promote = [](Scene& s, auto&) { return &s.spawn<ChoppableTree>(); };
+
+class ChoppableTree : public ve::GameObject {          // VE_REGISTER_TYPE(ChoppableTree, "ChoppableTree")
+    void chopped() { getComponent<ve::FoliageLink>()->setState("Stump"); } // a stump for good
+};
+
+auto info = foliage.nearest(layer, playerXZ, 5.0f);   // or raycast the promoted object
+foliage.setState(info->id, foliage.stateIndex(layer, "Stump"));
+foliage.remove(info->id);                               // gone (no mesh, no collider)
+auto save = foliage.overrides();                        // [(id, state)]: store in your save game
+foliage.setOverrides(save);                             // ...and give it back after loading
+```
+- An id (`FoliageInstanceId`: layer + placement square) is the same every run,
+  as long as the layer order and rules don't change.
+- A changed instance shows its state's mesh and collider now and whenever its
+  cell streams in again: walk away and back and the stump is still there.
+- Within `promoteDistance` of `colliderFocus` (the player) each instance is
+  replaced by a GameObject (`promote`, or a plain one) carrying a
+  `FoliageLink` (its id, transform, state and `setState`). Unless the object
+  has its own, the system gives it the instance's mesh and a static collider,
+  so the swap is invisible; it goes back to being an instance further away
+  (+25 %). The object is the system's: keep game state that must last (a
+  regrowth timer, chop progress you want to keep) in your game, keyed by the id.
+- Savanna's `Harvest.hpp`: `ChoppableTree` (3 chops, then a stump), `BerryBush`
+  (picked look, regrows via the game's `Regrowth` timer).
 
 ### Grass
 

@@ -1,5 +1,7 @@
 #include "Props.hpp"
 
+#include "Harvest.hpp"
+
 #include <ve/world/Noise.hpp>
 #include "Player.hpp"
 #include "SavannaLayout.hpp"
@@ -390,6 +392,23 @@ public:
 
 } // namespace
 
+namespace {
+std::string stateLabel(const ve::FoliageSystem& f, ve::FoliageInstanceId id)
+{
+    const std::string& n = f.stateName(id.layer, f.state(id));
+    return n.empty() ? std::string("(default)") : n;
+}
+} // namespace
+
+void AutoTest::shot(const char* name)
+{
+    // SAVANNA_SHOTS=<folder>: screenshots of the interactive foliage steps (headless runs).
+    if (const char* dir = std::getenv("SAVANNA_SHOTS"); dir && *dir && !m_shotTaken.count(name)) {
+        m_shotTaken.insert(name);
+        renderer().requestCapture(std::string(dir) + "/" + name + ".png");
+    }
+}
+
 glm::vec3 AutoTest::groundAt(glm::vec2 p) const
 {
     return {p.x, m_terrain->height(p.x, p.y) + 0.1f, p.y};
@@ -645,10 +664,87 @@ void AutoTest::update(float dt)
             (desert ? "quiver trees" : "jungle trees") + " within 100 m, terrain nodes " + std::to_string(m_terrain->drawnNodes()) +
             ", collider tiles " + std::to_string(m_terrain->colliderTiles()) + ", foliage " +
             std::to_string(foliageObject ? foliageObject->system()->stats().instances : 0) + " instances");
-        if (desert) player->teleport(groundAt({-1150.0f, 450.0f}), 0.0f);
-        else engine().quit();
+        if (desert) {
+            player->teleport(groundAt({-1150.0f, 450.0f}), 0.0f);
+        } else {
+            // Interactive foliage: stand next to an acacia near the camp.
+            const int layer = foliageObject ? foliageObject->layerIndex("Acacias") : -1;
+            const auto tree = layer >= 0 ? foliageObject->system()->nearest(uint32_t(layer), {90.0f, 60.0f}, 150.0f) : std::nullopt;
+            if (!tree) {
+                log("interactive foliage: no acacia found");
+                engine().quit();
+            } else {
+                m_tree = tree->id;
+                // 7 m east of it (inside its promoteDistance), looking west at it.
+                player->setPose(groundAt(glm::vec2(tree->position.x + 7.0f, tree->position.z)), 90.0f, 8.0f);
+            }
+        }
         m_t = 0.0f;
         ++m_step;
+    } else if (m_step == 7 && m_t > 1.0f) {
+        shot("1-acacia");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 8 && m_t > 0.3f) {
+        ve::FoliageSystem* foliage = scene().findFirst<ve::Foliage>()->system();
+        auto* tree = dynamic_cast<ChoppableTree*>(foliage->promoted(m_tree));
+        log(std::string("acacia promoted to a ChoppableTree: ") + (tree ? "yes" : "NO"));
+        int felled = 0;
+        for (int i = 0; tree && i < ChoppableTree::kChops; ++i) felled += tree->chop() ? 1 : 0;
+        log("chopped " + std::to_string(ChoppableTree::kChops) + " times: felled " + std::to_string(felled) + ", state '" +
+            stateLabel(*foliage, m_tree) + "', wood " + std::to_string(gameState().wood));
+        static_cast<Player*>(scene().find("Player"))->teleport(groundAt({1200.0f, -300.0f}), 0.0f); // far away: the cell unloads
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 9 && m_t > 2.0f) {
+        const auto info = scene().findFirst<ve::Foliage>()->system()->instance(m_tree);
+        static_cast<Player*>(scene().find("Player"))->setPose(groundAt(glm::vec2(info->position.x + 3.0f, info->position.z)), 90.0f, -28.0f);
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 10 && m_t > 2.0f) {
+        shot("2-stump");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 11 && m_t > 0.3f) {
+        ve::FoliageSystem* foliage = scene().findFirst<ve::Foliage>()->system();
+        auto* obj = foliage->promoted(m_tree);
+        auto* link = obj ? obj->getComponent<ve::FoliageLink>() : nullptr;
+        log("back at the tree: state '" + stateLabel(*foliage, m_tree) + "', promoted object shows '" +
+            (link ? link->stateName() : std::string("none")) + "', " + std::to_string(foliage->overrides().size()) +
+            " override(s) to save");
+        // Berries: pick a bush, then let them grow back.
+        auto* foliageObject = scene().findFirst<ve::Foliage>();
+        const int layer = foliageObject->layerIndex("Berry bushes");
+        const auto bush = layer >= 0 ? foliage->nearest(uint32_t(layer), {60.0f, 40.0f}, 400.0f) : std::nullopt;
+        if (!bush) {
+            log("interactive foliage: no berry bush found");
+            engine().quit();
+        } else {
+            m_bush = bush->id;
+            static_cast<Player*>(scene().find("Player"))->setPose(groundAt(glm::vec2(bush->position.x + 2.5f, bush->position.z)), 90.0f, -25.0f);
+            if (Regrowth* r = Regrowth::find(scene())) r->regrowSeconds = 2.0f;
+        }
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 12 && m_t > 1.0f) {
+        shot("3-berry-bush");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 13 && m_t > 0.3f) {
+        ve::FoliageSystem* foliage = scene().findFirst<ve::Foliage>()->system();
+        auto* bush = dynamic_cast<BerryBush*>(foliage->promoted(m_bush));
+        const bool picked = bush && bush->pick();
+        log(std::string("berry bush promoted: ") + (bush ? "yes" : "NO") + ", picked: " + (picked ? "yes" : "no") + ", state '" +
+            stateLabel(*foliage, m_bush) + "', berries " + std::to_string(gameState().berries));
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 14 && m_t > 3.0f) {
+        ve::FoliageSystem* foliage = scene().findFirst<ve::Foliage>()->system();
+        log("after the regrowth time: berry bush state '" + stateLabel(*foliage, m_bush) + "'");
+        engine().quit();
+        ++m_step;
+    } else if (m_step == 14 && m_t > 0.5f) {
+        shot("4-berries-picked");
     }
 }
 
@@ -715,8 +811,9 @@ void Hud::onGui()
     const int hours = static_cast<int>(tod);
     const int minutes = static_cast<int>((tod - hours) * 60.0f);
     char buf[256];
-    std::snprintf(buf, sizeof(buf), "%02d:%02d   %s%s\nSunstones: %d / %d", hours, minutes,
-                  m_weather ? vfx::Weather::name(m_weather->weather()) : "-", m_player.flying() ? "   [FLY]" : "", gs.collected, gs.total);
+    std::snprintf(buf, sizeof(buf), "%02d:%02d   %s%s\nSunstones: %d / %d\nWood: %d   Berries: %d", hours, minutes,
+                  m_weather ? vfx::Weather::name(m_weather->weather()) : "-", m_player.flying() ? "   [FLY]" : "", gs.collected,
+                  gs.total, gs.wood, gs.berries);
     const ImVec2 size = ImGui::CalcTextSize(buf);
     const ImVec2 p(io.DisplaySize.x - size.x - 20.0f, 16.0f);
     dl->AddRectFilled({p.x - 10, p.y - 6}, {p.x + size.x + 10, p.y + size.y + 6}, IM_COL32(20, 14, 8, 140), 6.0f);

@@ -403,6 +403,17 @@ helpers (the instancing helpers are vertex-only).
   are clamped to the world bounds, so a 3 km view distance on a small map
   costs nothing.
 
+**Interactive foliage.** Instances have stable ids (`FoliageInstanceId`: layer
++ placement grid square). `setState(id, s)` switches one to an alternative
+look (`FoliageLayer::states`: meshes + colliders; `kFoliageRemoved` = nothing).
+The system keeps these overrides (main thread only, so the worker needs no
+lock) and re-applies them whenever a cell streams in; `overrides()` exports
+them for save games. Each extra state gets its own InstanceGroups, created on
+first use. Within `promoteDistance` of the collider focus, instances are
+hidden and replaced by GameObjects (`promote`, plus a `FoliageLink` and,
+unless provided, the instance's mesh and collider), and restored beyond
+125 % of that distance or when the object is destroyed.
+
 **`GrassPass`** (a RenderPass, Opaque stage, order 10; one pass per grass layer)
 stores nothing per blade.
 - **Setup.** The game's `height`/`mask` functions are sampled once into an

@@ -268,7 +268,8 @@ million grass blades), scaling up on discrete GPUs.
 - [x] Savanna: all props are foliage layers (savannah/swamp/kopje rules); grass and reeds are GrassPasses; autotest teleports across the map and checks streaming
 - [x] Scene data (Phase W4/W5, docs/06-world.md): `Foliage` + `FoliageType`, `GrassLayer` (glTF LOD chains: mesh -> mesh -> cards), `FoliageExclusion`, `MeshLibrary`; per-biome densities; regenerates on terrain edits
 - **Result:** preload about 110 ms for about 9.4k props; worker about 0.06 ms per (cell, layer); static bodies 3.3k → about 450 (near the player only); grass + reeds about 0.3–0.7 ms GPU; same visuals and draw counts as the old one-shot scatter
-- Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); removal/persistence API (felled trees); grass interaction (player bending blades); a multi-threaded worker pool
+- [x] Interactive foliage: stable `FoliageInstanceId`s, per-instance states (alternative meshes + colliders, or removed) that are re-applied whenever a cell streams in, `overrides()` / `setOverrides()` for save games, and promotion of instances near the player to GameObjects (`promoteDistance`, `promote`) with a `FoliageLink`. Savanna: chop acacias into stumps (`ChoppableTree`), pick berry bushes that regrow (`BerryBush`, `Regrowth`); autotest chops, walks 1.3 km away and back, picks and waits for regrowth
+- Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); grass interaction (player bending blades); a multi-threaded worker pool; saving overrides to disk (waits for the save system)
 
 ### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds) ✅
 - [x] Chunked heightfield streaming: `TerrainData` is an immutable generator
@@ -417,7 +418,7 @@ Ordered roughly by how much they'll bite while building a game.
 ### F4 — Building & gameplay systems
 - [ ] Grid/snap building system (pieces, sockets, structural stability)
 - [ ] Inventory/crafting data model (data files)
-- [ ] Interaction system (raycast "use" with prompts) — generalise `Sunstone` (raycasts now available)
+- [~] Interaction system (raycast "use" with prompts): Savanna's `Interactable` (Harvest.hpp) does it for promoted foliage; generalise it (and `Sunstone`) into the engine
 - [ ] AI (state machines / behaviour trees), navmesh (Recast/Detour)
 - [ ] Combat (hitboxes, damage, stamina), boss encounters
 

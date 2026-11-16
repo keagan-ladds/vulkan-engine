@@ -6,8 +6,10 @@
 // =============================================================================
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/world/Foliage.hpp>
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -32,6 +34,7 @@ class Player;
 struct GameState {
     int collected = 0;
     int total = 0;
+    int wood = 0, berries = 0; // from chopped trees / picked bushes (Harvest.hpp)
     float messageTimer = 0.0f;
     std::string message;
 };
@@ -116,7 +119,10 @@ public:
 
 private:
     glm::vec3 groundAt(glm::vec2 p) const;
+    void shot(const char* name);
+    std::set<std::string> m_shotTaken;
     const ve::Terrain* m_terrain;
+    ve::FoliageInstanceId m_tree, m_bush; // interactive foliage checks
     std::vector<glm::vec3> m_crateStart;
     bool m_throwPending = false;
     bool m_inTrigger = false;

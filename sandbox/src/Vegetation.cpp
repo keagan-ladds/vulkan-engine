@@ -271,6 +271,40 @@ MeshData quiverTree(uint32_t seed)
     return m;
 }
 
+// What's left of an acacia: a stump with a pale cut face and a few roots.
+MeshData acaciaStump(uint32_t seed)
+{
+    Rng rng(seed);
+    MeshData m;
+    const glm::vec3 bark(0.30f, 0.24f, 0.19f), wood(0.72f, 0.60f, 0.42f);
+    const float h = rng.range(0.45f, 0.65f);
+    m.append(prim::cylinder(0.36f, 0.31f, h, 7, false), glm::mat4(1.0f), vary(rng, bark, 0.1f));
+    m.append(prim::cylinder(0.31f, 0.27f, 0.04f, 7, true), trs({0.0f, h, 0.0f}, 0.0f, 0.0f), vary(rng, wood, 0.05f));
+    for (int i = 0; i < 3; ++i) {
+        const float a = (float(i) + rng.range(-0.2f, 0.2f)) * glm::two_pi<float>() / 3.0f;
+        m.append(prim::cylinder(0.12f, 0.04f, rng.range(0.5f, 0.8f), 5, false),
+                 trs(glm::vec3(std::cos(a), 0.05f, std::sin(a)) * 0.25f, -a + glm::half_pi<float>(), 1.35f), vary(rng, bark, 0.1f));
+    }
+    m.makeFlatShaded();
+    return m;
+}
+
+// A bush with red berries; withBerries = false is the same bush, picked.
+MeshData berryBush(uint32_t seed, bool withBerries)
+{
+    MeshData m = bush(seed, false);
+    if (!withBerries) return m;
+    Rng rng(seed * 7u + 3u);
+    for (int i = 0; i < 14; ++i) {
+        const glm::vec3 dir = glm::normalize(glm::vec3(rng.range(-1.0f, 1.0f), rng.range(0.1f, 1.0f), rng.range(-1.0f, 1.0f)));
+        MeshData berry = prim::icosphere(0.09f, 0);
+        berry.makeFlatShaded();
+        m.append(berry, trs(dir * rng.range(0.9f, 1.25f) + glm::vec3(0.0f, 0.45f, 0.0f), 0.0f, 0.0f),
+                 vary(rng, glm::vec3(0.62f, 0.08f, 0.10f), 0.12f));
+    }
+    return m;
+}
+
 MeshData rock(uint32_t seed, float flatness)
 {
     Rng rng(seed);
@@ -316,8 +350,8 @@ const SO kTreeMid{.ratio = 0.35f, .maxError = 0.08f, .faceted = true};
 const SO kSmallFar{.ratio = 0.25f, .maxError = 0.3f, .sloppy = true, .faceted = true};
 
 // Names for raycast hits on instanced props (RaycastHit::userValue).
-const char* const kPropNames[] = {"",     "baobab",      "acacia",      "fever tree", "boulder", "rock",
-                                  "bush", "palm",        "jungle tree", "undergrowth", "quiver tree"};
+const char* const kPropNames[] = {"",     "baobab", "acacia",      "fever tree",  "boulder",      "rock",      "bush",
+                                  "palm", "jungle tree", "undergrowth", "quiver tree", "acacia stump", "berry bush"};
 } // namespace
 
 const char* propName(uint32_t userValue)
@@ -374,6 +408,26 @@ void registerPropMeshes()
             set.colliders.push_back(ve::Collider::convexHull(md));
         }
         set.colliderUserValue = 4;
+        return set;
+    });
+    // Interaction states (FoliageType::states) and a harvestable bush.
+    ve::MeshLibrary::add("acacia stump", [](ve::Renderer& r) {
+        ve::FoliageMeshes set;
+        addVariant(r, set, acaciaStump(1100), "acacia stump", {{kSmallFar, 0.0f}}, 0.06f, false);
+        set.colliders.push_back(ve::Collider::cylinder(0.3f, 0.36f).offset({0.0f, 0.3f, 0.0f}));
+        set.colliderUserValue = 11;
+        return set;
+    });
+    ve::MeshLibrary::add("berry bush", [](ve::Renderer& r) {
+        ve::FoliageMeshes set; // walk-through, like other bushes
+        for (uint32_t i = 0; i < 2; ++i) addVariant(r, set, berryBush(1200 + i, true), "berry bush", {{kSmallFar, 0.0f}}, 0.08f, false);
+        set.colliderUserValue = 12;
+        return set;
+    });
+    ve::MeshLibrary::add("berry bush (picked)", [](ve::Renderer& r) {
+        ve::FoliageMeshes set;
+        for (uint32_t i = 0; i < 2; ++i) addVariant(r, set, berryBush(1200 + i, false), "berry bush", {{kSmallFar, 0.0f}}, 0.08f, false);
+        set.colliderUserValue = 12;
         return set;
     });
     // Jungle and desert (the 4 km world's outer biomes).

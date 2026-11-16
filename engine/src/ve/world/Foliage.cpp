@@ -109,6 +109,8 @@ void FoliageSystem::ensureGroups(LayerData& layer)
         capacity = static_cast<uint32_t>(std::min(area * perCell, 60000.0));
     }
     const uint32_t perVariant = capacity / uint32_t(d.variants.size()) + capacity / uint32_t(d.variants.size()) / 4 + 64;
+    layer.capacity = perVariant;
+    layer.groups.assign(1 + d.states.size(), {});
     for (const auto& chain : d.variants) {
         InstanceGroupDesc g;
         g.name = d.name;
@@ -116,8 +118,40 @@ void FoliageSystem::ensureGroups(LayerData& layer)
         g.castShadows = d.castShadows;
         g.cullDistance = d.viewDistance;
         g.shadowDistance = d.shadowDistance;
-        layer.groups.push_back(renderer().createInstanceGroup(g, perVariant));
+        layer.groups[0].push_back(renderer().createInstanceGroup(g, perVariant));
     }
+}
+
+InstanceGroup* FoliageSystem::groupFor(LayerData& layer, uint32_t state, uint32_t variant, int* index)
+{
+    *index = -1;
+    if (state == kFoliageRemoved || state >= layer.groups.size()) return nullptr;
+    const auto& chains = state == 0 ? layer.desc.variants : layer.desc.states[state - 1].variants;
+    if (chains.empty()) return nullptr; // an invisible state
+    auto& groups = layer.groups[state];
+    if (groups.empty()) {
+        // Extra states' groups appear when first needed (most never are).
+        const uint32_t cap = std::max(layer.capacity / 4, 256u);
+        for (const auto& chain : chains) {
+            InstanceGroupDesc g;
+            g.name = layer.desc.name + " (" + layer.desc.states[state - 1].name + ")";
+            g.lods = chain;
+            g.castShadows = layer.desc.castShadows;
+            g.cullDistance = layer.desc.viewDistance;
+            g.shadowDistance = layer.desc.shadowDistance;
+            groups.push_back(renderer().createInstanceGroup(g, cap));
+        }
+    }
+    *index = int(variant % groups.size());
+    return groups[size_t(*index)].get();
+}
+
+const std::vector<Collider>& FoliageSystem::collidersFor(const LayerData& layer, uint32_t state) const
+{
+    static const std::vector<Collider> none;
+    if (state == 0) return layer.desc.colliders;
+    if (state == kFoliageRemoved || state > layer.desc.states.size()) return none;
+    return layer.desc.states[state - 1].colliders;
 }
 
 uint64_t FoliageSystem::cellKey(uint32_t layer, int cx, int cz)
@@ -190,20 +224,36 @@ std::vector<FoliageSystem::Instance> FoliageSystem::generate(uint32_t layerIndex
     const int gx0 = int(std::ceil(float(cx) * cs / L.spacing)), gx1 = int(std::ceil(float(cx + 1) * cs / L.spacing));
     const int gz0 = int(std::ceil(float(cz) * cs / L.spacing)), gz1 = int(std::ceil(float(cz + 1) * cs / L.spacing));
     std::vector<Instance> out;
-    Candidate c;
-    for (int gz = gz0; gz < gz1; ++gz) {
-        for (int gx = gx0; gx < gx1; ++gx) {
-            if (!candidate(layerIndex, gx, gz, &c)) continue;
-            glm::quat rot = glm::angleAxis(c.yaw, glm::vec3(0, 1, 0));
-            if (L.alignToNormal > 0.0f) {
-                const glm::vec3 up = glm::normalize(glm::mix(glm::vec3(0, 1, 0), c.n, L.alignToNormal));
-                rot = glm::rotation(glm::vec3(0, 1, 0), up) * rot;
-            }
-            out.push_back({c.variant, glm::vec3(c.p.x, c.h - L.sink * c.scale, c.p.y), rot, c.scale,
-                           glm::vec4(c.tint, c.tint * (1.0f + (c.tint - 1.0f) * 0.3f), c.tint, 1.0f)});
-        }
-    }
+    Instance inst;
+    for (int gz = gz0; gz < gz1; ++gz)
+        for (int gx = gx0; gx < gx1; ++gx)
+            if (makeInstance(layerIndex, gx, gz, &inst)) out.push_back(inst);
     return out;
+}
+
+bool FoliageSystem::makeInstance(uint32_t layerIndex, int gx, int gz, Instance* out) const
+{
+    const FoliageLayer& L = m_layers[layerIndex].desc;
+    Candidate c;
+    if (!candidate(layerIndex, gx, gz, &c)) return false;
+    glm::quat rot = glm::angleAxis(c.yaw, glm::vec3(0, 1, 0));
+    if (L.alignToNormal > 0.0f) {
+        const glm::vec3 up = glm::normalize(glm::mix(glm::vec3(0, 1, 0), c.n, L.alignToNormal));
+        rot = glm::rotation(glm::vec3(0, 1, 0), up) * rot;
+    }
+    *out = {gx, gz, c.variant, glm::vec3(c.p.x, c.h - L.sink * c.scale, c.p.y), rot, c.scale,
+            glm::vec4(c.tint, c.tint * (1.0f + (c.tint - 1.0f) * 0.3f), c.tint, 1.0f)};
+    return true;
+}
+
+int FoliageSystem::cellOf(uint32_t layer, int g) const
+{
+    // generate() gives cell c the squares ceil(c * cs / s) .. ceil((c + 1) * cs / s) - 1.
+    const float cs = m_settings.cellSize, s = m_layers[layer].desc.spacing;
+    int c = int(std::floor(float(g) * s / cs));
+    while (int(std::ceil(float(c) * cs / s)) > g) --c;
+    while (int(std::ceil(float(c + 1) * cs / s)) <= g) ++c;
+    return c;
 }
 
 std::vector<glm::vec3> FoliageSystem::query(uint32_t layer, glm::vec2 p, float radius) const
@@ -300,39 +350,87 @@ void FoliageSystem::workerLoop()
 
 size_t FoliageSystem::applyInstances(Cell& cell, size_t budget)
 {
-    LayerData& layer = m_layers[cell.layer];
     size_t added = 0;
+    cell.slots.resize(cell.instances.size());
     while (cell.applied < cell.instances.size() && added < budget) {
-        const Instance& inst = cell.instances[cell.applied++];
-        InstanceGroup& g = *layer.groups[inst.variant];
-        if (g.count() >= g.capacity()) {
-            ++m_stats.dropped;
-            if (layer.capacityWarned++ == 0)
-                log::warn("Foliage layer '{}' is full ({} per variant); raise FoliageLayer::maxInstances", layer.desc.name,
-                          g.capacity());
-            continue;
-        }
-        const glm::mat4 m = glm::translate(glm::mat4(1.0f), inst.position) * glm::mat4_cast(inst.rotation) *
-                            glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale));
-        cell.handles.push_back({inst.variant, g.add(m, inst.custom)});
+        const size_t i = cell.applied++;
+        const Instance& inst = cell.instances[i];
+        // The game may have changed this instance (felled, harvested): re-apply it.
+        const auto it = m_overrides.find(FoliageInstanceId{cell.layer, inst.gx, inst.gz}.packed());
+        cell.slots[i].state = it != m_overrides.end() ? it->second : 0u;
+        showInstance(cell, i);
         ++added;
     }
     if (cell.applied == cell.instances.size()) cell.state = CellState::Loaded;
     return added;
 }
 
+void FoliageSystem::showInstance(Cell& cell, size_t i)
+{
+    LayerData& layer = m_layers[cell.layer];
+    Slot& slot = cell.slots[i];
+    if (slot.group >= 0 || slot.promoted) return;
+    const Instance& inst = cell.instances[i];
+    int index;
+    InstanceGroup* g = groupFor(layer, slot.state, inst.variant, &index);
+    if (!g) return; // removed / invisible state
+    if (g->count() >= g->capacity()) {
+        ++m_stats.dropped;
+        if (layer.capacityWarned++ == 0)
+            log::warn("Foliage layer '{}' is full ({} per variant); raise FoliageLayer::maxInstances", layer.desc.name,
+                      g->capacity());
+        return;
+    }
+    const glm::mat4 m = glm::translate(glm::mat4(1.0f), inst.position) * glm::mat4_cast(inst.rotation) *
+                        glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale));
+    slot.group = index;
+    slot.handle = g->add(m, inst.custom);
+}
+
+void FoliageSystem::hideInstance(Cell& cell, size_t i)
+{
+    Slot& slot = cell.slots[i];
+    if (slot.group < 0) return;
+    m_layers[cell.layer].groups[slot.state][size_t(slot.group)]->remove(slot.handle);
+    slot.group = -1;
+    slot.handle = InstanceGroup::kInvalid;
+}
+
+void FoliageSystem::createBody(Cell& cell, size_t i)
+{
+    Slot& slot = cell.slots[i];
+    if (slot.hasBody || slot.promoted) return;
+    const Instance& inst = cell.instances[i];
+    const auto& colliders = collidersFor(m_layers[cell.layer], slot.state);
+    if (colliders.empty()) return;
+    const Collider& c = colliders[colliders.size() == 1 ? 0 : inst.variant % colliders.size()];
+    slot.body = physics().createStaticBody(c, inst.position, inst.rotation, glm::vec3(inst.scale),
+                                           m_layers[cell.layer].desc.colliderUserValue);
+    slot.hasBody = true;
+    ++cell.bodies;
+}
+
+void FoliageSystem::destroyBody(Cell& cell, size_t i)
+{
+    Slot& slot = cell.slots[i];
+    if (!slot.hasBody) return;
+    physics().destroyStaticBody(slot.body);
+    slot.hasBody = false;
+    --cell.bodies;
+}
+
 void FoliageSystem::destroyBodies(Cell& cell)
 {
-    for (uint32_t id : cell.bodies) physics().destroyStaticBody(id);
-    cell.bodies.clear();
+    for (size_t i = 0; i < cell.slots.size(); ++i) destroyBody(cell, i);
     cell.bodiesCreated = 0;
 }
 
 void FoliageSystem::unload(Cell& cell)
 {
-    LayerData& layer = m_layers[cell.layer];
-    for (const auto& [variant, handle] : cell.handles) layer.groups[variant]->remove(handle);
-    cell.handles.clear();
+    for (size_t i = 0; i < cell.slots.size(); ++i) {
+        if (cell.slots[i].promoted) demote(cell, i);
+        hideInstance(cell, i);
+    }
     destroyBodies(cell);
 }
 
@@ -357,7 +455,7 @@ void FoliageSystem::preload(const glm::vec3& viewer)
                 cell.instances = generate(li, cx, cz);
                 applyInstances(cell, SIZE_MAX);
                 count += cell.instances.size();
-                if (!L.colliders.empty() && cellDistance(cx, cz, glm::vec2(focus.x, focus.z)) < L.colliderDistance) {
+                if (cellDistance(cx, cz, glm::vec2(focus.x, focus.z)) < L.colliderDistance) {
                     cell.wantBodies = true;
                 }
                 m_cells.emplace(key, std::move(cell));
@@ -367,19 +465,14 @@ void FoliageSystem::preload(const glm::vec3& viewer)
     // Colliders without a budget too.
     for (auto& [key, cell] : m_cells) {
         if (!cell.wantBodies) continue;
-        const FoliageLayer& L = m_layers[cell.layer].desc;
-        for (const Instance& inst : cell.instances) {
-            const Collider& c = L.colliders[L.colliders.size() == 1 ? 0 : inst.variant];
-            cell.bodies.push_back(physics().createStaticBody(c, inst.position, inst.rotation, glm::vec3(inst.scale),
-                                                             L.colliderUserValue));
-        }
+        for (size_t i = 0; i < cell.instances.size(); ++i) createBody(cell, i);
         cell.bodiesCreated = cell.instances.size();
     }
     m_rescan = true; // the next update() walks the (new) cell set
     std::string perLayer;
     for (const auto& layer : m_layers) {
         uint32_t n = 0;
-        for (const auto& g : layer.groups) n += g->count();
+        for (const auto& g : layer.groups[0]) n += g->count();
         perLayer += std::format("{}{} {}", perLayer.empty() ? "" : ", ", n, layer.desc.name);
     }
     log::info("Foliage preload: {} instances in {} cells ({}), {:.0f} ms", count, m_cells.size(), perLayer,
@@ -477,6 +570,7 @@ void FoliageSystem::update(float)
     }
     const bool applied = budget < m_settings.instancesPerFrame;
     m_readyWaiting = !ready.empty() && budget == 0;
+    updatePromotion(focus);
 
     // 5. Colliders near the focus (budgeted); dropped with some hysteresis.
     //    Only when the focus moved, instances arrived/left or bodies are still owed.
@@ -485,30 +579,271 @@ void FoliageSystem::update(float)
     size_t bodyBudget = m_settings.bodiesPerFrame;
     uint32_t instances = 0, bodies = 0;
     for (auto& [key, cell] : m_cells) {
-        instances += static_cast<uint32_t>(cell.handles.size());
+        instances += static_cast<uint32_t>(cell.applied);
         const FoliageLayer& L = m_layers[cell.layer].desc;
-        if (L.colliders.empty() || cell.state != CellState::Loaded) continue;
+        if ((L.colliders.empty() && L.states.empty()) || cell.state != CellState::Loaded) continue;
         const float d = cellDistance(cell.cx, cell.cz, focus);
         if (d < L.colliderDistance) cell.wantBodies = true;
         else if (d > L.colliderDistance * 1.25f + 8.0f) cell.wantBodies = false;
 
         if (!cell.wantBodies) {
-            if (!cell.bodies.empty()) destroyBodies(cell);
+            if (cell.bodiesCreated) destroyBodies(cell);
         } else {
             while (cell.bodiesCreated < cell.instances.size() && bodyBudget > 0) {
-                const Instance& inst = cell.instances[cell.bodiesCreated++];
-                const Collider& c = L.colliders[L.colliders.size() == 1 ? 0 : inst.variant];
-                cell.bodies.push_back(physics().createStaticBody(c, inst.position, inst.rotation, glm::vec3(inst.scale),
-                                                                 L.colliderUserValue));
+                createBody(cell, cell.bodiesCreated++);
                 --bodyBudget;
             }
         }
-        bodies += static_cast<uint32_t>(cell.bodies.size());
+        bodies += cell.bodies;
     }
     m_bodiesWaiting = bodyBudget == 0;
     m_stats.cells = static_cast<uint32_t>(m_cells.size());
     m_stats.instances = instances;
     m_stats.bodies = bodies;
+}
+
+// -----------------------------------------------------------------------------
+// Interaction: per-instance state and promotion to GameObjects
+// -----------------------------------------------------------------------------
+
+std::optional<FoliageInstanceInfo> FoliageSystem::instance(FoliageInstanceId id) const
+{
+    Instance inst;
+    if (!id.valid() || id.layer >= m_layers.size() || !makeInstance(id.layer, id.gx, id.gz, &inst)) return std::nullopt;
+    return FoliageInstanceInfo{id, inst.position, inst.rotation, inst.scale, inst.variant, state(id)};
+}
+
+std::optional<FoliageInstanceInfo> FoliageSystem::nearest(uint32_t layer, glm::vec2 p, float radius) const
+{
+    if (layer >= m_layers.size()) return std::nullopt;
+    const float s = m_layers[layer].desc.spacing;
+    const int reach = int(std::ceil(radius / s)) + 1;
+    const int ox = int(std::floor(p.x / s)), oz = int(std::floor(p.y / s));
+    std::optional<FoliageInstanceInfo> best;
+    float bestDist = radius;
+    Instance inst;
+    for (int z = oz - reach; z <= oz + reach; ++z) {
+        for (int x = ox - reach; x <= ox + reach; ++x) {
+            if (!makeInstance(layer, x, z, &inst)) continue;
+            const float d = glm::length(glm::vec2(inst.position.x, inst.position.z) - p);
+            if (d > bestDist) continue;
+            const FoliageInstanceId id{layer, x, z};
+            if (state(id) == kFoliageRemoved) continue;
+            bestDist = d;
+            best = FoliageInstanceInfo{id, inst.position, inst.rotation, inst.scale, inst.variant, state(id)};
+        }
+    }
+    return best;
+}
+
+uint32_t FoliageSystem::state(FoliageInstanceId id) const
+{
+    const auto it = m_overrides.find(id.packed());
+    return it == m_overrides.end() ? 0u : it->second;
+}
+
+int FoliageSystem::stateIndex(uint32_t layer, const std::string& name) const
+{
+    if (layer >= m_layers.size()) return -1;
+    if (name.empty()) return 0;
+    const auto& states = m_layers[layer].desc.states;
+    for (size_t i = 0; i < states.size(); ++i)
+        if (states[i].name == name) return int(i + 1);
+    return -1;
+}
+
+const std::string& FoliageSystem::stateName(uint32_t layer, uint32_t state) const
+{
+    static const std::string none, removed = "Removed";
+    if (state == kFoliageRemoved) return removed;
+    if (layer >= m_layers.size() || state == 0 || state > m_layers[layer].desc.states.size()) return none;
+    return m_layers[layer].desc.states[state - 1].name;
+}
+
+FoliageSystem::Cell* FoliageSystem::loadedCell(FoliageInstanceId id, size_t* index)
+{
+    if (!id.valid() || id.layer >= m_layers.size()) return nullptr;
+    auto it = m_cells.find(cellKey(id.layer, cellOf(id.layer, id.gx), cellOf(id.layer, id.gz)));
+    if (it == m_cells.end()) return nullptr;
+    Cell& cell = it->second;
+    for (size_t i = 0; i < cell.applied; ++i) {
+        if (cell.instances[i].gx == id.gx && cell.instances[i].gz == id.gz) {
+            *index = i;
+            return &cell;
+        }
+    }
+    return nullptr;
+}
+
+void FoliageSystem::setState(FoliageInstanceId id, uint32_t newState)
+{
+    if (!id.valid() || id.layer >= m_layers.size()) return;
+    if (newState != kFoliageRemoved && newState > m_layers[id.layer].desc.states.size()) {
+        log::warnOnce("Foliage layer '" + m_layers[id.layer].desc.name + "': no state " + std::to_string(newState));
+        return;
+    }
+    if (newState == 0) m_overrides.erase(id.packed());
+    else m_overrides[id.packed()] = newState;
+
+    size_t i;
+    Cell* cell = loadedCell(id, &i);
+    if (!cell || cell->slots[i].state == newState) return;
+    // A promoted instance is handed back (its object goes) and promoted again
+    // next frame with the new state if the player is still close.
+    if (cell->slots[i].promoted) demote(*cell, i);
+    hideInstance(*cell, i);
+    destroyBody(*cell, i);
+    cell->slots[i].state = newState;
+    showInstance(*cell, i);
+    if (cell->wantBodies && i < cell->bodiesCreated) createBody(*cell, i);
+}
+
+std::vector<std::pair<uint64_t, uint32_t>> FoliageSystem::overrides() const
+{
+    return {m_overrides.begin(), m_overrides.end()};
+}
+
+void FoliageSystem::setOverrides(const std::vector<std::pair<uint64_t, uint32_t>>& states)
+{
+    // Back to the generated world, then apply the given changes.
+    std::vector<uint64_t> changed;
+    for (const auto& [k, s] : m_overrides) changed.push_back(k);
+    for (uint64_t k : changed) setState(FoliageInstanceId::unpack(k), 0);
+    for (const auto& [k, s] : states) setState(FoliageInstanceId::unpack(k), s);
+}
+
+GameObject* FoliageSystem::promoted(FoliageInstanceId id) const
+{
+    size_t i;
+    Cell* cell = const_cast<FoliageSystem*>(this)->loadedCell(id, &i);
+    return cell && cell->slots[i].promoted ? scene().findById(cell->slots[i].promoted) : nullptr;
+}
+
+void FoliageSystem::promote(Cell& cell, size_t i)
+{
+    LayerData& layer = m_layers[cell.layer];
+    Slot& slot = cell.slots[i];
+    if (slot.promoted || slot.state == kFoliageRemoved) return;
+    const Instance& inst = cell.instances[i];
+    const FoliageInstanceInfo info{{cell.layer, inst.gx, inst.gz}, inst.position, inst.rotation, inst.scale, inst.variant, slot.state};
+    GameObject* obj = layer.desc.promote ? layer.desc.promote(scene(), info) : &scene().spawn(layer.desc.name);
+    if (!obj) return;
+    obj->transform().setPosition(inst.position);
+    obj->transform().setRotation(inst.rotation);
+    obj->transform().setLocalScale(glm::vec3(inst.scale));
+    auto& link = obj->addComponent<FoliageLink>();
+    link.info = info;
+    link.m_system = id();
+    // Unless the game's object brings its own, it looks and collides like the instance.
+    if (!obj->getComponent<MeshRenderer>()) {
+        int index;
+        if (groupFor(layer, slot.state, inst.variant, &index)) {
+            const auto& chains = slot.state == 0 ? layer.desc.variants : layer.desc.states[slot.state - 1].variants;
+            const InstanceLod& lod0 = chains[inst.variant % chains.size()].front();
+            obj->addComponent<MeshRenderer>(lod0.mesh, lod0.materials);
+        }
+    }
+    const auto& colliders = collidersFor(layer, slot.state);
+    if (!colliders.empty() && !obj->getComponent<Rigidbody>()) {
+        auto& rb = obj->addComponent<Rigidbody>(colliders[colliders.size() == 1 ? 0 : inst.variant % colliders.size()],
+                                                BodyType::Static);
+        (void)rb;
+    }
+    hideInstance(cell, i);
+    destroyBody(cell, i);
+    slot.promoted = obj->id();
+    m_promoted.push_back(info.id);
+}
+
+void FoliageSystem::demote(Cell& cell, size_t i)
+{
+    Slot& slot = cell.slots[i];
+    if (!slot.promoted) return;
+    if (GameObject* obj = scene().findById(slot.promoted)) obj->destroy();
+    slot.promoted = 0;
+    const Instance& inst = cell.instances[i];
+    std::erase(m_promoted, FoliageInstanceId{cell.layer, inst.gx, inst.gz});
+    showInstance(cell, i);
+    if (cell.wantBodies && i < cell.bodiesCreated) createBody(cell, i);
+}
+
+void FoliageSystem::updatePromotion(glm::vec2 focus)
+{
+    // Hand back what's out of reach (25 % hysteresis) or whose object is gone.
+    for (size_t k = 0; k < m_promoted.size();) {
+        const FoliageInstanceId id = m_promoted[k];
+        size_t i;
+        Cell* cell = loadedCell(id, &i);
+        const float far = m_layers[id.layer].desc.promoteDistance * 1.25f + 1.0f;
+        if (!cell) {
+            m_promoted.erase(m_promoted.begin() + ptrdiff_t(k));
+            continue;
+        }
+        const Instance& inst = cell->instances[i];
+        const bool gone = !scene().findById(cell->slots[i].promoted);
+        if (gone || glm::length(glm::vec2(inst.position.x, inst.position.z) - focus) > far) {
+            demote(*cell, i); // erases m_promoted[k]
+            continue;
+        }
+        ++k;
+    }
+    // Promote what came close.
+    const float cs = m_settings.cellSize;
+    for (uint32_t li = 0; li < m_layers.size(); ++li) {
+        const float r = m_layers[li].desc.promoteDistance;
+        if (r <= 0.0f) continue;
+        const int x0 = int(std::floor((focus.x - r) / cs)), x1 = int(std::floor((focus.x + r) / cs));
+        const int z0 = int(std::floor((focus.y - r) / cs)), z1 = int(std::floor((focus.y + r) / cs));
+        for (int cz = z0; cz <= z1; ++cz) {
+            for (int cx = x0; cx <= x1; ++cx) {
+                auto it = m_cells.find(cellKey(li, cx, cz));
+                if (it == m_cells.end() || it->second.state != CellState::Loaded) continue;
+                Cell& cell = it->second;
+                for (size_t i = 0; i < cell.instances.size(); ++i) {
+                    const Instance& inst = cell.instances[i];
+                    if (!cell.slots[i].promoted && glm::length(glm::vec2(inst.position.x, inst.position.z) - focus) < r)
+                        promote(cell, i);
+                }
+            }
+        }
+    }
+}
+
+void FoliageSystem::onDestroy()
+{
+    for (FoliageInstanceId id : m_promoted) {
+        if (GameObject* obj = promoted(id)) obj->destroy();
+    }
+    m_promoted.clear();
+}
+
+// -----------------------------------------------------------------------------
+// FoliageLink
+// -----------------------------------------------------------------------------
+
+FoliageSystem* FoliageLink::system() const
+{
+    return dynamic_cast<FoliageSystem*>(gameObject().scene().findById(m_system));
+}
+
+void FoliageLink::setState(uint32_t state)
+{
+    if (FoliageSystem* s = system()) s->setState(info.id, state);
+}
+
+void FoliageLink::setState(const std::string& name)
+{
+    FoliageSystem* s = system();
+    if (!s) return;
+    const int index = s->stateIndex(info.id.layer, name);
+    if (index < 0) log::warnOnce("FoliageLink: no foliage state '" + name + "'");
+    else s->setState(info.id, uint32_t(index));
+}
+
+std::string FoliageLink::stateName() const
+{
+    const FoliageSystem* s = system();
+    return s ? s->stateName(info.id.layer, s->state(info.id)) : std::string();
 }
 
 void FoliageSystem::onGui()
@@ -525,9 +860,11 @@ void FoliageSystem::onGui()
     ImGui::Text("Instances: %u, static bodies: %u, dropped: %u", m_stats.instances, m_stats.bodies, m_stats.dropped);
     for (auto& layer : m_layers) {
         uint32_t n = 0, cap = 0;
-        for (auto& g : layer.groups) {
-            n += g->count();
-            cap += g->capacity();
+        for (auto& states : layer.groups) {
+            for (auto& g : states) {
+                n += g->count();
+                cap += g->capacity();
+            }
         }
         ImGui::Text("  %-10s %6u / %6u  (view %.0f m)", layer.desc.name.c_str(), n, cap, layer.desc.viewDistance);
     }
