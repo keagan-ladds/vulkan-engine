@@ -199,6 +199,9 @@ int main()
         config.renderer.cascadeCount = 4;
         config.renderer.maxShadowedPointLights = 4;      // campfire + torches
         config.renderer.maxShadowDistance = 180.0f;
+        // ~150k foliage instances in the 4 km world, and the editor briefly
+        // holds the old and the new set while it reopens a scene.
+        config.renderer.maxInstances = 1u << 19;
         if (const char* v = std::getenv("VE_VALIDATION")) config.validation = v[0] == '1';
 
         ve::Engine engine(config);

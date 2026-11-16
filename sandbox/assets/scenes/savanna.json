@@ -560,7 +560,8 @@
                 "biomes": "Savannah:1, Camp:1",
                 "biomeThreshold": 0.65,
                 "minHeight": 0.6,
-                "maxSlope": 0.34
+                "maxSlope": 0.34,
+                "shadowDistance": 300
               }
             }
           ]
@@ -607,7 +608,8 @@
                 "biomes": "Savannah:1, Camp:1",
                 "biomeThreshold": 0.65,
                 "minHeight": 0.6,
-                "maxSlope": 0.34
+                "maxSlope": 0.34,
+                "shadowDistance": 300
               }
             }
           ]
@@ -650,7 +652,8 @@
                 "biomeThreshold": 0.35,
                 "viewDistance": 3000,
                 "maxInstances": 2000,
-                "seed": 1003
+                "seed": 1003,
+                "shadowDistance": 300
               }
             }
           ]
@@ -694,7 +697,8 @@
                 "biomeThreshold": 0.5,
                 "viewDistance": 3000,
                 "maxInstances": 500,
-                "seed": 1004
+                "seed": 1004,
+                "shadowDistance": 300
               }
             }
           ]
@@ -830,7 +834,8 @@
                 "biomeThreshold": 0.5,
                 "viewDistance": 2500,
                 "maxInstances": 30000,
-                "seed": 1101
+                "seed": 1101,
+                "shadowDistance": 300
               }
             }
           ]
@@ -876,7 +881,8 @@
                 "biomeThreshold": 0.4,
                 "viewDistance": 2500,
                 "maxInstances": 12000,
-                "seed": 1102
+                "seed": 1102,
+                "shadowDistance": 300
               }
             }
           ]
@@ -968,7 +974,8 @@
                 "biomeThreshold": 0.6,
                 "viewDistance": 2500,
                 "maxInstances": 3000,
-                "seed": 1104
+                "seed": 1104,
+                "shadowDistance": 300
               }
             }
           ]

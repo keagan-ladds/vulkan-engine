@@ -55,6 +55,13 @@ struct RendererSettings {
     uint32_t directionalShadowResolution = 2048;
     float cascadeSplitLambda = 0.8f; // 0 = uniform splits, 1 = logarithmic
     float maxShadowDistance = 200.0f;
+    // Tallest instanced geometry (trees) above the highest regular mesh: bounds
+    // how far towards the sun directional shadow casters are gathered.
+    float shadowInstanceHeight = 40.0f;
+    // Directional shadows: casters are gathered at most this far towards the
+    // sun beyond each cascade (distant mountains at sunset within it still
+    // shadow the scene). Larger = longer sunset shadows, more overdraw.
+    float shadowCasterReach = 600.0f;
     // --- Point light shadows: cube maps ---
     uint32_t maxShadowedPointLights = 4;
     uint32_t pointShadowResolution = 512;
@@ -353,6 +360,7 @@ private:
     float m_lastGpuFrameMs = 0.0f;
     float m_lastFenceWaitMs = 0.0f;
     float m_lastSubmitMs = 0.0f;
+    float m_sceneTop = 0.0f; // highest point of this frame's draw items
     uint64_t m_contentEpoch = 1;
 
     std::array<std::shared_ptr<Shader>, size_t(BuiltinShader::Count)> m_builtinShaders;

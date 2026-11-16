@@ -14,6 +14,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cfloat>
 #include <array>
 #include <initializer_list>
 #include <chrono>
@@ -689,6 +690,7 @@ void Renderer::setupCamera(Scene& scene)
 
 void Renderer::gatherScene(Scene& scene)
 {
+    m_sceneTop = -FLT_MAX; // highest drawn geometry (shadow caster reach, buildCascades)
     m_frame.items.clear();
     m_frame.opaque.clear();
     m_frame.transparent.clear();
@@ -713,6 +715,7 @@ void Renderer::gatherScene(Scene& scene)
             item.distance = glm::length(item.bounds.center() - cam.position);
             item.castShadows = mr.castShadows;
             item.owner = &mr.gameObject();
+            m_sceneTop = std::max(m_sceneTop, item.bounds.max.y);
             m_frame.items.push_back(item);
         }
     });
@@ -810,7 +813,23 @@ void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uin
         // sun and the cascade (beyond casterMargin, e.g. a distant mountain at
         // sunset) still land in the map at depth 0. Don't cull them by the near
         // plane.
-        if (m_device.features().depthClamp) sv.frustum.planes[4] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        if (m_device.features().depthClamp) {
+            // ...but only as far as a caster could still shadow this cascade:
+            // going towards the sun, the ray from a receiver climbs sin(elevation)
+            // per metre, so nothing further than (scene top - cascade bottom) /
+            // sin(elevation) can reach down into it. With a low sun over a big
+            // world this skips everything beyond the hills that matter.
+            const float sinElevation = -lightDir.y;
+            const float top = (m_sceneTop > -FLT_MAX ? m_sceneTop : centroid.y) + m_settings.shadowInstanceHeight;
+            const float rise = std::max(top - (centroid.y - radius), 0.0f);
+            // Near sunset that bound grows without limit, and everything towards
+            // the sun is pancaked into every cascade (overdraw across whole
+            // maps); shadowCasterReach caps it.
+            float reach = std::max(m_settings.shadowCasterReach, casterMargin);
+            if (sinElevation > 0.02f) reach = std::min(reach, std::max(rise / sinElevation, casterMargin));
+            const glm::vec3 p0 = centroid - lightDir * (radius + reach);
+            sv.frustum.planes[4] = glm::vec4(lightDir, -glm::dot(lightDir, p0));
+        }
         sv.viewIndex = viewIndex;
         sv.layer = baseLayer + c;
         sv.lightIndex = lightIndex;

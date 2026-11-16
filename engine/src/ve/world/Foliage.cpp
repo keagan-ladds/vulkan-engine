@@ -86,8 +86,11 @@ uint32_t FoliageSystem::addLayer(FoliageLayer layer)
         if (a.layer >= m_layers.size()) throw std::runtime_error("FoliageLayer::avoid must name an earlier layer");
     }
     if (layer.seed == 0) layer.seed = 0x9E3779B9u * static_cast<uint32_t>(m_layers.size() + 1);
-    m_layers.push_back({std::move(layer), {}, 0});
-    ensureGroups(m_layers.back());
+    // Groups first: if they can't be created (instance buffer full), nothing
+    // half-built is left in m_layers.
+    LayerData data{std::move(layer), {}, 0};
+    ensureGroups(data);
+    m_layers.push_back(std::move(data));
     m_rescan = true;
     return static_cast<uint32_t>(m_layers.size() - 1);
 }
