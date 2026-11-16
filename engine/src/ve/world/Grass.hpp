@@ -41,6 +41,7 @@
 #include <glm/glm.hpp>
 
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -64,8 +65,13 @@ struct GrassDesc {
     glm::vec2 boundsMin{-256.0f}, boundsMax{256.0f};
     uint32_t resolution = 513; // height samples per side (include both edges)
     uint32_t maskResolution = 512;
-    // Sampled once in setup() into textures, then released (with whatever they
-    // capture, e.g. a terrain snapshot).
+    // > 0: the height / mask textures cover only a window this wide around
+    // the camera, re-baked on a worker thread as it moves (any world size).
+    // Keep it >= 4 x radius. 0 = the whole bounds, baked once.
+    float window = 0.0f;
+    // Sampled into the textures (whole bounds: once in setup(), then released
+    // with whatever they capture; windowed: on a worker thread whenever the
+    // window moves, so they must be thread-safe).
     std::function<float(glm::vec2)> height;   // required; must match the rendered ground
     std::function<glm::vec4(glm::vec2)> mask; // x density 0..1, y colour mix A->B, z height scale, w free; null = full
     glm::vec3 colorA{0.55f, 0.6f, 0.25f};
@@ -120,7 +126,7 @@ public:
     ~GrassPass() override;
 
     void setup(RenderGraph& graph) override;
-    void prepare(FrameData&) override { updateMaterial(); } // before the shadow and colour draws
+    void prepare(FrameData& frame) override; // window streaming + material, before the shadow and colour draws
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
     void onGui() override;
@@ -132,6 +138,19 @@ public:
     size_t lodCount() const { return m_lods.size(); }
 
 private:
+    // Height + mask samples and per-tile height ranges for one area.
+    struct Baked {
+        glm::vec2 lo{0.0f}, size{0.0f}; // world area covered
+        uint32_t res = 0, maskRes = 0;
+        std::vector<float> heights;
+        std::vector<uint8_t> mask;
+        std::vector<glm::vec2> tileHeights; // min/max ground height per tile
+        int tilesX = 0, tilesZ = 0;
+    };
+    static Baked bake(const GrassDesc& d, glm::vec2 lo, glm::vec2 size, uint32_t res, uint32_t maskRes);
+    void apply(Baked&& baked); // upload the textures, switch to the new area
+    glm::vec2 windowFor(glm::vec2 eye) const; // window origin for a camera position
+
     struct Lod {
         std::shared_ptr<Mesh> mesh;
         std::shared_ptr<Shader> shader;
@@ -148,8 +167,9 @@ private:
     GrassDesc m_desc;
     std::shared_ptr<Texture> m_height, m_mask;
     std::vector<Lod> m_lods;
-    std::vector<glm::vec2> m_tileHeights; // min/max ground height per tile
-    int m_tilesX = 0, m_tilesZ = 0;
+    Baked m_area;                      // what the textures hold now (samples freed after upload)
+    float m_windowSize = 0.0f;         // 0 = whole bounds
+    std::future<Baked> m_pending;      // a window being re-baked
     uint32_t m_lastTiles = 0, m_lastClumps = 0, m_shadowClumps = 0, m_lastShadowClumps = 0;
     bool m_registered = false;
 };

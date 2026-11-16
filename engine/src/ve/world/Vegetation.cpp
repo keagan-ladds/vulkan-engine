@@ -503,6 +503,8 @@ void GrassLayer::rebuild()
     const float size = d.boundsMax.x - d.boundsMin.x;
     d.maskResolution = uint32_t(std::clamp(size * maskResolution, 16.0f, 4096.0f));
     d.height = [td](glm::vec2 p) { return td->height(p.x, p.y); };
+    // Big worlds: bake only a window around the camera (it follows on a worker thread).
+    d.window = 4.0f * radius + 64.0f;
 
     struct Exclusion {
         glm::vec2 p;
@@ -516,7 +518,14 @@ void GrassLayer::rebuild()
     });
     auto weights = parseBiomeWeights(biomes, *td, self);
     const auto s = uint32_t(seed);
-    d.mask = [=, this](glm::vec2 p) {
+    // Copies of the settings (not `this`): windowed grass bakes on a worker
+    // thread, which must not read a layer being edited or destroyed.
+    const float minGroundHeight = this->minGroundHeight, maxGroundHeight = this->maxGroundHeight;
+    const float biomeThreshold = this->biomeThreshold, maxSlope = this->maxSlope;
+    const float patchFrequency = this->patchFrequency, patchContrast = this->patchContrast, patchOffset = this->patchOffset;
+    const float colorFrequency = this->colorFrequency, heightFrequency = this->heightFrequency;
+    const float heightVariation = this->heightVariation;
+    d.mask = [=](glm::vec2 p) {
         const float h = td->height(p.x, p.y);
         if (h < minGroundHeight || h > maxGroundHeight) return glm::vec4(0.0f);
         float density = biomeDensity(weights, *td, p);
