@@ -14,7 +14,6 @@ layout(location = 1) out vec4 outGBuffer; // thin G-buffer (see ve.glsl)
 
 void main()
 {
-    veLodDither(inLodFade);
     VeMaterial m = veMaterial();
     vec3 centre = m.params[0].xyz;
     float radius = m.params[0].w;
@@ -34,14 +33,23 @@ void main()
     vec3 normal = vec3(0.0);
     for (int k = 0; k < 3; ++k) {
         bool inside;
-        vec2 uv = veImpostorFrameUV(f[k], N, inObjCamera, dir, centre, radius, inside);
+        vec2 frameUV;
+        vec2 uv = veImpostorFrameUV(f[k], N, inObjCamera, dir, centre, radius, inside, frameUV);
+        // Explicit gradients, taken here in uniform control flow: implicit
+        // ones are undefined inside the `inside` branch, and the atlas uv
+        // jumps at frame borders (which picked blurry mips there).
+        vec2 dx = dFdx(frameUV) / N, dy = dFdy(frameUV) / N;
         if (!inside) continue;
-        vec4 a = veSample(m.textures[0], uv);
+        vec4 a = veSampleGrad(m.textures[0], uv, dx, dy);
+        if (a.a <= 0.0) continue; // contributes nothing below
         // Weight by alpha (premultiplied) so empty texels don't bleed their
         // background colour into the blend.
         albedo += vec4(a.rgb * a.a, a.a) * w[k];
-        normal += (veSample(m.textures[1], uv).xyz * 2.0 - 1.0) * w[k] * a.a;
+        normal += (veSampleGrad(m.textures[1], uv, dx, dy).xyz * 2.0 - 1.0) * w[k] * a.a;
     }
+    // Dither (LOD crossfade) after the texture lookups, so no lane has left
+    // the quad before the gradients were taken.
+    veLodDither(inLodFade);
     if (albedo.a < m.params[1].y) discard;
     vec3 rgb = albedo.rgb / max(albedo.a, 1e-4);
     if (inTint.w > 0.0) rgb *= inTint.rgb; // same per-instance tint as standard.vert

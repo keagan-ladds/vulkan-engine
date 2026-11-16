@@ -26,6 +26,8 @@ void main()
     }
     float d0 = veLinearDepth(depth);
     vec3 n0 = veSampleLod(pc.normalTex, inUV, 0.0).xyz;
+    bool hasN0 = dot(n0, n0) > 0.0;
+    if (hasN0) n0 = normalize(n0);
 
     // 4x4 texel window as 4 bilinear taps on the shared corners of 2x2 groups:
     // each tap is an exact 2x2 average, the four together an exact 4x4.
@@ -41,7 +43,9 @@ void main()
         // Edge-aware: same surface orientation and roughly the same depth
         // (relative tolerance: oblique ground changes depth quickly).
         vec3 n = veSampleLod(pc.normalTex, uv, 0.0).xyz;
-        float wn = dot(n0, n0) > 0.0 && dot(n, n) > 0.0 ? pow(max(dot(normalize(n0), normalize(n)), 0.0), 4.0) : 1.0;
+        float c = hasN0 && dot(n, n) > 0.0 ? max(dot(n0, normalize(n)), 0.0) : 1.0;
+        c *= c;
+        float wn = c * c; // cos^4
         float wd = 1.0 - smoothstep(0.1, 0.3, abs(veLinearDepth(d) - d0) / d0);
         float w = wn * wd + 1e-3;
         sum += veSampleLod(pc.ssgi, uv, 0.0) * w;

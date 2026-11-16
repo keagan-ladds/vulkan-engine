@@ -33,8 +33,12 @@ void veImpostorBasis(vec3 d, out vec3 right, out vec3 up)
 }
 
 // Atlas UV where the ray (o + t * dir) hits frame `frame` (integer grid coords),
-// in object space. Returns uv outside [0,1] (-> transparent) if it misses.
-vec2 veImpostorFrameUV(ivec2 frame, float N, vec3 o, vec3 dir, vec3 centre, float radius, out bool inside)
+// in object space; `inside` is false if it misses the frame. `frameUV` is the
+// unclamped position within the frame (0..1 inside): it varies smoothly across
+// the screen, so its derivatives / N are the right texture gradients (the
+// atlas UV jumps at frame borders).
+vec2 veImpostorFrameUV(ivec2 frame, float N, vec3 o, vec3 dir, vec3 centre, float radius, out bool inside,
+                       out vec2 frameUV)
 {
     vec3 d = veHemiOctDecode(vec2(frame) / (N - 1.0));
     vec3 right, up;
@@ -44,7 +48,14 @@ vec2 veImpostorFrameUV(ivec2 frame, float N, vec3 o, vec3 dir, vec3 centre, floa
     vec3 local = o + dir * t - centre;
     vec2 uv = 0.5 + 0.5 * vec2(dot(local, right), dot(local, up)) / radius;
     inside = all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+    frameUV = uv;
     return (vec2(frame) + clamp(uv, 0.0, 1.0)) / N;
+}
+
+vec2 veImpostorFrameUV(ivec2 frame, float N, vec3 o, vec3 dir, vec3 centre, float radius, out bool inside)
+{
+    vec2 frameUV;
+    return veImpostorFrameUV(frame, N, o, dir, centre, radius, inside, frameUV);
 }
 
 // The three frames around view direction `v` (object space, y clamped >= 0)

@@ -84,6 +84,16 @@ layout(set = 1, binding = 1) uniform sampler2D veTextures[];
 layout(set = 1, binding = 1) uniform sampler3D veTextures3D[];
 layout(set = 1, binding = 1) uniform samplerCube veTexturesCube[];
 
+// 4x4 ordered (Bayer) dither threshold for pixel p, in (0, 1): every 4x4
+// block holds all 16 values (k + 0.5) / 16. Arithmetic, no lookup table:
+// the index is the bit-interleave of (x ^ y) and y, bits reversed.
+float veBayer4(ivec2 p)
+{
+    uint x = uint(p.x) & 3u, y = uint(p.y) & 3u, b = x ^ y;
+    uint v = ((b & 1u) << 3) | ((y & 1u) << 2) | (b & 2u) | ((y & 2u) >> 1);
+    return (float(v) + 0.5) / 16.0;
+}
+
 #ifndef VE_CUSTOM_PUSH_CONSTANTS
 layout(push_constant) uniform VeDrawPush {
     mat4 model;
@@ -162,9 +172,7 @@ vec4 veGBuffer(vec3 worldNormal, float roughness)
 void veLodDither(float fade)
 {
     if (fade == 0.0) return;
-    const float bayer[16] = float[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
-    ivec2 p = ivec2(gl_FragCoord.xy) & 3;
-    float d = (bayer[p.y * 4 + p.x] + 0.5) / 16.0;
+    float d = veBayer4(ivec2(gl_FragCoord.xy));
     if (fade > 0.0 ? d >= fade : d < -fade) discard;
 }
 #endif
@@ -174,6 +182,7 @@ void veLodDither(float fade)
 
 vec4 veSample(uint index, vec2 uv) { return texture(veTextures[nonuniformEXT(index)], uv); }
 vec4 veSampleLod(uint index, vec2 uv, float lod) { return textureLod(veTextures[nonuniformEXT(index)], uv, lod); }
+vec4 veSampleGrad(uint index, vec2 uv, vec2 dx, vec2 dy) { return textureGrad(veTextures[nonuniformEXT(index)], uv, dx, dy); }
 vec4 veSample3D(uint index, vec3 uvw) { return texture(veTextures3D[nonuniformEXT(index)], uvw); }
 vec4 veSample3DLod(uint index, vec3 uvw, float lod) { return textureLod(veTextures3D[nonuniformEXT(index)], uvw, lod); }
 

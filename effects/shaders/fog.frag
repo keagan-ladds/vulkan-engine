@@ -56,9 +56,7 @@ void main()
     int steps = int(pc.scatter.z);
     // Ordered 4x4 Bayer jitter: every 4x4 block covers all 16 offsets, and
     // fog_apply's blur averages exactly such a block, so the dither vanishes.
-    const float bayer[16] = float[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
-    ivec2 bp = ivec2(gl_FragCoord.xy) & 3;
-    float jitter = (bayer[bp.y * 4 + bp.x] + 0.5) / 16.0;
+    float jitter = veBayer4(ivec2(gl_FragCoord.xy));
     vec3 sunDir = VFX_SUN.xyz;
     float phase = vfxPhaseHG(dot(rd, sunDir), pc.scatter.x);
     vec3 sunLight = pc.sunColor.rgb * phase * pc.sunColor.w;

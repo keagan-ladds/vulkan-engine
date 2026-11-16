@@ -24,6 +24,8 @@
 
 #include "ve.glsl"
 
+// Fields other than `visible`, `mask`, `fade` and `distance` are only filled in
+// for visible clumps.
 struct VeGrassClump {
     vec3 root;    // world position of the clump on the ground
     float height; // blade height (0 = hidden)
@@ -79,6 +81,9 @@ VeGrassClump veGrassClump(VeMaterial m)
     c.visible = margin > 0.0 && all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
     float lodDistance = c.distance + (veHash12(xz * 4.37 + 2.9) - 0.5) * m.params[6].z;
     c.visible = c.visible && lodDistance >= m.params[6].x && lodDistance < m.params[6].y;
+    // Hidden clumps (thinned out, other LOD, outside the map) are discarded by
+    // the caller: skip the rest of the per-clump hashes and the ground lookup.
+    if (!c.visible) return c;
 
     float r = veHash12(xz * 13.7 + 0.31);
     c.height = mix(m.params[3].x, m.params[3].y, r) * c.mask.z * mix(0.4, 1.0, c.fade);
