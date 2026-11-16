@@ -390,6 +390,11 @@ public:
 
 } // namespace
 
+glm::vec3 AutoTest::groundAt(glm::vec2 p) const
+{
+    return {p.x, m_terrain->height(p.x, p.y) + 0.1f, p.y};
+}
+
 void AutoTest::update(float dt)
 {
     m_t += dt;
@@ -620,7 +625,29 @@ void AutoTest::update(float dt)
         logAudio("hut, 22:00, combat pushed");
         audio().music().popMood("Combat");
         log("audio: combat popped -> mood '" + audio().music().currentMood() + "'");
-        engine().quit();
+        // The big world: walk into the desert, then the jungle (terrain LOD,
+        // physics tiles and foliage all stream around the player).
+        if (auto* dn = dynamic_cast<vfx::DayNightCycle*>(scene().find("DayNight"))) dn->timeOfDay = 12.0f;
+        static_cast<Player*>(scene().find("Player"))->teleport(groundAt({1200.0f, -300.0f}), 0.0f);
+        m_t = 0.0f;
+        ++m_step;
+    } else if ((m_step == 5 || m_step == 6) && m_t > 4.0f) {
+        const bool desert = m_step == 5;
+        const char* biome = desert ? "Desert" : "Jungle";
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        const glm::vec3 p = player->transform().position();
+        auto* foliageObject = dynamic_cast<ve::Foliage*>(scene().find("Foliage"));
+        const int layer = foliageObject ? foliageObject->layerIndex(desert ? "Quiver trees" : "Jungle trees") : -1;
+        const size_t trees = layer >= 0 ? foliageObject->system()->query(uint32_t(layer), glm::vec2(p.x, p.z), 100.0f).size() : 0;
+        log(std::string(biome) + ": weight " + std::to_string(m_terrain->biomeWeight(biome, p.x, p.z)) + ", player grounded: " +
+            (player->grounded() ? "yes" : "NO") + " (feet " + std::to_string(p.y) + ", ground " +
+            std::to_string(m_terrain->height(p.x, p.z)) + "), " + std::to_string(trees) + " " +
+            (desert ? "quiver trees" : "jungle trees") + " within 100 m, terrain nodes " + std::to_string(m_terrain->drawnNodes()) +
+            ", collider tiles " + std::to_string(m_terrain->colliderTiles()) + ", foliage " +
+            std::to_string(foliageObject ? foliageObject->system()->stats().instances : 0) + " instances");
+        if (desert) player->teleport(groundAt({-1150.0f, 450.0f}), 0.0f);
+        else engine().quit();
+        m_t = 0.0f;
         ++m_step;
     }
 }

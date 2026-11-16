@@ -88,6 +88,7 @@ uint32_t FoliageSystem::addLayer(FoliageLayer layer)
     if (layer.seed == 0) layer.seed = 0x9E3779B9u * static_cast<uint32_t>(m_layers.size() + 1);
     m_layers.push_back({std::move(layer), {}, 0});
     ensureGroups(m_layers.back());
+    m_rescan = true;
     return static_cast<uint32_t>(m_layers.size() - 1);
 }
 
@@ -371,6 +372,7 @@ void FoliageSystem::preload(const glm::vec3& viewer)
         }
         cell.bodiesCreated = cell.instances.size();
     }
+    m_rescan = true; // the next update() walks the (new) cell set
     std::string perLayer;
     for (const auto& layer : m_layers) {
         uint32_t n = 0;
@@ -390,12 +392,21 @@ void FoliageSystem::update(float)
     const glm::vec2 focus(focus3.x, focus3.z);
     const float cs = m_settings.cellSize;
 
+    // 1-2 only when the viewer moved (a quarter cell) or the cell set changed.
+    const bool rescan = m_rescan || glm::distance(viewer, m_scanViewer) > cs * 0.25f;
+    if (rescan) {
+        m_scanViewer = viewer;
+        m_rescan = false;
+    }
+    bool unloaded = false;
+
     // 1. Unload cells that fell behind (or cancel their jobs: the ticket goes stale).
-    for (auto it = m_cells.begin(); it != m_cells.end();) {
+    for (auto it = rescan ? m_cells.begin() : m_cells.end(); it != m_cells.end();) {
         const FoliageLayer& L = m_layers[it->second.layer].desc;
         if (cellDistance(it->second.cx, it->second.cz, viewer) > L.viewDistance * m_settings.unloadMargin) {
             unload(it->second);
             it = m_cells.erase(it);
+            unloaded = true;
         } else {
             ++it;
         }
@@ -403,7 +414,7 @@ void FoliageSystem::update(float)
 
     // 2. Request cells that came into range.
     std::vector<Job> newJobs;
-    for (uint32_t li = 0; li < m_layers.size(); ++li) {
+    for (uint32_t li = 0; li < (rescan ? m_layers.size() : 0); ++li) {
         const FoliageLayer& L = m_layers[li].desc;
         const int r = int(std::ceil(L.viewDistance / cs)) + 1;
         const int vx = int(std::floor(viewer.x / cs)), vz = int(std::floor(viewer.y / cs));
@@ -426,10 +437,12 @@ void FoliageSystem::update(float)
         std::lock_guard lock(m_mutex);
         m_workerViewer = viewer;
         // Drop queued jobs whose cell was unloaded meanwhile.
-        std::erase_if(m_jobs, [&](const Job& j) {
-            auto it = m_cells.find(j.key);
-            return it == m_cells.end() || it->second.ticket != j.ticket;
-        });
+        if (unloaded) {
+            std::erase_if(m_jobs, [&](const Job& j) {
+                auto it = m_cells.find(j.key);
+                return it == m_cells.end() || it->second.ticket != j.ticket;
+            });
+        }
         m_jobs.insert(m_jobs.end(), newJobs.begin(), newJobs.end());
         results.swap(m_results);
         m_stats.pending = static_cast<uint32_t>(m_jobs.size());
@@ -441,12 +454,15 @@ void FoliageSystem::update(float)
         if (it == m_cells.end() || it->second.ticket != r.ticket) continue; // stale
         it->second.instances = std::move(r.instances);
         it->second.state = CellState::Ready;
+        m_readyWaiting = true;
     }
 
     // 4. Add ready instances to the GPU groups (budgeted, nearest first).
     std::vector<Cell*> ready;
-    for (auto& [key, cell] : m_cells) {
-        if (cell.state == CellState::Ready) ready.push_back(&cell);
+    if (m_readyWaiting) {
+        for (auto& [key, cell] : m_cells) {
+            if (cell.state == CellState::Ready) ready.push_back(&cell);
+        }
     }
     std::sort(ready.begin(), ready.end(), [&](const Cell* a, const Cell* b) {
         return cellDistance(a->cx, a->cz, viewer) < cellDistance(b->cx, b->cz, viewer);
@@ -456,8 +472,13 @@ void FoliageSystem::update(float)
         if (budget == 0) break;
         budget -= applyInstances(*cell, budget);
     }
+    const bool applied = budget < m_settings.instancesPerFrame;
+    m_readyWaiting = !ready.empty() && budget == 0;
 
     // 5. Colliders near the focus (budgeted); dropped with some hysteresis.
+    //    Only when the focus moved, instances arrived/left or bodies are still owed.
+    if (!(rescan || unloaded || applied || m_bodiesWaiting || glm::distance(focus, m_scanFocus) > 1.0f)) return;
+    m_scanFocus = focus;
     size_t bodyBudget = m_settings.bodiesPerFrame;
     uint32_t instances = 0, bodies = 0;
     for (auto& [key, cell] : m_cells) {
@@ -481,6 +502,7 @@ void FoliageSystem::update(float)
         }
         bodies += static_cast<uint32_t>(cell.bodies.size());
     }
+    m_bodiesWaiting = bodyBudget == 0;
     m_stats.cells = static_cast<uint32_t>(m_cells.size());
     m_stats.instances = instances;
     m_stats.bodies = bodies;

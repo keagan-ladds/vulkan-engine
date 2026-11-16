@@ -115,6 +115,7 @@ public:
     void update(float dt) override;
 
 private:
+    glm::vec3 groundAt(glm::vec2 p) const;
     const ve::Terrain* m_terrain;
     std::vector<glm::vec3> m_crateStart;
     bool m_throwPending = false;

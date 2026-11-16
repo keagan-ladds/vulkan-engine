@@ -105,7 +105,7 @@ loop:
 - **Hooks cost nothing unless overridden.** The base `update`, `fixedUpdate`,
   `lateUpdate` and `onGui` set a "not overridden" bit the first time they run.
   The Scene then skips them, and skips objects with no such hook on themselves
-  or any component without walking their hierarchy (terrain chunks, model
+  or any component without walking their hierarchy (model
   nodes, static props).
 - Spawning during an update is safe: new objects get `start()` at the start of the next frame.
   `destroy()` is deferred to end of frame and also destroys children.
@@ -352,7 +352,34 @@ helpers (the instancing helpers are vertex-only).
 - `PipelineBuilder`: fluent builder (from tinyvulkan) extended with depth,
   multiple attachments, blending presets, depth bias and custom vertex input.
 
-### 5.9 World: foliage streaming and GPU grass (`ve/world`)
+### 5.9 World: terrain, foliage streaming and GPU grass (`ve/world`)
+
+**`Terrain`** (a GameObject; shape in `TerrainShape`, colours in
+`TerrainLook`, stamps are `TerrainStamp` components) streams everything:
+- **Data.** `data()` returns an immutable `TerrainData`: the generator inputs
+  (a copy of the shape, biomes and stamps) plus a thread-safe LRU cache of
+  64-cell sample tiles (heights + biome weights). Tiles are generated on
+  demand by whoever queries (main thread, foliage worker, grass bake, mesh
+  worker); a per-thread memo of recent tiles keeps lookups lock-free. Memory
+  follows what is queried (`tileCacheMB`), not the world size. Edits produce a
+  new snapshot (`version()` bumps); holders of the old one keep it alive.
+- **Rendering.** `TerrainLod` walks a quadtree of 33×33-vertex nodes (level L
+  samples every 2^L-th grid point). A node splits while the camera is within
+  `lodFactor` × its size *and* all four children have meshes, so a coarser
+  level always covers the ground. Vertices carry their parent-grid height and
+  normal (`tangent`), and `ve_terrain.glsl` morphs them with camera distance,
+  reaching the parent shape exactly where a node hands over: no popping.
+  Skirts hide the cracks between levels. Meshes are built on a worker thread
+  (tiles for the finest levels, the pure generator for coarse ones), uploaded
+  under a per-frame budget, cached LRU, and drawn through pooled
+  MeshRenderers on one hidden child, so culling, picking and every shadow pass
+  just work (`terrain_shadow.vert` morphs too).
+- **Physics.** 64-cell heightfield tiles exist around the camera, every
+  `CharacterController` and every dynamic `Rigidbody` (`colliderDistance`,
+  25 % hysteresis). The render mesh, `height()` and the grass all split cells
+  along Jolt's (i, j)–(i+1, j+1) diagonal, so the visible ground is the
+  physical one.
+
 
 **`FoliageSystem`** (a GameObject) scatters `InstanceGroup` instances using
 `FoliageLayer` rules.
@@ -574,11 +601,11 @@ Optional add-ons built only on public engine APIs:
 
 | File | What it demonstrates |
 |---|---|
-| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading), LOD chains + impostors, registered in `ve::MeshLibrary` for the scene's `FoliageType` layers |
+| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading): acacia, baobab, fever tree, bushes, rocks; jungle trees, palms, undergrowth; quiver trees and dry bushes for the desert. LOD chains + impostors, registered in `ve::MeshLibrary` for the scene's `FoliageType` layers |
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Props.*` | Campfire/torches (point shadows, particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
-| `assets/scenes/savanna.json` | The level (edit with F2): Terrain + biomes + stamps, Water, Weather, DayNight, Foliage (6 FoliageTypes) + GrassLayers (grass, reeds with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
+| `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 
 Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..4`,

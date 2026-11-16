@@ -87,6 +87,14 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
 - The terrain watches its parameters and its stamps' transforms, and rebuilds
   (throttled) when they change. Dependent systems (foliage, grass) see the
   terrain's `version()` change and regenerate.
+- **Any size.** Samples are generated per 64-cell tile when something needs
+  them; the visible ground is a quadtree LOD and colliders exist only near the
+  camera, characters and dynamic bodies (see 01-architecture §5.9). Savanna is
+  4 km wide (`size` 4096, `cellSize` 2: 2049² samples).
+- **Regions.** A Raise stamp with `height` 0 and a large `biomeRadius` paints a
+  whole region's biome; its ridged noise (`ridgeAmount`, `ridgeFrequency`)
+  shapes it: Savanna's desert uses ~80 m ridges for dunes, its jungle broad
+  ridges for rolling hills.
 
 **Biomes.**
 - A biome has a name, a ground colour (+ variation colour), and rules: height

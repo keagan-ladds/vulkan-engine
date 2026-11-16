@@ -11,7 +11,7 @@ in C++ (the Unity split). Press **F2** in any game built on the engine.
 | E2 | Editor MVP: hierarchy, inspector, GPU picking, move/rotate/scale gizmo, debug shapes, Play/Stop with restore, undo/redo, save/load, editor camera | ✅ |
 | E2b | Savanna's hand-placed content moved to `sandbox/assets/scenes/savanna.json` (camp, huts + audio zones, torches, crates, reed screens, sunstones, ambience, PlayerStart) | ✅ |
 | E3 | Prefabs (save a configured object as a reusable asset), asset browser with drag & drop, multi-select, snapping UI polish | planned |
-| E4 | World tools: foliage paint/exclusions, terrain sculpt/paint (needs Phase 13 terrain module) | planned |
+| E4 | World tools: foliage paint/exclusions, terrain sculpt/paint (the Phase 13 streaming terrain is in place) | planned |
 
 ## Design
 

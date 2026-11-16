@@ -226,6 +226,12 @@ private:
     std::vector<std::pair<glm::vec2, float>> m_exclusions;
     std::unordered_map<uint64_t, Cell> m_cells;
     uint32_t m_nextTicket = 1;
+    // update() only redoes the expensive walks over every cell when something
+    // they depend on changed (big worlds have tens of thousands of cells).
+    glm::vec2 m_scanViewer{1e30f}, m_scanFocus{1e30f};
+    bool m_rescan = true;        // layers / preload changed the cell set
+    bool m_readyWaiting = false; // ready cells not fully added (instance budget)
+    bool m_bodiesWaiting = false; // colliders not all created (body budget)
     FoliageStats m_stats;
 
     std::thread m_worker;

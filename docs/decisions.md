@@ -130,3 +130,19 @@ quits; combined with `VE_HEADLESS` and `VE_CAPTURE` it gives reproducible
 numbers and screenshots in CI-like environments, including GPU-less machines
 with Mesa's lavapipe. Compare builds A/B in alternating runs on the same
 machine: absolute numbers drift with machine load.
+
+### D18. Terrain streaming: generator snapshots, sample tiles, CDLOD-style quadtree
+**Chosen:** the terrain is a pure function of its parameters and stamps.
+`TerrainData` snapshots those inputs and caches 64-cell sample tiles on
+demand; the visible ground is a quadtree of fixed-size nodes with geomorphing
+and skirts, built on a worker thread; physics tiles follow the camera,
+characters and dynamic bodies.
+**Alternatives:** geometry clipmaps (need a toroidally updated heightmap on the
+GPU and don't suit per-vertex biome colours); streaming baked heightmaps from
+disk (needs an offline bake step; the editor edits the generator live).
+**Why:** one code path for every world size, no load-time bake, edits stay
+live (old meshes keep showing until rebuilt), and every query (foliage,
+grass, audio, gameplay) sees exactly the generated samples. Coarse nodes
+evaluate the generator directly, so far terrain never forces full-resolution
+tiles into memory.
+

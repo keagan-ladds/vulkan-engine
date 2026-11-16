@@ -197,8 +197,8 @@ too. Next up: physics follow-ups, F2 (animation) and building/gameplay systems. 
 - [ ] **Physics materials**: per-shape friction/restitution + surface type
   (footstep sounds, impact particles).
 - [ ] **Determinism / save-state** (later): body state serialisation for save games.
-- [ ] Known issue: the heightfield collider triangulates differently from the
-  render mesh (a few cm on steep slopes), and Jolt quantises heights to 8 bits per block.
+- [~] Known issue: Jolt quantises heightfield heights to 8 bits per block (a
+  few cm on steep slopes). The triangulation now matches the render mesh.
 
 **Accept:** player walks on terrain and can't walk through trees, rocks or huts;
 thrown rocks collide and come to rest; crates topple when hit; raycasts report
@@ -270,9 +270,28 @@ million grass blades), scaling up on discrete GPUs.
 - **Result:** preload about 110 ms for about 9.4k props; worker about 0.06 ms per (cell, layer); static bodies 3.3k → about 450 (near the player only); grass + reeds about 0.3–0.7 ms GPU; same visuals and draw counts as the old one-shot scatter
 - Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); removal/persistence API (felled trees); grass interaction (player bending blades); a multi-threaded worker pool
 
-### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds)
-- [ ] Engine terrain module: chunked heightfield streaming, LOD (geomorphing or clipmaps), splat materials
-- [ ] Physics heightfield tiles streamed with the terrain
+### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds) ✅
+- [x] Chunked heightfield streaming: `TerrainData` is an immutable generator
+  snapshot plus a thread-safe LRU cache of 64-cell sample tiles (heights +
+  biome weights) generated on demand (`tileCacheMB`); no whole-world grid
+- [x] LOD: quadtree of 33×33-vertex nodes (`TerrainLod`), geomorphing towards the
+  parent grid in `terrain.vert` / `terrain_shadow.vert`, skirts, worker-thread
+  mesh building with an upload budget, LRU node cache, old meshes kept until
+  edits are rebuilt
+- [x] Physics heightfield tiles streamed around the camera, characters and
+  dynamic bodies (`colliderDistance`); render mesh, queries and grass use
+  Jolt's quad diagonal, so the visible and physical ground match
+- [x] Grass bakes a window around the camera on big worlds (`GrassDesc::window`)
+- [x] Foliage streaming stays cheap with tens of thousands of cells (update
+  only re-walks cells when the viewer moves or something changed)
+- [x] Savanna is 4 km wide: savannah around the camp, a desert with dunes and
+  quiver trees to the east, a jungle with hills, jungle trees, palms and
+  undergrowth to the west; the autotest walks into both
+- [~] Splat materials: ground colour is still biome vertex colours + a detail
+  texture; per-biome textures (sand ripples, leaf litter) are next
+- **Result** (lavapipe, Release): 4 km world, 2049² samples, ~62k foliage
+  instances preloaded in ~1.2 s; main thread ~1.8 ms per frame, as on the
+  640 m map (it was 21 ms before foliage stopped re-walking every cell)
 
 ---
 
@@ -375,9 +394,9 @@ Ordered roughly by how much they'll bite while building a game.
    add named parameters.
 3. Sky-view LUT assumes a viewer near y = 0 and a flat ground; very high
    cameras get an approximate sky.
-4. Physics: the heightfield collider's triangle diagonals can differ from the
-   render mesh, so feet may float or sink up to a few cm on steep slopes.
-   Jolt also quantises heights to 8 bits per 2×2 block. Characters can't
+4. Physics: Jolt quantises heightfield heights to 8 bits per 2×2 block, so
+   feet may float or sink a few cm on steep slopes (the triangle diagonals
+   match the render mesh since Phase 13). Characters can't
    climb up onto dynamic crates reliably (a CharacterVirtual limitation unless
    you tune `mMaxStrength` and the supporting volume).
 
