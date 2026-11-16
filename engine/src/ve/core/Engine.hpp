@@ -89,6 +89,11 @@ public:
 private:
     void pollEvents();
     void tickFrame();
+    void benchFrame(float cpuMs);
+
+    // VE_BENCH=<frames>[,<warmup>]: average CPU/GPU timings over a run, log them, quit.
+    struct Benchmark;
+    std::unique_ptr<Benchmark> m_bench;
 
     EngineConfig m_config;
     Input m_input;

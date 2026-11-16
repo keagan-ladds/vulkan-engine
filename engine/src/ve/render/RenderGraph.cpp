@@ -396,6 +396,7 @@ void RenderGraph::applyTimings(const std::vector<uint64_t>& ts, const std::vecto
         for (const auto& p : m_passes) {
             if (p.get() != order[i]) continue;
             const float ms = static_cast<float>(ts[i * 2 + 1] - ts[i * 2]) * periodNs * 1e-6f;
+            p->lastGpuTimeMs = ms;
             p->gpuTimeMs = p->gpuTimeMs * 0.9f + ms * 0.1f; // smooth
         }
     }

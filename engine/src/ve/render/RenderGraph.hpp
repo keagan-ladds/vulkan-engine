@@ -178,7 +178,8 @@ public:
     RenderStage stage() const { return m_stage; }
     int order() const { return m_order; }
     bool enabled = true;
-    float gpuTimeMs = 0.0f; // measured with GPU timestamps (shown in the F1 overlay)
+    float gpuTimeMs = 0.0f;     // measured with GPU timestamps, smoothed (shown in the F1 overlay)
+    float lastGpuTimeMs = 0.0f; // the latest raw measurement (benchmarks)
 
 protected:
     Renderer& renderer() const { return *m_renderer; }

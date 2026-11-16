@@ -125,6 +125,8 @@ public:
     const FrameData& frameData() const { return m_frame; }
     const RenderStats& stats() const { return m_frame.stats; }
     float gpuFrameTimeMs() const { return m_gpuFrameMs; }
+    float lastGpuFrameTimeMs() const { return m_lastGpuFrameMs; } // raw, latest read back
+    float lastFenceWaitMs() const { return m_lastFenceWaitMs; }  // CPU time spent waiting for the GPU in render()
     Window& window() { return *m_window; }
 
     RendererSettings& settings() { return m_settings; }
@@ -336,6 +338,8 @@ private:
     FrameData m_frame;
     glm::mat4 m_prevViewProj{1.0f};
     float m_gpuFrameMs = 0.0f;
+    float m_lastGpuFrameMs = 0.0f;
+    float m_lastFenceWaitMs = 0.0f;
 
     std::array<std::shared_ptr<Shader>, size_t(BuiltinShader::Count)> m_builtinShaders;
     std::shared_ptr<Texture> m_white, m_black, m_flatNormal;

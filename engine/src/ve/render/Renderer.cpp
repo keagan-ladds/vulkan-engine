@@ -14,6 +14,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -1073,7 +1074,9 @@ bool Renderer::render(Scene& scene, const Time& time)
     const uint32_t slotIndex = static_cast<uint32_t>(m_frameNumber % Device::kFramesInFlight);
     FrameSlot& slot = m_slots[slotIndex];
 
+    const auto waitStart = std::chrono::steady_clock::now();
     VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
+    m_lastFenceWaitMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
     m_device.collectGarbage(m_frameNumber);
     m_instances->collectStats(slotIndex);
 
@@ -1084,6 +1087,7 @@ bool Renderer::render(Scene& scene, const Time& time)
                                   ts.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
             m_graph->applyTimings(ts, slot.timedPasses, m_timestampPeriodNs);
             const float total = static_cast<float>(ts.back() - ts.front()) * m_timestampPeriodNs * 1e-6f;
+            m_lastGpuFrameMs = total;
             m_gpuFrameMs = m_gpuFrameMs * 0.9f + total * 0.1f;
         }
     }
