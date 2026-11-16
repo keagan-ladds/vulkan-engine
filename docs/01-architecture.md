@@ -108,6 +108,11 @@ loop:
   nodes, static props).
 - Spawning during an update is safe: new objects get `start()` at the start of the next frame.
   `destroy()` is deferred to end of frame and also destroys children.
+- **Ids, not pointers, across frames.** Every GameObject has a random 64-bit
+  `id()`; `scene.findById(id)` is O(1) and returns null once the object is
+  destroyed, so remembering an id (not a raw pointer) can't dangle when the
+  editor deletes or replaces objects. `scene.findFirst<T>()` finds the first
+  object of a class (e.g. the scene's `vfx::Weather`).
 - Global access: `ve::Engine::get()` and helper accessors on GameObject
   (`input()`, `time()`, `assets()`, `audio()`, `renderer()`, `scene()`).
 
@@ -265,6 +270,16 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
 - Point: a `D32F` cube-array with `maxShadowedPointLights × 6` layers. The
   fragment shader writes `distance / range` as depth, and lookups compare
   against the same value.
+- Point faces are cached (`RendererSettings::cachePointShadows`, on by
+  default): `ShadowPass` hashes each face's inputs (view, range, every
+  caster's mesh, submesh, shader, world matrix and material data, plus
+  `Renderer::contentEpoch()`, which bumps when shadow maps are recreated or
+  shaders hot-reload) and skips faces whose hash matches their last render.
+  Static torches and campfires re-render only when something in range moves.
+  The shadow maps persist across frames, so a skipped face keeps its depth.
+- Directional shadows sample a 3×3 PCF kernel as 4 bilinear taps with the
+  same weights (exact for the default 1-texel radius; other radii fall back
+  to 9 taps).
 - Everything is configurable via `RendererSettings` (counts, cascade count,
   resolutions, split lambda, biases, max shadow distance).
 

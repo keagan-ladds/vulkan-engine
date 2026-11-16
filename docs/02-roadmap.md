@@ -7,7 +7,7 @@ verification workflow.
 
 Legend: `[x]` done · `[ ]` todo · `[~]` partially done (see note)
 
-## Status snapshot (2026-11-14)
+## Status snapshot (2026-11-16)
 
 Phases 0–10 are implemented and verified on Linux with an Intel Iris Xe
 (Mesa 25, Vulkan 1.4):
@@ -293,6 +293,54 @@ million grass blades), scaling up on discrete GPUs.
 - [x] `vfx::PhotoMode` (F12): pause + frozen time, free camera, FOV / exposure / time of day / depth of field panel
 - [x] `Renderer::beginPhotoCapture`: offscreen at any resolution, sub-pixel jitter, N frames averaged in linear colour, PNG; max-quality effect preset for the shot
 - Later: EXR/HDR output, a "hide the player" toggle, tiled rendering beyond the GPU's max image size
+
+---
+
+### Performance & simplification pass ✅ (2026-11-16)
+Reviewed by three scout agents (renderer/GPU layer, scene/world/physics,
+effects/shaders); every change was checked with the autotest, the editor test,
+zero validation messages, screenshot diffs and A/B benchmarks (`VE_BENCH`).
+No feature or quality setting was removed; shader changes give the same image
+(fp rounding), apart from the bug fixes noted.
+- [x] Shaders, exact: 3×3 PCF as 4 bilinear taps; grass reuses the sun shadow
+  from `veEvaluateLighting`; cofactor normal matrix; fog tracks its cascade
+  along the ray (no per-step search/mat4); clouds return before texture fetches
+  where density is provably zero; SSGI/SSR project the ray once; grass vertex
+  shader stops at hidden clumps; arithmetic `veBayer4()`; water glint shadow
+  only where the glint is non-zero
+- [x] Shader bug fixes: `fog_apply` is now an exact 4×4 box (the Bayer dither
+  didn't cancel, and it assumed half resolution); impostors sample with
+  explicit gradients (implicit ones were undefined in divergent flow)
+- [x] Point-light shadow cache (`cachePointShadows`, D16): a static camp
+  re-renders ~1.5 of 24 cube faces per frame
+- [x] Instancing: one cull thread per instance (was per instance × view),
+  sorted per-pass draw lists, visible list sized to need (Savanna: 3.6 MB
+  instead of 36 MB), cull views for every possible cascade (runtime-added
+  shadowed lights lost instanced shadows)
+- [x] Scene: hooks nobody overrides are skipped (D14); `forEach<T>` matches
+  subclasses (D15, old known issue 5); id → object map (`findById` O(1),
+  `findFirst<T>()`); destroy flush survives `onDestroy()` spawning or
+  destroying (could leave freed components registered)
+- [x] Dangling pointers fixed: `DayNightCycle` and the sandbox HUD cached
+  Weather/DayNight pointers the editor could delete; they now use ids
+- [x] Per-frame CPU: terrain edit-state JSON 4×/s instead of every frame,
+  `Terrain::find` without a scene scan, ambience parsing cached, resting
+  bodies don't rewrite transforms, transforms don't re-walk dirty subtrees,
+  grass material set once per frame, hot-reload stats each file once per poll,
+  primitives of the same shape share a mesh
+- [x] Simplification: `ve/core/Strings.hpp` + `log::warnOnce` (5 copies),
+  `vk::imageBarrier`/`memoryBarrier`/`recordMipChain` (3 copies),
+  `vfx::ScreenSpaceTracePass` (SSGI + SSR shared their whole pass), one
+  descriptor-write helper, `sandbox/Noise2D.hpp` removed (duplicate of
+  `ve/world/Noise.hpp`)
+- [x] Tooling: `VE_BENCH`, headless testing on GPU-less machines (lavapipe +
+  Xvfb), see 04-agent-handoff.md §4
+- **Result:** see the before/after table below (Release, 1600×900, lavapipe).
+- Not done (measured or judged not worth it yet): depth prepass for foliage
+  overdraw (bigger change; measure on real GPUs first), caching distant
+  shadow cascades (would lag a frame), subgroup-aggregated cull atomics, a
+  1×1 sky-ambient texture for fog, folding bloom's final blend into the
+  composite (the engine would have to know about an effect).
 
 ---
 

@@ -95,3 +95,38 @@ keeps games simple and makes the backend swappable. Its SIMD flags propagate to
 `ve_engine`, so it's pinned to SSE4.2 to keep binaries portable.
 **Unity-like split:** physics steps after `fixedUpdate`, and Transforms are
 interpolated between steps.
+
+### D14. Skip hooks nobody overrides (2026-11 performance pass)
+**Chosen:** the base `GameObject`/`Component` versions of `update`,
+`fixedUpdate`, `lateUpdate` and `onGui` set a "not overridden" bit when they
+run; the Scene stops calling them and skips objects with no hooks at all.
+**Alternatives:** per-hook object lists maintained on spawn (needs compile-time
+override detection, which reflection factories and subclass chains defeat);
+calling every hook every frame (thousands of empty virtual calls plus a
+hierarchy walk each).
+**Cost:** an override must not call the base's empty hook. Documented in
+GameObject.hpp and the handoff gotchas.
+
+### D15. The component registry matches subclasses
+**Chosen:** components stay bucketed by exact type; `forEach<T>` caches the
+list of buckets whose type is `T` or derives from it (a `dynamic_cast` on one
+element) and rebuilds it only when a new component type appears.
+**Why:** a `class FlickerLight : public PointLight` was invisible to the
+renderer (old known issue 5). Iteration stays a cached lookup per frame.
+
+### D16. Cache point-light shadow faces
+**Chosen:** hash every cube face's inputs and skip it when unchanged
+(`RendererSettings::cachePointShadows`).
+**Alternatives:** explicit "static light" flags (error-prone: something moves
+into range and the shadow is wrong); updating faces round-robin (visible lag).
+**Why:** point lights in this kind of game (torches, campfires) are static and
+mostly surrounded by static geometry. The hash covers everything the depth
+cube depends on, so the result is always identical to re-rendering.
+
+### D17. Benchmark mode and software-GPU testing
+**Chosen:** `VE_BENCH=<frames>[,<warmup>]` logs averaged main-thread CPU time
+(thread clock), frame time, physics step and per-pass GPU timestamps, then
+quits; combined with `VE_HEADLESS` and `VE_CAPTURE` it gives reproducible
+numbers and screenshots in CI-like environments, including GPU-less machines
+with Mesa's lavapipe. Compare builds A/B in alternating runs on the same
+machine: absolute numbers drift with machine load.

@@ -132,7 +132,6 @@ public:
     void collectStats(uint32_t slot);
 
     const InstanceStats& stats() const { return m_stats; }
-    uint32_t activeViews() const { return m_activeViews; }
     bool empty() const { return m_groups.empty(); }
 
     // Descriptor bindings for the global set.
@@ -144,7 +143,6 @@ public:
 
     // InstanceGroup callbacks.
     void release(InstanceGroup* group);
-    void layoutChanged() { m_layoutDirty = true; }
 
 private:
     struct Batch {
