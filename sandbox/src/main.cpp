@@ -11,6 +11,7 @@
 #include "EditorTest.hpp"
 #include "LoadingScreen.hpp"
 #include "World.hpp"
+#include "Backdrop.hpp"
 #include "Player.hpp"
 #include "Harvest.hpp"
 #include "Props.hpp"
@@ -254,6 +255,7 @@ void buildLevel(ve::Engine& engine)
     }
     player.teleport({start.x, terrain.height(start.x, start.y), start.y}, startYaw);
 
+    scene.spawn<MountainBackdrop>(); // art test: distant mountains around the map (Backdrop.hpp)
     scene.spawn<Hud>(player);
     scene.spawn<Regrowth>(); // berry bushes grow back (Harvest.hpp)
     auto& photoMode = scene.spawn<vfx::PhotoMode>(); // F12: free camera, DOF, max-quality screenshots
