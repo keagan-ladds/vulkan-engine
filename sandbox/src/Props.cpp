@@ -432,6 +432,15 @@ glm::vec3 AutoTest::groundAt(glm::vec2 p) const
     return {p.x, m_terrain->height(p.x, p.y) + 0.1f, p.y};
 }
 
+int AutoTest::foliageAt(const glm::vec3& p, float radius) const
+{
+    // What the placement rules put there, in every layer (deterministic; loaded or not).
+    int n = 0;
+    if (auto* f = scene().findFirst<ve::Foliage>(); f && f->system())
+        for (uint32_t l = 0; l < f->system()->layerCount(); ++l) n += int(f->system()->query(l, {p.x, p.z}, radius).size());
+    return n;
+}
+
 void AutoTest::buildStep(int piece, const glm::vec3& aim, float yawDegrees)
 {
     auto* b = scene().findFirst<Builder>();
@@ -949,7 +958,7 @@ void AutoTest::update(float dt)
             m_site.y -= 0.1f;
             buildStep(0, m_site, 0.0f); // stone foundation
         }
-    } else if (m_step >= 26 && m_step <= 37 && m_t > 0.3f && m_frames - m_stepFrame >= 4) {
+    } else if (m_step >= 26 && m_step <= 39 && m_t > 0.4f && m_frames - m_stepFrame >= 4) {
         auto* b = scene().findFirst<Builder>();
         auto pos = [&](size_t i) {
             ve::GameObject* o = i < m_built.size() ? scene().findById(m_built[i]) : nullptr;
@@ -1018,26 +1027,60 @@ void AutoTest::update(float dt)
             log(std::string("build: fence removed ") + (removed ? "yes" : "NO"));
             b->setAimOverride(std::nullopt);
             b->setActive(false);
+            // Exclusions while playing: a box dropped on an existing foliage instance clears it
+            // (the path a foundation's FoliageExclusion takes), and taking it away brings it back.
+            m_exclusionAt = glm::vec3(0.0f);
+            if (auto* f = scene().findFirst<ve::Foliage>(); f && f->system())
+                for (uint32_t l = 0; l < f->system()->layerCount() && m_exclusionAt == glm::vec3(0.0f); ++l) {
+                    auto near = f->system()->query(l, layout::kCamp + glm::vec2(30.0f, 30.0f), 25.0f);
+                    if (!near.empty()) m_exclusionAt = near.front();
+                }
+            m_foliageOnSite = foliageAt(m_exclusionAt, 0.3f);
+            auto& ex = scene().spawn("Exclusion test");
+            ex.transform().setPosition(m_exclusionAt);
+            ex.transform().setRotation(glm::angleAxis(glm::radians(30.0f), glm::vec3(0, 1, 0)));
+            auto& fe = ex.addComponent<ve::FoliageExclusion>();
+            fe.box = true;
+            fe.size = {2.0f, 2.0f};
+            m_exclusionObject = ex.id();
             m_t = 0.0f;
             m_stepFrame = m_frames;
             ++m_step;
             break;
         }
         case 36: {
+            const int during = foliageAt(m_exclusionAt, 0.3f);
+            if (ve::GameObject* ex = scene().findById(m_exclusionObject)) ex->destroy();
+            log("build: foliage at a spot " + std::to_string(m_foliageOnSite) + " before an exclusion box, " + std::to_string(during) +
+                " with it");
+            m_foliageDuring = during;
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            ++m_step;
+            break;
+        }
+        case 37: {
+            log("build: ... and " + std::to_string(foliageAt(m_exclusionAt, 0.3f)) + " after removing it");
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            ++m_step;
+            break;
+        }
+        case 38: {
             // Save, then load (the level rebuilt behind the loading screen): the pieces come back.
             s_expect.pieces.clear();
             for (size_t i = 0; i < m_built.size(); ++i)
                 if (ve::GameObject* o = scene().findById(m_built[i])) s_expect.pieces.push_back({o->name(), o->transform().position()});
             const bool saved = ve::save::saveGame(scene(), "buildtest");
             log("build: " + std::to_string(s_expect.pieces.size()) + " pieces, saved " + (saved ? "yes" : "NO"));
-            s_resume = 38;
+            s_resume = 40;
             log(std::string("build: loading the save: ") + (loadProgress("buildtest") ? "started" : "NO SAVE"));
             ++m_step;
             break;
         }
         default: break;
         }
-    } else if (m_step == 38 && m_t > 3.0f) {
+    } else if (m_step == 40 && m_t > 3.0f) {
         int found = 0;
         float worst = 0.0f;
         for (const auto& [name, p] : s_expect.pieces) {
@@ -1060,7 +1103,7 @@ void AutoTest::update(float dt)
         }
         m_t = 0.0f;
         ++m_step;
-    } else if (m_step == 39 && m_t > 1.5f) {
+    } else if (m_step == 41 && m_t > 1.5f) {
         shot("7-building");
         if (m_t > 2.0f) {
             engine().quit();

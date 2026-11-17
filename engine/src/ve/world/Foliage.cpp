@@ -96,7 +96,43 @@ uint32_t FoliageSystem::addLayer(FoliageLayer layer)
     return static_cast<uint32_t>(m_layers.size() - 1);
 }
 
-void FoliageSystem::addExclusion(glm::vec2 center, float radius) { m_exclusions.push_back({center, radius}); }
+float FoliageExclusionShape::distance(glm::vec2 p) const
+{
+    if (!box) return glm::length(p - center) - radius;
+    const glm::vec2 d = p - center;
+    const float c = std::cos(yaw), s = std::sin(yaw);
+    // Into the box's frame (yaw turns local x towards -z, like a Transform rotation about Y).
+    const glm::vec2 local(d.x * c - d.y * s, d.x * s + d.y * c);
+    const glm::vec2 q = glm::abs(local) - halfExtents;
+    return glm::length(glm::max(q, glm::vec2(0.0f))) + std::min(std::max(q.x, q.y), 0.0f);
+}
+
+glm::vec4 FoliageExclusionShape::bounds() const
+{
+    const float r = box ? glm::length(halfExtents) : radius;
+    return {center.x - r, center.y - r, center.x + r, center.y + r};
+}
+
+void FoliageSystem::addExclusion(glm::vec2 center, float radius)
+{
+    FoliageExclusionShape e;
+    e.center = center;
+    e.radius = radius;
+    m_exclusions.push_back(e);
+}
+
+void FoliageSystem::addExclusion(const FoliageExclusionShape& shape)
+{
+    m_exclusions.push_back(shape);
+}
+
+void FoliageSystem::setExclusions(std::vector<FoliageExclusionShape> shapes, glm::vec4 area)
+{
+    stopWorkers(); // they read the exclusions
+    m_exclusions = std::move(shapes);
+    replaceCells(area);
+    startWorker();
+}
 
 void FoliageSystem::ensureGroups(LayerData& layer)
 {
@@ -174,9 +210,8 @@ bool FoliageSystem::candidate(uint32_t layerIndex, int gx, int gz, Candidate* ou
                          (glm::vec2(rnd(1), rnd(2)) - 0.5f) * L.jitter) * L.spacing;
     if (p.x < m_world.boundsMin.x || p.y < m_world.boundsMin.y || p.x > m_world.boundsMax.x || p.y > m_world.boundsMax.y)
         return false;
-    for (const auto& [c, r] : m_exclusions) {
-        if (glm::dot(p - c, p - c) < r * r) return false;
-    }
+    for (const FoliageExclusionShape& e : m_exclusions)
+        if (e.distance(p) < 0.0f) return false;
     if (L.clusterFrequency > 0.0f) {
         const float n = valueNoise(p * L.clusterFrequency, L.seed);
         const float edge = 1.0f - L.clusterCoverage;
@@ -318,6 +353,16 @@ void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<
                             glm::vec4 area)
 {
     // The worker reads the world and the layers' callbacks: stop it while they change.
+    stopWorkers();
+    m_world = std::move(world);
+    for (size_t i = 0; i < m_layers.size(); ++i)
+        if (i < densities.size() && densities[i]) m_layers[i].desc.density = densities[i];
+    replaceCells(area);
+    startWorker();
+}
+
+void FoliageSystem::stopWorkers()
+{
     {
         std::lock_guard lock(m_mutex);
         m_quit = true;
@@ -328,12 +373,13 @@ void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<
     m_quit = false;
     m_jobs.clear();
     m_results.clear();
+}
 
-    m_world = std::move(world);
+void FoliageSystem::replaceCells(glm::vec4 area)
+{
     float margin = 0.0f; // placement looks this far around (spacing, avoid distances)
-    for (size_t i = 0; i < m_layers.size(); ++i) {
-        FoliageLayer& L = m_layers[i].desc;
-        if (i < densities.size() && densities[i]) L.density = densities[i];
+    for (const LayerData& layer : m_layers) {
+        const FoliageLayer& L = layer.desc;
         float reach = L.spacing;
         for (const auto& a : L.avoid) reach = std::max(reach, a.radius + m_layers[a.layer].desc.spacing);
         margin = std::max(margin, reach);
@@ -352,7 +398,6 @@ void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<
         }
     }
     m_rescan = true;
-    startWorker();
 }
 
 float FoliageSystem::streamProgress() const

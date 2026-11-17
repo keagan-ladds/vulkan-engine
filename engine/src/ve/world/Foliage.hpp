@@ -189,6 +189,20 @@ private:
     uint64_t m_system = 0; // FoliageSystem object id
 };
 
+// An area nothing is placed in: a circle, or a box turned by `yaw` (radians, about Y).
+struct FoliageExclusionShape {
+    glm::vec2 center{0.0f};
+    float radius = 0.0f;              // circle
+    bool box = false;
+    glm::vec2 halfExtents{0.0f};      // box (local x, z)
+    float yaw = 0.0f;
+
+    // Distance from p to the shape's edge: <= 0 inside.
+    float distance(glm::vec2 p) const;
+    glm::vec4 bounds() const;         // world x0, z0, x1, z1
+    bool operator==(const FoliageExclusionShape&) const = default;
+};
+
 struct FoliageSettings {
     float cellSize = 64.0f;
     uint32_t instancesPerFrame = 6000; // budget for adding instances to groups
@@ -216,6 +230,10 @@ public:
 
     uint32_t addLayer(FoliageLayer layer);
     void addExclusion(glm::vec2 center, float radius); // nothing is placed inside (camps, roads...)
+    void addExclusion(const FoliageExclusionShape& shape);
+    // Replaces every exclusion and places the cells around `area` (x0, z0, x1, z1)
+    // again: e.g. a building was placed. Instance states (chopped...) are kept.
+    void setExclusions(std::vector<FoliageExclusionShape> shapes, glm::vec4 area);
 
     // Synchronously loads everything visible from `viewer` (+ colliders).
     void preload(const glm::vec3& viewer);
@@ -237,6 +255,7 @@ public:
     void onDestroy() override;
     const FoliageStats& stats() const { return m_stats; }
 
+    uint32_t layerCount() const { return uint32_t(m_layers.size()); }
     // Instances layer `layer` would place near `p` (deterministic, works for unloaded cells too).
     std::vector<glm::vec3> query(uint32_t layer, glm::vec2 p, float radius) const;
 
@@ -343,6 +362,8 @@ private:
     glm::ivec4 cellRange(int x0, int z0, int x1, int z1) const;
     void ensureGroups(LayerData& layer);
     void startWorker();
+    void stopWorkers();
+    void replaceCells(glm::vec4 area); // unload the cells near area (and queued ones) to be placed again
     void workerLoop();
     size_t applyInstances(Cell& cell, size_t budget);
     void unload(Cell& cell);
@@ -353,7 +374,7 @@ private:
     FoliageWorld m_world;
     FoliageSettings m_settings;
     std::vector<LayerData> m_layers;
-    std::vector<std::pair<glm::vec2, float>> m_exclusions;
+    std::vector<FoliageExclusionShape> m_exclusions;
     std::unordered_map<uint64_t, Cell> m_cells;
     std::unordered_map<uint64_t, uint32_t> m_overrides; // instance id -> state (main thread only)
     std::vector<FoliageInstanceId> m_promoted;          // instances currently stood in for by GameObjects

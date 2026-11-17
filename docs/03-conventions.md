@@ -368,6 +368,10 @@ if (placePressed && preview.valid()) ve::prefab::instantiate(scene(), piecePath,
   1 m, wall tops at 2.5 m, foundation tops at 0.5 m) and any pair lines up.
 - Pieces that create colliders in `start()` skip them on ghosts
   (`PlacementGhost::is(*this)`).
+- Optionally clear the vegetation under a piece: add a `FoliageExclusion`
+  (box, a little bigger than the footprint) to its prefab. Placing / removing
+  it re-places only the nearby foliage and re-bakes grass in the background
+  (Savanna: the stone foundation and the stairs).
 - Rebuild the navmesh around placed / removed pieces (`NavMeshSurface::rebuild`).
 - Roofs: eaves (low edge) on wall tops; a roof whose slope cuts through a
   side wall is (correctly) blocked.

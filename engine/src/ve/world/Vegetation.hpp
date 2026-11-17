@@ -76,13 +76,22 @@ std::vector<std::pair<int, float>> parseBiomeWeights(const std::string& spec, co
 // Sum of weight x biome weight at a point, clamped to 0..1; 1 if `weights` is empty.
 float biomeDensity(const std::vector<std::pair<int, float>>& weights, const TerrainData& terrain, glm::vec2 p);
 
-// Keeps foliage and/or grass out of a circle around its object (huts, camps, roads).
+// Keeps foliage and/or grass out of a circle, or a box, around its object
+// (huts, camps, roads, building foundations). The box turns with the
+// object's yaw. Adding, moving or removing one while playing re-places only
+// the vegetation around it (foliage keeps chopped / picked states; grass
+// re-bakes in the background), so buildings can carry one.
 class FoliageExclusion : public Component {
 public:
+    bool box = false;              // false: a circle of `radius`
     float radius = 3.0f;
-    float falloff = 1.0f; // grass thins out over this distance
+    glm::vec2 size{4.0f, 4.0f};    // box: full extents along the object's local x and z
+    glm::vec2 offset{0.0f};        // box / circle centre in the object's local x, z
+    float falloff = 1.0f;          // grass thins out over this distance
     bool foliage = true;
     bool grass = true;
+
+    FoliageExclusionShape shape() const; // in the world, now
 };
 
 // One foliage layer, on a child of a Foliage object. Its object's name is the
@@ -160,7 +169,7 @@ private:
         std::vector<std::pair<int, float>> weights;
         float threshold = 0.0f;
     };
-    std::string state() const;
+    std::string state() const; // what needs a rebuild (exclusions are handled incrementally)
     void rebuild();
     void refresh(glm::vec4 area); // terrain brush edits: re-place around `area` only
     FoliageWorld makeWorld(const std::shared_ptr<const TerrainData>& td) const;
@@ -172,6 +181,7 @@ private:
     std::vector<std::string> m_layerNames;
     std::vector<LayerDensity> m_densities; // per system layer
     std::string m_state;
+    std::vector<FoliageExclusionShape> m_exclusions; // as last applied
     uint64_t m_terrainVersion = 0;
     const Terrain* m_terrain = nullptr;
     bool m_dirty = true;
@@ -231,7 +241,7 @@ public:
     GrassPass* pass() const { return m_pass; }
 
 private:
-    std::string state() const;
+    std::string state() const; // what needs a rebuild (exclusions are handled incrementally)
     void rebuild();
     void removePass();
     std::function<glm::vec4(glm::vec2)> makeMask(const std::shared_ptr<const TerrainData>& td) const;
@@ -239,6 +249,7 @@ private:
     GrassPass* m_pass = nullptr;
     std::string m_passName;
     std::string m_state;
+    std::vector<FoliageExclusionShape> m_exclusions; // as last applied
     uint64_t m_terrainVersion = 0;
     const Terrain* m_terrain = nullptr;
     bool m_dirty = true;

@@ -155,5 +155,15 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
 - Optional impostor as the last LOD.
 - Alpha-masked glTF materials become cutout materials automatically, so grass
   cards just work.
-- `FoliageExclusion` (radius, falloff, foliage / grass) on any object keeps
-  vegetation out: the camp, inside the huts.
+- `FoliageExclusion` on any object keeps vegetation out: the camp, inside
+  the huts, under building pieces.
+  - **Shape:** a circle (`radius`) or a box (`box`, `size`, turning with the
+    object's yaw), with an `offset`.
+  - **Grass falloff:** grass thins out over `falloff` past the edge.
+  - **What it affects:** `foliage` and `grass` each switch on separately.
+  - **Changing it while playing** (a building placed or removed, an
+    exclusion moved in the editor) doesn't rebuild everything.
+    `Foliage` re-places only the cells around the change
+    (`FoliageSystem::setExclusions`), keeping chopped / picked states;
+    `GrassLayer` re-bakes its window in the background, as it does after
+    terrain brush edits. Ghost previews (`PlacementGhost`) are ignored.

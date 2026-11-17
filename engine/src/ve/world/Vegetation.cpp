@@ -1,5 +1,7 @@
 #include "ve/world/Vegetation.hpp"
 
+#include "ve/gameplay/Placement.hpp"
+
 #include "ve/core/Engine.hpp"
 #include "ve/core/Profiler.hpp"
 
@@ -58,19 +60,48 @@ std::string fieldsOf(const char* type, const void* object)
     return t ? SceneSerializer::serializeFields(*t, object).dump() : std::string();
 }
 
-// Active exclusions for foliage or grass, with their positions.
-std::string exclusionState(const Scene& scene, bool grass)
+// Active exclusions for foliage or grass (ghost previews of building pieces don't count).
+std::vector<FoliageExclusionShape> exclusionShapes(const Scene& scene, bool grass)
 {
-    std::string s;
+    std::vector<FoliageExclusionShape> out;
     scene.forEach<FoliageExclusion>([&](FoliageExclusion& e) {
-        if (!e.isActive() || !(grass ? e.grass : e.foliage)) return;
-        const glm::vec3 p = e.transform().position();
-        s += std::to_string(p.x) + "," + std::to_string(p.z) + "," + std::to_string(e.radius) + "," +
-             std::to_string(e.falloff) + ";";
+        if (!e.isActive() || !(grass ? e.grass : e.foliage) || PlacementGhost::is(e.gameObject())) return;
+        out.push_back(e.shape());
     });
-    return s;
+    return out;
+}
+
+// The area where two exclusion lists differ (x0, z0, x1, z1), padded; empty (x0 > x1) if they're the same.
+glm::vec4 changedArea(const std::vector<FoliageExclusionShape>& a, const std::vector<FoliageExclusionShape>& b, float pad)
+{
+    glm::vec4 area(1e30f, 1e30f, -1e30f, -1e30f);
+    auto add = [&](const std::vector<FoliageExclusionShape>& from, const std::vector<FoliageExclusionShape>& other) {
+        for (const auto& e : from) {
+            if (std::find(other.begin(), other.end(), e) != other.end()) continue;
+            const glm::vec4 bb = e.bounds();
+            area = {std::min(area.x, bb.x - pad), std::min(area.y, bb.y - pad), std::max(area.z, bb.z + pad), std::max(area.w, bb.w + pad)};
+        }
+    };
+    add(a, b);
+    add(b, a);
+    return area;
 }
 } // namespace
+
+FoliageExclusionShape FoliageExclusion::shape() const
+{
+    FoliageExclusionShape e;
+    const Transform& t = transform();
+    const glm::vec3 c = t.transformPoint(glm::vec3(offset.x, 0.0f, offset.y));
+    e.center = {c.x, c.z};
+    e.radius = radius;
+    e.box = box;
+    const glm::vec3 right = t.rotation() * glm::vec3(1, 0, 0);
+    e.yaw = std::atan2(-right.z, right.x);
+    const glm::vec3 sc = t.localScale();
+    e.halfExtents = size * 0.5f * glm::vec2(std::abs(sc.x), std::abs(sc.z));
+    return e;
+}
 
 // "a:1, b:2" -> {{"a", 1}, {"b", 2}}; a bare name means 1.
 std::vector<std::pair<std::string, float>> parseNameValues(const std::string& spec)
@@ -321,7 +352,7 @@ std::string Foliage::state() const
     std::vector<FoliageType*> types;
     collect(const_cast<Foliage&>(*this), types);
     for (FoliageType* t : types) s += t->gameObject().name() + fieldsOf("FoliageType", t);
-    return s + exclusionState(scene(), false);
+    return s;
 }
 
 void Foliage::update(float dt)
@@ -339,7 +370,17 @@ void Foliage::update(float dt)
             m_dirty = true;
     }
     if (!m_dirty && state() != m_state) m_dirty = true;
-    if (m_dirty) rebuild();
+    if (m_dirty) {
+        rebuild();
+    } else if (m_system) {
+        // An exclusion appeared, moved or went (a building): re-place only around it.
+        auto shapes = exclusionShapes(scene(), false);
+        if (shapes != m_exclusions) {
+            const glm::vec4 area = changedArea(shapes, m_exclusions, 1.0f);
+            m_exclusions = shapes;
+            if (area.x <= area.z) m_system->setExclusions(std::move(shapes), area);
+        }
+    }
 
     if (m_system) {
         GameObject* focus = colliderFocus.empty() ? nullptr : scene().find(colliderFocus);
@@ -379,11 +420,8 @@ void Foliage::rebuild()
     sys.runInEditor = true;
     sys.setParent(this, true);
     m_system = &sys;
-    scene().forEach<FoliageExclusion>([&](FoliageExclusion& e) {
-        if (!e.isActive() || !e.foliage) return;
-        const glm::vec3 p = e.transform().position();
-        sys.addExclusion({p.x, p.z}, e.radius);
-    });
+    m_exclusions = exclusionShapes(scene(), false);
+    for (const FoliageExclusionShape& e : m_exclusions) sys.addExclusion(e);
 
     const std::string self = "Foliage '" + name() + "'";
     for (FoliageType* t : types) {
@@ -545,8 +583,7 @@ std::string GrassLayer::state() const
       << '|' << bladesPerClump << '|' << clumpRadius << '|' << fragmentShader << '|' << biomes << '|' << biomeThreshold
       << '|' << minGroundHeight << '|' << maxGroundHeight << '|' << maxSlope << '|' << patchFrequency << '|'
       << patchContrast << '|' << patchOffset << '|' << colorFrequency << '|' << heightFrequency << '|' << heightVariation
-      << '|' << seed << '|' << maskResolution << '|' << castShadows << '|' << activeInHierarchy() << '|'
-      << exclusionState(scene(), true);
+      << '|' << seed << '|' << maskResolution << '|' << castShadows << '|' << activeInHierarchy();
     return s.str();
 }
 
@@ -568,7 +605,18 @@ void GrassLayer::update(float dt)
             }
         }
         if (!m_dirty && state() != m_state) m_dirty = true;
-        if (m_dirty) rebuild();
+        if (m_dirty) {
+            rebuild();
+        } else if (m_pass && m_terrain) {
+            // Exclusions changed (a building placed / removed): re-bake in the background, keep the pass.
+            auto shapes = exclusionShapes(scene(), true);
+            if (shapes != m_exclusions) {
+                m_exclusions = shapes;
+                auto td = m_terrain->data();
+                m_pass->refresh([td](glm::vec2 p) { return td->height(p.x, p.y); }, makeMask(td));
+                m_sinceBuild = 0.0f;
+            }
+        }
     }
     if (!m_pass) return;
     // Live parameters.
@@ -593,14 +641,13 @@ std::function<glm::vec4(glm::vec2)> GrassLayer::makeMask(const std::shared_ptr<c
 {
     const std::string self = "GrassLayer '" + name() + "'";
     struct Exclusion {
-        glm::vec2 p;
-        float r, falloff;
+        FoliageExclusionShape shape;
+        float falloff;
     };
     std::vector<Exclusion> exclusions;
     scene().forEach<FoliageExclusion>([&](FoliageExclusion& e) {
-        if (!e.isActive() || !e.grass) return;
-        const glm::vec3 p = e.transform().position();
-        exclusions.push_back({{p.x, p.z}, e.radius, std::max(e.falloff, 0.01f)});
+        if (!e.isActive() || !e.grass || PlacementGhost::is(e.gameObject())) return;
+        exclusions.push_back({e.shape(), std::max(e.falloff, 0.01f)});
     });
     auto weights = parseBiomeWeights(biomes, *td, self);
     const auto s = uint32_t(seed);
@@ -619,7 +666,7 @@ std::function<glm::vec4(glm::vec2)> GrassLayer::makeMask(const std::shared_ptr<c
         if (maxSlope < 1.0f) density *= 1.0f - glm::smoothstep(maxSlope - 0.05f, maxSlope + 0.05f, 1.0f - td->normal(p.x, p.y).y);
         if (patchFrequency > 0.0f)
             density *= std::clamp(noise::fbm(p * patchFrequency, 2, 61 + s) * patchContrast - patchOffset, 0.0f, 1.0f);
-        for (const Exclusion& e : exclusions) density *= glm::smoothstep(e.r, e.r + e.falloff, glm::length(p - e.p));
+        for (const Exclusion& e : exclusions) density *= glm::smoothstep(0.0f, e.falloff, e.shape.distance(p));
         if (density <= 0.0f) return glm::vec4(0.0f);
         const float colorMix = colorFrequency > 0.0f ? noise::fbm(p * colorFrequency, 3, 31 + s) : 0.5f;
         const float heightScale =
@@ -654,6 +701,7 @@ void GrassLayer::rebuild()
     // Big worlds: bake only a window around the camera (it follows on a worker thread).
     d.window = 4.0f * radius + 64.0f;
 
+    m_exclusions = exclusionShapes(scene(), true);
     d.mask = makeMask(td);
     d.bladesPerClump = uint32_t(std::max(bladesPerClump, 1));
     d.clumpRadius = clumpRadius;
@@ -717,6 +765,9 @@ void GrassLayer::rebuild()
 void registerVegetationTypes(TypeRegistry& r)
 {
     r.add<FoliageExclusion>("FoliageExclusion", [](TypeBuilder<FoliageExclusion>& t) {
+        t.field("box", &FoliageExclusion::box).tooltip("a box (size, turning with the object) instead of a circle (radius)");
+        t.field("size", &FoliageExclusion::size).tooltip("box: full extents along the object's local x and z");
+        t.field("offset", &FoliageExclusion::offset).tooltip("centre in the object's local x, z");
         t.category("World");
         t.field("radius", &FoliageExclusion::radius).range(0.0f, 1000.0f).speed(0.05f);
         t.field("falloff", &FoliageExclusion::falloff).range(0.0f, 100.0f).speed(0.05f).tooltip("grass thins out over this distance");
