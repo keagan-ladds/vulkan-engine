@@ -47,7 +47,7 @@ layout(set = 0, binding = 0, std140) uniform VeFrameGlobals {
     vec4 shadowParams;     // normal bias (texels), pcf radius (texels), dir res, point res
     uvec4 builtinTextures; // SceneDepth, SceneColor, SceneNormal
     vec4 globalParams[8];
-    vec4 jitter;           // xy = sub-pixel camera jitter in UV units (TAA, photo mode)
+    vec4 jitter;           // xy = how far the sub-pixel camera jitter moved the image, in UV units (TAA, photo mode)
 } frame;
 
 struct VeDirectionalLight {

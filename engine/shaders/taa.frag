@@ -7,6 +7,8 @@
 //   - History: Catmull-Rom filtered (bilinear would blur a little every frame).
 //   - Ghosting: the history is clipped to the variance box of the current
 //     neighbourhood in YCoCg, so anything that moved or changed is rejected.
+//   - The current frame is resampled at the unjittered pixel centre (a
+//     Gaussian over the 3x3 texels), so the jitter itself never shows.
 //   - Blending happens on tonemapped values so bright pixels don't flicker.
 #define VE_CUSTOM_PUSH_CONSTANTS
 #include "ve.glsl"
@@ -66,6 +68,8 @@ void main()
     ivec2 p = ivec2(gl_FragCoord.xy);
     ivec2 maxP = textureSize(veTextures[nonuniformEXT(pc.current)], 0) - 1;
     vec3 m1 = vec3(0.0), m2 = vec3(0.0), cur = vec3(0.0);
+    float curWeight = 0.0;
+    vec2 jitterPx = frame.jitter.xy * frame.screenSize.xy; // how far the image moved
     float closest = -1.0;
     ivec2 closestP = p;
     for (int y = -1; y <= 1; ++y) {
@@ -74,7 +78,12 @@ void main()
             vec3 c = toYCoCg(tonemap(max(texelFetch(veTextures[nonuniformEXT(pc.current)], q, 0).rgb, vec3(0.0))));
             m1 += c;
             m2 += c * c;
-            if (x == 0 && y == 0) cur = c;
+            // Texel q shows what is at q - jitter without jitter: weight it by
+            // its distance from this pixel's (unjittered) centre.
+            vec2 o = vec2(x, y) - jitterPx;
+            float w = exp(-2.29 * dot(o, o));
+            cur += c * w;
+            curWeight += w;
             float d = texelFetch(veTextures[nonuniformEXT(pc.depth)], q, 0).r; // reversed-Z: larger = closer
             if (d > closest) {
                 closest = d;
@@ -82,6 +91,7 @@ void main()
             }
         }
     }
+    cur /= curWeight;
     if (pc.historyValid == 0u) {
         outColor = vec4(untonemap(fromYCoCg(cur)), 1.0);
         return;

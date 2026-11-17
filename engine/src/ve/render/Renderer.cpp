@@ -93,6 +93,9 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
             m_envCapturePath = c;
             const char* f = std::getenv("VE_CAPTURE_FRAME");
             m_envCaptureFrame = f && *f ? std::strtoull(f, nullptr, 10) : 150;
+            // VE_CAPTURE_COUNT=n: n consecutive frames, saved as name_0.png ... name_<n-1>.png
+            const char* n = std::getenv("VE_CAPTURE_COUNT");
+            m_envCaptureCount = n && *n ? std::max<uint64_t>(1, std::strtoull(n, nullptr, 10)) : 1;
         }
     }
     createShadowMaps();
@@ -351,7 +354,7 @@ void Renderer::createDefaultPasses()
     m_graph->addPass<ShadowPass>();
     m_graph->addPass<OpaquePass>();
     m_graph->addPass<TransparentPass>();
-    m_graph->addPass<TemporalAAPass>();
+    m_taaPass = &m_graph->addPass<TemporalAAPass>();
     m_graph->addPass<CompositePass>();
 }
 
@@ -747,6 +750,24 @@ void Renderer::gatherScene(Scene& scene)
     gatherLights(scene);
 }
 
+// The direction directional shadow maps are rendered from: the light's,
+// snapped to shadowDirectionStep-degree steps of azimuth and elevation. A sun
+// that moves every frame would otherwise re-rasterise every shadow edge from a
+// slightly different angle each frame, and the edges' stair steps crawl
+// (the whole scene seems to shimmer). Snapped, shadows stand still and move in
+// small steps; lighting keeps the exact direction.
+glm::vec3 Renderer::shadowDirection(const glm::vec3& dir) const
+{
+    const float step = glm::radians(m_settings.shadowDirectionStep);
+    if (step <= 0.0f) return dir;
+    float elevation = std::asin(std::clamp(dir.y, -1.0f, 1.0f));
+    if (std::abs(dir.y) > 0.9995f) return dir; // overhead: azimuth is meaningless
+    float azimuth = std::atan2(dir.z, dir.x);
+    elevation = std::round(elevation / step) * step;
+    azimuth = std::round(azimuth / step) * step;
+    return {std::cos(elevation) * std::cos(azimuth), std::sin(elevation), std::cos(elevation) * std::sin(azimuth)};
+}
+
 void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uint32_t slot, GpuDirectionalLight& gpu)
 {
     const CameraData& cam = m_frame.camera;
@@ -947,7 +968,7 @@ void Renderer::gatherLights(Scene& scene)
         g.cascadeSplits = glm::vec4(0.0f);
         g.cascadeTexel = glm::vec4(0.0f);
         if (l.castShadows && dirShadowSlots < m_settings.maxShadowedDirectionalLights) {
-            buildCascades(dir, i, dirShadowSlots++, g);
+            buildCascades(shadowDirection(dir), i, dirShadowSlots++, g);
         }
     }
 
@@ -1026,7 +1047,9 @@ void Renderer::fillGlobals(const Time& time)
     // Unjittered: reprojection (TAA, temporal accumulators) maps to where a
     // point was, not to last frame's jittered sample of it.
     g.prevViewProj = m_frameNumber == 0 ? cam.viewProjNoJitter : m_prevViewProj;
-    g.jitter = glm::vec4(m_jitter.x / float(ext.width), m_jitter.y / float(ext.height), 0.0f, 0.0f);
+    // How far the image moved: adding j to proj[2] moves NDC by -j * proj[2][3]
+    // (= -j, as clip.w = -z), so content shifts by minus the jitter.
+    g.jitter = glm::vec4(-m_jitter.x / float(ext.width), -m_jitter.y / float(ext.height), 0.0f, 0.0f);
     g.cameraPosition = glm::vec4(cam.position, cam.nearPlane);
     g.cameraForward = glm::vec4(cam.forward, cam.farPlane);
     g.screenSize = glm::vec4(float(ext.width), float(ext.height), 1.0f / float(ext.width), 1.0f / float(ext.height));
@@ -1233,7 +1256,7 @@ bool Renderer::render(Scene& scene, const Time& time)
     if (photo && m_photo.frame >= m_photo.settings.warmupFrames) {
         const uint32_t k = m_photo.frame - m_photo.settings.warmupFrames + 1;
         m_jitter = glm::vec2(halton(k, 2), halton(k, 3)) - 0.5f;
-    } else if (m_settings.temporalAA) {
+    } else if (m_settings.temporalAA && m_taaPass->enabled) { // no jitter without the resolve
         const uint32_t k = m_frameNumber % 8u + 1u; // 8 positions
         m_jitter = glm::vec2(halton(k, 2), halton(k, 3)) - 0.5f;
     }
@@ -1293,7 +1316,15 @@ bool Renderer::render(Scene& scene, const Time& time)
         vkCmdCopyImageToBuffer(slot.cmd, image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer.handle, 1, &region);
     };
     if (photo) readback(m_photo.target, m_photo.readback);
-    if (headless && !m_envCapturePath.empty() && m_frameNumber == m_envCaptureFrame) m_capturePath = m_envCapturePath;
+    if (headless && !m_envCapturePath.empty() && m_frameNumber >= m_envCaptureFrame &&
+        m_frameNumber < m_envCaptureFrame + m_envCaptureCount) {
+        m_capturePath = m_envCapturePath;
+        if (m_envCaptureCount > 1) {
+            const std::filesystem::path p(m_envCapturePath);
+            m_capturePath = (p.parent_path() / (p.stem().string() + "_" + std::to_string(m_frameNumber - m_envCaptureFrame) +
+                                                p.extension().string())).string();
+        }
+    }
     const bool capture = headless && !photo && !m_capturePath.empty();
     if (capture) {
         const VkExtent3D e = m_headlessTarget.extent;

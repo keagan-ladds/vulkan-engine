@@ -58,6 +58,7 @@ All of these run with Vulkan validation on in Debug builds. Any
 | Clean shutdown | send SIGTERM (`timeout 10 ./savanna`): SDL turns it into a normal quit, so the whole shutdown path runs |
 | Benchmark | `VE_HEADLESS=1 VE_BENCH=120,30 SAVANNA_TIME=17.6 SAVANNA_WEATHER=0 ./savanna` (Release) → `[bench]` lines: main-thread CPU ms, frame ms, physics step, total and per-pass GPU ms, then exit |
 | Screenshot | `VE_HEADLESS=1 VE_CAPTURE=shot.png VE_CAPTURE_FRAME=60 ./savanna` (any test hook works alongside) |
+| Consecutive frames (flicker / jitter checks) | add `VE_CAPTURE_COUNT=8`: saves `shot_0.png` … `shot_7.png`; with `VE_FIXED_DT=0.016667` each frame advances 1/60 s however slow the software renderer is |
 
 **Machines without a display or GPU** (CI, cloud containers): install
 `xvfb mesa-vulkan-drivers` and prefix commands with `xvfb-run -a`. Lavapipe

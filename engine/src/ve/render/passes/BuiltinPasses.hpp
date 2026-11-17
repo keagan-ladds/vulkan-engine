@@ -77,6 +77,7 @@ private:
     PipelineHandle m_pipeline;
     uint32_t m_frame = 0;
     VkExtent3D m_extent{};
+    uint64_t m_lastFrame = 0; // frame number of the last resolve (history is stale after a gap)
     bool m_active = false;
 };
 

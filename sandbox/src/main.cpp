@@ -177,6 +177,7 @@ void buildWorld(ve::Engine& engine)
     if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
     if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser
     r.settings().temporalAA = true;
+    if (const char* s = std::getenv("SAVANNA_SUNSTEP")) r.settings().shadowDirectionStep = std::strtof(s, nullptr); // degrees, 0 = continuous
     // SAVANNA_LIGHTS=<n>[,0]: n small coloured point lights scattered around the camp
     // (clustered lighting test; ",0" turns the clusters off for comparison).
     if (const char* l = std::getenv("SAVANNA_LIGHTS")) {

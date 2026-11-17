@@ -98,6 +98,9 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
 
     RendererSettings rs = config.renderer;
     if (const char* h = std::getenv("VE_HEADLESS"); h && h[0] == '1') rs.headless = true;
+    // VE_FIXED_DT=0.016667: every frame advances time by this much, however long it
+    // took (headless tests on slow software rendering see real-time motion per frame).
+    if (const char* f = std::getenv("VE_FIXED_DT"); f && *f) m_fixedFrameDt = std::strtof(f, nullptr);
     m_window = std::make_unique<Window>(config.title, config.width, config.height, rs.headless);
     m_renderer = std::make_unique<Renderer>();
     m_renderer->init(*m_window, rs, config.validation, shaderDirs);
@@ -211,6 +214,7 @@ void Engine::run()
         float realDt = std::chrono::duration<float>(now - last).count();
         last = now;
         realDt = std::min(realDt, 0.25f); // clamp hitches (debugger breaks, loading)
+        if (m_fixedFrameDt > 0.0f) realDt = m_fixedFrameDt; // VE_FIXED_DT: simulate a steady frame rate (tests)
 
         m_time.unscaledDeltaTime = realDt;
         m_time.deltaTime = realDt * m_time.timeScale;

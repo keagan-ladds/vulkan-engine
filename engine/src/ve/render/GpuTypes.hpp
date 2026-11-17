@@ -48,7 +48,7 @@ struct FrameGlobals {
     glm::vec4 shadowParams;   // x = normal bias (texels), y = PCF radius (texels), z = dir shadow map size, w = point shadow map size
     glm::uvec4 builtinTextures; // x = SceneDepth, y = SceneColor, z = SceneNormal (bindless indices), w = reserved
     glm::vec4 globalParams[kGlobalParamCount]; // free-form game/effect globals (see vfx.glsl for the effects convention)
-    glm::vec4 jitter; // xy = this frame's sub-pixel camera jitter in UV units (TAA, photo mode), zw unused
+    glm::vec4 jitter; // xy = how far this frame's sub-pixel camera jitter moved the image, in UV units (TAA, photo mode)
 };
 
 struct GpuDirectionalLight {

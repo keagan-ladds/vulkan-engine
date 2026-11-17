@@ -108,6 +108,7 @@ private:
     std::unique_ptr<Scene> m_scene;
     bool m_running = false;
     double m_accumulator = 0.0;
+    float m_fixedFrameDt = 0.0f; // VE_FIXED_DT (tests): fixed time per frame
 };
 
 } // namespace ve

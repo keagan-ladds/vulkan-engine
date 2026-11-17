@@ -41,6 +41,7 @@ class Renderer;
 class Window;
 class Scene;
 class Texture;
+class TemporalAAPass;
 class Mesh;
 struct Time;
 
@@ -62,6 +63,10 @@ struct RendererSettings {
     // sun beyond each cascade (distant mountains at sunset within it still
     // shadow the scene). Larger = longer sunset shadows, more overdraw.
     float shadowCasterReach = 600.0f;
+    // Directional shadows are rendered from the light direction snapped to
+    // steps of this many degrees, so a moving sun doesn't make shadow edges
+    // crawl every frame (they move in small steps instead). 0 = continuous.
+    float shadowDirectionStep = 0.2f;
     // --- Point light shadows: cube maps ---
     uint32_t maxShadowedPointLights = 4;
     uint32_t pointShadowResolution = 512;
@@ -293,6 +298,7 @@ private:
     void setupCamera(Scene& scene);
     void gatherLights(Scene& scene);
     void buildLightClusters(uint32_t pointLights);
+    glm::vec3 shadowDirection(const glm::vec3& lightDirection) const;
     void buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uint32_t shadowSlot, GpuDirectionalLight& gpu);
     void fillGlobals(const Time& time);
     VkPipeline buildFullscreenPipeline(const FullscreenPipelineDesc& desc);
@@ -353,6 +359,7 @@ private:
     void photoFinish();
     void saveCapture(); // headless VE_CAPTURE / requestCapture: m_captureBuffer -> PNG
     uint64_t m_envCaptureFrame = 0;
+    uint64_t m_envCaptureCount = 1;
     std::string m_envCapturePath;
     TextureId m_dirShadowMap = kNoTexture;
     TextureId m_pointShadowMap = kNoTexture;
@@ -364,6 +371,7 @@ private:
 
     std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
     uint32_t m_clusterWords = 0;          // used words of LightBuffer::clusterLights
+    TemporalAAPass* m_taaPass = nullptr;  // the camera only jitters while it runs
     FrameData m_frame;
     glm::mat4 m_prevViewProj{1.0f};
     float m_gpuFrameMs = 0.0f;

@@ -156,6 +156,7 @@ void ShadowPass::onGui()
     ImGui::SliderFloat("PCF radius (texels)", &s.shadowPcfRadius, 0.0f, 3.0f);
     ImGui::SliderFloat("Split lambda", &s.cascadeSplitLambda, 0.0f, 1.0f);
     ImGui::SliderFloat("Max distance", &s.maxShadowDistance, 20.0f, 1000.0f);
+    ImGui::SliderFloat("Sun direction step (deg)", &s.shadowDirectionStep, 0.0f, 1.0f, "%.2f");
     int cascades = static_cast<int>(s.cascadeCount);
     int dirCount = static_cast<int>(s.maxShadowedDirectionalLights);
     int pointCount = static_cast<int>(s.maxShadowedPointLights);
@@ -271,8 +272,10 @@ void TemporalAAPass::execute(RenderContext& ctx)
     RenderGraph& g = graph();
     const uint32_t w = m_frame & 1u;
     const Image& color = g.get(r.sceneColor()).image;
-    const bool valid = m_frame > 0 && color.extent.width == m_extent.width && color.extent.height == m_extent.height;
+    const bool valid = m_frame > 0 && ctx.frame->frameNumber == m_lastFrame + 1 &&
+                       color.extent.width == m_extent.width && color.extent.height == m_extent.height;
     m_extent = color.extent;
+    m_lastFrame = ctx.frame->frameNumber;
 
     // 1. Resolve into this frame's history.
     ctx.fullscreen({{m_history[w]}}, m_pipeline,
