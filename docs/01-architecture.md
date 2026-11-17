@@ -424,6 +424,12 @@ helpers (the instancing helpers are vertex-only).
   `terrain.frag` blends the layers by weight and texture height, samples rock
   triplanar, and blends a rotated, larger second copy with distance against
   tiling. Leftover weight shows the biome vertex colour.
+- **Edits.** `TerrainEdits` (editor brushes) add per-sample height offsets
+  and painted biomes, sparse in 64-cell tiles, inside `generateHeight` /
+  `generateBiomes`, so every consumer sees them. A rebuild after brush edits
+  only (`changedOnlyIn`) keeps the old snapshot's cached tiles, LOD meshes and
+  collider tiles outside the brushed area; foliage and grass refresh just
+  that area.
 - **Physics.** 64-cell heightfield tiles exist around the camera, every
   `CharacterController` and every dynamic `Rigidbody` (`colliderDistance`,
   25 % hysteresis). The render mesh, `height()` and the grass all split cells

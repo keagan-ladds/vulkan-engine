@@ -135,6 +135,8 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
 - Savanna: soil (savannah, camp), sand (desert), leaf litter (jungle) and rock
   (rocky, cliffs); the swamp keeps its colours. The textures come from
   `tools/generate_assets.py`.
+- Hand edits: the editor's sculpt and paint brushes (docs/05-editor.md, E4)
+  add a height offset and a painted biome on top of all of the above.
 - `Terrain::biomeWeights(x, z)` gives the per-biome weights to anyone
   (foliage, grass, gameplay).
 

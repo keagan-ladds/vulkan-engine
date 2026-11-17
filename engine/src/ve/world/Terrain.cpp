@@ -2,6 +2,7 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Strings.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/Mesh.hpp"
@@ -37,14 +38,44 @@ constexpr int kTileSamples = TerrainData::kTileCells + 1; // per tile side (neig
 
 int64_t tileKey(int tx, int tz) { return (int64_t(tz) << 32) | int64_t(uint32_t(tx)); }
 
+int floorDiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
+
 } // namespace
 
+// -----------------------------------------------------------------------------
+// TerrainEdits
+// -----------------------------------------------------------------------------
+
+float TerrainEdits::height(int gi, int gj) const
+{
+    if (tiles.empty()) return 0.0f;
+    const int tx = floorDiv(gi, kTile), tz = floorDiv(gj, kTile);
+    const auto it = tiles.find(key(tx, tz));
+    if (it == tiles.end()) return 0.0f;
+    return it->second->height[size_t(gj - tz * kTile) * kSide + size_t(gi - tx * kTile)];
+}
+
+void TerrainEdits::paint(int gi, int gj, int& biome, float& strength) const
+{
+    biome = -1;
+    strength = 0.0f;
+    if (tiles.empty()) return;
+    const int tx = floorDiv(gi, kTile), tz = floorDiv(gj, kTile);
+    const auto it = tiles.find(key(tx, tz));
+    if (it == tiles.end()) return;
+    const size_t k = size_t(gj - tz * kTile) * kSide + size_t(gi - tx * kTile);
+    if (it->second->biome[k] == 255 || it->second->paint[k] == 0) return;
+    biome = it->second->biome[k];
+    strength = float(it->second->paint[k]) / 255.0f;
+}
+
 TerrainData::TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vector<TerrainBiome> biomes,
-                         std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes)
-    : m_shape(shape), m_centre(centre), m_biomes(std::move(biomes)), m_uid(g_terrainUid++)
+                         std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes, TerrainEdits edits)
+    : m_shape(shape), m_centre(centre), m_biomes(std::move(biomes)), m_edits(std::move(edits)), m_uid(g_terrainUid++)
 {
     cellSize = std::max(shape.cellSize, 0.1f);
     res = std::max(2, int(std::round(shape.size / cellSize)) + 1);
+    m_half = (res - 1) / 2;
     origin = glm::vec2(centre.x, centre.z) - glm::vec2(float(res - 1) * cellSize * 0.5f);
     for (const auto& b : m_biomes) biomeNames.push_back(b.name);
     if (biomeNames.empty()) biomeNames.push_back("Default");
@@ -57,6 +88,39 @@ TerrainData::TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vecto
 }
 
 float TerrainData::generateHeight(glm::vec2 p) const
+{
+    return baseHeight(p) + editHeight(p);
+}
+
+float TerrainData::editHeight(glm::vec2 p) const
+{
+    if (m_edits.empty()) return 0.0f;
+    const glm::vec2 u = (p - origin) / cellSize;
+    const int i = int(std::floor(u.x)), j = int(std::floor(u.y));
+    const float fx = u.x - float(i), fz = u.y - float(j);
+    const int gi = i - m_half, gj = j - m_half;
+    const float h00 = m_edits.height(gi, gj), h10 = m_edits.height(gi + 1, gj);
+    const float h01 = m_edits.height(gi, gj + 1), h11 = m_edits.height(gi + 1, gj + 1);
+    return glm::mix(glm::mix(h00, h10, fx), glm::mix(h01, h11, fx), fz);
+}
+
+void TerrainData::adoptTiles(const TerrainData& old, glm::vec4 changed)
+{
+    if (old.res != res || old.cellSize != cellSize || old.origin != origin || old.biomeNames != biomeNames) return;
+    // Biome weights depend on the slope, which reaches one sample further.
+    const float margin = 2.0f * cellSize, tileSize = float(kTileCells) * cellSize;
+    std::scoped_lock lock(m_mutex, old.m_mutex);
+    for (const auto& [key, cached] : old.m_tiles) {
+        const int tx = int(uint32_t(key)), tz = int(key >> 32);
+        const glm::vec2 lo = origin + glm::vec2(float(tx), float(tz)) * tileSize;
+        const bool touched = lo.x - margin <= changed.z && lo.x + tileSize + margin >= changed.x &&
+                             lo.y - margin <= changed.w && lo.y + tileSize + margin >= changed.y;
+        if (!touched) m_tiles.emplace(key, Cached{cached.tile, cached.lastUse});
+    }
+    m_clock = old.m_clock;
+}
+
+float TerrainData::baseHeight(glm::vec2 p) const
 {
     const TerrainShape& t = m_shape;
     const auto seedU = static_cast<uint32_t>(t.seed);
@@ -122,6 +186,27 @@ void TerrainData::generateBiomes(glm::vec2 p, float h, float slope, float* w) co
         remaining -= v;
     }
     w[0] = remaining;
+
+    // Painted biomes (editor brush) blend over the rules.
+    if (m_edits.empty()) return;
+    const glm::vec2 u = (p - origin) / cellSize;
+    const int i = int(std::floor(u.x)), j = int(std::floor(u.y));
+    const float fx = u.x - float(i), fz = u.y - float(j);
+    thread_local std::vector<float> painted;
+    painted.assign(nb, 0.0f);
+    float total = 0.0f;
+    const float cw[4] = {(1 - fx) * (1 - fz), fx * (1 - fz), (1 - fx) * fz, fx * fz};
+    for (int c = 0; c < 4; ++c) {
+        int biome;
+        float strength;
+        m_edits.paint(i + (c & 1) - m_half, j + (c >> 1) - m_half, biome, strength);
+        if (biome < 0 || size_t(biome) >= nb || cw[c] <= 0.0f) continue;
+        painted[size_t(biome)] += strength * cw[c];
+        total += strength * cw[c];
+    }
+    if (total <= 0.0f) return;
+    const float keep = 1.0f - std::min(total, 1.0f);
+    for (size_t b = 0; b < nb; ++b) w[b] = w[b] * keep + painted[b];
 }
 
 glm::vec3 TerrainData::groundColor(const TerrainLook& look, glm::vec2 p, float h, glm::vec3 n, const float* weights,
@@ -376,7 +461,11 @@ Json Terrain::editState() const
 {
     // Everything that affects the terrain (to notice edits): its own fields and the stamps.
     Json j = Json::array();
-    if (const TypeInfo* self = TypeRegistry::get().find("Terrain")) j.push_back(SceneSerializer::serializeFields(*self, this));
+    if (const TypeInfo* self = TypeRegistry::get().find("Terrain")) {
+        Json fields = SceneSerializer::serializeFields(*self, this);
+        if (fields.is_object()) fields.erase("edits"); // brush edits are tracked separately (m_editsVersion)
+        j.push_back(std::move(fields));
+    }
     const glm::vec3 c = transform().position();
     j.push_back({c.x, c.y, c.z});
     const TypeInfo* t = TypeRegistry::get().find("TerrainStamp");
@@ -388,7 +477,7 @@ Json Terrain::editState() const
     return j;
 }
 
-std::shared_ptr<TerrainData> Terrain::generate() const
+std::shared_ptr<TerrainData> Terrain::generate(bool quiet) const
 {
     // A snapshot of the inputs: samples are generated lazily, tile by tile.
     std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps;
@@ -397,8 +486,9 @@ std::shared_ptr<TerrainData> Terrain::generate() const
     });
     const size_t stampCount = stamps.size();
     auto d = std::make_shared<TerrainData>(*this, transform().position(), biomes, std::move(stamps),
-                                           size_t(std::max(tileCacheMB, 1.0f) * 1024.0f * 1024.0f));
-    log::info("Terrain: {:.0f} m, {}x{} samples in tiles of {} cells (generated on demand), {} biomes, {} stamps",
+                                           size_t(std::max(tileCacheMB, 1.0f) * 1024.0f * 1024.0f), m_edits);
+    if (!quiet)
+        log::info("Terrain: {:.0f} m, {}x{} samples in tiles of {} cells (generated on demand), {} biomes, {} stamps",
               float(d->res - 1) * d->cellSize, d->res, d->res, TerrainData::kTileCells, d->biomeNames.size(), stampCount);
     return d;
 }
@@ -431,21 +521,192 @@ void Terrain::rebuild()
 {
     m_dirty = false;
     m_sinceRebuild = 0.0f;
-    auto fresh = generate();
+    // Only brush edits since the last rebuild: everything outside the brushed
+    // area (sample tiles, LOD meshes, colliders, foliage, grass) stays.
+    std::string state = editState().dump();
+    const glm::vec4 area = m_editArea;
+    const bool editsOnly = m_data && state == m_editState && !m_editsReplaced && area.x <= area.z;
+    std::shared_ptr<const TerrainData> old = m_data;
+    auto fresh = generate(editsOnly);
+    if (editsOnly) fresh->adoptTiles(*old, area);
     {
         std::lock_guard lock(m_mutex);
         m_data = fresh;
     }
-    m_editState = editState().dump();
+    m_editState = std::move(state);
     ++m_version;
+    m_changes.push_back({m_version, editsOnly, area});
+    if (m_changes.size() > 64) m_changes.erase(m_changes.begin());
+    m_editArea = glm::vec4(1e30f, 1e30f, -1e30f, -1e30f);
+    m_editsReplaced = false;
     if (!m_started) return;
     TerrainLod::Settings ls;
     ls.nodeCells = chunkCells;
     ls.lodFactor = std::max(lodFactor, 1.1f);
-    m_lod->setData(fresh, *this, ls);
+    m_lod->setData(fresh, *this, ls, editsOnly ? &area : nullptr);
     updateMaterials();
-    updateColliders(true);
-    updateNodes(true);
+    updateColliders(!editsOnly, editsOnly ? &area : nullptr);
+    updateNodes(!editsOnly);
+}
+
+bool Terrain::changedOnlyIn(uint64_t version, glm::vec4& area) const
+{
+    area = glm::vec4(1e30f, 1e30f, -1e30f, -1e30f);
+    if (m_changes.empty() || m_changes.front().version > version + 1) return false; // history doesn't reach back
+    for (const Change& c : m_changes) {
+        if (c.version <= version) continue;
+        if (!c.editsOnly) return false;
+        area = glm::vec4(glm::min(glm::vec2(area), glm::vec2(c.area)), glm::max(glm::vec2(area.z, area.w), glm::vec2(c.area.z, c.area.w)));
+    }
+    return area.x <= area.z;
+}
+
+// -----------------------------------------------------------------------------
+// Sculpting & painting
+// -----------------------------------------------------------------------------
+
+void Terrain::applyBrush(const Brush& brush, glm::vec2 centre, float dt)
+{
+    const auto d = data();
+    const float cs = d->cellSize, r = std::max(brush.radius, cs);
+    const glm::vec2 u = (centre - d->origin) / cs;
+    const int i0 = std::max(0, int(std::floor(u.x - r / cs)) - 1), i1 = std::min(d->res - 1, int(std::ceil(u.x + r / cs)) + 1);
+    const int j0 = std::max(0, int(std::floor(u.y - r / cs)) - 1), j1 = std::min(d->res - 1, int(std::ceil(u.y + r / cs)) + 1);
+    if (i0 > i1 || j0 > j1 || dt <= 0.0f) return;
+    const int w = i1 - i0 + 1, h = j1 - j0 + 1;
+    constexpr int T = TerrainEdits::kTile, S = TerrainEdits::kSide;
+
+    // Current heights (generator + edits so far): smoothing and flattening work on them.
+    std::vector<float> cur(size_t(w) * h);
+    for (int j = j0; j <= j1; ++j)
+        for (int i = i0; i <= i1; ++i) {
+            const glm::ivec2 g = d->editCoord(i, j);
+            cur[size_t(j - j0) * w + size_t(i - i0)] = d->baseHeight(d->samplePosition(i, j)) + m_edits.height(g.x, g.y);
+        }
+    auto at = [&](int i, int j) { return cur[size_t(std::clamp(j, j0, j1) - j0) * w + size_t(std::clamp(i, i0, i1) - i0)]; };
+
+    // Tiles touched by this step are copied once (snapshots may share the old ones).
+    std::unordered_map<int64_t, std::shared_ptr<TerrainEdits::Tile>> work;
+    auto writable = [&](int tx, int tz) -> TerrainEdits::Tile& {
+        const int64_t k = TerrainEdits::key(tx, tz);
+        if (auto it = work.find(k); it != work.end()) return *it->second;
+        const auto old = m_edits.tiles.find(k);
+        auto t = old != m_edits.tiles.end() ? std::make_shared<TerrainEdits::Tile>(*old->second) : std::make_shared<TerrainEdits::Tile>();
+        return *work.emplace(k, std::move(t)).first->second;
+    };
+    // A sample on a tile border belongs to both tiles (and a corner to four).
+    auto forTiles = [&](glm::ivec2 g, auto&& fn) {
+        const int tx = floorDiv(g.x, T), tz = floorDiv(g.y, T);
+        const int lx = g.x - tx * T, lz = g.y - tz * T;
+        for (int dz = 0; dz <= (lz == 0 ? 1 : 0); ++dz)
+            for (int dx = 0; dx <= (lx == 0 ? 1 : 0); ++dx) fn(writable(tx - dx, tz - dz), size_t(lz + dz * T) * S + size_t(lx + dx * T));
+    };
+
+    const float rate = std::clamp(brush.strength, 0.0f, 1.0f);
+    const float approach = std::min(1.0f, rate * 12.0f * dt); // smooth / flatten: fraction of the way per step
+    for (int j = j0; j <= j1; ++j) {
+        for (int i = i0; i <= i1; ++i) {
+            const float dist = glm::length(d->samplePosition(i, j) - centre);
+            if (dist >= r) continue;
+            const float f = 1.0f - glm::smoothstep(r * 0.5f, r, dist);
+            const glm::ivec2 g = d->editCoord(i, j);
+            const float hNow = at(i, j);
+            float delta = 0.0f;
+            switch (brush.mode) {
+            case Brush::Mode::Raise: delta = rate * 8.0f * dt * f; break;
+            case Brush::Mode::Lower: delta = -rate * 8.0f * dt * f; break;
+            case Brush::Mode::Smooth: {
+                float sum = 0.0f;
+                for (int b = -1; b <= 1; ++b)
+                    for (int a = -1; a <= 1; ++a) sum += at(i + a, j + b);
+                delta = (sum / 9.0f - hNow) * approach * f;
+                break;
+            }
+            case Brush::Mode::Flatten: delta = (brush.height - hNow) * approach * f; break;
+            case Brush::Mode::Paint: {
+                const float amount = rate * 4.0f * dt * f * 255.0f;
+                const auto biome = uint8_t(std::clamp(brush.biome, 0, 254));
+                forTiles(g, [&](TerrainEdits::Tile& t, size_t k) {
+                    // Painting over another biome first fades it out.
+                    float p = t.paint[k];
+                    if (t.biome[k] == biome || p <= 0.0f) {
+                        t.biome[k] = biome;
+                        p = std::min(255.0f, p + amount);
+                    } else if (p <= amount) {
+                        t.biome[k] = biome;
+                        p = amount - p;
+                    } else {
+                        p -= amount;
+                    }
+                    t.paint[k] = uint8_t(std::lround(p));
+                });
+                break;
+            }
+            }
+            if (delta != 0.0f)
+                forTiles(g, [&](TerrainEdits::Tile& t, size_t k) { t.height[k] = std::clamp(t.height[k] + delta, -300.0f, 300.0f); });
+        }
+    }
+    for (auto& [k, t] : work) m_edits.tiles[k] = std::move(t);
+    const glm::vec2 lo = d->samplePosition(i0, j0), hi = d->samplePosition(i1, j1);
+    m_editArea = glm::vec4(glm::min(glm::vec2(m_editArea), lo), glm::max(glm::vec2(m_editArea.z, m_editArea.w), hi));
+    ++m_editsVersion;
+    m_dirty = true;
+}
+
+void Terrain::clearEdits()
+{
+    if (m_edits.empty()) return;
+    m_edits.tiles.clear();
+    m_editsReplaced = true;
+    ++m_editsVersion;
+    m_dirty = true;
+}
+
+Json Terrain::editsJson() const
+{
+    // Per edited tile: heights in cm (int16), painted biome and strength (bytes), base64.
+    Json tiles = Json::array();
+    std::vector<int64_t> keys;
+    for (const auto& [k, t] : m_edits.tiles) keys.push_back(k);
+    std::sort(keys.begin(), keys.end()); // stable files
+    for (int64_t k : keys) {
+        const TerrainEdits::Tile& t = *m_edits.tiles.at(k);
+        std::vector<int16_t> cm(t.height.size());
+        for (size_t i = 0; i < cm.size(); ++i) cm[i] = int16_t(std::clamp(std::lround(t.height[i] * 100.0f), -32767l, 32767l));
+        tiles.push_back({{"x", int(uint32_t(k))}, {"z", int(k >> 32)},
+                         {"height", str::base64Encode(cm.data(), cm.size() * sizeof(int16_t))},
+                         {"biome", str::base64Encode(t.biome.data(), t.biome.size())},
+                         {"paint", str::base64Encode(t.paint.data(), t.paint.size())}});
+    }
+    return Json{{"tileCells", TerrainEdits::kTile}, {"tiles", tiles}};
+}
+
+void Terrain::setEditsJson(const Json& j)
+{
+    TerrainEdits edits;
+    if (j.is_object() && j.value("tileCells", 0) == TerrainEdits::kTile && j.contains("tiles")) {
+        constexpr size_t n = size_t(TerrainEdits::kSide) * TerrainEdits::kSide;
+        for (const Json& e : j["tiles"]) {
+            auto t = std::make_shared<TerrainEdits::Tile>();
+            const auto cm = str::base64Decode(e.value("height", std::string()));
+            const auto biome = str::base64Decode(e.value("biome", std::string()));
+            const auto paint = str::base64Decode(e.value("paint", std::string()));
+            if (cm.size() != n * 2 || biome.size() != n || paint.size() != n) {
+                log::warn("Terrain: ignoring a malformed edit tile");
+                continue;
+            }
+            for (size_t i = 0; i < n; ++i) t->height[i] = float(int16_t(uint16_t(cm[2 * i] | cm[2 * i + 1] << 8))) / 100.0f;
+            t->biome = biome;
+            t->paint = paint;
+            edits.tiles[TerrainEdits::key(e.value("x", 0), e.value("z", 0))] = std::move(t);
+        }
+    }
+    if (edits.empty() && m_edits.empty()) return;
+    m_edits = std::move(edits);
+    m_editsReplaced = true;
+    ++m_editsVersion;
+    m_dirty = true;
 }
 
 void Terrain::onDestroy()
@@ -612,7 +873,7 @@ void Terrain::updateNodes(bool preload)
     }
 }
 
-void Terrain::updateColliders(bool force)
+void Terrain::updateColliders(bool force, const glm::vec4* area)
 {
     m_sinceColliders = 0.0f;
     const auto d = data();
@@ -620,6 +881,19 @@ void Terrain::updateColliders(bool force)
     if (force) {
         for (auto& [key, rb] : m_colliderTiles) removeComponent(rb);
         m_colliderTiles.clear();
+    }
+    if (area) {
+        // Brush edits: replace just the tiles under the brushed area.
+        const float ts = float(TerrainData::kTileCells) * d->cellSize;
+        for (auto it = m_colliderTiles.begin(); it != m_colliderTiles.end();) {
+            const glm::vec2 lo = d->origin + glm::vec2(float(int(uint32_t(it->first))), float(int(it->first >> 32))) * ts;
+            if (lo.x <= area->z && lo.x + ts >= area->x && lo.y <= area->w && lo.y + ts >= area->y) {
+                removeComponent(it->second);
+                it = m_colliderTiles.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
     // Ground is needed under the camera, every character and every dynamic body.
     std::vector<glm::vec2> focus;
@@ -786,6 +1060,9 @@ void registerTerrainTypes(TypeRegistry& r)
         t.field("borderRockEnd", &Terrain::borderRockEnd);
         t.field("borderRock", &Terrain::borderRock).range(0.0f, 1.0f).speed(0.01f);
         t.field("brightnessVariation", &Terrain::brightnessVariation).range(0.0f, 1.0f).speed(0.01f);
+        t.property("edits", FieldKind::Json, [](const Terrain& x) { return x.editsJson(); },
+                   [](Terrain& x, const Json& j) { x.setEditsJson(j); })
+            .hidden();
         t.property("rockMaterial", FieldKind::Json, [](const Terrain& x) { return Terrain::materialJson(x.rockMaterial); },
                    [](Terrain& x, const Json& j) { x.rockMaterial = Terrain::materialFromJson(j); })
             .tooltip("optional rock texture (projected from three sides): {albedo, normal, roughness, ao, size, tint, "

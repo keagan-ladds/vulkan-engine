@@ -276,9 +276,22 @@ void gatherBenders(FrameData& frame)
 }
 } // namespace
 
+void GrassPass::refresh(std::function<float(glm::vec2)> height, std::function<glm::vec4(glm::vec2)> mask)
+{
+    m_desc.height = std::move(height);
+    m_desc.mask = std::move(mask);
+    m_refresh = true;
+}
+
 void GrassPass::prepare(FrameData& frame)
 {
     gatherBenders(frame);
+    if (m_pending.valid() && m_pending.wait_for(std::chrono::seconds(0)) == std::future_status::ready) apply(m_pending.get());
+    if (m_refresh && !m_pending.valid()) {
+        // Same area, new ground: bake it again in the background.
+        m_refresh = false;
+        m_pending = std::async(std::launch::async, &GrassPass::bake, m_desc, m_area.lo, m_area.size, m_area.res, m_area.maskRes);
+    }
     if (m_windowSize > 0.0f) {
         // A finished re-bake replaces the window; otherwise start one once the
         // camera has crossed a quarter of it (the grass radius stays inside).

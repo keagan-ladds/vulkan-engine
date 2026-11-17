@@ -145,10 +145,15 @@ public:
 
     // Parameters are live: change them any time (LOD meshes / shaders excepted).
     GrassDesc& desc() { return m_desc; }
+    // The ground changed (e.g. terrain brush edits): new height / mask
+    // functions; the baked area is re-baked on a worker thread and swapped in
+    // when ready (the old textures stay meanwhile).
+    void refresh(std::function<float(glm::vec2)> height, std::function<glm::vec4(glm::vec2)> mask);
     Material& material(size_t lod = 0) { return *m_lods.at(lod).material; }
     size_t lodCount() const { return m_lods.size(); }
 
 private:
+    bool m_refresh = false; // re-bake the current area (refresh())
     // Height + mask samples and per-tile height ranges for one area.
     struct Baked {
         glm::vec2 lo{0.0f}, size{0.0f}; // world area covered

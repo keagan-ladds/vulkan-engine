@@ -295,6 +295,9 @@ million grass blades), scaling up on discrete GPUs.
   vertex with height-based blending; distance anti-tiling (rotated 3.7×
   second copy + macro noise); untextured biomes keep their vertex colours.
   Savanna: soil, sand ripples, leaf litter, rock
+- [x] Editor sculpt / paint brushes (`TerrainEdits`, saved with the scene);
+  brush rebuilds are incremental (tiles, LOD nodes, colliders, foliage cells
+  and grass textures outside the brushed area are kept)
 - **Result** (lavapipe, Release): 4 km world, 2049² samples, ~62k foliage
   instances preloaded in ~1.2 s; main thread ~1.8 ms per frame, as on the
   640 m map (it was 21 ms before foliage stopped re-walking every cell)

@@ -17,6 +17,8 @@ private:
     const void* m_foliageSystem = nullptr; // W4: vegetation must regenerate after a terrain edit
     std::string m_grassPass; // pass name (a new pass may reuse the old one's address)
     size_t m_bouldersNew = 0;
+    float m_heightBefore = 0.0f; // terrain brush checks
+    size_t m_editedTiles = 0;
 };
 
 } // namespace savanna

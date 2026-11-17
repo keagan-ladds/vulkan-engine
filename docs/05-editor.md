@@ -11,7 +11,7 @@ in C++ (the Unity split). Press **F2** in any game built on the engine.
 | E2 | Editor MVP: hierarchy, inspector, GPU picking, move/rotate/scale gizmo, debug shapes, Play/Stop with restore, undo/redo, save/load, editor camera | ✅ |
 | E2b | Savanna's hand-placed content moved to `sandbox/assets/scenes/savanna.json` (camp, huts + audio zones, torches, crates, reed screens, sunstones, ambience, PlayerStart) | ✅ |
 | E3 | Prefabs (save a configured object as a reusable asset), asset browser with drag & drop, multi-select, snapping UI polish | planned |
-| E4 | World tools: foliage paint/exclusions, terrain sculpt/paint (the Phase 13 streaming terrain is in place) | planned |
+| E4 | World tools: terrain sculpt/paint ✅; foliage paint/exclusions planned | partly |
 
 ## Design
 
@@ -103,3 +103,22 @@ Load with `ve::SceneSerializer::load(scene, "scenes/x.json")`.
 - **Undo/redo:** per-object JSON before/after snapshots. Property edits apply
   in place; structural changes (create, delete, reparent, add/remove
   component) re-create the object.
+
+### Terrain tools (E4)
+Select the Terrain: the inspector's **Terrain tools** section has a brush
+(Raise, Lower, Smooth, Flatten, Paint biome), radius and strength. In the
+viewport the brush outline follows the ground; hold the left mouse button to
+apply (Shift swaps Raise/Lower; Ctrl+click with Flatten picks the target
+height). Each stroke is one undo step; "Clear all edits" removes them.
+
+- Edits are a layer on top of the generator (`TerrainEdits`): a height offset
+  and a painted biome per sample, stored only in the 64-cell tiles that were
+  touched, relative to the terrain's centre (they stay put when you resize or
+  move it). They are saved in the scene file (Terrain's hidden `edits` field:
+  heights in cm, biome and strength bytes, base64 per tile).
+- Code can brush too: `terrain.applyBrush(brush, {x, z}, dt)`.
+- Brushing rebuilds only the brushed area: sample tiles, LOD meshes and
+  physics tiles elsewhere are kept, foliage re-places just the nearby cells
+  (`FoliageSystem::refresh`; chopped / picked instances keep their state) and
+  grass re-bakes its textures in the background (`GrassPass::refresh`).
+  Listeners ask `Terrain::changedOnlyIn(version, area)`.

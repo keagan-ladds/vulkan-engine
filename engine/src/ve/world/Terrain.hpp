@@ -138,6 +138,27 @@ struct TerrainLook {
     TerrainMaterial rockMaterial;
 };
 
+// Hand-made changes on top of the generator (the editor's sculpt and paint
+// brushes): a height offset and a painted biome per grid sample, stored
+// sparsely in tiles of 64 cells (only where something was edited). Sample
+// coordinates are relative to the terrain's centre sample, so edits stay put
+// when the terrain is resized or moved. Tiles are shared between snapshots
+// (copy-on-write when brushing).
+struct TerrainEdits {
+    static constexpr int kTile = 64, kSide = kTile + 1; // neighbouring tiles share their border samples
+    struct Tile {
+        std::vector<float> height = std::vector<float>(kSide * kSide, 0.0f);     // m
+        std::vector<uint8_t> biome = std::vector<uint8_t>(kSide * kSide, 255);   // painted biome, 255 = none
+        std::vector<uint8_t> paint = std::vector<uint8_t>(kSide * kSide, 0);     // paint strength 0..255
+    };
+    std::unordered_map<int64_t, std::shared_ptr<const Tile>> tiles;
+
+    bool empty() const { return tiles.empty(); }
+    float height(int gi, int gj) const;                         // offset at a sample
+    void paint(int gi, int gj, int& biome, float& strength) const; // biome -1 = none
+    static int64_t key(int tx, int tz) { return (int64_t(tz) << 32) | int64_t(uint32_t(tx)); }
+};
+
 // An immutable snapshot of a terrain: its generator inputs plus a cache of
 // sample tiles generated on demand, so worlds of any size cost memory only
 // where something looks (rendering, physics, foliage, grass, audio).
@@ -150,7 +171,10 @@ public:
     static constexpr int kTileCells = 64; // cells per cache tile side (65 x 65 samples)
 
     TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vector<TerrainBiome> biomes,
-                std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes);
+                std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes, TerrainEdits edits = {});
+    // After brush edits only: reuse `old`'s cached sample tiles outside the
+    // world-space rectangle `changed` (x0, z0, x1, z1).
+    void adoptTiles(const TerrainData& old, glm::vec4 changed);
     TerrainData(const TerrainData&) = delete;
     TerrainData& operator=(const TerrainData&) = delete;
 
@@ -173,7 +197,12 @@ public:
 
     // The generator itself: height at any world point (exact at sample points),
     // and the biome weights for a point of that height and slope (1 - normal.y).
-    float generateHeight(glm::vec2 p) const;
+    float generateHeight(glm::vec2 p) const;  // including edits
+    float baseHeight(glm::vec2 p) const;      // the generator alone (no edits)
+    float editHeight(glm::vec2 p) const;      // the edits' offset (bilinear between samples)
+    const TerrainEdits& edits() const { return m_edits; }
+    // Grid sample (i, j) -> edit coordinates (relative to the centre sample).
+    glm::ivec2 editCoord(int i, int j) const { return {i - m_half, j - m_half}; }
     void generateBiomes(glm::vec2 p, float height, float slope, float* weights) const; // biomeNames.size() weights
     // Vertex colour of the ground (biome colours, mud, rock) for these weights,
     // and how much of it is rock and mud.
@@ -203,6 +232,8 @@ private:
     glm::vec3 m_centre;
     std::vector<TerrainBiome> m_biomes;
     std::vector<Stamp> m_stamps;
+    TerrainEdits m_edits;
+    int m_half = 0; // centre sample index (edit coordinates)
     uint64_t m_uid; // tells thread-local lookup caches apart
 
     mutable std::mutex m_mutex;
@@ -250,6 +281,27 @@ public:
     uint64_t version() const { return m_version; } // bumps on every rebuild
 
     void markDirty() { m_dirty = true; }
+
+    // ---- Sculpting & painting (the editor's terrain tools; saved with the scene) ----
+    struct Brush {
+        enum class Mode { Raise, Lower, Smooth, Flatten, Paint };
+        Mode mode = Mode::Raise;
+        float radius = 6.0f;   // m (soft edge over the outer half)
+        float strength = 0.5f; // 0..1
+        float height = 0.0f;   // Flatten: target height (world)
+        int biome = 0;         // Paint: biome index
+    };
+    // One brush step of `dt` seconds centred on world (x, z). The terrain
+    // rebuilds just that area (throttled), foliage and grass follow.
+    void applyBrush(const Brush& brush, glm::vec2 centre, float dt);
+    void clearEdits();
+    size_t editedTiles() const { return m_edits.tiles.size(); }
+    Json editsJson() const;
+    void setEditsJson(const Json& j);
+    // True if every rebuild after `version` only changed brush edits; `area`
+    // gets the world rectangle (x0, z0, x1, z1) they touched. Foliage and
+    // grass use it to refresh just that area instead of everything.
+    bool changedOnlyIn(uint64_t version, glm::vec4& area) const;
     static Terrain* find(const Scene& scene);
 
     // Biomes as JSON (reflection / scene files).
@@ -263,12 +315,12 @@ public:
     size_t colliderTiles() const { return m_colliderTiles.size(); }
 
 private:
-    std::shared_ptr<TerrainData> generate() const;
+    std::shared_ptr<TerrainData> generate(bool quiet = false) const;
     Json editState() const; // own fields + position + stamps: rebuild when it changes
     void rebuild();         // new data snapshot; meshes and colliders follow
     void updateMaterials(); // one material per LOD level (morph range), sharing the look
     void updateNodes(bool preload);
-    void updateColliders(bool force);
+    void updateColliders(bool force, const glm::vec4* area = nullptr);
 
     mutable std::mutex m_mutex;
     mutable std::shared_ptr<const TerrainData> m_data;
@@ -284,6 +336,16 @@ private:
     float m_sinceColliders = 1e9f;
     std::string m_editState;
     uint64_t m_version = 0;
+    TerrainEdits m_edits;
+    uint64_t m_editsVersion = 0;
+    bool m_editsReplaced = false; // loaded / cleared / undone: rebuild everything
+    glm::vec4 m_editArea{1e30f, 1e30f, -1e30f, -1e30f}; // brushed since the last rebuild
+    struct Change {
+        uint64_t version;
+        bool editsOnly;
+        glm::vec4 area;
+    };
+    std::vector<Change> m_changes; // recent rebuilds (changedOnlyIn)
     bool m_dirty = false;
     bool m_started = false;
     float m_sinceRebuild = 0.0f;

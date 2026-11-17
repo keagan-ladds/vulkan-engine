@@ -14,6 +14,7 @@
 // =============================================================================
 
 #include "ve/editor/Gizmo.hpp"
+#include "ve/world/Terrain.hpp"
 #include "ve/scene/Reflection.hpp"
 
 #include <filesystem>
@@ -87,6 +88,9 @@ private:
     void drawInspector();
     bool drawField(const FieldInfo& field, void* object, GameObject& owner);
     void drawViewport();
+    void drawTerrainTools(Terrain& terrain);
+    // Terrain brush in the viewport (true = the tool owns the mouse this frame).
+    bool terrainBrush(Terrain& terrain, const ViewProjector& view, DebugDraw& dd, glm::vec2 mouse);
     void drawPlayToolbar();
     std::vector<std::string> listAssets(const std::string& extensions);
 
@@ -102,6 +106,10 @@ private:
     PickingPass* m_picking = nullptr;
     glm::vec2 m_pressPos{0.0f};
     bool m_pressInViewport = false;
+
+    int m_terrainTool = -1; // Terrain::Brush::Mode, -1 = off
+    Terrain::Brush m_brush;
+    bool m_brushing = false;
 
     Gizmo m_gizmo;
     Gizmo::Options m_gizmoOptions;

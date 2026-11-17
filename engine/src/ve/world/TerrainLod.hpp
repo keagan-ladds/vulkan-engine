@@ -62,7 +62,9 @@ public:
     ~TerrainLod();
 
     // New terrain (or edited): nodes rebuild lazily and keep their old mesh meanwhile.
-    void setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings);
+    // `changed` (world x0, z0, x1, z1): only brush edits there; other nodes keep their meshes.
+    void setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings,
+                 const glm::vec4* changed = nullptr);
     // Per frame: choose nodes for `camera`, queue missing meshes, upload finished ones.
     // preload = build everything needed for this view first (synchronously).
     void update(const glm::vec3& camera, bool preload);

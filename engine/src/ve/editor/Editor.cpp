@@ -806,6 +806,7 @@ void Editor::drawHierarchyNode(GameObject& o)
 
 bool Editor::drawField(const FieldInfo& f, void* obj, GameObject& owner)
 {
+    if (f.hidden) return false;
     bool changed = false;
     const bool ranged = f.max > f.min;
     const char* label = f.name.c_str();
@@ -994,6 +995,7 @@ void Editor::drawInspector()
         if (changed && type->onChanged) type->onChanged(sel);
         ImGui::PopID();
     }
+    if (auto* terrain = dynamic_cast<Terrain*>(sel)) drawTerrainTools(*terrain);
 
     // --- Components ---
     Component* removeMe = nullptr;
@@ -1140,6 +1142,12 @@ void Editor::drawViewport()
             dd.circle(glm::vec3(m[3]), {0, 1, 0}, a->maxDistance, IM_COL32(230, 120, 255, 110));
         }
 
+        auto* terrain = dynamic_cast<Terrain*>(sel);
+        if (terrain && m_terrainTool >= 0) {
+            // Sculpting / painting: the brush owns the mouse (no gizmo, no picking).
+            terrainBrush(*terrain, view, dd, mouse);
+            return;
+        }
         ImDrawList* fg = ImGui::GetBackgroundDrawList();
         switch (m_gizmo.manipulate(fg, view, sel->transform(), m_gizmoOptions)) {
         case Gizmo::Event::Began: beginEdit(*sel); break;
@@ -1171,6 +1179,105 @@ void Editor::drawViewport()
             }
         }
     }
+}
+
+// -----------------------------------------------------------------------------
+// Terrain tools
+// -----------------------------------------------------------------------------
+
+void Editor::drawTerrainTools(Terrain& terrain)
+{
+    if (!ImGui::CollapsingHeader("Terrain tools", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::PushID("terraintools");
+    static const char* kModes[] = {"Off (select / move)", "Raise", "Lower", "Smooth", "Flatten", "Paint biome"};
+    int mode = m_terrainTool + 1;
+    if (ImGui::Combo("Brush", &mode, kModes, IM_ARRAYSIZE(kModes))) m_terrainTool = mode - 1;
+    if (m_terrainTool >= 0) {
+        ImGui::SliderFloat("Radius", &m_brush.radius, 1.0f, 200.0f, "%.1f m", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Strength", &m_brush.strength, 0.01f, 1.0f);
+        const auto m = Terrain::Brush::Mode(m_terrainTool);
+        if (m == Terrain::Brush::Mode::Flatten) {
+            ImGui::DragFloat("Target height", &m_brush.height, 0.05f);
+            ImGui::TextDisabled("Ctrl+click picks the height under the cursor");
+        }
+        if (m == Terrain::Brush::Mode::Paint && !terrain.biomes.empty()) {
+            m_brush.biome = std::clamp(m_brush.biome, 0, int(terrain.biomes.size()) - 1);
+            if (ImGui::BeginCombo("Biome", terrain.biomes[size_t(m_brush.biome)].name.c_str())) {
+                for (size_t b = 0; b < terrain.biomes.size(); ++b)
+                    if (ImGui::Selectable(terrain.biomes[b].name.c_str(), int(b) == m_brush.biome)) m_brush.biome = int(b);
+                ImGui::EndCombo();
+            }
+        }
+        ImGui::TextDisabled("Left mouse in the viewport: apply. Shift: Raise <-> Lower.");
+    }
+    ImGui::Text("Edited: %zu tile(s)", terrain.editedTiles());
+    if (terrain.editedTiles() > 0 && ImGui::Button("Clear all edits")) {
+        beginEdit(terrain);
+        terrain.clearEdits();
+        endEdit("Clear terrain edits");
+    }
+    ImGui::PopID();
+}
+
+bool Editor::terrainBrush(Terrain& terrain, const ViewProjector& view, DebugDraw& dd, glm::vec2 mouse)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    // Ray march to the ground, then bisect.
+    glm::vec3 o, d;
+    view.ray(mouse, o, d);
+    auto below = [&](const glm::vec3& p) { return terrain.inBounds(p.x, p.z) && p.y < terrain.height(p.x, p.z); };
+    bool found = false;
+    glm::vec3 hit(0.0f);
+    float t0 = 0.0f;
+    for (float t = 0.5f; t < 6000.0f; t += std::max(0.5f, t * 0.01f)) {
+        if (below(o + d * t)) {
+            float a = t0, b = t;
+            for (int k = 0; k < 16; ++k) {
+                const float m = 0.5f * (a + b);
+                (below(o + d * m) ? b : a) = m;
+            }
+            hit = o + d * b;
+            found = true;
+            break;
+        }
+        t0 = t;
+    }
+    if (m_brushing && (!ImGui::IsMouseDown(0) || !found)) {
+        m_brushing = false;
+        endEdit(m_terrainTool == int(Terrain::Brush::Mode::Paint) ? "Paint terrain" : "Sculpt terrain");
+    }
+    if (!found) return false;
+
+    // The brush outline, draped over the ground (outer edge and where the falloff starts).
+    for (float frac : {1.0f, 0.5f}) {
+        const float r = m_brush.radius * frac;
+        glm::vec3 prev(0.0f);
+        for (int s = 0; s <= 48; ++s) {
+            const float a = float(s) / 48.0f * 6.2831853f;
+            const float x = hit.x + std::cos(a) * r, z = hit.z + std::sin(a) * r;
+            const glm::vec3 p(x, (terrain.inBounds(x, z) ? terrain.height(x, z) : hit.y) + 0.15f, z);
+            if (s > 0) dd.line(prev, p, frac == 1.0f ? IM_COL32(255, 220, 80, 230) : IM_COL32(255, 220, 80, 110));
+            prev = p;
+        }
+    }
+    if (io.WantCaptureMouse && !m_brushing) return true;
+    auto mode = Terrain::Brush::Mode(m_terrainTool);
+    if (ImGui::IsMouseClicked(0)) {
+        if (io.KeyCtrl && mode == Terrain::Brush::Mode::Flatten) {
+            m_brush.height = hit.y;
+        } else {
+            beginEdit(terrain); // the whole stroke is one undo step
+            m_brushing = true;
+        }
+    }
+    if (m_brushing) {
+        if (io.KeyShift && mode == Terrain::Brush::Mode::Raise) mode = Terrain::Brush::Mode::Lower;
+        else if (io.KeyShift && mode == Terrain::Brush::Mode::Lower) mode = Terrain::Brush::Mode::Raise;
+        Terrain::Brush b = m_brush;
+        b.mode = mode;
+        terrain.applyBrush(b, {hit.x, hit.z}, std::min(io.DeltaTime, 0.1f));
+    }
+    return true;
 }
 
 } // namespace ve

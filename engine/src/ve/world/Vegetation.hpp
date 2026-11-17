@@ -152,11 +152,19 @@ public:
     int layerIndex(const std::string& name) const;
 
 private:
+    struct LayerDensity { // to rebind a layer's density to a new terrain snapshot
+        std::vector<std::pair<int, float>> weights;
+        float threshold = 0.0f;
+    };
     std::string state() const;
     void rebuild();
+    void refresh(glm::vec4 area); // terrain brush edits: re-place around `area` only
+    FoliageWorld makeWorld(const std::shared_ptr<const TerrainData>& td) const;
+    static std::function<float(const FoliageSample&)> makeDensity(const std::shared_ptr<const TerrainData>& td, const LayerDensity& d);
 
     FoliageSystem* m_system = nullptr;
     std::vector<std::string> m_layerNames;
+    std::vector<LayerDensity> m_densities; // per system layer
     std::string m_state;
     uint64_t m_terrainVersion = 0;
     const Terrain* m_terrain = nullptr;
@@ -220,6 +228,7 @@ private:
     std::string state() const;
     void rebuild();
     void removePass();
+    std::function<glm::vec4(glm::vec2)> makeMask(const std::shared_ptr<const TerrainData>& td) const;
 
     GrassPass* m_pass = nullptr;
     std::string m_passName;

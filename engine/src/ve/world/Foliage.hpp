@@ -216,6 +216,12 @@ public:
     // Synchronously loads everything visible from `viewer` (+ colliders).
     void preload(const glm::vec3& viewer);
 
+    // The ground changed inside `area` (world x0, z0, x1, z1; e.g. terrain
+    // brush edits): new world callbacks and layer densities (same layers, in
+    // order; empty function = keep), and the cells around the area are placed
+    // again. Everything else, and instance states, stay as they are.
+    void refresh(FoliageWorld world, const std::vector<std::function<float(const FoliageSample&)>>& densities, glm::vec4 area);
+
     // Colliders are streamed around this object (e.g. the player); null = the camera.
     GameObject* colliderFocus = nullptr;
 

@@ -25,7 +25,8 @@ TerrainLod::~TerrainLod()
     m_worker.join();
 }
 
-void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings)
+void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings,
+                         const glm::vec4* changed)
 {
     const bool layoutChanged = !m_data || data->res != m_data->res || data->cellSize != m_data->cellSize ||
                                data->origin != m_data->origin || settings.nodeCells != m_settings.nodeCells;
@@ -33,10 +34,20 @@ void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainL
     m_look = look;
     m_settings = settings;
     m_settings.nodeCells = std::max(m_settings.nodeCells, 4) & ~1; // even: parent vertices are every other one
-    ++m_version;
+    const uint64_t previous = m_version++;
     if (layoutChanged) m_nodes.clear(); // different grid: old meshes don't fit any more
     m_levels = 1;
     while (int64_t(m_settings.nodeCells) << (m_levels - 1) < m_data->res - 1) ++m_levels;
+    if (changed && !layoutChanged) {
+        // Nodes away from the edit are still up to date (normals reach 2 vertices beyond a node).
+        for (auto& [k, n] : m_nodes) {
+            if (n.version != previous) continue;
+            const float size = nodeSize(k.level), margin = 3.0f * m_data->cellSize * float(1 << k.level);
+            const glm::vec2 lo = m_data->origin + glm::vec2(float(k.x), float(k.z)) * size - margin;
+            const glm::vec2 hi = lo + size + 2.0f * margin;
+            if (hi.x < changed->x || lo.x > changed->z || hi.y < changed->y || lo.y > changed->w) n.version = m_version;
+        }
+    }
 }
 
 float TerrainLod::nodeSize(int level) const

@@ -326,7 +326,14 @@ void Foliage::update(float dt)
     m_sinceBuild += dt;
     if (m_sinceBuild < 0.25f) return;
     const Terrain* terrain = Terrain::find(scene());
-    if (terrain != m_terrain || (terrain && terrain->version() != m_terrainVersion)) m_dirty = true;
+    if (terrain != m_terrain || (terrain && terrain->version() != m_terrainVersion)) {
+        // Brush edits only: re-place around them instead of everything.
+        glm::vec4 area;
+        if (!m_dirty && m_system && terrain == m_terrain && terrain->changedOnlyIn(m_terrainVersion, area) && state() == m_state)
+            refresh(area);
+        else
+            m_dirty = true;
+    }
     if (!m_dirty && state() != m_state) m_dirty = true;
     if (m_dirty) rebuild();
 
@@ -355,12 +362,8 @@ void Foliage::rebuild()
     collect(*this, types);
     if (types.empty()) return;
 
-    FoliageWorld world;
-    const glm::vec2 lo = td->origin, hi = td->origin + glm::vec2(float(td->res - 1) * td->cellSize);
-    world.boundsMin = lo + edgeMargin;
-    world.boundsMax = glm::max(hi - edgeMargin, world.boundsMin + 1.0f);
-    world.height = [td](glm::vec2 p) { return td->height(p.x, p.y); };
-    world.normal = [td](glm::vec2 p) { return td->normal(p.x, p.y); };
+    m_densities.clear();
+    const FoliageWorld world = makeWorld(td);
     FoliageSettings settings;
     settings.cellSize = std::max(cellSize, 4.0f);
     settings.instancesPerFrame = uint32_t(std::max(instancesPerFrame, 1));
@@ -408,14 +411,8 @@ void Foliage::rebuild()
         l.spacing = std::max(l.spacing, 0.1f);
         l.maxScale = std::max(l.maxScale, l.minScale);
         if (l.seed == 0) l.seed = uint32_t(std::hash<std::string>{}(layerName));
-        auto weights = parseBiomeWeights(t->biomes, *td, "FoliageType '" + layerName + "'");
-        if (!weights.empty() || t->biomeThreshold > 0.0f) {
-            const float threshold = t->biomeThreshold;
-            l.density = [td, weights, threshold](const FoliageSample& s) {
-                const float d = biomeDensity(weights, *td, s.position);
-                return threshold > 0.0f ? (d >= threshold ? 1.0f : 0.0f) : d;
-            };
-        }
+        const LayerDensity density{parseBiomeWeights(t->biomes, *td, "FoliageType '" + layerName + "'"), t->biomeThreshold};
+        l.density = makeDensity(td, density);
         for (const auto& [other, radius] : parseNameValues(t->avoid)) {
             const int index = layerIndex(other);
             if (index < 0) log::warnOnce(self + ": layer '" + layerName + "' avoids '" + other + "', which isn't an earlier layer");
@@ -424,6 +421,7 @@ void Foliage::rebuild()
         try {
             sys.addLayer(std::move(l));
             m_layerNames.push_back(layerName);
+            m_densities.push_back(density);
         } catch (const std::exception& e) {
             log::warnOnce(self + ": " + e.what());
         }
@@ -438,6 +436,35 @@ void Foliage::rebuild()
         sys.preload(viewer);
     }
     m_built = true;
+}
+
+FoliageWorld Foliage::makeWorld(const std::shared_ptr<const TerrainData>& td) const
+{
+    FoliageWorld world;
+    const glm::vec2 lo = td->origin, hi = td->origin + glm::vec2(float(td->res - 1) * td->cellSize);
+    world.boundsMin = lo + edgeMargin;
+    world.boundsMax = glm::max(hi - edgeMargin, world.boundsMin + 1.0f);
+    world.height = [td](glm::vec2 p) { return td->height(p.x, p.y); };
+    world.normal = [td](glm::vec2 p) { return td->normal(p.x, p.y); };
+    return world;
+}
+
+std::function<float(const FoliageSample&)> Foliage::makeDensity(const std::shared_ptr<const TerrainData>& td, const LayerDensity& d)
+{
+    if (d.weights.empty() && d.threshold <= 0.0f) return {};
+    return [td, weights = d.weights, threshold = d.threshold](const FoliageSample& s) {
+        const float v = biomeDensity(weights, *td, s.position);
+        return threshold > 0.0f ? (v >= threshold ? 1.0f : 0.0f) : v;
+    };
+}
+
+void Foliage::refresh(glm::vec4 area)
+{
+    m_terrainVersion = m_terrain->version();
+    auto td = m_terrain->data();
+    std::vector<std::function<float(const FoliageSample&)>> densities;
+    for (const LayerDensity& d : m_densities) densities.push_back(makeDensity(td, d));
+    m_system->refresh(makeWorld(td), densities, area);
 }
 
 // -----------------------------------------------------------------------------
@@ -488,7 +515,17 @@ void GrassLayer::update(float dt)
     m_sinceBuild += dt;
     if (m_sinceBuild >= 0.25f) {
         const Terrain* terrain = Terrain::find(scene());
-        if (terrain != m_terrain || (terrain && terrain->version() != m_terrainVersion)) m_dirty = true;
+        if (terrain != m_terrain || (terrain && terrain->version() != m_terrainVersion)) {
+            // Brush edits only: re-bake the grass textures in the background, keep the pass.
+            glm::vec4 area;
+            if (!m_dirty && m_pass && terrain == m_terrain && terrain->changedOnlyIn(m_terrainVersion, area) && state() == m_state) {
+                m_terrainVersion = terrain->version();
+                auto td = terrain->data();
+                m_pass->refresh([td](glm::vec2 p) { return td->height(p.x, p.y); }, makeMask(td));
+            } else {
+                m_dirty = true;
+            }
+        }
         if (!m_dirty && state() != m_state) m_dirty = true;
         if (m_dirty) rebuild();
     }
@@ -509,6 +546,45 @@ void GrassLayer::update(float dt)
     d.farDensity = farDensity;
     d.shadowDistance = shadowDistance;
     d.lodBlend = lodBlend;
+}
+
+std::function<glm::vec4(glm::vec2)> GrassLayer::makeMask(const std::shared_ptr<const TerrainData>& td) const
+{
+    const std::string self = "GrassLayer '" + name() + "'";
+    struct Exclusion {
+        glm::vec2 p;
+        float r, falloff;
+    };
+    std::vector<Exclusion> exclusions;
+    scene().forEach<FoliageExclusion>([&](FoliageExclusion& e) {
+        if (!e.isActive() || !e.grass) return;
+        const glm::vec3 p = e.transform().position();
+        exclusions.push_back({{p.x, p.z}, e.radius, std::max(e.falloff, 0.01f)});
+    });
+    auto weights = parseBiomeWeights(biomes, *td, self);
+    const auto s = uint32_t(seed);
+    // Copies of the settings (not `this`): windowed grass bakes on a worker
+    // thread, which must not read a layer being edited or destroyed.
+    const float minGroundHeight = this->minGroundHeight, maxGroundHeight = this->maxGroundHeight;
+    const float biomeThreshold = this->biomeThreshold, maxSlope = this->maxSlope;
+    const float patchFrequency = this->patchFrequency, patchContrast = this->patchContrast, patchOffset = this->patchOffset;
+    const float colorFrequency = this->colorFrequency, heightFrequency = this->heightFrequency;
+    const float heightVariation = this->heightVariation;
+    return [=](glm::vec2 p) {
+        const float h = td->height(p.x, p.y);
+        if (h < minGroundHeight || h > maxGroundHeight) return glm::vec4(0.0f);
+        float density = biomeDensity(weights, *td, p);
+        if (biomeThreshold > 0.0f) density = density >= biomeThreshold ? 1.0f : 0.0f;
+        if (maxSlope < 1.0f) density *= 1.0f - glm::smoothstep(maxSlope - 0.05f, maxSlope + 0.05f, 1.0f - td->normal(p.x, p.y).y);
+        if (patchFrequency > 0.0f)
+            density *= std::clamp(noise::fbm(p * patchFrequency, 2, 61 + s) * patchContrast - patchOffset, 0.0f, 1.0f);
+        for (const Exclusion& e : exclusions) density *= glm::smoothstep(e.r, e.r + e.falloff, glm::length(p - e.p));
+        if (density <= 0.0f) return glm::vec4(0.0f);
+        const float colorMix = colorFrequency > 0.0f ? noise::fbm(p * colorFrequency, 3, 31 + s) : 0.5f;
+        const float heightScale =
+            heightFrequency > 0.0f ? glm::mix(1.0f - heightVariation, 1.0f, noise::fbm(p * heightFrequency, 2, 13 + s)) : 1.0f;
+        return glm::vec4(density, colorMix, heightScale, 0.0f);
+    };
 }
 
 void GrassLayer::rebuild()
@@ -537,40 +613,7 @@ void GrassLayer::rebuild()
     // Big worlds: bake only a window around the camera (it follows on a worker thread).
     d.window = 4.0f * radius + 64.0f;
 
-    struct Exclusion {
-        glm::vec2 p;
-        float r, falloff;
-    };
-    std::vector<Exclusion> exclusions;
-    scene().forEach<FoliageExclusion>([&](FoliageExclusion& e) {
-        if (!e.isActive() || !e.grass) return;
-        const glm::vec3 p = e.transform().position();
-        exclusions.push_back({{p.x, p.z}, e.radius, std::max(e.falloff, 0.01f)});
-    });
-    auto weights = parseBiomeWeights(biomes, *td, self);
-    const auto s = uint32_t(seed);
-    // Copies of the settings (not `this`): windowed grass bakes on a worker
-    // thread, which must not read a layer being edited or destroyed.
-    const float minGroundHeight = this->minGroundHeight, maxGroundHeight = this->maxGroundHeight;
-    const float biomeThreshold = this->biomeThreshold, maxSlope = this->maxSlope;
-    const float patchFrequency = this->patchFrequency, patchContrast = this->patchContrast, patchOffset = this->patchOffset;
-    const float colorFrequency = this->colorFrequency, heightFrequency = this->heightFrequency;
-    const float heightVariation = this->heightVariation;
-    d.mask = [=](glm::vec2 p) {
-        const float h = td->height(p.x, p.y);
-        if (h < minGroundHeight || h > maxGroundHeight) return glm::vec4(0.0f);
-        float density = biomeDensity(weights, *td, p);
-        if (biomeThreshold > 0.0f) density = density >= biomeThreshold ? 1.0f : 0.0f;
-        if (maxSlope < 1.0f) density *= 1.0f - glm::smoothstep(maxSlope - 0.05f, maxSlope + 0.05f, 1.0f - td->normal(p.x, p.y).y);
-        if (patchFrequency > 0.0f)
-            density *= std::clamp(noise::fbm(p * patchFrequency, 2, 61 + s) * patchContrast - patchOffset, 0.0f, 1.0f);
-        for (const Exclusion& e : exclusions) density *= glm::smoothstep(e.r, e.r + e.falloff, glm::length(p - e.p));
-        if (density <= 0.0f) return glm::vec4(0.0f);
-        const float colorMix = colorFrequency > 0.0f ? noise::fbm(p * colorFrequency, 3, 31 + s) : 0.5f;
-        const float heightScale =
-            heightFrequency > 0.0f ? glm::mix(1.0f - heightVariation, 1.0f, noise::fbm(p * heightFrequency, 2, 13 + s)) : 1.0f;
-        return glm::vec4(density, colorMix, heightScale, 0.0f);
-    };
+    d.mask = makeMask(td);
     d.bladesPerClump = uint32_t(std::max(bladesPerClump, 1));
     d.clumpRadius = clumpRadius;
     d.castShadows = castShadows;

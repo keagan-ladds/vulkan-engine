@@ -75,6 +75,40 @@ private:
     bool m_placed = false;
 };
 
+// Test hook: brush a hill and a desert patch in front of the camera (terrain tools).
+class SculptTest : public ve::GameObject {
+public:
+    explicit SculptTest(ve::Terrain* terrain) : m_terrain(terrain) {}
+    void update(float) override
+    {
+        ve::Camera* cam = scene().mainCamera();
+        if (m_done || !cam || m_terrain->version() == 0) return;
+        m_done = true;
+        glm::vec3 f = cam->transform().forward();
+        f = glm::normalize(glm::vec3(f.x, 0.0f, f.z));
+        const glm::vec3 r(-f.z, 0.0f, f.x), eye = cam->transform().position();
+        const glm::vec3 hill = eye + f * 28.0f + r * 6.0f, sand = eye + f * 14.0f - r * 6.0f;
+        ve::Terrain::Brush raise;
+        raise.radius = 9.0f;
+        raise.strength = 1.0f;
+        for (int i = 0; i < 25; ++i) m_terrain->applyBrush(raise, {hill.x, hill.z}, 0.05f); // +10 m
+        ve::Terrain::Brush smooth = raise;
+        smooth.mode = ve::Terrain::Brush::Mode::Smooth;
+        for (int i = 0; i < 10; ++i) m_terrain->applyBrush(smooth, {hill.x, hill.z}, 0.05f);
+        ve::Terrain::Brush paint;
+        paint.mode = ve::Terrain::Brush::Mode::Paint;
+        paint.radius = 7.0f;
+        paint.strength = 1.0f;
+        for (size_t b = 0; b < m_terrain->biomes.size(); ++b)
+            if (m_terrain->biomes[b].name == "Desert") paint.biome = int(b);
+        for (int i = 0; i < 10; ++i) m_terrain->applyBrush(paint, {sand.x, sand.z}, 0.05f);
+    }
+
+private:
+    ve::Terrain* m_terrain;
+    bool m_done = false;
+};
+
 // Test hook: a striped box sliding left/right in front of the camera (TAA motion vectors).
 class Mover : public ve::GameObject {
 public:
@@ -233,6 +267,8 @@ void buildWorld(ve::Engine& engine)
     if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser
     r.settings().temporalAA = true;
     if (const char* o = std::getenv("SAVANNA_OCCLUSION")) r.settings().occlusionCulling = o[0] == '1'; // occlusion culling on/off
+    // SAVANNA_SCULPT=1: brush a hill and a desert patch in front of the camera.
+    if (std::getenv("SAVANNA_SCULPT")) scene.spawn<SculptTest>(terrainPtr);
     // SAVANNA_MOVER=1: a textured box sliding sideways 5 m in front of the camera.
     // SAVANNA_VELOCITY=0 turns the motion vector pass off (TAA uses camera motion only).
     if (std::getenv("SAVANNA_MOVER")) scene.spawn<Mover>();

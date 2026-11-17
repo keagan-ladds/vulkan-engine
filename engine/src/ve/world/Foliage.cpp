@@ -313,6 +313,46 @@ glm::vec3 FoliageSystem::focusPosition(const glm::vec3& viewer) const
     return colliderFocus ? colliderFocus->transform().position() : viewer;
 }
 
+void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<float(const FoliageSample&)>>& densities,
+                            glm::vec4 area)
+{
+    // The worker reads the world and the layers' callbacks: stop it while they change.
+    {
+        std::lock_guard lock(m_mutex);
+        m_quit = true;
+    }
+    m_cv.notify_all();
+    if (m_worker.joinable()) m_worker.join();
+    m_quit = false;
+    m_jobs.clear();
+    m_results.clear();
+
+    m_world = std::move(world);
+    float margin = 0.0f; // placement looks this far around (spacing, avoid distances)
+    for (size_t i = 0; i < m_layers.size(); ++i) {
+        FoliageLayer& L = m_layers[i].desc;
+        if (i < densities.size() && densities[i]) L.density = densities[i];
+        float reach = L.spacing;
+        for (const auto& a : L.avoid) reach = std::max(reach, a.radius + m_layers[a.layer].desc.spacing);
+        margin = std::max(margin, reach);
+    }
+    // Cells near the area are placed again; so are queued ones (their jobs are gone).
+    const float cs = m_settings.cellSize;
+    for (auto it = m_cells.begin(); it != m_cells.end();) {
+        Cell& c = it->second;
+        const glm::vec2 lo(float(c.cx) * cs, float(c.cz) * cs);
+        const bool near = lo.x - margin <= area.z && lo.x + cs + margin >= area.x && lo.y - margin <= area.w && lo.y + cs + margin >= area.y;
+        if (near || c.state == CellState::Queued) {
+            unload(c);
+            it = m_cells.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    m_rescan = true;
+    startWorker();
+}
+
 void FoliageSystem::startWorker()
 {
     if (!m_worker.joinable()) m_worker = std::thread([this] { workerLoop(); });
