@@ -335,6 +335,43 @@ loop). Models face +Z (glTF). See the sandbox's `Villager` (wanders around
 the camp, walks and idles) and `tools/generate_assets.py` (`villager()`
 writes a rigged model with keyframed clips).
 
+### Prefabs
+
+```cpp
+ve::prefab::save(object, "prefabs/hut.prefab");                       // or Edit > Save as prefab
+ve::GameObject* hut = ve::prefab::instantiate(scene(), "prefabs/hut.prefab", pos, rot);
+```
+
+A prefab stores the object's registered type, fields, persistent components
+and children. Code that builds meshes from fields in `start()` (like
+`BuildPiece`) makes tiny prefabs: just the type and its fields. Instances
+spawned while playing are kept by save games automatically.
+
+### Building: snap points, previews, placing
+
+Engine mechanics, game rules. A piece is a prefab with `SnapPoint`s
+(and optionally `PlacementBox`es if its bounds are a poor fit, e.g. sloped
+roofs); the game's build tool runs:
+
+```cpp
+preview.show(scene(), piecePath);  preview.update();               // ghost (late update)
+glm::quat rot = glm::angleAxis(ve::placement::snapAngle(yaw, glm::radians(45.0f)), up);
+glm::vec3 pos = aim;
+if (auto s = ve::placement::findSnap(scene(), preview.snapPoints(), rot, aim, 0.9f, preview.object())) pos = s->position;
+preview.setPose(pos, rot);
+preview.setValid(ve::placement::fits(physics(), preview.volume(), pos, rot, 0.1f, allowTerrain));
+if (placePressed && preview.valid()) ve::prefab::instantiate(scene(), piecePath, pos, rot);
+```
+
+- Snap points are positions; the piece keeps the player's rotation. Lay
+  them out on one lattice (Savanna: tile corners / edge midpoints every
+  1 m, wall tops at 2.5 m, foundation tops at 0.5 m) and any pair lines up.
+- Pieces that create colliders in `start()` skip them on ghosts
+  (`PlacementGhost::is(*this)`).
+- Rebuild the navmesh around placed / removed pieces (`NavMeshSurface::rebuild`).
+- Roofs: eaves (low edge) on wall tops; a roof whose slope cuts through a
+  side wall is (correctly) blocked.
+
 ### Walking AI: navmesh + agents
 
 ```cpp

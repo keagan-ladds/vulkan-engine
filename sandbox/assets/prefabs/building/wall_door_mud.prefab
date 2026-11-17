@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "object": {
+    "type": "BuildPiece",
+    "name": "Mud wall with door",
+    "active": true,
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotation": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "scale": [
+      1,
+      1,
+      1
+    ],
+    "fields": {
+      "kind": 3,
+      "material": 0
+    }
+  }
+}

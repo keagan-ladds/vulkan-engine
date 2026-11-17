@@ -1,9 +1,12 @@
 #include "EditorTest.hpp"
 
+#include "Props.hpp"
+
 #include <ve/core/Engine.hpp>
 #include <ve/core/Log.hpp>
 #include <ve/editor/Editor.hpp>
 #include <ve/render/Renderer.hpp>
+#include <ve/scene/Prefab.hpp>
 #include <ve/scene/Scene.hpp>
 #include <ve/scene/SceneSerializer.hpp>
 #include <ve/world/Grass.hpp>
@@ -177,7 +180,26 @@ void EditorTest::update(float)
                 "), height " + std::to_string(t->height(hill.x, hill.y)) + ", desert weight " +
                 std::to_string(t->biomeWeight("Desert", sand.x, sand.y)));
     }
-    if (m_frame == 681 && std::string(std::getenv("SAVANNA_EDITORTEST")) != "hold") {
+    if (m_frame == 682) {
+        // Prefabs: save a configured object, make a new one from the file.
+        const std::string path = (std::filesystem::temp_directory_path() / "ve_editortest_torch.prefab").string();
+        auto* torch = dynamic_cast<Torch*>(s.find("Torch"));
+        if (torch) {
+            torch->intensity = 9.25f;
+            const bool saved = ve::prefab::save(*torch, path);
+            ve::prefab::clearCache(); // read it back from the file
+            ve::GameObject* copy = ve::prefab::instantiate(s, path, {5.0f, 3.0f, 5.0f});
+            auto* t2 = dynamic_cast<Torch*>(copy);
+            const auto* link = copy ? copy->getComponent<ve::PrefabInstance>() : nullptr;
+            log(std::string("prefab: saved ") + (saved ? "yes" : "NO") + ", instance is a Torch " + (t2 ? "yes" : "NO") + ", intensity " +
+                (t2 ? std::to_string(t2->intensity) : std::string("?")) + ", new id " + (copy && copy->id() != torch->id() ? "yes" : "NO") +
+                ", linked to the file " + (link && link->prefab == path ? "yes" : "NO"));
+            std::filesystem::remove(path);
+        } else {
+            log("prefab: no Torch in the scene");
+        }
+    }
+    if (m_frame == 683 && std::string(std::getenv("SAVANNA_EDITORTEST")) != "hold") {
         log("done");
         engine().quit();
     }

@@ -132,6 +132,9 @@ private:
     std::string m_scenePath;
     char m_saveAsBuffer[256] = "scenes/untitled.json";
     bool m_openSaveAs = false;
+    char m_prefabBuffer[256] = "prefabs/object.prefab";
+    bool m_openSavePrefab = false;
+    bool m_snapToPoints = true; // moving an object with SnapPoints snaps it to others nearby
     std::vector<std::string> m_assetCache;
     std::string m_assetCacheKey;
     float m_assetCacheAge = 1e9f;

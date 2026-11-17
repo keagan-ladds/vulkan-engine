@@ -11,6 +11,9 @@
 //   - "moved":   world transforms of level objects that physics moves
 //                (dynamic Rigidbodies: crates, thrown rocks);
 //   - "removed": level objects that no longer exist (a collected pickup);
+//   - "spawned": prefab instances created while playing (PrefabInstance on
+//                a root that isn't a level object, e.g. player buildings):
+//                prefab, id and transform; loading replaces the current set;
 //   - "state":   whatever every ve::Saveable object or component writes
 //                (saveState / loadState), keyed by the object's persistent
 //                id, or its name for code-spawned objects (e.g. "Player"),
@@ -18,8 +21,9 @@
 //                picked instances) and Terrain (edits) are Saveable;
 //   - "game":    free JSON from the game (counters, quest flags...).
 // Loading applies it to the level as it is (the game reloads the level first
-// if needed): moves, removes, then loadState() on every Saveable it has a
-// record for.
+// if needed): removes, moves, recreates the spawned prefab instances (same
+// ids, so their Saveables find their state), then loadState() on every
+// Saveable it has a record for.
 //
 // Slots are files in save::folder(): EngineConfig::saveFolder, or the
 // platform's per-user data folder ("<title>/saves"); VE_SAVE_DIR overrides.

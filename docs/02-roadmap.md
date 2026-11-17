@@ -7,25 +7,19 @@ verification workflow.
 
 Legend: `[x]` done · `[ ]` todo · `[~]` partially done (see note)
 
-## Status snapshot (2026-11-16)
+## Status snapshot (2026-11-17)
 
-Phases 0–10 are implemented and verified on Linux with an Intel Iris Xe
-(Mesa 25, Vulkan 1.4):
+Phases 0–13 are done, as are F2 (animation), most of F3, F5 tooling and the
+engine side of F4 (interaction, save games, loading screens, gamepad,
+profiler, navmesh + agents, prefabs, snap / placement), plus the Savanna
+building kit.
 
-- Zero compiler warnings on a clean Debug build. Release also builds and runs.
-- Zero Vulkan validation messages, covering startup, every test-hook view,
-  window resizing, the autotest and shutdown.
-- The savanna scene runs vsync-locked at 60 FPS at 1600×900 in a Debug build
-  with validation on, with about 11 ms of GPU time. Per-pass timings are in the
-  F1 overlay.
-- `SAVANNA_AUTOTEST=1` passes in both Debug and Release.
+- Zero Vulkan validation messages through the autotest (which also covers
+  save / load, navigation and building) and the editor test.
+- Savanna starts in ~0.9 s in Release, behind a loading screen.
 
-Physics (Phase 11, formerly future phase F1) is done too: Jolt rigid bodies, a
-character controller and raycasts, all used by the savanna scene and the game
-template. One physics step takes about 0.3–0.7 ms for roughly 410 bodies.
-
-Phase 12 (dense worlds), the scene-file world (W1–W5) and music/ambience are done
-too. Next up: physics follow-ups, F2 (animation) and building/gameplay systems. Also see
+Next up: game-side F4 (animal AI, inventory / crafting, building
+follow-ups, combat) and the retained-mode game UI. Also see
 [Known issues](#known-issues--tech-debt).
 
 ---
@@ -185,9 +179,8 @@ too. Next up: physics follow-ups, F2 (animation) and building/gameplay systems. 
 - [ ] **Water/buoyancy**: Jolt `ApplyBuoyancyImpulse` for floating debris,
   plus swim/wade volumes for the character.
 - [ ] **Ragdolls** (needs F2 animation skeletons): Jolt `Ragdoll` from a skeleton.
-- [ ] **Collider streaming for large worlds**: only create bodies for
-  trees/rocks near the player (ties into the foliage system). Thousands of
-  static bodies across a huge map are a waste.
+- [x] **Collider streaming for large worlds**: terrain physics tiles and
+  foliage colliders exist only near the player (Phase 12d / 13).
 - [ ] **Character improvements**: character-vs-character collision
   (`CharacterVsCharacterCollisionSimple`), climbing onto dynamic crates,
   crouch (shape swap), being pushed by moving kinematic platforms, and fall
@@ -438,12 +431,14 @@ Engine provides mechanisms, the game (Savanna here) the rules and content.
 - [x] Navmesh (engine): `NavMeshSurface` (tiled Recast build from terrain + static colliders + foliage colliders on worker threads, loading task, rebuilds around chopped trees, optional streaming around the camera), queries (paths, nearest / random points, raycast), `NavAgent` (Detour crowd: path following + avoidance). Savanna: villagers idle / wander / follow the player when asked (game-side state machine)
 - [ ] Animal AI (herds grazing, fleeing the player) on the same agents, in the game
 - [ ] Inventory / crafting data model (game; data files)
-- [ ] Grid/snap building system (game: pieces, sockets, structural stability; engine helpers only if something is generic)
+- [x] Grid/snap building (engine: prefabs, `SnapPoint` + `findSnap`, grid helpers, `PlacementBox` + `fits`, `PlacementPreview` ghost, save games keep spawned prefab instances; editor snaps on drag. Savanna: 12-kind kit (foundation, floor, mud / plaster walls, door, window, post, beam, metal / thatch roofs, stairs, railing, fence) as prefabs, build mode B, navmesh rebuilds; autotest builds, saves, reloads)
+- [ ] Building follow-ups (game): costs / crafting, structural stability (support graph), damage / repair, more pieces (gables, verandas, multi-storey), material variants on the same piece (reference's "same structure, different materials")
 - [ ] Combat (game: hitboxes, damage, stamina), boss encounters
 
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)
-- [x] Scene serialization (JSON scene files, editor save / load); prefabs are E3
+- [x] Scene serialization (JSON scene files, editor save / load)
+- [x] Prefabs (E3): `.prefab` files, `prefab::instantiate`, `PrefabInstance` link, editor Save as prefab / Create > Prefab (no overrides / propagation yet)
 - [x] Loading screens (engine): `Engine::beginLoading(loadingScene)` + load steps (main thread, one per frame) + load tasks (progress of work over frames); the game's loading scene (UI) is drawn while the world streams in editor-paused mode. Foliage fills its cells on a worker pool (cores − 1) instead of the blocking preload. Savanna: sunset title, progress bar, tips. Loading waits for the area around the viewer (foliage `readyDistance`; terrain LOD on a worker pool, unbudgeted uploads): 2.4 s -> 0.9 s in Release. In the editor: no loading scene, a progress panel over the world as it fills in (also `openScene`)
 - [x] Save/load: `ve::save` (slots, capture / apply: moved and removed level objects, `ve::Saveable` hooks; Foliage overrides, Terrain edits and time of day built in). Savanna: F5 / F9 (reload behind the loading screen, then apply), player + regrowth Saveable, counters as game data; the autotest saves, changes things, loads and checks
 - [x] Gamepad input + rebinding (engine): SDL game controllers, axes with radial dead zones, triggers as actions, `startRebind`, bindings JSON, virtual pad for tests. Savanna: pad layout for the player, F10 controls window saved to `controls.json`

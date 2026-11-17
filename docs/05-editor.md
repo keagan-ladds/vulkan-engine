@@ -10,7 +10,7 @@ in C++ (the Unity split). Press **F2** in any game built on the engine.
 | E1 | Reflection (types describe their fields), scene files (JSON), persistent object IDs | ✅ |
 | E2 | Editor MVP: hierarchy, inspector, GPU picking, move/rotate/scale gizmo, debug shapes, Play/Stop with restore, undo/redo, save/load, editor camera | ✅ |
 | E2b | Savanna's hand-placed content moved to `sandbox/assets/scenes/savanna.json` (camp, huts + audio zones, torches, crates, reed screens, sunstones, ambience, PlayerStart) | ✅ |
-| E3 | Prefabs (save a configured object as a reusable asset), asset browser with drag & drop, multi-select, snapping UI polish | planned |
+| E3 | Prefabs ✅ (Edit > Save as prefab, Create > Prefab, `PrefabInstance` link), snap points ✅ (dragging an object with `SnapPoint`s snaps it onto others', drawn on the selection; toolbar "Snap points"); asset browser with drag & drop, multi-select, prefab overrides / propagation planned | partly |
 | E4 | World tools: terrain sculpt/paint ✅; foliage paint/exclusions planned | partly |
 
 ## Design

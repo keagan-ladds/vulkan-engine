@@ -1,5 +1,6 @@
 #include "Props.hpp"
 
+#include "Building.hpp"
 #include "Harvest.hpp"
 
 #include <ve/world/Noise.hpp>
@@ -431,9 +432,22 @@ glm::vec3 AutoTest::groundAt(glm::vec2 p) const
     return {p.x, m_terrain->height(p.x, p.y) + 0.1f, p.y};
 }
 
+void AutoTest::buildStep(int piece, const glm::vec3& aim, float yawDegrees)
+{
+    auto* b = scene().findFirst<Builder>();
+    b->setActive(true);
+    b->select(piece);
+    b->setYawDegrees(yawDegrees);
+    b->setAimOverride(aim);
+    m_t = 0.0f;
+    m_stepFrame = m_frames;
+    ++m_step;
+}
+
 void AutoTest::update(float dt)
 {
     m_t += dt;
+    ++m_frames;
     auto log = [](const std::string& s) { std::fprintf(stderr, "[autotest] %s\n", s.c_str()); };
     // Music mood and ambient layer levels (target levels: the fades take a few seconds).
     auto logAudio = [&](const std::string& where) {
@@ -929,6 +943,126 @@ void AutoTest::update(float dt)
     } else if (m_step == 25 && m_t > 0.5f) {
         shot("6-villager-follows");
         if (m_t > 1.0f) {
+            if (ve::NavMeshSurface* nav = ve::NavMeshSurface::find(scene())) nav->showDebug = false;
+            // Building: the build mode's own code path (snap, fit, place), aimed by the test.
+            m_site = groundAt(layout::kCamp + glm::vec2(-13.0f, 13.0f));
+            m_site.y -= 0.1f;
+            buildStep(0, m_site, 0.0f); // stone foundation
+        }
+    } else if (m_step >= 26 && m_step <= 37 && m_t > 0.3f && m_frames - m_stepFrame >= 4) {
+        auto* b = scene().findFirst<Builder>();
+        auto pos = [&](size_t i) {
+            ve::GameObject* o = i < m_built.size() ? scene().findById(m_built[i]) : nullptr;
+            return o ? o->transform().position() : glm::vec3(-9999.0f);
+        };
+        auto placeLog = [&](const char* what, const glm::vec3& expected) {
+            const bool valid = b->previewValid(), snapped = b->previewSnapped();
+            ve::GameObject* o = b->place();
+            if (o) m_built.push_back(o->id());
+            const float err = o ? glm::distance(o->transform().position(), expected) : -1.0f;
+            log(std::string("build: ") + what + " placed " + (o ? "yes" : "NO") + ", valid " + (valid ? "yes" : "no") + ", snapped " +
+                (snapped ? "yes" : "no") + ", " + std::to_string(err) + " m from the expected spot");
+        };
+        const glm::vec3 a = pos(0);
+        switch (m_step) {
+        case 26:
+            placeLog("foundation", b->previewPosition());
+            buildStep(0, m_site + glm::vec3(2.3f, 0.2f, 0.15f), 0.0f); // next to it, a little off
+            break;
+        case 27:
+            placeLog("2nd foundation (snaps 2 m east)", a + glm::vec3(2.0f, 0.0f, 0.0f));
+            buildStep(0, a + glm::vec3(0.1f, 0.0f, 0.1f), 0.0f); // on top of the first
+            break;
+        case 28:
+            log(std::string("build: a 3rd foundation inside the 1st is ") + (b->previewValid() ? "ALLOWED" : "blocked") +
+                (b->place() ? " (PLACED)" : ""));
+            buildStep(2, a + glm::vec3(0.25f, 0.6f, -0.85f), 0.0f); // mud wall on the north edge of the first
+            break;
+        case 29:
+            placeLog("mud wall", a + glm::vec3(0.0f, BuildPiece::kFoundation, -1.0f));
+            buildStep(4, pos(1) + glm::vec3(-0.2f, 0.6f, -0.9f), 0.0f); // door wall on the second's north edge
+            break;
+        case 30:
+            placeLog("door wall", pos(1) + glm::vec3(0.0f, BuildPiece::kFoundation, -1.0f));
+            buildStep(5, a + glm::vec3(-0.9f, 0.6f, 0.2f), 90.0f); // window wall along the west edge
+            break;
+        case 31:
+            placeLog("window wall", a + glm::vec3(-1.0f, BuildPiece::kFoundation, 0.0f));
+            // Roofs: eaves (the low edge) on the north walls' tops, rising south over the rooms.
+            buildStep(8, a + glm::vec3(0.1f, BuildPiece::kFoundation + BuildPiece::kWall + 0.15f, 0.1f), 180.0f);
+            break;
+        case 32:
+            placeLog("metal roof", a + glm::vec3(0.0f, BuildPiece::kFoundation + BuildPiece::kWall, 0.0f));
+            buildStep(9, pos(1) + glm::vec3(0.1f, BuildPiece::kFoundation + BuildPiece::kWall + 0.15f, 0.1f), 180.0f); // thatch beside it
+            break;
+        case 33:
+            placeLog("thatched roof", pos(1) + glm::vec3(0.0f, BuildPiece::kFoundation + BuildPiece::kWall, 0.0f));
+            buildStep(10, a + glm::vec3(0.2f, 0.05f, 1.6f), 0.0f); // stairs up to the first foundation from the south
+            // Look at the site: the screenshot shows the stairs' ghost and the build panel.
+            static_cast<Player*>(scene().find("Player"))->setPose(a + glm::vec3(-4.5f, 1.0f, 6.5f), glm::degrees(std::atan2(-4.5f, 6.5f)), -14.0f);
+            break;
+        case 34:
+            if (!m_buildShot) { // one frame with the stairs' ghost on screen first
+                shot("7a-build-mode");
+                m_buildShot = true;
+                break;
+            }
+            placeLog("stairs", a + glm::vec3(0.0f, 0.0f, 1.5f));
+            buildStep(12, pos(1) + glm::vec3(3.2f, 0.0f, 0.4f), 0.0f); // a fence off the second foundation, then remove it
+            break;
+        case 35: {
+            placeLog("fence", b->previewPosition());
+            ve::GameObject* fence = m_built.empty() ? nullptr : scene().findById(m_built.back());
+            const bool removed = b->remove(fence);
+            if (removed) m_built.pop_back();
+            log(std::string("build: fence removed ") + (removed ? "yes" : "NO"));
+            b->setAimOverride(std::nullopt);
+            b->setActive(false);
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            ++m_step;
+            break;
+        }
+        case 36: {
+            // Save, then load (the level rebuilt behind the loading screen): the pieces come back.
+            s_expect.pieces.clear();
+            for (size_t i = 0; i < m_built.size(); ++i)
+                if (ve::GameObject* o = scene().findById(m_built[i])) s_expect.pieces.push_back({o->name(), o->transform().position()});
+            const bool saved = ve::save::saveGame(scene(), "buildtest");
+            log("build: " + std::to_string(s_expect.pieces.size()) + " pieces, saved " + (saved ? "yes" : "NO"));
+            s_resume = 38;
+            log(std::string("build: loading the save: ") + (loadProgress("buildtest") ? "started" : "NO SAVE"));
+            ++m_step;
+            break;
+        }
+        default: break;
+        }
+    } else if (m_step == 38 && m_t > 3.0f) {
+        int found = 0;
+        float worst = 0.0f;
+        for (const auto& [name, p] : s_expect.pieces) {
+            float best = 1e9f;
+            for (const auto& o : scene().objects()) {
+                if (o->isDestroyed() || !dynamic_cast<BuildPiece*>(o.get()) || o->name() != name) continue;
+                best = std::min(best, glm::distance(o->transform().position(), p));
+            }
+            if (best < 0.01f) ++found;
+            worst = std::max(worst, best);
+        }
+        log("build: after loading, " + std::to_string(found) + " of " + std::to_string(s_expect.pieces.size()) +
+            " pieces back in place (worst " + std::to_string(worst) + " m)");
+        ve::save::remove("buildtest");
+        // Look at the little house for the screenshot.
+        if (!s_expect.pieces.empty()) {
+            // From the south-west: the late sun lights the faces we see.
+            const glm::vec3 c = s_expect.pieces.front().second + glm::vec3(1.0f, 0.0f, 0.0f);
+            static_cast<Player*>(scene().find("Player"))->setPose(c + glm::vec3(-6.0f, 1.2f, 6.5f), glm::degrees(std::atan2(-6.0f, 6.5f)), -12.0f);
+        }
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 39 && m_t > 1.5f) {
+        shot("7-building");
+        if (m_t > 2.0f) {
             engine().quit();
             ++m_step;
         }
@@ -1059,7 +1193,7 @@ void Hud::update(float dt)
     GameState& gs = gameState();
     gs.messageTimer = std::max(0.0f, gs.messageTimer - dt);
     findEnvironment();
-    if (input().keyPressed(ve::Key::R) && m_weather) m_weather->next(12.0f);
+    if (input().keyPressed(ve::Key::R) && m_weather && !Builder::building(scene())) m_weather->next(12.0f); // R rotates pieces while building
     if (input().keyPressed(ve::Key::H)) m_showHelp = !m_showHelp;
     if (input().keyPressed(ve::Key::F5)) saveProgress(scene(), "quick");
     if (input().keyPressed(ve::Key::F9)) loadProgress("quick");
@@ -1132,7 +1266,7 @@ void Hud::onGui()
 
     if (m_showHelp) {
         const char* help = "WASD move  Shift sprint  Space jump  F fly  E pick up  Q/RMB throw\n"
-                           "T/G time +/-  R weather  M combat music  Tab mouse  F5/F9 save/load  F10 controls  F1 debug  F12 photo mode  H hide help";
+                           "T/G time +/-  R weather  M combat music  B build  Tab mouse  F5/F9 save/load  F10 controls  F1 debug  F12 photo mode  H hide help";
         const ImVec2 hs = ImGui::CalcTextSize(help);
         const ImVec2 hp(16.0f, io.DisplaySize.y - hs.y - 16.0f);
         dl->AddRectFilled({hp.x - 8, hp.y - 6}, {hp.x + hs.x + 8, hp.y + hs.y + 6}, IM_COL32(20, 14, 8, 120), 6.0f);

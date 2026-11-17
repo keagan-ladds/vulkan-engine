@@ -29,6 +29,8 @@
 #include "ve/world/Foliage.hpp"
 #include "ve/anim/Animation.hpp"
 #include "ve/gameplay/Interaction.hpp"
+#include "ve/gameplay/Placement.hpp"
+#include "ve/scene/Prefab.hpp"
 #include "ve/nav/Navigation.hpp"
 #include "ve/world/Grass.hpp"
 #include "ve/world/LodModel.hpp"

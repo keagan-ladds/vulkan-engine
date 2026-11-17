@@ -1,5 +1,7 @@
 #include "Player.hpp"
 
+#include "Building.hpp"
+
 #include <ve/gameplay/Interaction.hpp>
 #include <ve/world/Grass.hpp>
 #include <ve/world/Terrain.hpp>
@@ -169,7 +171,7 @@ void Player::update(float)
         if (!m_fly) m_controller->teleport(transform().position()); // land where we are
     }
 
-    if (in.actionPressed("Throw")) throwRock();
+    if (in.actionPressed("Throw") && !Builder::building(scene())) throwRock(); // RMB removes pieces while building
 
     if (m_fly) {
         // Free flight (noclip): move directly, dragging the physics capsule along.

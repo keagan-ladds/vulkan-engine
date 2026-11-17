@@ -132,6 +132,7 @@ struct AutoTestSaveExpect {
     int collected = 0, wood = 0, berries = 0, stones = 0;
     glm::vec3 player{0.0f};
     uint64_t tree = 0;
+    std::vector<std::pair<std::string, glm::vec3>> pieces; // building test: name, position
 };
 
 class AutoTest : public ve::GameObject {
@@ -143,6 +144,12 @@ public:
     // Loading a save rebuilds the level (and this test object): the new one resumes here.
     static inline int s_resume = 0;
     static inline AutoTestSaveExpect s_expect;
+    // Building test helpers.
+    void buildStep(int piece, const glm::vec3& aim, float yawDegrees);
+    uint32_t m_frames = 0, m_stepFrame = 0; // frames: steps that need the preview to settle
+    glm::vec3 m_site{0.0f};
+    std::vector<uint64_t> m_built;
+    bool m_buildShot = false;
 
 private:
     glm::vec3 groundAt(glm::vec2 p) const;

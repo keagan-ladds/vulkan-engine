@@ -2,6 +2,8 @@
 
 #include "ve/anim/Animation.hpp"
 #include "ve/gameplay/Interaction.hpp"
+#include "ve/gameplay/Placement.hpp"
+#include "ve/scene/Prefab.hpp"
 #include "ve/nav/Navigation.hpp"
 
 #include "ve/assets/AssetManager.hpp"
@@ -133,6 +135,22 @@ void registerBuiltinTypes()
         t.field("maxReach", &Interactor::maxReach).range(0.0f, 50.0f);
         t.field("coneDegrees", &Interactor::coneDegrees).range(0.0f, 90.0f);
         t.field("useMainCamera", &Interactor::useMainCamera);
+    });
+    r.add<PrefabInstance>("PrefabInstance", [](TypeBuilder<PrefabInstance>& t) {
+        t.category("Scene");
+        t.field("prefab", &PrefabInstance::prefab).assets(".prefab").tooltip("the prefab this object was made from");
+        t.field("saveInGame", &PrefabInstance::saveInGame).tooltip("spawned while playing: save games recreate it");
+    });
+    r.add<SnapPoint>("SnapPoint", [](TypeBuilder<SnapPoint>& t) {
+        t.category("Gameplay");
+        t.field("offset", &SnapPoint::offset).tooltip("local position of the connection point");
+        t.field("type", &SnapPoint::type);
+        t.field("accepts", &SnapPoint::accepts).tooltip("types it connects to, comma-separated (* = any)");
+    });
+    r.add<PlacementBox>("PlacementBox", [](TypeBuilder<PlacementBox>& t) {
+        t.category("Gameplay");
+        t.field("center", &PlacementBox::center);
+        t.field("halfExtents", &PlacementBox::halfExtents).tooltip("part of the solid volume checked when placing the piece");
     });
     r.add<NavMeshSurface>("NavMeshSurface", [](TypeBuilder<NavMeshSurface>& t) {
         t.category("Navigation");

@@ -6,11 +6,13 @@
 #include "ve/core/Input.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/editor/PickingPass.hpp"
+#include "ve/gameplay/Placement.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/MeshComponents.hpp"
+#include "ve/scene/Prefab.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/scene/SceneSerializer.hpp"
 #include "ve/ui/UiLayer.hpp"
@@ -327,6 +329,27 @@ void Editor::onGui()
         ImGui::OpenPopup("Save scene as");
         m_openSaveAs = false;
     }
+    if (m_openSavePrefab) {
+        ImGui::OpenPopup("Save as prefab");
+        m_openSavePrefab = false;
+    }
+    if (ImGui::BeginPopupModal("Save as prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Prefab path (relative to the assets folder):");
+        ImGui::SetNextItemWidth(360.0f);
+        const bool enter = ImGui::InputText("##prefab", m_prefabBuffer, sizeof(m_prefabBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::Button("Save") || enter) {
+            if (GameObject* sel = selected()) {
+                const bool ok = prefab::save(*sel, m_prefabBuffer);
+                m_status = ok ? std::string("Saved prefab ") + m_prefabBuffer : "Prefab: can't write the file";
+                m_statusTime = 3.0f;
+                m_assetCacheAge = 1e9f; // list it in Create > Prefab
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
     if (ImGui::BeginPopupModal("Save scene as", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Path (relative to the assets folder):");
         ImGui::SetNextItemWidth(360.0f);
@@ -620,6 +643,13 @@ void Editor::drawMenuBar()
         GameObject* sel = selected();
         if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, sel)) select(duplicate(*sel));
         if (ImGui::MenuItem("Delete", "Del", false, sel)) deleteObject(*sel);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save as prefab...", nullptr, false, sel && sel->persistent)) {
+            std::string name = sel->name();
+            for (char& c : name) c = std::isalnum(static_cast<unsigned char>(c)) ? char(std::tolower(static_cast<unsigned char>(c))) : '_';
+            std::snprintf(m_prefabBuffer, sizeof(m_prefabBuffer), "prefabs/%s.prefab", name.c_str());
+            m_openSavePrefab = true;
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Create")) {
@@ -643,6 +673,24 @@ void Editor::drawMenuBar()
                     const std::string name = std::filesystem::path(m).stem().string();
                     newObject("GameObject", name,
                               Json::array({{{"type", "ModelInstance"}, {"fields", {{"path", m}, {"staticColliders", true}}}}}));
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Prefab")) {
+            const auto prefabs = listAssets(".prefab");
+            if (prefabs.empty()) ImGui::TextDisabled("No .prefab files in assets/ (Edit > Save as prefab)");
+            for (const auto& path : prefabs) {
+                if (!ImGui::MenuItem(path.c_str())) continue;
+                if (const Json* pj = prefab::load(path)) {
+                    // A copy of the prefab's object, linked back to it, in front of the camera.
+                    Json j = pj->value("object", Json::object());
+                    const glm::vec3 p = placementPoint(*m_engine, view);
+                    j["position"] = {p.x, p.y, p.z};
+                    Json comps = j.value("components", Json::array());
+                    comps.push_back({{"type", "PrefabInstance"}, {"fields", {{"prefab", path}}}});
+                    j["components"] = std::move(comps);
+                    createObject(j, nullptr, "Create " + std::filesystem::path(path).stem().string());
                 }
             }
             ImGui::EndMenu();
@@ -700,6 +748,8 @@ void Editor::drawMenuBar()
     modeButton("Rotate (E)", GizmoMode::Rotate);
     modeButton("Scale (R)", GizmoMode::Scale);
     if (ImGui::Button(m_gizmoOptions.local ? "Local" : "World")) m_gizmoOptions.local = !m_gizmoOptions.local;
+    ImGui::Checkbox("Snap points", &m_snapToPoints);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Moving an object with SnapPoints snaps it onto other objects' points");
     ImGui::Checkbox("Snap", &m_gizmoOptions.snap);
     if (m_gizmoOptions.snap) {
         ImGui::SetNextItemWidth(60.0f);
@@ -1178,7 +1228,22 @@ void Editor::drawViewport()
             return;
         }
         ImDrawList* fg = ImGui::GetBackgroundDrawList();
-        switch (m_gizmo.manipulate(fg, view, sel->transform(), m_gizmoOptions)) {
+        const Gizmo::Event ev = m_gizmo.manipulate(fg, view, sel->transform(), m_gizmoOptions);
+        // Modular pieces: while moving, pull the object onto a nearby snap point of another.
+        if (m_snapToPoints && m_gizmoOptions.mode == GizmoMode::Translate && (ev == Gizmo::Event::Changed || ev == Gizmo::Event::Ended)) {
+            const auto points = placement::snapPointsOf(*sel);
+            if (auto s = placement::findSnap(m_engine->scene(), points, sel->transform().rotation(), sel->transform().position(), 0.6f, sel))
+                sel->transform().setPosition(s->position);
+        }
+        // Its snap points, so you can see what will connect.
+        std::function<void(GameObject&)> drawSnaps = [&](GameObject& g) {
+            for (const auto& c : g.components())
+                if (auto* sp = dynamic_cast<SnapPoint*>(c.get()))
+                    dd.sphere(sp->worldPosition(), view.worldSize(sp->worldPosition(), 5.0f), IM_COL32(120, 255, 160, 220));
+            for (Transform* ch : g.transform().children()) drawSnaps(ch->gameObject());
+        };
+        drawSnaps(*sel);
+        switch (ev) {
         case Gizmo::Event::Began: beginEdit(*sel); break;
         case Gizmo::Event::Ended:
             endEdit(m_gizmoOptions.mode == GizmoMode::Translate ? "Move" : m_gizmoOptions.mode == GizmoMode::Rotate ? "Rotate" : "Scale");

@@ -1,0 +1,56 @@
+{
+  "pieces": [
+    {
+      "name": "Stone foundation",
+      "prefab": "prefabs/building/foundation_stone.prefab"
+    },
+    {
+      "name": "Timber floor",
+      "prefab": "prefabs/building/floor_timber.prefab"
+    },
+    {
+      "name": "Mud brick wall",
+      "prefab": "prefabs/building/wall_mud.prefab"
+    },
+    {
+      "name": "Plastered wall",
+      "prefab": "prefabs/building/wall_plaster.prefab"
+    },
+    {
+      "name": "Mud wall with door",
+      "prefab": "prefabs/building/wall_door_mud.prefab"
+    },
+    {
+      "name": "Plastered wall with window",
+      "prefab": "prefabs/building/wall_window_plaster.prefab"
+    },
+    {
+      "name": "Timber post",
+      "prefab": "prefabs/building/post_timber.prefab"
+    },
+    {
+      "name": "Timber beam",
+      "prefab": "prefabs/building/beam_timber.prefab"
+    },
+    {
+      "name": "Corrugated metal roof",
+      "prefab": "prefabs/building/roof_metal.prefab"
+    },
+    {
+      "name": "Thatched roof",
+      "prefab": "prefabs/building/roof_thatch.prefab"
+    },
+    {
+      "name": "Timber stairs",
+      "prefab": "prefabs/building/stairs_timber.prefab"
+    },
+    {
+      "name": "Veranda railing",
+      "prefab": "prefabs/building/railing_timber.prefab"
+    },
+    {
+      "name": "Timber fence",
+      "prefab": "prefabs/building/fence_timber.prefab"
+    }
+  ]
+}

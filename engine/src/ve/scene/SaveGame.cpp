@@ -4,17 +4,21 @@
 #include "ve/core/Log.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/Prefab.hpp"
 #include "ve/scene/Scene.hpp"
 
 #include <SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <typeindex>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace ve::save {
 
@@ -102,7 +106,20 @@ Json capture(Scene& scene)
     }
     for (uint64_t id : scene.levelObjects())
         if (!scene.findById(id)) removed.push_back(hexId(id));
-    return Json{{"version", 1}, {"moved", moved}, {"removed", removed}, {"state", state}};
+    // Prefab instances spawned while playing (player buildings): recreated on load.
+    Json spawned = Json::array();
+    const std::unordered_set<uint64_t> level(scene.levelObjects().begin(), scene.levelObjects().end());
+    for (const auto& up : scene.objects()) {
+        const GameObject& o = *up;
+        const auto* pi = o.isDestroyed() ? nullptr : o.getComponent<PrefabInstance>();
+        if (!pi || !pi->saveInGame || pi->prefab.empty() || level.count(o.id())) continue;
+        if (o.transform().parent()) continue; // saved with its root
+        const glm::vec3 p = o.transform().position(), sc = o.transform().localScale();
+        const glm::quat q = o.transform().rotation();
+        spawned.push_back({{"prefab", pi->prefab}, {"id", hexId(o.id())}, {"position", {p.x, p.y, p.z}},
+                           {"rotation", {q.x, q.y, q.z, q.w}}, {"scale", {sc.x, sc.y, sc.z}}});
+    }
+    return Json{{"version", 1}, {"moved", moved}, {"removed", removed}, {"spawned", spawned}, {"state", state}};
 }
 
 void apply(Scene& scene, const Json& save)
@@ -126,16 +143,44 @@ void apply(Scene& scene, const Json& save)
             o->transform().setRotation(q);
         }
     }
-    const Json& state = save.contains("state") ? save["state"] : Json::object();
+    // Runtime-spawned prefab instances: the save's set replaces whatever is there.
+    const std::unordered_set<uint64_t> level(scene.levelObjects().begin(), scene.levelObjects().end());
     for (const auto& up : scene.objects()) {
-        GameObject& o = *up;
-        if (o.isDestroyed()) continue;
+        const auto* pi = up->isDestroyed() ? nullptr : up->getComponent<PrefabInstance>();
+        if (pi && pi->saveInGame && !level.count(up->id()) && !up->transform().parent()) up->destroy();
+    }
+    std::vector<GameObject*> created;
+    for (const Json& sp : save.value("spawned", Json::array())) {
+        const auto vec = [&](const char* key, size_t n) {
+            const Json& a = sp.value(key, Json::array());
+            std::array<float, 4> v{0, 0, 0, 1};
+            for (size_t i = 0; i < n && i < a.size(); ++i) v[i] = a[i].get<float>();
+            return v;
+        };
+        const auto p = vec("position", 3), q = vec("rotation", 4), sc = vec("scale", 3);
+        GameObject* o = prefab::instantiate(scene, sp.value("prefab", std::string()), {p[0], p[1], p[2]}, glm::quat(q[3], q[0], q[1], q[2]),
+                                            nullptr, parseId(sp.value("id", std::string("0"))));
+        if (!o) continue;
+        if (sp.contains("scale")) o->transform().setLocalScale({sc[0], sc[1], sc[2]});
+        created.push_back(o);
+    }
+
+    const Json& state = save.contains("state") ? save["state"] : Json::object();
+    auto restore = [&](GameObject& o) {
+        if (o.isDestroyed()) return;
         if (auto* s = dynamic_cast<Saveable*>(&o))
             if (auto it = state.find(objectKey(o)); it != state.end()) s->loadState(*it);
         for (const auto& c : o.components())
             if (auto* s = dynamic_cast<Saveable*>(c.get()))
                 if (auto it = state.find(componentKey(o, *c)); it != state.end()) s->loadState(*it);
-    }
+    };
+    for (const auto& up : scene.objects()) restore(*up);
+    // The new instances aren't in objects() until next frame.
+    std::function<void(GameObject&)> subtree = [&](GameObject& o) {
+        restore(o);
+        for (Transform* c : o.transform().children()) subtree(c->gameObject());
+    };
+    for (GameObject* o : created) subtree(*o);
 }
 
 bool write(const std::string& slot, const Json& save)

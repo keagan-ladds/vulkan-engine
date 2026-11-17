@@ -567,7 +567,7 @@ stores nothing per blade.
   height. Vertex y is the sway weight and uv goes to `grass_card.frag`, which
   alpha-tests `cardTexture`.
 
-## 5.10 Gameplay helpers (`ve/gameplay`, `ve/scene/SaveGame`)
+## 5.10 Gameplay helpers (`ve/gameplay`, `ve/scene/SaveGame`, `ve/scene/Prefab`)
 
 - **Save games.** `ve::Saveable` (`saveState` / `loadState`) on any object or
   component; `save::capture(scene)` = level objects moved by physics +
@@ -576,6 +576,31 @@ stores nothing per blade.
   object name (+ component type); `save::apply` destroys, moves, then calls
   `loadState`. Slots are JSON files (tmp + rename). The game decides when
   to reload the level before applying (Savanna: behind the loading screen).
+
+- **Prefabs** (`ve/scene/Prefab.hpp`). A `.prefab` file is JSON holding an
+  object (type, fields, persistent components, children) at the origin.
+  `prefab::instantiate` creates an instance: children's ids are derived from
+  the root's, so a save game recreates them with the same ids. It also adds a
+  `PrefabInstance` component pointing back at the file. Instances are copies:
+  editing the file doesn't update them (no overrides / propagation yet).
+  Save games record runtime-spawned instances (a `PrefabInstance` root that
+  isn't a level object) under "spawned" and recreate them before restoring
+  Saveable state.
+
+- **Placement** (`ve/gameplay/Placement.hpp`), the mechanics of building:
+  - `SnapPoint` components are typed points on a piece. `findSnap` keeps the
+    piece's rotation and moves it so its point closest to a scene point
+    (within a radius of the aim) lands on it.
+  - `snapToGrid` / `snapAngle` are the grid helpers.
+  - `fits` tests the piece's volume against physics: its `PlacementBox`es,
+    or the bounds of what it draws if it has none, shrunk by a margin so
+    neighbours that only touch are fine. A predicate can allow some hits,
+    e.g. the terrain.
+  - `PlacementPreview` is the ghost: a prefab instance with a
+    `PlacementGhost` marker, its world-acting components disabled, not
+    saved, and drawn with one transparent material tinted valid / invalid.
+  - The game owns the pieces, rules, costs and the build tool; the editor
+    uses the same snapping when dragging.
 
 - **Interaction.** `Interactable` (component: prompt / `promptFn`, `onUse`,
   `onFocus`, reach, focus offset; or override `currentPrompt` / `use` /
@@ -809,6 +834,7 @@ Optional add-ons built only on public engine APIs:
 | `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading): acacia, baobab, fever tree, bushes, rocks; jungle trees, palms, undergrowth; quiver trees and dry bushes for the desert. LOD chains + impostors, registered in `ve::MeshLibrary` for the scene's `FoliageType` layers |
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
+| `Building.*` | Building kit on the engine's prefabs + placement: `BuildPiece` (12 kinds x materials, mesh / colliders / snap points / placement boxes from code; the kit is `assets/prefabs/building/*.prefab` + `building/catalogue.json`), `Builder` (build mode B: ghost, snap, fit, place, remove, navmesh rebuild) |
 | `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
