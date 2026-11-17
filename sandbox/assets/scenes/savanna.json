@@ -1453,6 +1453,53 @@
       "type": "Villager"
     },
     {
+      "id": "a11ce00000000d01",
+      "type": "GameObject",
+      "name": "Navigation",
+      "active": true,
+      "position": [
+        20.0,
+        0.0,
+        10.0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "components": [
+        {
+          "type": "NavMeshSurface",
+          "enabled": true,
+          "fields": {
+            "size": [
+              192.0,
+              400.0,
+              192.0
+            ],
+            "agentRadius": 0.35,
+            "agentHeight": 1.8,
+            "agentMaxClimb": 0.45,
+            "maxSlopeDegrees": 40.0,
+            "cellSize": 0.2,
+            "tileSize": 32.0,
+            "maxWaterDepth": 0.3,
+            "includeTerrain": true,
+            "includeStaticBodies": true,
+            "includeFoliage": true,
+            "streamRadius": 0.0,
+            "showDebug": false
+          }
+        }
+      ]
+    },
+    {
       "active": true,
       "children": [
         {

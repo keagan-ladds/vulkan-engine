@@ -90,6 +90,27 @@ FetchContent_Declare(meshoptimizer
     SYSTEM)
 FetchContent_MakeAvailable(meshoptimizer)
 
+# Recast & Detour: navmesh building (Recast) and path finding / crowds
+# (Detour, DetourCrowd). Private to ve_engine (ve::NavMesh, ve::NavAgent).
+# Fetched with git: GitHub archive downloads are blocked in some sandboxes.
+set(RECASTNAVIGATION_DEMO OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_TESTS OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_DT_POLYREF64 ON CACHE BOOL "" FORCE)  # big tiled worlds: many tiles x polys
+FetchContent_Declare(recastnavigation
+    GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+    GIT_TAG v1.6.0
+    GIT_SHALLOW TRUE
+    SYSTEM)
+FetchContent_MakeAvailable(recastnavigation)
+foreach(t Recast Detour DetourCrowd)
+    if(MSVC)
+        target_compile_options(${t} PRIVATE /w)
+    else()
+        target_compile_options(${t} PRIVATE -w)
+    endif()
+endforeach()
+
 add_library(ve_thirdparty STATIC
     ${CMAKE_CURRENT_LIST_DIR}/thirdparty/thirdparty_impl.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp

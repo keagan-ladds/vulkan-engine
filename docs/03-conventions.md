@@ -72,6 +72,39 @@ crate.transform().setPosition({0, 1, 0});
 Read one-shot inputs (`keyPressed`, `actionPressed`) in `update()`. If physics
 in `fixedUpdate()` needs them, pass them over as a flag (see `Player`).
 
+### Input: actions, axes, gamepads, rebinding
+
+Gameplay reads named actions and axes, never keys, so players can rebind and a
+gamepad works without extra code:
+
+```cpp
+ve::Input& in = input();
+in.bindAction("Jump", ve::Key::Space);
+in.bindAction("Jump", ve::GamepadButton::A);
+in.bindAction("Throw", ve::GamepadAxis::RightTrigger);   // trigger past triggerThreshold
+in.bindAxis("MoveY", ve::Key::S, ve::Key::W);            // -1 .. +1
+in.bindAxis("MoveY", ve::GamepadAxis::LeftY, -1.0f);     // stick up = forward
+float fwd = in.axisValue("MoveY");                       // strongest source wins
+```
+
+- Sticks have a radial dead zone (`stickDeadZone`); the first connected
+  controller is used (`gamepadConnected()`, `gamepadName()`).
+- Rebinding UI: list `in.actions()` with `in.bindingNames(action)`, call
+  `in.startRebind(action)`; the next key, mouse button or pad button/trigger
+  replaces that device's bindings (Escape cancels, `rebinding()` tells you it
+  is waiting). Persist with `saveBindings()` / `loadBindings(json)`. The
+  savanna's F10 window does this and keeps `controls.json` in the save folder.
+- Tests: `attachVirtualGamepad()` + `setVirtualGamepadAxis/Button` drive an SDL
+  virtual controller (works headless).
+
+### Profile CPU time
+
+Wrap a scope in `VE_PROFILE("Name")` (main thread; nested scopes become child
+rows). The F1 overlay's "CPU zones" table and `VE_BENCH` output show the
+average and the worst frame of the last second. The engine already times the
+frame phases (fixed update, update, GUI, audio, render and its sub-steps) and
+the terrain, foliage and grass systems; GPU time per pass is in "Render passes".
+
 ### Write a reusable Component
 
 ```cpp
@@ -277,6 +310,30 @@ In a scene file: a `ModelInstance` with `path` and `animation` (the clip to
 loop). Models face +Z (glTF). See the sandbox's `Villager` (wanders around
 the camp, walks and idles) and `tools/generate_assets.py` (`villager()`
 writes a rigged model with keyframed clips).
+
+### Walking AI: navmesh + agents
+
+```cpp
+// The level: a NavMeshSurface over the area (scene file or code).
+auto& nav = scene.spawn("Navigation").addComponent<ve::NavMeshSurface>();
+nav.size = {192.0f, 400.0f, 192.0f};        // box around the object
+nav.settings.agentRadius = 0.35f;
+
+// A character: the engine walks, the game decides where.
+auto& agent = addComponent<ve::NavAgent>();
+agent.speed = 1.3f;
+if (agent.arrived())
+    if (auto p = ve::NavMeshSurface::find(scene())->randomPointNear(home, 8.0f)) agent.setDestination(*p);
+```
+
+- Agents join once the navmesh under them is built (a few frames; behind a
+  loading screen it's done before play starts). Move them with `warp()`,
+  not the Transform. Following something that moves: call `setDestination`
+  a few times a second (see `Villager`).
+- Static Rigidbodies, the terrain and foliage colliders block; kinematic and
+  dynamic bodies don't (agents avoid each other, not crates). After moving
+  static geometry call `rebuild(area)`; chopped trees rebuild by themselves.
+- Big worlds: `streamRadius` keeps only tiles around the camera (or `focus`).
 
 ### Thousands of props: instancing
 

@@ -3,6 +3,7 @@
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Profiler.hpp"
 #include "ve/core/Window.hpp"
 #include "ve/editor/Editor.hpp"
 #include "ve/physics/Physics.hpp"
@@ -157,6 +158,8 @@ void Engine::benchFrame(float cpuMs)
     const InstanceStats& is = m_renderer->instances().stats();
     log::info("[bench] instances {} (camera draws {}, shadow draws {})", is.instances, is.visibleCamera, is.visibleShadow);
     for (const auto& [name, ms] : b.passMs) log::info("[bench]   {:<28} {:8.3f} ms", name, ms / n);
+    for (const Profiler::Zone& z : Profiler::get().zones())
+        log::info("[bench] cpu {}{:<28} {:8.3f} ms", std::string(size_t(z.depth) * 2, ' '), z.name, z.avgMs);
     quit();
 }
 
@@ -226,7 +229,9 @@ void Engine::run()
         m_time.fixedDeltaTime = m_config.fixedTimestep;
         const bool loadingFrame = loading();
         if (m_bench) m_bench->frameStart = threadCpuMs();
+        Profiler::get().beginFrame();
         tickFrame();
+        Profiler::get().endFrame();
         if (m_bench && !loadingFrame) benchFrame(std::chrono::duration<float, std::milli>(Clock::now() - now).count());
         ++m_time.frameCount;
     }
@@ -279,6 +284,7 @@ void Engine::endLoading()
     m_loadSteps.clear();
     m_renderer->setLoadingFrames(false);
     m_accumulator = 0.0; // no burst of fixed steps for the time spent loading
+    Profiler::get().reset(); // loading frames have different zones and timings
     log::info("Loading done in {:.1f} s", m_loadElapsed);
 }
 
@@ -350,32 +356,49 @@ void Engine::tickFrame()
     if (!paused) m_accumulator += m_time.deltaTime;
     int steps = 0;
     // Each step: gameplay fixedUpdate() hooks (forces, character movement), then the physics world.
-    while (m_accumulator >= m_time.fixedDeltaTime && steps < m_config.maxFixedStepsPerFrame) {
-        m_scene->fixedUpdate(m_time.fixedDeltaTime);
-        const auto t0 = std::chrono::steady_clock::now();
-        m_physics->step(*m_scene, m_time.fixedDeltaTime);
-        m_physics->lastStepMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        m_accumulator -= m_time.fixedDeltaTime;
-        ++steps;
+    {
+        VE_PROFILE("Fixed update + physics");
+        while (m_accumulator >= m_time.fixedDeltaTime && steps < m_config.maxFixedStepsPerFrame) {
+            m_scene->fixedUpdate(m_time.fixedDeltaTime);
+            const auto t0 = std::chrono::steady_clock::now();
+            m_physics->step(*m_scene, m_time.fixedDeltaTime);
+            m_physics->lastStepMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            m_accumulator -= m_time.fixedDeltaTime;
+            ++steps;
+        }
+        if (steps == m_config.maxFixedStepsPerFrame) m_accumulator = 0.0; // drop time we can't catch up on
+        m_time.fixedAlpha = static_cast<float>(m_accumulator / m_time.fixedDeltaTime);
+        // Smooth motion: place physics objects between their last two fixed-step poses.
+        if (!paused) m_physics->interpolate(*m_scene, m_time.fixedAlpha);
     }
-    if (steps == m_config.maxFixedStepsPerFrame) m_accumulator = 0.0; // drop time we can't catch up on
-    m_time.fixedAlpha = static_cast<float>(m_accumulator / m_time.fixedDeltaTime);
-    // Smooth motion: place physics objects between their last two fixed-step poses.
-    if (!paused) m_physics->interpolate(*m_scene, m_time.fixedAlpha);
 
-    m_scene->update(m_time.deltaTime, paused);
-    m_scene->lateUpdate(m_time.deltaTime, paused);
-    m_scene->onGui();
-    if (m_editor) m_editor->onGui();
-    m_ui->drawDebugOverlay();
+    {
+        VE_PROFILE("Update");
+        m_scene->update(m_time.deltaTime, paused);
+    }
+    {
+        VE_PROFILE("Late update");
+        m_scene->lateUpdate(m_time.deltaTime, paused);
+    }
+    {
+        VE_PROFILE("GUI");
+        m_scene->onGui();
+        if (m_editor) m_editor->onGui();
+        m_ui->drawDebugOverlay();
+    }
 
     if (Camera* cam = m_scene->mainCamera()) {
         const Transform& t = cam->transform();
         m_audio->setListener(t.position(), t.forward(), t.up());
     }
-    m_audio->update(m_time.unscaledDeltaTime);
-
-    m_renderer->render(*m_scene, m_time);
+    {
+        VE_PROFILE("Audio");
+        m_audio->update(m_time.unscaledDeltaTime);
+    }
+    {
+        VE_PROFILE("Render");
+        m_renderer->render(*m_scene, m_time);
+    }
     m_ui->endFrameIfNotRendered();
     m_scene->flushDestroyed();
 }

@@ -3,6 +3,7 @@
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Profiler.hpp"
 #include "ve/core/Strings.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Material.hpp"
@@ -504,6 +505,7 @@ void Terrain::start()
 
 void Terrain::update(float dt)
 {
+    VE_PROFILE("Terrain");
     m_sinceRebuild += dt;
     m_sinceCheck += dt;
     m_sinceColliders += dt;

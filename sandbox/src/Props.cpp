@@ -15,12 +15,14 @@
 #include <ve/assets/AssetManager.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/gameplay/Interaction.hpp>
+#include <ve/nav/Navigation.hpp>
 #include <ve/audio/Ambience.hpp>
 #include <ve/audio/Audio.hpp>
 #include <ve/audio/Music.hpp>
 #include <ve/core/Engine.hpp>
 #include <ve/editor/Editor.hpp>
 #include <ve/core/Input.hpp>
+#include <ve/core/Log.hpp>
 #include <ve/core/Time.hpp>
 #include <ve/physics/Physics.hpp>
 #include <ve/render/Instancing.hpp>
@@ -44,6 +46,8 @@
 #include <imgui.h>
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <cstdio>
 
 namespace savanna {
@@ -836,8 +840,94 @@ void AutoTest::update(float dt)
             " (" + std::to_string(s_expect.stones) + "), player " + std::to_string(glm::distance(p, s_expect.player)) +
             " m from the saved spot, chopped acacia '" + treeState + "'");
         ve::save::remove("autotest");
-        engine().quit();
+        // Gamepad: a virtual SDL controller drives the player (stick forward, then Y = stop flying).
+        const bool pad = input().attachVirtualGamepad();
+        m_padStart = scene().find("Player")->transform().position();
+        input().setVirtualGamepadAxis(ve::GamepadAxis::LeftY, -1.0f); // stick fully forward
+        log(std::string("virtual gamepad: ") + (pad ? "attached" : "NOT AVAILABLE") + ", connected '" + input().gamepadName() + "'");
+        m_t = 0.0f;
         ++m_step;
+    } else if (m_step == 21 && m_t > 1.0f) {
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        const float moved = glm::distance(player->transform().position(), m_padStart);
+        log("gamepad: MoveY " + std::to_string(input().axisValue("MoveY")) + ", moved " + std::to_string(moved) + " m in 1 s (flying " +
+            (player->flying() ? "yes" : "no") + ")");
+        input().setVirtualGamepadAxis(ve::GamepadAxis::LeftY, 0.0f);
+        input().setVirtualGamepadButton(ve::GamepadButton::Y, true); // ToggleFly
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 22 && m_t > 0.3f) {
+        input().setVirtualGamepadButton(ve::GamepadButton::Y, false);
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        std::string names;
+        for (const std::string& n : input().bindingNames("ToggleFly")) names += (names.empty() ? "" : ", ") + n;
+        log(std::string("gamepad: Y pressed -> flying ") + (player->flying() ? "yes" : "no") + "; ToggleFly is bound to " + names);
+        // Bindings survive a JSON round trip (the F10 controls file).
+        const ve::Json saved = input().saveBindings();
+        input().clearAction("ToggleFly");
+        input().loadBindings(saved);
+        log("bindings JSON round trip: ToggleFly has " + std::to_string(input().bindingNames("ToggleFly").size()) + " binding(s)");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 23 && m_t > 0.5f) {
+        // Navigation: the level's navmesh (built behind the loading screen) routes around huts.
+        ve::NavMeshSurface* nav = ve::NavMeshSurface::find(scene());
+        if (!nav) {
+            log("navmesh: NONE");
+            engine().quit();
+            return;
+        }
+        const auto& st = nav->stats();
+        log("navmesh: ready " + std::string(nav->ready() ? "yes" : "no") + ", tiles " + std::to_string(st.tiles) + ", polygons " +
+            std::to_string(st.polygons) + ", " + std::to_string(st.lastTileMs) + " ms per tile");
+        ve::GameObject* hut = scene().find("Hut");
+        if (hut) {
+            const glm::vec3 h = hut->transform().position();
+            const glm::vec3 a = groundAt({h.x - 6.0f, h.z}), b = groundAt({h.x + 6.0f, h.z});
+            const ve::NavPath path = nav->findPath(a, b);
+            const auto blocked = nav->raycast(a, b);
+            log("path across a hut: complete " + std::string(path.complete ? "yes" : "no") + ", " + std::to_string(path.corners.size()) +
+                " corners, " + std::to_string(path.length()) + " m (straight 12 m), straight line blocked " + (blocked ? "yes" : "no"));
+        }
+        // A villager follows the player (the game's AI on the engine's NavAgent).
+        Villager* v = nullptr;
+        for (const auto& obj : scene().objects())
+            if (!v && !obj->isDestroyed()) v = dynamic_cast<Villager*>(obj.get());
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        if (v && player) {
+            const glm::vec3 vp = v->transform().position();
+            const glm::vec3 goal = nav->randomPointNear(vp + glm::vec3(9.0f, 0.0f, 8.0f), 3.0f).value_or(vp + glm::vec3(9.0f, 0.0f, 8.0f));
+            player->setPose(goal, 0.0f, -10.0f);
+            v->follow(*player);
+            m_followStart = glm::distance(vp, goal);
+            m_follower = v->id();
+            log("villager follows: start " + std::to_string(m_followStart) + " m from the player, on navmesh " +
+                (v->agent().onNavMesh() ? "yes" : "no"));
+        }
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 24 && m_t > 9.0f) {
+        auto* v = static_cast<Villager*>(scene().findById(m_follower));
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        if (v && player) {
+            const glm::vec3 vp = v->transform().position(), pp = player->transform().position();
+            log("villager after 9 s: " + std::to_string(glm::distance(glm::vec2(vp.x, vp.z), glm::vec2(pp.x, pp.z))) + " m from the player (was " +
+                std::to_string(m_followStart) + "), following " + (v->mode() == Villager::Mode::Follow ? "yes" : "no") + ", walking " +
+                (v->walking() ? "yes" : "no"));
+            // Look at the villager from a few metres back for the screenshot, navmesh drawn.
+            const glm::vec3 d = vp - pp;
+            player->setPose(pp - glm::normalize(glm::vec3(d.x, 0.0f, d.z)) * 3.0f + glm::vec3(0.0f, 1.0f, 0.0f),
+                            glm::degrees(std::atan2(-d.x, -d.z)), -18.0f);
+            if (ve::NavMeshSurface* nav = ve::NavMeshSurface::find(scene())) nav->showDebug = true;
+        }
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 25 && m_t > 0.5f) {
+        shot("6-villager-follows");
+        if (m_t > 1.0f) {
+            engine().quit();
+            ++m_step;
+        }
     }
 }
 
@@ -893,8 +983,74 @@ bool loadProgress(const std::string& slot)
     return ok;
 }
 
+void loadControls()
+{
+    std::ifstream in(ve::save::folder() / "controls.json");
+    if (!in) return;
+    try {
+        ve::Json j;
+        in >> j;
+        ve::Engine::get().input().loadBindings(j);
+    } catch (const std::exception& e) {
+        ve::log::warn("controls.json: {}", e.what());
+    }
+}
+
+void saveControls()
+{
+    std::error_code ec;
+    std::filesystem::create_directories(ve::save::folder(), ec);
+    std::ofstream out(ve::save::folder() / "controls.json");
+    out << ve::Engine::get().input().saveBindings().dump(1) << '\n';
+}
+
+void Hud::drawControls()
+{
+    ve::Input& in = input();
+    ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Controls (F10)", &m_showControls)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextDisabled("Gamepad: %s", in.gamepadConnected() ? in.gamepadName().c_str() : "none connected");
+    if (!in.rebinding().empty()) ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "Press a key, mouse or gamepad button for '%s' (Esc cancels)",
+                                                    in.rebinding().c_str());
+    if (ImGui::BeginTable("bindings", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        for (const std::string& action : in.actions()) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(action.c_str());
+            ImGui::TableNextColumn();
+            std::string names;
+            for (const std::string& n : in.bindingNames(action)) names += (names.empty() ? "" : ", ") + n;
+            ImGui::TextUnformatted(names.c_str());
+            ImGui::TableNextColumn();
+            ImGui::PushID(action.c_str());
+            if (ImGui::SmallButton("Rebind")) in.startRebind(action);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextDisabled("Keyboard/mouse and gamepad bindings are replaced separately.");
+    ImGui::End();
+}
+
 void Hud::update(float dt)
 {
+    // SAVANNA_CONTROLS=1: open the controls window (screenshots).
+    static const bool s_controlsShot = std::getenv("SAVANNA_CONTROLS") != nullptr;
+    if (s_controlsShot && !m_showControls && !m_controlsShotDone) {
+        m_showControls = m_controlsShotDone = true;
+        input().setMouseCaptured(false);
+    }
+    // A rebind just finished (F10): keep it for next time.
+    const bool rebinding = !input().rebinding().empty();
+    if (m_wasRebinding && !rebinding) saveControls();
+    m_wasRebinding = rebinding;
+    if (input().keyPressed(ve::Key::F10)) {
+        m_showControls = !m_showControls;
+        input().setMouseCaptured(!m_showControls);
+    }
     gameState().total = gameState().collected + Sunstone::remaining(scene()); // stones can be added in the editor
     GameState& gs = gameState();
     gs.messageTimer = std::max(0.0f, gs.messageTimer - dt);
@@ -917,6 +1073,7 @@ void Hud::update(float dt)
 
 void Hud::onGui()
 {
+    if (m_showControls) drawControls();
     if (engine().editor() && engine().editor()->paused()) return; // the editor's panels take the screen
     if (vfx::PhotoMode::anyActive()) return;                         // a clean view to compose the shot
     ImGuiIO& io = ImGui::GetIO();
@@ -971,7 +1128,7 @@ void Hud::onGui()
 
     if (m_showHelp) {
         const char* help = "WASD move  Shift sprint  Space jump  F fly  E pick up  Q/RMB throw\n"
-                           "T/G time +/-  R weather  M combat music  Tab mouse  F5/F9 save/load  F1 debug  F12 photo mode  H hide help";
+                           "T/G time +/-  R weather  M combat music  Tab mouse  F5/F9 save/load  F10 controls  F1 debug  F12 photo mode  H hide help";
         const ImVec2 hs = ImGui::CalcTextSize(help);
         const ImVec2 hp(16.0f, io.DisplaySize.y - hs.y - 16.0f);
         dl->AddRectFilled({hp.x - 8, hp.y - 6}, {hp.x + hs.x + 8, hp.y + hs.y + 6}, IM_COL32(20, 14, 8, 120), 6.0f);

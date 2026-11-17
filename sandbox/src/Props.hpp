@@ -48,6 +48,9 @@ bool saveProgress(ve::Scene& scene, const std::string& slot);
 // Loads by rebuilding the level behind the loading screen (World.hpp), then applying the save.
 bool loadProgress(const std::string& slot);
 void applyGameData(const ve::Json& game); // the counters, from a save's "game" section
+// Control bindings (F10 rebinds them): loaded over the defaults, saved next to the save games.
+void loadControls();
+void saveControls();
 
 // The shared vertex-coloured prop material (set once the prop library exists;
 // a plain one is created on first use otherwise, e.g. in another game).
@@ -130,6 +133,7 @@ struct AutoTestSaveExpect {
 
 class AutoTest : public ve::GameObject {
 public:
+    static void startAt(int step) { if (s_resume == 0) s_resume = step; } // (a reload resumes where it was)
     explicit AutoTest(const ve::Terrain& terrain) : GameObject("AutoTest"), m_terrain(&terrain), m_step(s_resume) { s_resume = 0; }
     void update(float dt) override;
 
@@ -148,6 +152,9 @@ private:
     bool m_inTrigger = false;
     glm::vec3 m_triggerCenter{0.0f}, m_triggerFeet{0.0f};
     ve::GameObject* m_destroyProbe = nullptr;
+    glm::vec3 m_padStart{0.0f};
+    float m_followStart = 0.0f;
+    uint64_t m_follower = 0;
     float m_t = 0.0f;
     int m_step;
 };
@@ -164,7 +171,11 @@ private:
     vfx::DayNightCycle* m_dayNight = nullptr; // looked up by id every frame (the editor can delete them)
     vfx::Weather* m_weather = nullptr;
     uint64_t m_dayNightId = 0, m_weatherId = 0;
+    void drawControls(); // F10: actions, their bindings, rebinding
     bool m_showHelp = true;
+    bool m_showControls = false;
+    bool m_controlsShotDone = false;
+    bool m_wasRebinding = false;
     bool m_combat = false; // M: stand-in for a fight (pushes the "Combat" music mood)
 };
 

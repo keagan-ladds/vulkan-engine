@@ -41,9 +41,12 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ScaledShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/TransformedShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
+
+#include <glm/gtx/matrix_decompose.hpp>
 
 #include <algorithm>
 #include <cstdarg>
@@ -773,6 +776,34 @@ Collider Collider::offset(const glm::vec3& translation, const glm::quat& rotatio
 {
     if (!impl) return *this;
     return makeCollider(JPH::RotatedTranslatedShapeSettings(toJ(translation), toJ(rotation), impl->shape).Create(), "offset");
+}
+
+std::vector<glm::vec3> Collider::triangles(const glm::mat4& transform) const
+{
+    std::vector<glm::vec3> out;
+    if (!impl) return out;
+    glm::vec3 scale, translation, skew;
+    glm::vec4 perspective;
+    glm::quat rotation;
+    glm::decompose(transform, scale, rotation, translation, skew, perspective);
+    const JPH::Shape& shape = *impl->shape;
+    const JPH::Quat rot = toJ(rotation);
+    const JPH::Vec3 com = toJ(translation) + rot * (toJ(scale) * shape.GetCenterOfMass());
+    // Offset / compound shapes: triangulate their leaf shapes.
+    JPH::AllHitCollisionCollector<JPH::TransformedShapeCollector> leaves;
+    shape.CollectTransformedShapes(JPH::AABox::sBiggest(), com, rot, toJ(scale), JPH::SubShapeIDCreator(), leaves, {});
+    constexpr int kBatch = JPH::Shape::cGetTrianglesMinTrianglesRequested * 4;
+    JPH::Float3 verts[kBatch * 3];
+    for (const JPH::TransformedShape& ts : leaves.mHits) {
+        JPH::Shape::GetTrianglesContext ctx;
+        ts.GetTrianglesStart(ctx, JPH::AABox::sBiggest(), JPH::RVec3::sZero());
+        for (;;) {
+            const int n = ts.GetTrianglesNext(ctx, kBatch, verts);
+            if (n <= 0) break;
+            for (int i = 0; i < n * 3; ++i) out.emplace_back(verts[i].x, verts[i].y, verts[i].z);
+        }
+    }
+    return out;
 }
 
 uint32_t PhysicsWorld::createStaticBody(const Collider& collider, const glm::vec3& position, const glm::quat& rotation,

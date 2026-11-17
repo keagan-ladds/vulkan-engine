@@ -240,6 +240,7 @@ void buildLevel(ve::Engine& engine)
 
     // --- Player: spawns at the PlayerStart marker ------------------------------------------
     auto& player = scene.spawn<Player>();
+    loadControls(); // the player's saved bindings (F10) over its defaults
     if (auto rocks = ve::MeshLibrary::get(r, "rock")) // throwable stones look like the scattered rocks
         player.setThrowable(rocks->variants[0][0].mesh, propMaterial(), rocks->colliders[0]);
     glm::vec2 start = layout::kCamp + glm::vec2(9.0f, 5.0f);
@@ -266,7 +267,7 @@ void buildLevel(ve::Engine& engine)
     }
 
     // Test hooks (handy for screenshots / automated checks):
-    //   SAVANNA_TIME=21.5  SAVANNA_WEATHER=0..4 (4 = thunderstorm)  SAVANNA_DEBUG=1  SAVANNA_POSE=x,y,z,yawDeg,pitchDeg
+    //   SAVANNA_TIME=21.5  SAVANNA_WEATHER=0..4 (4 = thunderstorm)  SAVANNA_DEBUG=1  SAVANNA_CONTROLS=1  SAVANNA_POSE=x,y,z,yawDeg,pitchDeg
     if (const char* t = std::getenv("SAVANNA_TIME"); t && dayNight) dayNight->timeOfDay = std::strtof(t, nullptr);
     if (const char* w = std::getenv("SAVANNA_WEATHER"); w && weather) {
         weather->setWeather(static_cast<vfx::Weather::Type>(std::atoi(w) % int(vfx::Weather::Type::Count)), 0.01f);
@@ -310,7 +311,11 @@ void buildLevel(ve::Engine& engine)
         }
     }
     if (const char* a = std::getenv("SAVANNA_TAA")) r.settings().temporalAA = a[0] == '1'; // SAVANNA_TAA=0 turns it off
-    if (std::getenv("SAVANNA_AUTOTEST")) scene.spawn<AutoTest>(terrain);
+    if (const char* at = std::getenv("SAVANNA_AUTOTEST")) {
+        // SAVANNA_AUTOTEST=<step>: start at that step (e.g. 23 = navigation only).
+        if (std::atoi(at) > 1) AutoTest::startAt(std::atoi(at));
+        scene.spawn<AutoTest>(terrain);
+    }
     // SAVANNA_PHOTO=<samples>[,<resolution 0..4>[,<dof aperture>]]: take a photo-mode shot of the start view and quit.
     if (const char* p = std::getenv("SAVANNA_PHOTO")) {
         int samples = 32, res = 0;

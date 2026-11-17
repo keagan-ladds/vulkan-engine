@@ -251,6 +251,16 @@ public:
     // The GameObject standing in for an instance while it's promoted (else null).
     GameObject* promoted(FoliageInstanceId id) const;
 
+    // ---- Obstacles (navmesh building) ----
+    // Every instance inside `area` (world x0, z0, x1, z1) whose current state
+    // has a collider, with its world transform. Works for unloaded cells too.
+    void forEachCollider(glm::vec4 area, const std::function<void(const Collider&, const glm::mat4&)>& fn) const;
+    // Called when an instance changes state (chopped, removed, restored): e.g.
+    // a navmesh rebuilds around `position`. Returns an id for removeStateListener.
+    using StateListener = std::function<void(FoliageInstanceId id, const glm::vec3& position)>;
+    uint32_t addStateListener(StateListener fn);
+    void removeStateListener(uint32_t id);
+
 private:
     struct Instance {
         int gx, gz; // placement grid square (the id)
@@ -342,6 +352,8 @@ private:
     std::unordered_map<uint64_t, Cell> m_cells;
     std::unordered_map<uint64_t, uint32_t> m_overrides; // instance id -> state (main thread only)
     std::vector<FoliageInstanceId> m_promoted;          // instances currently stood in for by GameObjects
+    std::vector<std::pair<uint32_t, StateListener>> m_stateListeners;
+    uint32_t m_nextListener = 1;
     uint32_t m_nextTicket = 1;
     // update() only redoes the expensive walks over every cell when something
     // they depend on changed (big worlds have tens of thousands of cells).

@@ -1,13 +1,25 @@
 #pragma once
 
 // =============================================================================
-// Input - keyboard & mouse state with per-frame edges and named actions.
+// Input - keyboard, mouse and gamepad state with per-frame edges, named
+// actions (buttons) and named axes (analog), rebindable at runtime.
 //
 //   if (input().keyDown(Key::W)) ...            held this frame
 //   if (input().keyPressed(Key::Space)) ...     went down this frame
 //   input().bindAction("Jump", Key::Space);
+//   input().bindAction("Jump", GamepadButton::A);
 //   if (input().actionPressed("Jump")) ...
+//   input().bindAxis("MoveY", Key::S, Key::W);          // keys: -1 / 0 / +1
+//   input().bindAxis("MoveY", GamepadAxis::LeftY, -1);  // stick (up = forward)
+//   float forward = input().axisValue("MoveY");          // the strongest source
 //   glm::vec2 look = input().mouseDelta();      pixels moved this frame
+//
+// Gamepad: the first connected controller (hot-plugged), SDL's standard
+// layout (Xbox names). Sticks have a radial dead zone; triggers can drive
+// actions (bindAction(action, GamepadAxis::RightTrigger)).
+// Rebinding: startRebind("Jump") -> the next key / mouse button / gamepad
+// button pressed becomes the binding for that kind of device; bindings
+// round-trip through JSON (saveBindings / loadBindings) for a settings file.
 //
 // "Pressed"/"Released" edges are per *rendered frame*, so read them in
 // update(), not fixedUpdate() (which can run 0 or several times per frame).
@@ -15,6 +27,7 @@
 // =============================================================================
 
 #include <glm/glm.hpp>
+#include <nlohmann/json.hpp>
 
 #include <array>
 #include <cstdint>
@@ -23,8 +36,12 @@
 #include <vector>
 
 union SDL_Event;
+struct _SDL_GameController;
+struct _SDL_Joystick;
 
 namespace ve {
+
+using Json = nlohmann::json;
 
 // Values are USB-HID scancodes, which is exactly what SDL_Scancode uses, so
 // conversion is a cast. Scancodes are layout independent: Key::W is "the key
@@ -40,6 +57,13 @@ enum class Key : uint16_t {
 };
 
 enum class MouseButton : uint8_t { Left = 1, Middle = 2, Right = 3, X1 = 4, X2 = 5 };
+
+// SDL_GameControllerButton / Axis order.
+enum class GamepadButton : uint8_t {
+    A, B, X, Y, Back, Guide, Start, LeftStick, RightStick, LeftShoulder, RightShoulder,
+    DPadUp, DPadDown, DPadLeft, DPadRight, Count
+};
+enum class GamepadAxis : uint8_t { LeftX, LeftY, RightX, RightY, LeftTrigger, RightTrigger, Count };
 
 class Input {
 public:
@@ -69,20 +93,62 @@ public:
     void setMouseCaptured(bool captured);
     bool mouseCaptured() const { return m_mouseCaptured; }
 
+    // --- Gamepad --------------------------------------------------------------
+    bool gamepadConnected() const { return m_pad != nullptr; }
+    std::string gamepadName() const;
+    bool gamepadDown(GamepadButton button) const;
+    bool gamepadPressed(GamepadButton button) const;
+    float gamepadAxis(GamepadAxis axis) const; // sticks -1..1 (dead zone applied, +y = down), triggers 0..1
+    float stickDeadZone = 0.18f;
+    float triggerThreshold = 0.5f;             // a trigger bound to an action is "down" past this
+
+    // Tests / tools: a virtual gamepad (SDL), driven from code.
+    bool attachVirtualGamepad();
+    void setVirtualGamepadButton(GamepadButton button, bool down);
+    void setVirtualGamepadAxis(GamepadAxis axis, float value); // -1..1 (triggers 0..1)
+
     // --- Actions --------------------------------------------------------------
     // An action can be bound to several keys/buttons; it is "down" if any is.
     void bindAction(const std::string& action, Key key);
     void bindAction(const std::string& action, MouseButton button);
+    void bindAction(const std::string& action, GamepadButton button);
+    void bindAction(const std::string& action, GamepadAxis trigger); // past triggerThreshold
     void clearAction(const std::string& action);
     bool actionDown(const std::string& action) const;
     bool actionPressed(const std::string& action) const;
     bool actionReleased(const std::string& action) const;
 
+    // --- Axes (analog) ----------------------------------------------------------
+    void bindAxis(const std::string& axis, Key negative, Key positive);
+    void bindAxis(const std::string& axis, GamepadAxis padAxis, float scale = 1.0f);
+    void clearAxis(const std::string& axis);
+    float axisValue(const std::string& axis) const; // -1..1: the strongest of its sources
+
+    // --- Rebinding / settings ----------------------------------------------------
+    std::vector<std::string> actions() const;             // sorted
+    std::vector<std::string> bindingNames(const std::string& action) const; // "E", "Mouse Left", "Pad A"...
+    // The next key / mouse button (or gamepad button) pressed replaces the
+    // action's keyboard+mouse (or gamepad) bindings. Escape cancels.
+    void startRebind(const std::string& action);
+    void cancelRebind() { m_rebind.clear(); }
+    const std::string& rebinding() const { return m_rebind; }
+    Json saveBindings() const;
+    void loadBindings(const Json& json); // replaces the actions / axes it lists
+
 private:
     struct Binding {
         std::vector<Key> keys;
         std::vector<MouseButton> buttons;
+        std::vector<GamepadButton> pad;
+        std::vector<GamepadAxis> triggers;
     };
+    struct AxisBinding {
+        std::vector<std::pair<Key, Key>> keys;
+        std::vector<std::pair<GamepadAxis, float>> pad;
+    };
+    bool triggerDown(GamepadAxis a, bool previous) const;
+    void openGamepad(int deviceIndex);
+    void finishRebind(Key key, MouseButton button, GamepadButton pad);
 
     std::array<bool, kKeyCount> m_keys{};
     std::array<bool, kKeyCount> m_prevKeys{};
@@ -95,6 +161,15 @@ private:
     bool m_uiKeyboard = false;
     bool m_uiMouse = false;
     std::unordered_map<std::string, Binding> m_actions;
+    std::unordered_map<std::string, AxisBinding> m_axes;
+    std::string m_rebind;
+
+    ::_SDL_GameController* m_pad = nullptr;
+    int m_padInstance = -1;
+    std::array<bool, size_t(GamepadButton::Count)> m_padButtons{}, m_prevPadButtons{};
+    std::array<float, size_t(GamepadAxis::Count)> m_padAxes{}, m_prevPadAxes{};
+    int m_virtualIndex = -1;
+    ::_SDL_Joystick* m_virtual = nullptr;
 };
 
 } // namespace ve

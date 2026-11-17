@@ -28,6 +28,18 @@ Player::Player() : GameObject("Player")
     in.bindAction("Throw", Key::Q);
     in.bindAction("Throw", ve::MouseButton::Right);
     in.bindAction("ToggleFly", Key::F);
+    // Gamepad (Xbox layout): left stick moves, right stick looks.
+    in.bindAction("Jump", ve::GamepadButton::A);
+    in.bindAction("Use", ve::GamepadButton::X);
+    in.bindAction("Throw", ve::GamepadAxis::RightTrigger);
+    in.bindAction("Sprint", ve::GamepadButton::LeftStick);
+    in.bindAction("ToggleFly", ve::GamepadButton::Y);
+    in.bindAxis("MoveX", Key::A, Key::D);
+    in.bindAxis("MoveX", ve::GamepadAxis::LeftX);
+    in.bindAxis("MoveY", Key::S, Key::W);
+    in.bindAxis("MoveY", ve::GamepadAxis::LeftY, -1.0f); // stick up = forward
+    in.bindAxis("LookX", ve::GamepadAxis::RightX);
+    in.bindAxis("LookY", ve::GamepadAxis::RightY);
 
     // Physics capsule that walks over terrain, rocks and steps, collides with
     // trees and huts, and pushes crates. Its position is our feet.
@@ -142,6 +154,10 @@ void Player::update(float)
         m_yaw -= d.x;
         m_pitch = std::clamp(m_pitch - d.y, -1.5f, 1.5f);
     }
+    // Gamepad look: radians per second at full deflection.
+    const float stick = 2.6f * time().unscaledDeltaTime;
+    m_yaw -= in.axisValue("LookX") * stick;
+    m_pitch = std::clamp(m_pitch - in.axisValue("LookY") * stick, -1.5f, 1.5f);
     transform().setLocalRotation(glm::angleAxis(m_yaw, glm::vec3(0, 1, 0)));
     if (m_head) m_head->transform().setLocalRotation(glm::angleAxis(m_pitch, glm::vec3(1, 0, 0)));
 
@@ -158,7 +174,7 @@ void Player::update(float)
     if (m_fly) {
         // Free flight (noclip): move directly, dragging the physics capsule along.
         const float dt = time().unscaledDeltaTime;
-        glm::vec3 move = lookDirection() * in.axis(Key::S, Key::W) + transform().right() * in.axis(Key::A, Key::D);
+        glm::vec3 move = lookDirection() * in.axisValue("MoveY") + transform().right() * in.axisValue("MoveX");
         move.y += in.axis(Key::LCtrl, Key::Space);
         const float speed = flySpeed * (in.actionDown("Sprint") ? 4.0f : 1.0f);
         glm::vec3 p = transform().position() + move * speed * dt;
@@ -175,7 +191,7 @@ void Player::fixedUpdate(float)
     // Desired horizontal velocity from WASD, relative to where we face.
     const glm::vec3 fwd = glm::vec3(-std::sin(m_yaw), 0.0f, -std::cos(m_yaw));
     const glm::vec3 right = glm::vec3(std::cos(m_yaw), 0.0f, -std::sin(m_yaw));
-    glm::vec3 wish = fwd * in.axis(Key::S, Key::W) + right * in.axis(Key::A, Key::D);
+    glm::vec3 wish = fwd * in.axisValue("MoveY") + right * in.axisValue("MoveX");
     if (glm::length(wish) > 1.0f) wish = glm::normalize(wish);
     const glm::vec3 feet = transform().position();
     const ve::Terrain* terrain = ve::Terrain::find(scene());

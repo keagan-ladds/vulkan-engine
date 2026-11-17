@@ -1,6 +1,7 @@
 #include "ve/world/Vegetation.hpp"
 
 #include "ve/core/Engine.hpp"
+#include "ve/core/Profiler.hpp"
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Log.hpp"
@@ -325,6 +326,7 @@ std::string Foliage::state() const
 
 void Foliage::update(float dt)
 {
+    VE_PROFILE("Foliage rules");
     m_sinceBuild += dt;
     if (m_sinceBuild < 0.25f) return;
     const Terrain* terrain = Terrain::find(scene());
@@ -550,6 +552,7 @@ std::string GrassLayer::state() const
 
 void GrassLayer::update(float dt)
 {
+    VE_PROFILE("Grass layers");
     m_sinceBuild += dt;
     if (m_sinceBuild >= 0.25f) {
         const Terrain* terrain = Terrain::find(scene());

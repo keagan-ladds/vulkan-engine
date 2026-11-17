@@ -1,5 +1,7 @@
 #include "ve/ui/UiLayer.hpp"
 
+#include "ve/core/Profiler.hpp"
+
 #include "ve/audio/Audio.hpp"
 
 #include "ve/core/Engine.hpp"
@@ -146,6 +148,28 @@ void UiLayer::drawDebugOverlay()
         ImGui::Text("Objects: %zu   Physics bodies: %u (%.2f ms)", m_engine->scene().objectCount(),
                     m_engine->physics().bodyCount(), m_engine->physics().lastStepMs);
         ImGui::Text("Camera: %.1f %.1f %.1f", f.camera.position.x, f.camera.position.y, f.camera.position.z);
+    }
+
+    if (ImGui::CollapsingHeader("CPU zones", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Main-thread VE_PROFILE scopes: smoothed average and worst of the last second.
+        if (ImGui::BeginTable("##zones", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Zone", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("avg ms", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("max ms", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableHeadersRow();
+            for (const Profiler::Zone& z : Profiler::get().zones()) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Indent(float(z.depth) * 12.0f + 0.001f);
+                ImGui::TextUnformatted(z.name.c_str());
+                ImGui::Unindent(float(z.depth) * 12.0f + 0.001f);
+                ImGui::TableNextColumn();
+                ImGui::Text("%6.2f", z.avgMs);
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%6.2f", z.maxMs);
+            }
+            ImGui::EndTable();
+        }
     }
 
     if (ImGui::CollapsingHeader("Settings")) {

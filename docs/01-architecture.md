@@ -17,6 +17,7 @@ vulkan-engine/
 │   ├── src/ve/physics/     Jolt-backed physics: PhysicsWorld, Collider, Rigidbody, CharacterController
 │   ├── src/ve/assets/      AssetManager, texture loading (stb), glTF loading (cgltf), Model
 │   ├── src/ve/audio/       AudioSystem, AudioClip, AudioSource, zones (miniaudio); Music, Ambience
+│   ├── src/ve/nav/         Navmesh building (Recast), paths + agents (Detour)
 │   ├── src/ve/ui/          ImGui integration + engine debug overlay
 │   ├── src/ve/world/       Terrain, FoliageSystem (streamed scattering), GrassPass (GPU grass), Vegetation (scene types), LodModel
 │   └── shaders/            engine shaders + include/ve.glsl (the shared shader interface)
@@ -569,6 +570,33 @@ stores nothing per blade.
   HUD). Mechanism only: Savanna decides what chopping, picking and
   collecting do and how prompts look.
 
+## 5.11 Navigation (`ve/nav`)
+
+Backed by **Recast & Detour** (linked `PRIVATE`, only included by
+`Navigation.cpp`).
+
+- **`NavMeshSurface`** (component): a tiled navmesh over a box around its
+  object (or, with `streamRadius`, the tiles around the camera / a focus
+  object over the whole terrain). Each tile's input is gathered on the main
+  thread: terrain heights sampled directly (deep water marked unwalkable),
+  static `Rigidbody` colliders (`Collider::triangles`, Jolt's shape
+  triangulation; the terrain's own heightfield bodies are skipped) and
+  foliage colliders (`FoliageSystem::forEachCollider`, deterministic, so
+  unloaded cells count too). Tiles are voxelized and turned into Detour tiles
+  on worker threads and swapped in on the main thread; while a loading screen
+  is up the surface registers a "Finding paths" load task that drives the
+  build. `FoliageSystem` state listeners rebuild the tiles around a chopped
+  tree; `rebuild(area)` is there for other changes. Queries: `findPath`
+  (corners), `nearestPoint`, `randomPointNear`, `raycast`.
+- **`NavAgent`** (component): joins the surface's `dtCrowd` once there is
+  navmesh under it, then walks to `setDestination` targets with path
+  following, steering and avoidance of other agents; writes its Transform in
+  `lateUpdate` (turning towards where it walks), `arrived()` /
+  `remainingDistance()` for the game's AI.
+- Behaviour is game code: Savanna's `Villager` idles, wanders to random
+  reachable spots and follows the player when asked ("walk with me").
+- `showDebug` draws the navmesh's polygons near the camera.
+
 ## 6. Physics
 
 Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
@@ -649,8 +677,14 @@ The listener follows the main camera.
 Dear ImGui with the SDL2 and Vulkan (dynamic rendering) backends. It is drawn
 by `UiPass` directly onto the backbuffer. Games draw HUD/menus in `onGui()`
 hooks. F1 toggles the engine debug overlay: FPS/frame time, draw counts,
-renderer settings (shadows, exposure), and every render pass with an
-enable toggle and its own `onGui()` settings.
+CPU zones (`VE_PROFILE` scopes from `ve/core/Profiler.hpp`, main thread,
+nested, averaged over ~1 s), renderer settings (shadows, exposure), and every
+render pass with an enable toggle, its GPU time and its own `onGui()` settings.
+
+Input (`ve/core/Input.hpp`) maps keys, mouse buttons, gamepad buttons and
+triggers to named actions, and keys or stick axes to named axes; the first
+SDL game controller is used. Bindings can be rebound at runtime
+(`startRebind`) and saved as JSON; the game decides where and draws the UI.
 
 ## 10. Effects module (ve_effects, namespace `vfx`)
 

@@ -2,6 +2,7 @@
 
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Profiler.hpp"
 #include "ve/ui/UiLayer.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Components.hpp"
@@ -533,6 +534,7 @@ void FoliageSystem::preload(const glm::vec3& viewer)
 
 void FoliageSystem::update(float)
 {
+    VE_PROFILE("Foliage streaming");
     startWorker();
     const glm::vec3 viewer3 = viewerPosition();
     const glm::vec2 viewer(viewer3.x, viewer3.z);
@@ -734,8 +736,17 @@ void FoliageSystem::setState(FoliageInstanceId id, uint32_t newState)
         log::warnOnce("Foliage layer '" + m_layers[id.layer].desc.name + "': no state " + std::to_string(newState));
         return;
     }
+    const auto prev = m_overrides.find(id.packed());
+    const uint32_t oldState = prev != m_overrides.end() ? prev->second : 0;
     if (newState == 0) m_overrides.erase(id.packed());
     else m_overrides[id.packed()] = newState;
+    if (oldState != newState && !m_stateListeners.empty()) {
+        Instance inst;
+        if (makeInstance(id.layer, id.gx, id.gz, &inst)) {
+            const auto listeners = m_stateListeners; // a listener may remove itself
+            for (const auto& [lid, fn] : listeners) fn(id, inst.position);
+        }
+    }
 
     size_t i;
     Cell* cell = loadedCell(id, &i);
@@ -748,6 +759,44 @@ void FoliageSystem::setState(FoliageInstanceId id, uint32_t newState)
     cell->slots[i].state = newState;
     showInstance(*cell, i);
     if (cell->wantBodies && i < cell->bodiesCreated) createBody(*cell, i);
+}
+
+void FoliageSystem::forEachCollider(glm::vec4 area, const std::function<void(const Collider&, const glm::mat4&)>& fn) const
+{
+    for (uint32_t l = 0; l < m_layers.size(); ++l) {
+        const LayerData& layer = m_layers[l];
+        if (layer.desc.colliders.empty() && layer.desc.states.empty()) continue;
+        const float sp = layer.desc.spacing;
+        // Instances stay inside their grid square: one square of margin is plenty.
+        const int x0 = int(std::floor(area.x / sp)) - 1, z0 = int(std::floor(area.y / sp)) - 1;
+        const int x1 = int(std::floor(area.z / sp)) + 1, z1 = int(std::floor(area.w / sp)) + 1;
+        Instance inst;
+        for (int gz = z0; gz <= z1; ++gz) {
+            for (int gx = x0; gx <= x1; ++gx) {
+                const FoliageInstanceId id{l, gx, gz};
+                const auto o = m_overrides.find(id.packed());
+                const uint32_t st = o != m_overrides.end() ? o->second : 0;
+                const auto& colliders = collidersFor(layer, st);
+                if (colliders.empty() || !makeInstance(l, gx, gz, &inst)) continue;
+                if (inst.position.x < area.x || inst.position.x > area.z || inst.position.z < area.y || inst.position.z > area.w) continue;
+                const Collider& c = colliders[colliders.size() == 1 ? 0 : inst.variant % colliders.size()];
+                const glm::mat4 m = glm::translate(glm::mat4(1.0f), inst.position) * glm::mat4_cast(inst.rotation) *
+                                    glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale));
+                fn(c, m);
+            }
+        }
+    }
+}
+
+uint32_t FoliageSystem::addStateListener(StateListener fn)
+{
+    m_stateListeners.emplace_back(m_nextListener, std::move(fn));
+    return m_nextListener++;
+}
+
+void FoliageSystem::removeStateListener(uint32_t id)
+{
+    std::erase_if(m_stateListeners, [id](const auto& l) { return l.first == id; });
 }
 
 std::vector<std::pair<uint64_t, uint32_t>> FoliageSystem::overrides() const

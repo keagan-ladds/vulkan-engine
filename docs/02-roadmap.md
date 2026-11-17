@@ -433,7 +433,8 @@ Ordered roughly by how much they'll bite while building a game.
 ### F4 — Building & gameplay systems
 Engine provides mechanisms, the game (Savanna here) the rules and content.
 - [x] Interaction (engine): `ve::Interactable` + `ve::Interactor` (eye ray, then view cone with line of sight; focus / prompt / use); Savanna's trees, berry bushes and sunstones use it, its HUD shows the prompt; the autotest chops and collects through it
-- [ ] Navmesh (engine: Recast/Detour build from colliders + terrain tiles, `NavAgent` component); AI behaviours (state machines for villagers / animals) in the game
+- [x] Navmesh (engine): `NavMeshSurface` (tiled Recast build from terrain + static colliders + foliage colliders on worker threads, loading task, rebuilds around chopped trees, optional streaming around the camera), queries (paths, nearest / random points, raycast), `NavAgent` (Detour crowd: path following + avoidance). Savanna: villagers idle / wander / follow the player when asked (game-side state machine)
+- [ ] Animal AI (herds grazing, fleeing the player) on the same agents, in the game
 - [ ] Inventory / crafting data model (game; data files)
 - [ ] Grid/snap building system (game: pieces, sockets, structural stability; engine helpers only if something is generic)
 - [ ] Combat (game: hitboxes, damage, stamina), boss encounters
@@ -443,6 +444,6 @@ Engine provides mechanisms, the game (Savanna here) the rules and content.
 - [x] Scene serialization (JSON scene files, editor save / load); prefabs are E3
 - [x] Loading screens (engine): `Engine::beginLoading(loadingScene)` + load steps (main thread, one per frame) + load tasks (progress of work over frames); the game's loading scene (UI) is drawn while the world streams in editor-paused mode. Foliage fills its cells on a worker pool (cores − 1) instead of the blocking preload. Savanna: sunset title, progress bar, tips
 - [x] Save/load: `ve::save` (slots, capture / apply: moved and removed level objects, `ve::Saveable` hooks; Foliage overrides, Terrain edits and time of day built in). Savanna: F5 / F9 (reload behind the loading screen, then apply), player + regrowth Saveable, counters as game data; the autotest saves, changes things, loads and checks
-- [ ] Gamepad input + rebinding UI (engine)
-- [ ] CPU profiler zones (engine; GPU per-pass timing already exists)
+- [x] Gamepad input + rebinding (engine): SDL game controllers, axes with radial dead zones, triggers as actions, `startRebind`, bindings JSON, virtual pad for tests. Savanna: pad layout for the player, F10 controls window saved to `controls.json`
+- [x] CPU profiler zones (engine): `VE_PROFILE` scopes, nested, F1 "CPU zones" table + bench output
 - [ ] Retained-mode game UI (inventory grids, health bars) beyond ImGui (engine widgets, game layouts)

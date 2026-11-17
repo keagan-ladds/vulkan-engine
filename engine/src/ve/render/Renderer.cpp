@@ -3,6 +3,7 @@
 #include "ve/render/ShaderHotReload.hpp"
 
 #include "ve/core/Log.hpp"
+#include "ve/core/Profiler.hpp"
 #include "ve/core/Time.hpp"
 #include "ve/core/Window.hpp"
 #include "ve/render/Mesh.hpp"
@@ -1294,10 +1295,19 @@ bool Renderer::render(Scene& scene, const Time& time)
     m_graph->maxStage = photo ? int(RenderStage::Overlay) : (1 << 30);
     m_graph->loadingFrame = m_loadingFrames;
     m_skinning->beginFrame(slotIndex);
-    gatherScene(scene);
-    fillGlobals(time);
-    m_instances->prepare(slotIndex, m_frame); // also assigns ShadowView::cullView
-    m_graph->prepare(m_frame);
+    {
+        VE_PROFILE("Gather scene");
+        gatherScene(scene);
+        fillGlobals(time);
+    }
+    {
+        VE_PROFILE("Instances");
+        m_instances->prepare(slotIndex, m_frame); // also assigns ShadowView::cullView
+    }
+    {
+        VE_PROFILE("Pass prepare");
+        m_graph->prepare(m_frame);
+    }
 
     std::memcpy(slot.globals.mapped, &m_frame.globals, sizeof(FrameGlobals));
     // The light buffer up to the used part of the cluster light lists.
@@ -1336,7 +1346,10 @@ bool Renderer::render(Scene& scene, const Time& time)
     ctx.graph = m_graph.get();
     ctx.frame = &m_frame;
     ctx.frameSlot = slotIndex;
-    m_graph->execute(ctx);
+    {
+        VE_PROFILE("Record commands");
+        m_graph->execute(ctx);
+    }
     slot.timedPasses = m_graph->lastExecuted();
     m_instances->recordReadback(slot.cmd, slotIndex);
     slot.timestampsWritten = slot.timestamps != VK_NULL_HANDLE;

@@ -2,6 +2,7 @@
 
 #include "ve/anim/Animation.hpp"
 #include "ve/gameplay/Interaction.hpp"
+#include "ve/nav/Navigation.hpp"
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Ambience.hpp"
@@ -132,6 +133,40 @@ void registerBuiltinTypes()
         t.field("maxReach", &Interactor::maxReach).range(0.0f, 50.0f);
         t.field("coneDegrees", &Interactor::coneDegrees).range(0.0f, 90.0f);
         t.field("useMainCamera", &Interactor::useMainCamera);
+    });
+    r.add<NavMeshSurface>("NavMeshSurface", [](TypeBuilder<NavMeshSurface>& t) {
+        t.category("Navigation");
+        t.field("size", &NavMeshSurface::size).tooltip("box centred on the object that agents can use");
+        auto setting = [&t](const char* name, float NavMeshSettings::*m, float lo, float hi, const char* tip) {
+            t.property(name, FieldKind::Float, [m](const NavMeshSurface& s) { return Json(s.settings.*m); },
+                       [m, lo, hi](NavMeshSurface& s, const Json& j) {
+                           if (j.is_number()) s.settings.*m = std::clamp(j.get<float>(), lo, hi);
+                       })
+                .tooltip(tip);
+        };
+        setting("agentRadius", &NavMeshSettings::agentRadius, 0.05f, 5.0f, "the navmesh keeps this far from walls");
+        setting("agentHeight", &NavMeshSettings::agentHeight, 0.1f, 10.0f, "headroom needed");
+        setting("agentMaxClimb", &NavMeshSettings::agentMaxClimb, 0.0f, 5.0f, "highest step");
+        setting("maxSlopeDegrees", &NavMeshSettings::maxSlopeDegrees, 0.0f, 89.0f, "steeper ground is not walkable");
+        setting("cellSize", &NavMeshSettings::cellSize, 0.05f, 2.0f, "voxel size (about agentRadius / 2)");
+        setting("tileSize", &NavMeshSettings::tileSize, 4.0f, 256.0f, "m; changes rebuild whole tiles");
+        setting("maxWaterDepth", &NavMeshSettings::maxWaterDepth, -1.0f, 100.0f, "deeper water is not walkable (< 0: no limit)");
+        t.field("includeTerrain", &NavMeshSurface::includeTerrain);
+        t.field("includeStaticBodies", &NavMeshSurface::includeStaticBodies);
+        t.field("includeFoliage", &NavMeshSurface::includeFoliage);
+        t.field("streamRadius", &NavMeshSurface::streamRadius).range(0.0f, 4000.0f).tooltip("> 0: only tiles this close to the camera exist (whole terrain)");
+        t.field("showDebug", &NavMeshSurface::showDebug);
+    });
+    r.add<NavAgent>("NavAgent", [](TypeBuilder<NavAgent>& t) {
+        t.category("Navigation");
+        t.field("speed", &NavAgent::speed).range(0.0f, 50.0f).speed(0.01f);
+        t.field("acceleration", &NavAgent::acceleration).range(0.0f, 200.0f);
+        t.field("angularSpeed", &NavAgent::angularSpeed).range(0.0f, 2000.0f);
+        t.field("radius", &NavAgent::radius).range(0.05f, 5.0f).speed(0.01f);
+        t.field("height", &NavAgent::height).range(0.1f, 10.0f);
+        t.field("stoppingDistance", &NavAgent::stoppingDistance).range(0.0f, 20.0f);
+        t.field("updateRotation", &NavAgent::updateRotation);
+        t.field("avoidOthers", &NavAgent::avoidOthers);
     });
     r.add<Animator>("Animator", [](TypeBuilder<Animator>& t) {
         t.category("Animation");

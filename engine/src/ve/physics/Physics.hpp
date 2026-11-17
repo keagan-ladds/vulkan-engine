@@ -75,6 +75,10 @@ public:
     Collider offset(const glm::vec3& translation, const glm::quat& rotation = glm::quat(1, 0, 0, 0)) const;
 
     bool valid() const { return impl != nullptr; }
+    // The shape as world triangles (3 points each, counter-clockwise seen from
+    // outside; round shapes are tessellated) under `transform` (may scale).
+    // Used to build navmeshes.
+    std::vector<glm::vec3> triangles(const glm::mat4& transform) const;
 
     struct Impl; // engine internal (holds the Jolt shape)
     std::shared_ptr<const Impl> impl;
