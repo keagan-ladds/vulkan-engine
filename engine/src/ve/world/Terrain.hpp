@@ -52,6 +52,10 @@ struct TerrainMaterial {
     glm::vec3 tint{1.0f};         // albedo multiplier
     float normalStrength = 1.0f;
     float roughnessValue = 0.9f;  // without a roughness map
+    // 0 = the albedo's own colours; 1 = the biome's colour (with its noise and
+    // patches) carrying the albedo's light/dark detail. Keeps a biome's palette
+    // art-directable while the texture adds pebbles, cracks, straw...
+    float biomeColor = 0.0f;
     bool textured() const { return !albedo.empty() || !normal.empty() || !roughness.empty() || !ao.empty(); }
 };
 

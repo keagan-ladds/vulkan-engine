@@ -549,14 +549,15 @@ void Terrain::updateMaterials()
                                        [&] { return packSurfaceMap(r, assets(), *lm); });
         }
         table.insert(table.end(), {albedo, surface, 1.0f / std::max(lm->size, 0.01f), lm->normalStrength,
-                                   lm->tint.x, lm->tint.y, lm->tint.z, lm->roughnessValue});
+                                   lm->tint.x, lm->tint.y, lm->tint.z, lm->roughnessValue,
+                                   std::clamp(lm->biomeColor, 0.0f, 1.0f), 0.0f, 0.0f, 0.0f});
     }
     m_layerTextures = std::move(keep);
     if (!anyTextured) {
         m_layerTable.reset();
         m_layerTableData.clear();
     } else if (table != m_layerTableData) {
-        m_layerTable = Texture::create2D(r, 2, uint32_t(layers.size()), VK_FORMAT_R32G32B32A32_SFLOAT, table.data(),
+        m_layerTable = Texture::create2D(r, 3, uint32_t(layers.size()), VK_FORMAT_R32G32B32A32_SFLOAT, table.data(),
                                          table.size() * sizeof(float), false, SamplerType::NearestClamp, "TerrainLayers");
         m_layerTableData = std::move(table);
     }
@@ -702,6 +703,7 @@ Json Terrain::materialJson(const TerrainMaterial& m)
     j["tint"] = Json{m.tint.x, m.tint.y, m.tint.z};
     j["normalStrength"] = m.normalStrength;
     j["roughnessValue"] = m.roughnessValue;
+    j["biomeColor"] = m.biomeColor;
     return j;
 }
 
@@ -717,6 +719,7 @@ TerrainMaterial Terrain::materialFromJson(const Json& j)
     m.tint = vec3From(j.value("tint", Json()), m.tint);
     m.normalStrength = j.value("normalStrength", m.normalStrength);
     m.roughnessValue = j.value("roughnessValue", m.roughnessValue);
+    m.biomeColor = j.value("biomeColor", m.biomeColor);
     return m;
 }
 
@@ -786,14 +789,14 @@ void registerTerrainTypes(TypeRegistry& r)
         t.property("rockMaterial", FieldKind::Json, [](const Terrain& x) { return Terrain::materialJson(x.rockMaterial); },
                    [](Terrain& x, const Json& j) { x.rockMaterial = Terrain::materialFromJson(j); })
             .tooltip("optional rock texture (projected from three sides): {albedo, normal, roughness, ao, size, tint, "
-                     "normalStrength, roughnessValue}");
+                     "normalStrength, roughnessValue, biomeColor}");
         t.field("detailTexture", &Terrain::detailTexture).assets(".png .jpg .jpeg .tga");
         t.field("detailScales", &Terrain::detailScales);
         t.field("wetnessSlot", &Terrain::wetnessSlot).range(-1.0f, 7.0f);
         t.property("biomes", FieldKind::Json, [](const Terrain& x) { return x.biomesJson(); },
                    [](Terrain& x, const Json& j) { x.setBiomesJson(j); })
             .tooltip("[{name, color, color2, patchColor, patchFrequency, minHeight, maxHeight, maxSlope, coverage, ..., "
-                     "material: {albedo, normal, roughness, ao, size, tint, normalStrength, roughnessValue}}]; "
+                     "material: {albedo, normal, roughness, ao, size, tint, normalStrength, roughnessValue, biomeColor}}]; "
                      "biome 0 fills the rest, later biomes paint over earlier ones");
     });
     r.add<TerrainStamp>("TerrainStamp", [](TypeBuilder<TerrainStamp>& t) {

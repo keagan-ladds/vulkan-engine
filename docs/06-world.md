@@ -122,6 +122,10 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
   where layers meet, the higher texels win (stones poke through sand) instead
   of a soft cross-fade. Normal, roughness and AO are packed into one texture
   on load, so a layer costs two texture fetches.
+- `biomeColor` (0..1) recolours a layer with the biome's own colour (with its
+  noise and patches), keeping only the texture's light/dark detail: the
+  palette stays art-directable, the texture adds pebbles, straw, cracks.
+  Savanna's savannah soil uses it so the ground stays golden next to the grass.
 - Each terrain vertex blends up to three layers (the three that weigh most in
   its LOD node); whatever weight is left (untextured biomes, mud) shows the
   vertex colour. Rock is projected from three sides, so cliffs don't stretch.

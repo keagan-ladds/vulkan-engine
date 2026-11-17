@@ -56,11 +56,12 @@
               "ao": "textures/ground/soil_ao.png",
               "size": 3.0,
               "tint": [
-                1.3,
-                1.35,
-                1.2
+                1,
+                1,
+                1
               ],
-              "normalStrength": 1.0
+              "normalStrength": 1.0,
+              "biomeColor": 0.9
             }
           },
           {
@@ -169,11 +170,12 @@
               "ao": "textures/ground/soil_ao.png",
               "size": 3.0,
               "tint": [
-                1.0,
-                0.95,
-                0.9
+                1,
+                1,
+                1
               ],
-              "normalStrength": 1.0
+              "normalStrength": 1.0,
+              "biomeColor": 0.6
             }
           },
           {

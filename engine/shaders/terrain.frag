@@ -8,6 +8,7 @@
 //   textures[1]  = splat layer table (RGBA32F, a row per layer: the biomes, then rock):
 //                  texel 0 = albedo texture, surface texture (-1 = none), 1 / size, normal strength
 //                  texel 1 = tint rgb, roughness without a map
+//                  texel 2 = x: biome colour amount (the vertex colour carrying the albedo's brightness detail)
 //                  Surface textures pack normal x/y, roughness, AO.
 // Each vertex blends up to three splat layers (terrain.vert); the weight left
 // over shows the biome vertex colour, broken up by the detail noise.
@@ -50,6 +51,7 @@ Layer layer(uint table, uint row, bool triplanar, vec3 N, vec3 base, float dist)
 {
     vec4 t0 = texelFetch(veTextures[nonuniformEXT(table)], ivec2(0, row), 0);
     vec4 t1 = texelFetch(veTextures[nonuniformEXT(table)], ivec2(1, row), 0);
+    float biomeColor = texelFetch(veTextures[nonuniformEXT(table)], ivec2(2, row), 0).x;
     Layer l = Layer(vec3(0.0), 0.0, vec3(0.0), 0.0, 0.0);
     float k = t0.z; // repeats per metre
     vec3 p = inWorldPos;
@@ -85,6 +87,13 @@ Layer layer(uint table, uint row, bool triplanar, vec3 N, vec3 base, float dist)
         l.height += a.a * flatten;
         l.roughness += s.z * flatten;
         l.ao += s.w * flatten;
+    }
+    if (biomeColor > 0.0 && t0.x >= 0.0) {
+        // The biome's colour, lightened / darkened like the texture around its average.
+        const vec3 lum = vec3(0.2126, 0.7152, 0.0722);
+        float average = max(dot(veSampleLod(uint(t0.x), vec2(0.5), 16.0).rgb, lum), 0.02);
+        // (softened: a texture's brightest bits are often 3x its average)
+        l.albedo = mix(l.albedo, base * pow(dot(l.albedo, lum) / average, 0.6), biomeColor);
     }
     l.albedo *= t1.rgb;
     if (l.roughness < 0.0) l.roughness = t1.w;
