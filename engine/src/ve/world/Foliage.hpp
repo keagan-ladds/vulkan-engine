@@ -194,6 +194,10 @@ struct FoliageSettings {
     uint32_t instancesPerFrame = 6000; // budget for adding instances to groups
     uint32_t bodiesPerFrame = 300;     // budget for creating static bodies
     float unloadMargin = 1.15f;        // unload beyond viewDistance * margin (hysteresis)
+    // Loading screens wait for the cells this close to the viewer; farther
+    // ones (big trees are drawn kilometres away) keep streaming in, nearest
+    // first, once play starts. <= 0: wait for everything in view.
+    float readyDistance = 300.0f;
 };
 
 struct FoliageStats {
@@ -215,7 +219,8 @@ public:
 
     // Synchronously loads everything visible from `viewer` (+ colliders).
     void preload(const glm::vec3& viewer);
-    // Fraction of the cells in view that are fully placed (streaming; loading screens).
+    // Fraction of the cells within settings.readyDistance (all in view if <= 0)
+    // that are fully placed (loading screens).
     float streamProgress() const;
 
     // The ground changed inside `area` (world x0, z0, x1, z1; e.g. terrain

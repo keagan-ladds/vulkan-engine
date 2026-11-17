@@ -866,7 +866,7 @@ void Terrain::updateNodes(bool preload)
     if (!m_lod) return;
     glm::vec3 eye = transform().position();
     if (Camera* cam = scene().mainCamera()) eye = cam->transform().position();
-    m_lod->update(eye, preload);
+    m_lod->update(eye, preload, engine().loading()); // behind a loading screen: no upload budget
 
     // The drawn nodes go to pooled MeshRenderers on a child object. Node
     // vertices are in world space, so the child keeps an identity transform.

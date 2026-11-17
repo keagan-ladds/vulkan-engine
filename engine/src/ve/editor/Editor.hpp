@@ -40,6 +40,9 @@ public:
     void beginFrame(float realDt); // shortcuts, editor camera, pick results
     void onGui();                  // panels, gizmo, debug shapes
     bool paused() const { return m_mode == Mode::Edit; }
+    // In Edit mode, or about to be (a game that starts in the editor): loading
+    // then shows the editor's progress bar instead of the game's loading screen.
+    bool editing() const { return m_mode == Mode::Edit || (m_hasPending && m_pendingMode == Mode::Edit); }
 
     Mode mode() const { return m_mode; }
     void setMode(Mode mode);
@@ -83,6 +86,7 @@ private:
     void updateCamera(float dt);
     void handleShortcuts();
     void drawMenuBar();
+    void drawLoading();
     void drawHierarchy();
     void drawHierarchyNode(GameObject& object);
     void drawInspector();

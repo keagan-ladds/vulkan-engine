@@ -19,7 +19,7 @@
 //   - Skirts: a short wall hangs down from every node edge and hides the
 //     small cracks between neighbours of different levels.
 //
-// Meshes are built on a worker thread (from the pure terrain generator, or the
+// Meshes are built on worker threads (from the pure terrain generator, or the
 // tile cache for the finest levels) and uploaded under a per-frame budget.
 // After a terrain edit, nodes keep their old mesh until the new one is ready.
 // =============================================================================
@@ -68,7 +68,7 @@ public:
                  const glm::vec4* changed = nullptr);
     // Per frame: choose nodes for `camera`, queue missing meshes, upload finished ones.
     // preload = build everything needed for this view first (synchronously).
-    void update(const glm::vec3& camera, bool preload);
+    void update(const glm::vec3& camera, bool preload, bool uploadAll = false); // uploadAll: no per-frame budget (loading screens)
 
     const std::vector<Drawn>& drawn() const { return m_drawn; }
     int levels() const { return m_levels; }
@@ -136,7 +136,7 @@ private:
     std::vector<Result> m_results;
     int m_busy = 0;
     bool m_quit = false;
-    std::thread m_worker;
+    std::vector<std::thread> m_workers;
 };
 
 } // namespace ve

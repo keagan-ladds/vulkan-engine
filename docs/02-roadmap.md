@@ -429,6 +429,8 @@ Ordered roughly by how much they'll bite while building a game.
   reprojection from depth, Catmull-Rom history, YCoCg variance clipping
 - [ ] Temporal reprojection for fog/clouds (fewer steps)
 - [ ] Multithreaded scene gathering / command recording
+- [x] Procedural fire (effects: `vfx::Fire` + `FirePass`; noise flames, coal bed, flicker for lights). Savanna: campfire and torches use it
+- [ ] Heat haze (screen-space distortion above fires) for close-ups / marketing shots
 
 ### F4 — Building & gameplay systems
 Engine provides mechanisms, the game (Savanna here) the rules and content.
@@ -442,7 +444,7 @@ Engine provides mechanisms, the game (Savanna here) the rules and content.
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)
 - [x] Scene serialization (JSON scene files, editor save / load); prefabs are E3
-- [x] Loading screens (engine): `Engine::beginLoading(loadingScene)` + load steps (main thread, one per frame) + load tasks (progress of work over frames); the game's loading scene (UI) is drawn while the world streams in editor-paused mode. Foliage fills its cells on a worker pool (cores − 1) instead of the blocking preload. Savanna: sunset title, progress bar, tips
+- [x] Loading screens (engine): `Engine::beginLoading(loadingScene)` + load steps (main thread, one per frame) + load tasks (progress of work over frames); the game's loading scene (UI) is drawn while the world streams in editor-paused mode. Foliage fills its cells on a worker pool (cores − 1) instead of the blocking preload. Savanna: sunset title, progress bar, tips. Loading waits for the area around the viewer (foliage `readyDistance`; terrain LOD on a worker pool, unbudgeted uploads): 2.4 s -> 0.9 s in Release. In the editor: no loading scene, a progress panel over the world as it fills in (also `openScene`)
 - [x] Save/load: `ve::save` (slots, capture / apply: moved and removed level objects, `ve::Saveable` hooks; Foliage overrides, Terrain edits and time of day built in). Savanna: F5 / F9 (reload behind the loading screen, then apply), player + regrowth Saveable, counters as game data; the autotest saves, changes things, loads and checks
 - [x] Gamepad input + rebinding (engine): SDL game controllers, axes with radial dead zones, triggers as actions, `startRebind`, bindings JSON, virtual pad for tests. Savanna: pad layout for the player, F10 controls window saved to `controls.json`
 - [x] CPU profiler zones (engine): `VE_PROFILE` scopes, nested, F1 "CPU zones" table + bench output

@@ -118,7 +118,7 @@ void Editor::setMode(Mode mode)
 {
     // Before the game has run a couple of frames its camera isn't placed yet:
     // apply the switch once it is (e.g. a game that starts in the editor).
-    if (m_frames < 3) {
+    if (m_frames < 3 || m_engine->loadStepsPending()) {
         m_pendingMode = mode;
         m_hasPending = true;
         return;
@@ -225,7 +225,9 @@ void Editor::requestPick(glm::ivec2 pixel)
 void Editor::beginFrame(float dt)
 {
     Input& in = m_engine->input();
-    if (m_frames < 3 && ++m_frames == 3 && m_hasPending) {
+    if (m_frames < 3) ++m_frames;
+    // A pending switch waits for the game's camera: a few frames, and the level's load steps.
+    if (m_hasPending && m_frames >= 3 && !m_engine->loadStepsPending()) {
         m_hasPending = false;
         setMode(m_pendingMode);
     }
@@ -309,6 +311,7 @@ void Editor::handleShortcuts()
 
 void Editor::onGui()
 {
+    if (m_engine->loadingInEditor()) drawLoading();
     if (m_mode == Mode::Off) return;
     if (m_mode == Mode::Play) {
         drawPlayToolbar();
@@ -487,14 +490,38 @@ bool Editor::saveScene(const std::filesystem::path& path)
 
 void Editor::openScene(const std::filesystem::path& path)
 {
-    SceneSerializer::clearPersistent(m_engine->scene());
-    SceneSerializer::load(m_engine->scene(), path);
-    m_scenePath = path.generic_string();
-    m_undo.clear();
-    m_redo.clear();
+    if (m_engine->loading()) return; // one at a time
+    // Through the engine's loading: terrain, foliage and navmeshes register
+    // load tasks, and the progress shows in the editor (drawLoading) while
+    // the world fills in.
     select(nullptr);
-    m_status = "Opened " + m_scenePath;
-    m_statusTime = 3.0f;
+    m_engine->beginLoading(nullptr);
+    m_engine->addLoadStep("Opening " + path.filename().generic_string(), [this, path] {
+        SceneSerializer::clearPersistent(m_engine->scene());
+        SceneSerializer::load(m_engine->scene(), path);
+        m_scenePath = path.generic_string();
+        m_undo.clear();
+        m_redo.clear();
+        m_status = "Opened " + m_scenePath;
+        m_statusTime = 3.0f;
+    });
+}
+
+void Editor::drawLoading()
+{
+    // A small panel at the bottom centre of the viewport: what's loading, how far.
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y - 48.0f}, ImGuiCond_Always, {0.5f, 1.0f});
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+    if (ImGui::Begin("##editorLoading", nullptr, flags)) {
+        static const char spin[] = "|/-\\";
+        const int frame = int(ImGui::GetTime() * 8.0) % 4;
+        ImGui::Text("%c  Loading: %s", spin[frame], m_engine->loadStatus().c_str());
+        ImGui::ProgressBar(m_engine->loadProgress(), {320.0f, 0.0f});
+    }
+    ImGui::End();
 }
 
 void Editor::newScene()
@@ -659,7 +686,9 @@ void Editor::drawMenuBar()
 
     // Toolbar.
     ImGui::Separator();
+    ImGui::BeginDisabled(m_engine->loading()); // not before the world is ready
     if (ImGui::Button("Play")) setMode(Mode::Play);
+    ImGui::EndDisabled();
     ImGui::Separator();
     auto modeButton = [&](const char* label, GizmoMode mode) {
         const bool on = m_gizmoOptions.mode == mode;

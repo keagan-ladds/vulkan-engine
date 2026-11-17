@@ -111,11 +111,18 @@ public:
     float loadProgress() const;                        // 0..1 over steps and tasks
     const std::string& loadStatus() const { return m_loadStatus; } // what's happening now
     Scene* loadingScene() { return m_loadingScene.get(); }
+    bool loadStepsPending() const { return !m_loadSteps.empty(); }
+    // Loading while the editor is in Edit mode: no loading scene is shown, the
+    // editor keeps running (world paused, drawn as it streams in) and shows
+    // the progress itself; loading ends as soon as steps and tasks are done.
+    bool loadingInEditor() const;
 
 private:
     void pollEvents();
     void tickFrame();
     void tickLoading(); // a loading-screen frame
+    void runLoadStep();
+    bool pollLoadTasks(); // true when every step ran and every task is done
     void endLoading();
     void benchFrame(float cpuMs);
 
@@ -149,6 +156,7 @@ private:
     size_t m_loadStepsTotal = 0, m_loadStepsDone = 0;
     float m_loadMinSeconds = 0.0f, m_loadElapsed = 0.0f;
     std::string m_loadStatus;
+    glm::vec4 m_loadClearColor{0.0f, 0.0f, 0.0f, 1.0f};
     bool m_running = false;
     double m_accumulator = 0.0;
     float m_fixedFrameDt = 0.0f; // VE_FIXED_DT (tests): fixed time per frame

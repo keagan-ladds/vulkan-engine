@@ -100,6 +100,21 @@ when every step ran and every task reports 1 (and `minSeconds` passed); the
 loading scene is destroyed and the next frame is the world's.
 `VE_CAPTURE_FRAME` / benchmarks count world frames only.
 
+What a loading screen waits for is "ready to play here", not the whole
+world: foliage counts only the cells within `FoliageSettings::readyDistance`
+(300 m) of the viewer (big trees drawn kilometres away keep streaming in,
+nearest first, after play starts), and the terrain's first LOD view is
+built on a small worker pool with no per-frame upload budget while loading
+(Savanna: about 0.9 s to play in Release, was 2.4 s).
+
+**In the editor** (Edit mode, or a game started in it): `beginLoading`
+shows no loading scene. Frames stay normal editor frames (the world paused,
+drawn as it fills in), one load step runs per frame, and the editor draws a
+progress panel from `loadStatus()` / `loadProgress()`; loading ends as soon
+as steps and tasks are done, and Play waits until then. `Editor::openScene`
+goes through the same path, so opening a large scene shows its terrain,
+vegetation and navmesh progress.
+
 ## 4. Scene model (Unity-style)
 
 - **`GameObject`** has a name, a `Transform` (position / rotation quat / scale,
@@ -274,6 +289,7 @@ Default pass list:
 | AfterOpaque (0) | `ScreenSpaceGIPass` *(opt-in)*: half-res bounce + AO → `scene * ao + bounce` | effects |
 | AfterOpaque (10) | `ScreenSpaceReflectionsPass` *(opt-in)*: half-res trace → premultiplied blend | effects |
 | Transparent (0) | `TransparentPass` (sorted back-to-front; water) | engine |
+| Transparent (9) | `FirePass` | effects |
 | Transparent (10) | `ParticlePass` | effects |
 | Transparent (50) | `VolumetricFogPass` (half-res raymarch → upsample+blend), placed after transparents so water/particles are fogged | effects |
 | PostProcess (-10) | `DepthOfFieldPass` *(opt-in)*: half-res prep → gather → blend by CoC | effects |
@@ -737,6 +753,16 @@ Optional add-ons built only on public engine APIs:
     background taps are clamped to the centre's CoC; full-res composite with
     alpha = CoC. Cost at 1600×900 on Iris Xe: SSGI about 1.3 ms, SSR about
     0.3 ms, DOF about 1.2 ms.
+- `Fire` component and `FirePass`: procedural flames, no textures and no
+  simulation. Each fire is 1–8 vertical sheets turned around Y towards the
+  camera (each a little off-axis and offset, so they read as one volume),
+  bent downwind at the tips, plus a horizontal coal bed. The fragment shader
+  rises domain-warped value noise through a teardrop shape, tears the top
+  into tongues and colours the "heat" with a black-body-like ramp. Output is
+  additive HDR with soft depth fades, and bloom makes the glow. The
+  component's `flicker()` / `lightJitter()` drive a point light so the glow
+  and shadows follow the flames. Cost: about 8 noise lookups per pixel over a
+  few small quads.
 - `ParticleEmitter` component (CPU simulation) and `ParticlePass`
   (instanced camera-facing or velocity-stretched quads, alpha/additive).
   - Streaks stretch along the actual motion, wind drift included, so rain
@@ -776,7 +802,7 @@ Optional add-ons built only on public engine APIs:
 | `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading): acacia, baobab, fever tree, bushes, rocks; jungle trees, palms, undergrowth; quiver trees and dry bushes for the desert. LOD chains + impostors, registered in `ve::MeshLibrary` for the scene's `FoliageType` layers |
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
-| `Props.*` | Campfire/torches (point shadows, particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
+| `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 

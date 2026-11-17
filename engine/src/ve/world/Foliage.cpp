@@ -358,9 +358,14 @@ void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<
 float FoliageSystem::streamProgress() const
 {
     if (m_scanViewer.x > 1e29f) return 0.0f; // not scanned yet
-    size_t done = 0;
-    for (const auto& [key, cell] : m_cells) done += cell.state == CellState::Loaded ? 1 : 0;
-    return m_cells.empty() ? 1.0f : float(done) / float(m_cells.size());
+    size_t done = 0, total = 0;
+    const float ready = m_settings.readyDistance;
+    for (const auto& [key, cell] : m_cells) {
+        if (ready > 0.0f && cellDistance(cell.cx, cell.cz, m_scanViewer) > ready) continue;
+        ++total;
+        done += cell.state == CellState::Loaded ? 1 : 0;
+    }
+    return total == 0 ? 1.0f : float(done) / float(total);
 }
 
 void FoliageSystem::startWorker()

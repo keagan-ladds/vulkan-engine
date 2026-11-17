@@ -36,6 +36,7 @@
 #include <ve/render/Material.hpp>
 #include <ve/scene/Reflection.hpp>
 #include <vfx/PhotoMode.hpp>
+#include <vfx/Fire.hpp>
 #include <vfx/Particles.hpp>
 #include <vfx/DayNight.hpp>
 #include <vfx/Water.hpp>
@@ -76,26 +77,6 @@ float flicker(float t, float seed)
            0.1f * (ve::noise::valueNoise(glm::vec2(t * 6.0f, seed)) - 0.5f);
 }
 
-vfx::ParticleSettings flameSettings(float scale)
-{
-    vfx::ParticleSettings s;
-    s.rate = 70.0f * scale;
-    s.maxParticles = 300;
-    s.lifetimeMin = 0.35f;
-    s.lifetimeMax = 0.8f;
-    s.spawnRadius = 0.28f * scale;
-    s.velocity = {0.0f, 1.6f * scale, 0.0f};
-    s.velocityRandom = {0.25f, 0.4f, 0.25f};
-    s.sizeStart = 0.35f * scale;
-    s.sizeEnd = 0.08f * scale;
-    s.colorStart = {5.0f, 2.2f, 0.6f, 0.9f};
-    s.colorMid = {3.2f, 0.9f, 0.15f, 0.7f};
-    s.colorEnd = {0.6f, 0.08f, 0.0f, 0.0f};
-    s.blend = ve::BlendMode::Additive;
-    s.rotationSpeed = 2.0f;
-    s.softness = 0.2f;
-    return s;
-}
 
 } // namespace
 
@@ -172,11 +153,16 @@ void Campfire::start()
     m_light->castShadows = true;
     m_light->shadowBias = 0.004f;
 
-    // Flames, smoke and sparks.
+    // Flames (procedural, vfx::Fire) over a bed of glowing coals; smoke and sparks are particles.
     auto& flames = s.spawn("Flames");
     flames.setParent(this, false);
-    flames.transform().setLocalPosition({0.0f, 0.2f, 0.0f});
-    flames.addComponent<vfx::ParticleEmitter>().settings = flameSettings(1.0f);
+    flames.transform().setLocalPosition({0.0f, 0.1f, 0.0f});
+    m_fire = &flames.addComponent<vfx::Fire>();
+    m_fire->height = 1.4f;
+    m_fire->radius = 0.5f;
+    m_fire->intensity = 4.0f;
+    m_fire->layers = 4;
+    m_fire->seed = 3;
 
     auto& smokeObj = s.spawn("Smoke");
     smokeObj.setParent(this, false);
@@ -231,7 +217,10 @@ void Campfire::start()
 void Campfire::update(float dt)
 {
     m_t += dt;
-    if (m_light) m_light->intensity = baseIntensity * flicker(m_t, 1.3f);
+    if (!m_light) return;
+    // The glow follows the flames: brightness and a small wobble (shadows dance).
+    m_light->intensity = baseIntensity * (m_fire ? m_fire->flicker() : flicker(m_t, 1.3f));
+    if (m_fire) m_light->transform().setLocalPosition(glm::vec3(0.0f, 0.9f, 0.0f) + m_fire->lightJitter());
 }
 
 // -----------------------------------------------------------------------------
@@ -250,11 +239,21 @@ void Torch::start()
 
     auto& flame = scene().spawn("TorchFlame");
     flame.setParent(this, false);
-    flame.transform().setLocalPosition({0.0f, 2.1f, 0.0f});
-    flame.addComponent<vfx::ParticleEmitter>().settings = flameSettings(0.45f);
+    flame.transform().setLocalPosition({0.0f, 1.97f, 0.0f});
+    m_fire = &flame.addComponent<vfx::Fire>();
+    m_fire->height = 0.5f;
+    m_fire->radius = 0.12f;
+    m_fire->intensity = 3.5f;
+    m_fire->layers = 3;
+    m_fire->coals = 0.0f;
+    m_fire->speed = 1.3f;
+    m_fire->seed = uint32_t(reinterpret_cast<uintptr_t>(this) % 997u);
+    auto& glow = scene().spawn("TorchLight");
+    glow.setParent(&flame, false);
+    glow.transform().setLocalPosition({0.0f, 0.2f, 0.0f});
     // A thin solid pole (static capsule standing on the ground).
     addComponent<ve::Rigidbody>(ve::Collider::capsule(0.95f, 0.07f).offset({0.0f, 1.0f, 0.0f}), ve::BodyType::Static);
-    m_light = &flame.addComponent<ve::PointLight>();
+    m_light = &glow.addComponent<ve::PointLight>();
     m_light->color = {1.0f, 0.55f, 0.22f};
     m_light->range = 10.0f;
     m_light->castShadows = true;
@@ -265,7 +264,9 @@ void Torch::start()
 void Torch::update(float dt)
 {
     m_t += dt;
-    if (m_light) m_light->intensity = intensity * flicker(m_t, 5.7f);
+    if (!m_light) return;
+    m_light->intensity = intensity * (m_fire ? m_fire->flicker() : flicker(m_t, 5.7f));
+    if (m_fire) m_light->transform().setLocalPosition(glm::vec3(0.0f, 0.2f, 0.0f) + m_fire->lightJitter());
 }
 
 // -----------------------------------------------------------------------------

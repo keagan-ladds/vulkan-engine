@@ -11,7 +11,9 @@ namespace ve {
 
 TerrainLod::TerrainLod(Renderer& renderer) : m_renderer(&renderer)
 {
-    m_worker = std::thread([this] { workerLoop(); });
+    // Nodes build independently: a few workers (the first view needs a few hundred).
+    const unsigned n = std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u);
+    for (unsigned i = 0; i < n; ++i) m_workers.emplace_back([this] { workerLoop(); });
 }
 
 TerrainLod::~TerrainLod()
@@ -22,7 +24,7 @@ TerrainLod::~TerrainLod()
         m_jobs.clear();
     }
     m_wake.notify_all();
-    m_worker.join();
+    for (std::thread& t : m_workers) t.join();
 }
 
 void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings,
@@ -114,7 +116,7 @@ void TerrainLod::select(const Key& k, const glm::vec3& camera, std::vector<Key>&
     if (n.version != m_version) request(k, dist / size); // edited terrain: rebuild, keep showing the old one
 }
 
-void TerrainLod::update(const glm::vec3& camera, bool preload)
+void TerrainLod::update(const glm::vec3& camera, bool preload, bool uploadAll)
 {
     if (!m_data) return;
     ++m_frame;
@@ -125,7 +127,7 @@ void TerrainLod::update(const glm::vec3& camera, bool preload)
         std::vector<Result> results;
         {
             std::lock_guard lock(m_mutex);
-            const size_t n = preload ? m_results.size() : std::min<size_t>(m_results.size(), m_settings.uploadsPerFrame);
+            const size_t n = preload || uploadAll ? m_results.size() : std::min<size_t>(m_results.size(), m_settings.uploadsPerFrame);
             results.assign(std::make_move_iterator(m_results.begin()), std::make_move_iterator(m_results.begin() + ptrdiff_t(n)));
             m_results.erase(m_results.begin(), m_results.begin() + ptrdiff_t(n));
         }

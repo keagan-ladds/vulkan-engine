@@ -249,7 +249,8 @@ void Engine::beginLoading(std::unique_ptr<Scene> loadingScene, float minSeconds,
     m_loadTasks.clear();
     m_loadStepsTotal = m_loadStepsDone = 0;
     m_loadStatus = "Loading";
-    m_renderer->setLoadingFrames(true, clearColor);
+    m_loadClearColor = clearColor;
+    m_renderer->setLoadingFrames(!loadingInEditor(), clearColor);
 }
 
 void Engine::addLoadStep(std::string name, std::function<void()> step)
@@ -288,35 +289,54 @@ void Engine::endLoading()
     log::info("Loading done in {:.1f} s", m_loadElapsed);
 }
 
-void Engine::tickLoading()
+void Engine::runLoadStep()
 {
-    const auto frameStart = std::chrono::steady_clock::now();
-    m_ui->beginFrame();
-    m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
-    m_loadElapsed += m_time.unscaledDeltaTime;
-
     // One main-thread step per frame (the screen is redrawn in between).
-    if (!m_loadSteps.empty()) {
-        LoadStep step = std::move(m_loadSteps.front());
-        m_loadSteps.erase(m_loadSteps.begin());
-        m_loadStatus = step.name;
-        step.run();
-        ++m_loadStepsDone;
-    }
-    // The world streams (runInEditor objects only), gameplay waits.
-    m_scene->startPending();
-    m_scene->update(m_time.deltaTime, true);
-    m_scene->lateUpdate(m_time.deltaTime, true);
+    if (m_loadSteps.empty()) return;
+    LoadStep step = std::move(m_loadSteps.front());
+    m_loadSteps.erase(m_loadSteps.begin());
+    m_loadStatus = step.name;
+    const auto t0 = std::chrono::steady_clock::now();
+    step.run();
+    log::info("Loading: '{}' took {:.2f} s", step.name, std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count());
+    ++m_loadStepsDone;
+}
 
+bool Engine::pollLoadTasks()
+{
     bool tasksDone = true;
     for (LoadTask& t : m_loadTasks) {
+        const float before = t.last;
         t.last = std::clamp(t.progress ? t.progress() : 1.0f, 0.0f, 1.0f);
+        if (t.last >= 1.0f && before < 1.0f) log::info("Loading: '{}' done at {:.1f} s", t.name, m_loadElapsed);
         if (t.last < 1.0f) {
             if (tasksDone && m_loadSteps.empty()) m_loadStatus = t.name;
             tasksDone = false;
         }
     }
     if (!m_loadSteps.empty()) m_loadStatus = m_loadSteps.front().name;
+    return tasksDone && m_loadSteps.empty();
+}
+
+bool Engine::loadingInEditor() const
+{
+    return m_loadingScene && m_editor && m_editor->editing();
+}
+
+void Engine::tickLoading()
+{
+    const auto frameStart = std::chrono::steady_clock::now();
+    m_renderer->setLoadingFrames(true, m_loadClearColor);
+    m_ui->beginFrame();
+    m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
+    m_loadElapsed += m_time.unscaledDeltaTime;
+
+    runLoadStep();
+    // The world streams (runInEditor objects only), gameplay waits.
+    m_scene->startPending();
+    m_scene->update(m_time.deltaTime, true);
+    m_scene->lateUpdate(m_time.deltaTime, true);
+    const bool done = pollLoadTasks();
 
     m_loadingScene->startPending();
     m_loadingScene->update(m_time.unscaledDeltaTime);
@@ -327,7 +347,7 @@ void Engine::tickLoading()
     m_loadingScene->flushDestroyed();
     m_scene->flushDestroyed();
 
-    if (m_loadSteps.empty() && tasksDone && m_loadElapsed >= m_loadMinSeconds) {
+    if (done && m_loadElapsed >= m_loadMinSeconds) {
         endLoading();
         return;
     }
@@ -339,16 +359,24 @@ void Engine::tickLoading()
 
 void Engine::tickFrame()
 {
-    if (m_loadingScene) {
+    // Loading while the editor is open: no game loading screen. The editor
+    // stays usable and shows progress while the world fills in around it.
+    const bool editorLoading = loadingInEditor();
+    if (m_loadingScene && !editorLoading) {
         tickLoading();
         return;
+    }
+    if (editorLoading) {
+        m_renderer->setLoadingFrames(false);
+        m_loadElapsed += m_time.unscaledDeltaTime;
+        runLoadStep();
     }
     m_ui->beginFrame();
     m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
 
     if (m_editor) m_editor->beginFrame(m_time.unscaledDeltaTime);
     // Editor "Edit" mode: the game is paused; only runInEditor objects update.
-    const bool paused = (m_editor && m_editor->paused()) || gamePaused;
+    const bool paused = (m_editor && m_editor->paused()) || gamePaused || editorLoading;
 
     m_scene->startPending();
 
@@ -380,6 +408,7 @@ void Engine::tickFrame()
         VE_PROFILE("Late update");
         m_scene->lateUpdate(m_time.deltaTime, paused);
     }
+    if (editorLoading && pollLoadTasks()) endLoading(); // (no minimum time: there's no screen to read)
     {
         VE_PROFILE("GUI");
         m_scene->onGui();

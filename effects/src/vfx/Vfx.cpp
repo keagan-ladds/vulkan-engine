@@ -1,3 +1,4 @@
+#include "vfx/Fire.hpp"
 #include "vfx/Vfx.hpp"
 #include <ve/scene/Reflection.hpp>
 #include "vfx/Weather.hpp"
@@ -20,6 +21,17 @@ void registerTypes()
     done = true;
     ve::TypeRegistry& r = ve::TypeRegistry::get();
 
+    r.add<Fire>("Fire", [](ve::TypeBuilder<Fire>& t) {
+        t.category("Effects");
+        t.field("height", &Fire::height).range(0.01f, 20.0f).speed(0.01f);
+        t.field("radius", &Fire::radius).range(0.01f, 10.0f).speed(0.01f);
+        t.field("intensity", &Fire::intensity).range(0.0f, 100.0f).speed(0.05f);
+        t.field("temperature", &Fire::temperature).range(0.3f, 2.0f).speed(0.01f);
+        t.field("speed", &Fire::speed).range(0.0f, 5.0f).speed(0.01f);
+        t.field("layers", &Fire::layers).range(1, 8);
+        t.field("coals", &Fire::coals).range(0.0f, 4.0f).speed(0.01f);
+        t.field("windInfluence", &Fire::windInfluence).range(0.0f, 4.0f).speed(0.01f);
+    });
     r.add<Weather>("Weather", [](ve::TypeBuilder<Weather>& t) {
         t.category("Environment");
         t.enumField("startWeather", &Weather::startWeather, {"Clear", "Hazy", "Overcast", "Rain", "Thunderstorm"});
@@ -66,6 +78,7 @@ Effects addDefaultEffects(ve::Renderer& renderer)
     Effects fx;
     fx.atmosphere = &g.addPass<AtmospherePass>();
     fx.fog = &g.addPass<VolumetricFogPass>();
+    fx.fire = &g.addPass<FirePass>();
     fx.particles = &g.addPass<ParticlePass>();
     fx.bloom = &g.addPass<BloomPass>();
     renderer.setGlobalParam(SlotWind, glm::vec4(0.8f, 0.6f, 3.0f, 1.0f));

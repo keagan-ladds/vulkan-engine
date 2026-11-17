@@ -295,6 +295,28 @@ editor-paused mode meanwhile, so only `runInEditor` objects run. The
 backbuffer is sRGB: convert display colours to linear for ImGui (see the
 sandbox's `LoadingScreen.cpp`).
 
+Wait for what the player needs to start, not the whole world: a task's
+progress should reach 1 when the area around the viewer is ready and keep
+streaming the rest afterwards (foliage: `FoliageSettings::readyDistance`).
+When the editor is open the same calls show no loading scene: the editor
+draws a progress panel over the world as it fills in. So a game that can
+start in the editor should ask for Edit mode before `beginLoading`.
+
+### Fire (campfires, torches)
+
+```cpp
+auto& fire = flames.addComponent<vfx::Fire>();   // at the fuel, flames go up
+fire.height = 1.4f; fire.radius = 0.5f; fire.intensity = 4.0f;
+fire.coals = 0.0f;                               // torches / candles: no ember bed
+// update(): the light follows the flames
+light->intensity = base * fire.flicker();
+light->transform().setLocalPosition(lightPos + fire.lightJitter());
+```
+
+Smoke and sparks are `ParticleEmitter`s on top (see the sandbox's
+`Campfire`). `temperature` < 1 gives a lazier, redder fire; more `layers`
+gives a fuller one. Everything is editable in the editor's inspector.
+
 ### Animated characters (skinned glTF)
 
 ```cpp

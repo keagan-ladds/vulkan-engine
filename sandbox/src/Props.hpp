@@ -22,6 +22,7 @@ class PointLight;
 class AudioClip;
 } // namespace ve
 namespace vfx {
+class Fire;
 class ParticleEmitter;
 class Weather;
 class DayNightCycle;
@@ -72,6 +73,7 @@ public:
 private:
     std::shared_ptr<ve::Material> m_material;
     ve::PointLight* m_light = nullptr;
+    vfx::Fire* m_fire = nullptr;
     float m_t = 0.0f;
 };
 
@@ -86,6 +88,7 @@ public:
 private:
     std::shared_ptr<ve::Material> m_material;
     ve::PointLight* m_light = nullptr;
+    vfx::Fire* m_fire = nullptr;
     float m_t = 0.0f;
 };
 

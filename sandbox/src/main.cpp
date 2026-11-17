@@ -375,12 +375,14 @@ int main()
         ve::Engine engine(config);
         // A loading screen (its own small scene, LoadingScreen.hpp) until the
         // world is ready; building it runs as load steps between its frames.
+        // SAVANNA_EDITOR=1: start in the editor (same as pressing F2). Asked for
+        // before loading, so the editor shows the progress instead of the
+        // game's loading screen (the switch happens once the level is built).
+        if (std::getenv("SAVANNA_EDITOR") && engine.editor()) engine.editor()->setMode(ve::Editor::Mode::Edit);
         engine.beginLoading(savanna::makeLoadingScene(), 0.5f);
         engine.addLoadStep("Preparing the sky", [&] { buildEffects(engine); });
         engine.addLoadStep("Loading the savanna", [&] { buildLevel(engine); });
         engine.addLoadStep("Waking up the camp", [&] {
-            // SAVANNA_EDITOR=1: start in the editor (same as pressing F2).
-            if (std::getenv("SAVANNA_EDITOR") && engine.editor()) engine.editor()->setMode(ve::Editor::Mode::Edit);
             if (std::getenv("SAVANNA_EDITORTEST")) engine.scene().spawn<savanna::EditorTest>();
         });
         engine.run();
