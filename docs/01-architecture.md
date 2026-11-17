@@ -275,11 +275,12 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
    `settings.maxShadowedDirectionalLights`, each with `settings.cascadeCount`
    cascades) and point shadow slots (closest `settings.maxShadowedPointLights`
    within range). Compute cascade splits (practical split scheme) and
-   texel-snapped, sphere-fitted orthographic matrices, seen from the light
-   direction snapped to `settings.shadowDirectionStep` degrees (0.2): with a
-   day/night cycle the sun moves every frame, and re-rasterising every shadow
-   edge from a new angle each frame made the edges crawl (2–4 % of the ground's
-   pixels changed per frame with a still camera; ~0.02 % snapped). Lighting
+   texel-snapped, sphere-fitted orthographic matrices. Optionally
+   (`settings.shadowDirectionStep` > 0, off by default) the light direction
+   for shadows is snapped to steps of that many degrees: a moving sun
+   re-rasterises every shadow edge from a new angle each frame, so the edges
+   crawl (2–4 % of the ground's pixels change per frame with a still camera,
+   TAA off; ~0.02 % snapped), but the steps themselves are visible. Lighting
    uses the exact direction. Compute the six cube-face matrices.
 4. `pass->prepare()` for all enabled passes.
 5. Upload FrameGlobals, LightBuffer and MaterialBuffer (host-visible, per frame in flight).

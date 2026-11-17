@@ -63,10 +63,11 @@ struct RendererSettings {
     // sun beyond each cascade (distant mountains at sunset within it still
     // shadow the scene). Larger = longer sunset shadows, more overdraw.
     float shadowCasterReach = 600.0f;
-    // Directional shadows are rendered from the light direction snapped to
-    // steps of this many degrees, so a moving sun doesn't make shadow edges
-    // crawl every frame (they move in small steps instead). 0 = continuous.
-    float shadowDirectionStep = 0.2f;
+    // > 0: directional shadows are rendered from the light direction snapped
+    // to steps of this many degrees, so a moving sun doesn't make shadow edges
+    // crawl every frame; they jump in visible steps instead. 0 = continuous
+    // (TAA hides most of the crawl).
+    float shadowDirectionStep = 0.0f;
     // --- Point light shadows: cube maps ---
     uint32_t maxShadowedPointLights = 4;
     uint32_t pointShadowResolution = 512;
