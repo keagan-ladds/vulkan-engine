@@ -430,7 +430,7 @@ Ordered roughly by how much they'll bite while building a game.
 - [ ] Temporal reprojection for fog/clouds (fewer steps)
 - [ ] Multithreaded scene gathering / command recording
 - [x] Procedural fire (effects: `vfx::Fire` + `FirePass`; noise flames, coal bed, flicker for lights). Savanna: campfire and torches use it
-- [ ] Heat haze (screen-space distortion above fires) for close-ups / marketing shots
+- [x] Heat haze above fires (`Fire::haze`: copy of the screen around the fires, noise offsets, depth-aware)
 
 ### F4 — Building & gameplay systems
 Engine provides mechanisms, the game (Savanna here) the rules and content.

@@ -27,6 +27,12 @@ float noise1(float x)
     return hash1(i) * (1.0f - u) + hash1(i + 1.0f) * u;
 }
 
+struct HazePush {
+    uint32_t copy;       // bindless index of the screen copy
+    uint32_t pad[3];
+    glm::vec4 rect;      // the copied uv rectangle (outside it: no offset)
+};
+
 } // namespace
 
 // -----------------------------------------------------------------------------
@@ -63,6 +69,7 @@ FirePass::~FirePass()
 {
     ve::Renderer& r = renderer();
     r.destroyPipeline(m_pipeline);
+    r.destroyPipeline(m_hazePipeline);
     ve::Device* device = &r.device();
     for (ve::Buffer b : m_instances) device->deferDestroy([device, b]() mutable { device->destroyBuffer(b); });
 }
@@ -80,29 +87,40 @@ void FirePass::setup(ve::RenderGraph&)
         {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Instance, lean)},
         {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Instance, anim)},
     };
-    VkShaderModule vs = r.loadShader("fire.vert");
-    VkShaderModule fs = r.loadShader("fire.frag");
-    m_pipeline = ve::PipelineBuilder()
-                     .shaders(vs, fs)
-                     .vertexInput({&binding, 1}, attrs)
-                     .colorAttachment(ve::Renderer::kSceneColorFormat, ve::BlendMode::Additive)
-                     .depthAttachment(ve::Renderer::kDepthFormat)
-                     .depthTest(true, false, VK_COMPARE_OP_GREATER_OR_EQUAL)
-                     .layout(r.pipelineLayout())
-                     .build(r.device().handle());
-    vkDestroyShaderModule(r.device().handle(), vs, nullptr);
-    vkDestroyShaderModule(r.device().handle(), fs, nullptr);
+    auto build = [&](const char* frag, ve::BlendMode blend) {
+        VkShaderModule vs = r.loadShader("fire.vert");
+        VkShaderModule fs = r.loadShader(frag);
+        VkPipeline p = ve::PipelineBuilder()
+                           .shaders(vs, fs)
+                           .vertexInput({&binding, 1}, attrs)
+                           .colorAttachment(ve::Renderer::kSceneColorFormat, blend)
+                           .depthAttachment(ve::Renderer::kDepthFormat)
+                           .depthTest(true, false, VK_COMPARE_OP_GREATER_OR_EQUAL)
+                           .layout(r.pipelineLayout())
+                           .build(r.device().handle());
+        vkDestroyShaderModule(r.device().handle(), vs, nullptr);
+        vkDestroyShaderModule(r.device().handle(), fs, nullptr);
+        return p;
+    };
+    m_pipeline = build("fire.frag", ve::BlendMode::Additive);
+    m_hazePipeline = build("fire_haze.frag", ve::BlendMode::AlphaBlend);
+    m_hazeCopy = graph().createTexture("FireHazeCopy", {.format = ve::Renderer::kSceneColorFormat,
+                                                        .extraUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT});
 }
 
 void FirePass::prepare(ve::FrameData& frame)
 {
     m_count = 0;
+    m_hazeCount = 0;
     m_fires = 0;
     m_slot = static_cast<uint32_t>(renderer().frameNumber() % 2);
     if (!frame.scene) return;
     auto* out = static_cast<Instance*>(m_instances[m_slot].mapped);
     const glm::vec4 wind = renderer().globalParam(SlotWind);
     const float time = frame.time;
+    std::vector<Instance> haze;
+    glm::vec2 lo(1e30f), hi(-1e30f);
+    bool fullScreen = false;
     frame.scene->forEach<Fire>([&](Fire& f) {
         if (!f.isActive() || f.height <= 0.0f) return;
         const int sheets = std::clamp(f.layers, 1, 8);
@@ -122,11 +140,36 @@ void FirePass::prepare(ve::FrameData& frame)
             out[m_count++] = {glm::vec4(base, h), glm::vec4(rad * (1.0f - 0.08f * float(i & 1)), f.intensity, seed + float(i) * 3.71f, 0.0f),
                               glm::vec4(lean.x, lean.y, f.temperature, angle), glm::vec4(t, float(i), float(sheets), 0.0f)};
         }
+        if (f.haze > 0.0f) {
+            haze.push_back({glm::vec4(base, h), glm::vec4(rad, f.haze, seed, 2.0f), glm::vec4(lean.x, lean.y, 0.0f, 0.0f),
+                            glm::vec4(t, 0.0f, 1.0f, 0.0f)});
+            // The screen area it covers (its box, projected) is what gets copied.
+            const float w = rad * 2.2f + glm::length(lean) * 1.5f;
+            for (int c = 0; c < 8; ++c) {
+                const glm::vec3 p = base + glm::vec3((c & 1) ? w : -w, (c & 2) ? h * 3.0f : h * 0.3f, (c & 4) ? w : -w);
+                const glm::vec4 clip = frame.camera.viewProj * glm::vec4(p, 1.0f);
+                if (clip.w <= 0.05f) {
+                    fullScreen = true; // a corner behind the camera: copy everything
+                    continue;
+                }
+                const glm::vec2 uv = glm::vec2(clip) / clip.w * 0.5f + 0.5f;
+                lo = glm::min(lo, uv);
+                hi = glm::max(hi, uv);
+            }
+        }
         if (f.coals > 0.0f)
             out[m_count++] = {glm::vec4(base, h), glm::vec4(rad * 1.25f, f.intensity * f.coals, seed, 1.0f),
                               glm::vec4(0.0f, 0.0f, f.temperature, 0.0f), glm::vec4(t, 0.0f, 1.0f, 0.0f)};
         ++m_fires;
     });
+    for (const Instance& i : haze) {
+        if (m_count + m_hazeCount >= kMaxInstances) break;
+        out[m_count + m_hazeCount++] = i;
+    }
+    // Margin for the haze's offsets, clamped to the screen.
+    m_hazeRect = fullScreen ? glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)
+                            : glm::clamp(glm::vec4(lo - 0.03f, hi + 0.03f), glm::vec4(0.0f), glm::vec4(1.0f));
+    if (m_hazeRect.z <= m_hazeRect.x || m_hazeRect.w <= m_hazeRect.y) m_hazeCount = 0; // off screen
 }
 
 void FirePass::declare(ve::PassBuilder& b)
@@ -135,27 +178,59 @@ void FirePass::declare(ve::PassBuilder& b)
     b.use(r.sceneColor(), ve::Access::ColorAttachment);
     b.use(r.sceneDepth(), ve::Access::DepthRead);
     b.use(r.sceneDepth(), ve::Access::Sampled);
+    b.use(m_hazeCopy, ve::Access::Sampled);
 }
 
 void FirePass::execute(ve::RenderContext& ctx)
 {
-    if (m_count == 0) return;
+    if (m_count == 0 && m_hazeCount == 0) return;
     ve::Renderer& r = renderer();
+    ve::RenderGraph& g = graph();
     ve::DepthTarget depth;
     depth.texture = r.sceneDepth();
     depth.readOnly = true;
-    ctx.beginRendering({{r.sceneColor()}}, depth);
     VkBuffer vb = m_instances[m_slot].handle;
     VkDeviceSize offset = 0;
+    if (m_count > 0) {
+        ctx.beginRendering({{r.sceneColor()}}, depth);
+        vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
+        ctx.bindPipeline(m_pipeline);
+        vkCmdDraw(ctx.cmd, 6, m_count, 0, 0);
+        ctx.endRendering();
+    }
+    if (m_hazeCount == 0) return;
+
+    // Heat haze: copy the screen around the fires (flames included), then
+    // draw the haze sheets sampling that copy with rising offsets.
+    const VkExtent3D ext = g.get(r.sceneColor()).image.extent;
+    const int32_t x0 = int32_t(m_hazeRect.x * float(ext.width)), y0 = int32_t(m_hazeRect.y * float(ext.height));
+    const int32_t x1 = int32_t(std::ceil(m_hazeRect.z * float(ext.width))), y1 = int32_t(std::ceil(m_hazeRect.w * float(ext.height)));
+    const ve::Image& copy = g.get(m_hazeCopy).image;
+    const int32_t cx1 = std::min<int32_t>(x1, int32_t(copy.extent.width)), cy1 = std::min<int32_t>(y1, int32_t(copy.extent.height));
+    if (cx1 <= x0 || cy1 <= y0) return;
+    g.transition(ctx.cmd, r.sceneColor(), ve::Access::TransferSrc);
+    g.transition(ctx.cmd, m_hazeCopy, ve::Access::TransferDst);
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.srcOffset = region.dstOffset = {x0, y0, 0};
+    region.extent = {uint32_t(cx1 - x0), uint32_t(cy1 - y0), 1};
+    vkCmdCopyImage(ctx.cmd, g.get(r.sceneColor()).image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, copy.handle,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    g.transition(ctx.cmd, m_hazeCopy, ve::Access::Sampled);
+    g.transition(ctx.cmd, r.sceneColor(), ve::Access::ColorAttachment);
+
+    ctx.beginRendering({{r.sceneColor()}}, depth);
     vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-    ctx.bindPipeline(m_pipeline);
-    vkCmdDraw(ctx.cmd, 6, m_count, 0, 0);
+    ctx.bindPipeline(m_hazePipeline);
+    ctx.push(HazePush{g.sampled(m_hazeCopy), {0, 0, 0}, m_hazeRect});
+    vkCmdDraw(ctx.cmd, 6, m_hazeCount, 0, m_count);
     ctx.endRendering();
 }
 
 void FirePass::onGui()
 {
-    ImGui::Text("Fires: %u (%u quads)", m_fires, m_count);
+    ImGui::Text("Fires: %u (%u quads, %u haze)", m_fires, m_count, m_hazeCount);
 }
 
 } // namespace vfx

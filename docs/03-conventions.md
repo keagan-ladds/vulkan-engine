@@ -315,7 +315,9 @@ light->transform().setLocalPosition(lightPos + fire.lightJitter());
 
 Smoke and sparks are `ParticleEmitter`s on top (see the sandbox's
 `Campfire`). `temperature` < 1 gives a lazier, redder fire; more `layers`
-gives a fuller one. Everything is editable in the editor's inspector.
+gives a fuller one. `haze` (0 = off) sets the heat shimmer above the flames;
+the sandbox uses 1 for the campfire and 0.6 for torches. Everything is
+editable in the editor's inspector.
 
 ### Animated characters (skinned glTF)
 

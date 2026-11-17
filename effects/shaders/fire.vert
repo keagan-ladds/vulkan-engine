@@ -1,6 +1,7 @@
 #version 460
 // Fire sheets: vertical quads turned around Y towards the camera (each sheet a
-// little off-axis), bent downwind at the top; or the horizontal coal bed.
+// little off-axis), bent downwind at the top; the horizontal coal bed; or the
+// heat-haze sheet above the flames (fire_haze.frag).
 #include "ve.glsl"
 
 layout(location = 0) in vec4 inBaseHeight; // xyz base, w height
@@ -34,9 +35,20 @@ void main()
         world = base + right * (c.x * kWide * radius) + vec3(0.0, y01 * kTall * height, 0.0) +
                 vec3(inLean.x, 0.0, inLean.y) * (y01 * y01) + f * depthOffset;
         outUV = vec2(c.x * kWide, y01 * kTall);
-    } else {
+    } else if (inShape.w < 1.5) {
         world = base + vec3(c.x * radius, 0.03, c.y * radius);
         outUV = c;
+    } else {
+        // Heat haze: one camera-facing sheet over the flames, rising downwind.
+        vec3 toCam = frame.cameraPosition.xyz - base;
+        toCam.y = 0.0;
+        vec3 f = dot(toCam, toCam) > 1e-6 ? normalize(toCam) : vec3(0, 0, 1);
+        vec3 right = vec3(f.z, 0.0, -f.x);
+        float y01 = c.y * 0.5 + 0.5;
+        float halfWidth = radius * 2.2;
+        world = base + right * (c.x * halfWidth) + vec3(0.0, mix(0.3, 3.0, y01) * height, 0.0) +
+                vec3(inLean.x, 0.0, inLean.y) * (0.3 + y01 * 1.5) + f * radius * 0.3; // a little in front of the flames
+        outUV = vec2(c.x, y01);
     }
     outShape = inShape;
     outParams = vec4(inLean.z, inAnim.x, inAnim.z, 0.0);

@@ -163,6 +163,7 @@ void Campfire::start()
     m_fire->intensity = 4.0f;
     m_fire->layers = 4;
     m_fire->seed = 3;
+    if (const char* h = std::getenv("SAVANNA_HAZE")) m_fire->haze = float(std::atof(h)); // comparisons
 
     auto& smokeObj = s.spawn("Smoke");
     smokeObj.setParent(this, false);
@@ -247,6 +248,8 @@ void Torch::start()
     m_fire->layers = 3;
     m_fire->coals = 0.0f;
     m_fire->speed = 1.3f;
+    m_fire->haze = 0.6f;
+    if (const char* h = std::getenv("SAVANNA_HAZE")) m_fire->haze *= float(std::atof(h));
     m_fire->seed = uint32_t(reinterpret_cast<uintptr_t>(this) % 997u);
     auto& glow = scene().spawn("TorchLight");
     glow.setParent(&flame, false);

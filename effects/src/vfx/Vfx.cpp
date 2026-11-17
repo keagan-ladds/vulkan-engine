@@ -31,6 +31,7 @@ void registerTypes()
         t.field("layers", &Fire::layers).range(1, 8);
         t.field("coals", &Fire::coals).range(0.0f, 4.0f).speed(0.01f);
         t.field("windInfluence", &Fire::windInfluence).range(0.0f, 4.0f).speed(0.01f);
+        t.field("haze", &Fire::haze).range(0.0f, 4.0f).speed(0.01f);
     });
     r.add<Weather>("Weather", [](ve::TypeBuilder<Weather>& t) {
         t.category("Environment");

@@ -763,6 +763,13 @@ Optional add-ons built only on public engine APIs:
   component's `flicker()` / `lightJitter()` drive a point light so the glow
   and shadows follow the flames. Cost: about 8 noise lookups per pixel over a
   few small quads.
+  - Heat haze (`Fire::haze`): after the flames, the pass copies only the
+    screen rectangle the fires' haze boxes project to (`FireHazeCopy`), then
+    draws one camera-facing sheet above each fire (`fire_haze.frag`). It
+    samples the copy at offsets from rising noise, about 5 cm in the world
+    (so it shrinks with distance). It is masked at the sheet's edges and
+    never pulls in pixels from in front of the hot air. The flame tips are in
+    the copy, so they shimmer too.
 - `ParticleEmitter` component (CPU simulation) and `ParticlePass`
   (instanced camera-facing or velocity-stretched quads, alpha/additive).
   - Streaks stretch along the actual motion, wind drift included, so rain
