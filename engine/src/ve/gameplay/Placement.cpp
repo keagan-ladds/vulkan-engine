@@ -53,6 +53,11 @@ glm::vec3 SnapPoint::worldPosition() const
     return transform().transformPoint(offset);
 }
 
+glm::vec3 SnapPoint::worldFacing() const
+{
+    return transform().rotation() * facing;
+}
+
 bool SnapPoint::connectsTo(const std::string& otherType, const std::string& otherAccepts) const
 {
     return listHas(accepts, otherType) || listHas(otherAccepts, type);
@@ -84,7 +89,8 @@ std::vector<LocalSnap> snapPointsOf(const GameObject& root)
             // Relative to the root, in its rotated frame without its scale: rotate by the
             // piece's rotation later. (Snap points are geometry: they scale with the piece.)
             const glm::vec3 local = glm::vec3(inv * glm::vec4(sp->worldPosition(), 1.0f)) * scale;
-            out.push_back({local, sp->type, sp->accepts});
+            const glm::vec3 facing = glm::mat3(inv) * sp->worldFacing();
+            out.push_back({local, sp->type, sp->accepts, sp->alignRotation, facing});
         }
     });
     return out;
@@ -95,8 +101,17 @@ std::optional<SnapResult> findSnap(const Scene& scene, const std::vector<LocalSn
 {
     std::optional<SnapResult> best;
     if (points.empty()) return best;
-    std::vector<glm::vec3> placed(points.size());
-    for (size_t i = 0; i < points.size(); ++i) placed[i] = aim + rotation * points[i].offset;
+    // The rotation a pair asks for: the player's, or turned so the facings line up.
+    auto yawOf = [](const glm::vec3& v) { return std::atan2(-v.z, v.x); };
+    const float chosen = yawOf(rotation * glm::vec3(1, 0, 0));
+    auto rotationFor = [&](const LocalSnap& p, const SnapPoint& t) {
+        if (!p.alignRotation) return rotation;
+        // Yaw that turns the piece's facing onto the target's, or onto its opposite.
+        const float y = yawOf(glm::vec3(t.worldFacing().x, 0.0f, t.worldFacing().z)) - yawOf(glm::vec3(p.facing.x, 0.0f, p.facing.z));
+        auto diff = [&](float a) { return std::abs(std::remainder(a - chosen, 6.2831853f)); };
+        const float pick = diff(y) <= diff(y + 3.14159265f) ? y : y + 3.14159265f;
+        return glm::angleAxis(pick, glm::vec3(0, 1, 0));
+    };
     // A cheap bound: only targets within reach of any of the piece's points.
     float reach = 0.0f;
     for (const LocalSnap& p : points) reach = std::max(reach, glm::length(p.offset));
@@ -110,9 +125,15 @@ std::optional<SnapResult> findSnap(const Scene& scene, const std::vector<LocalSn
         if (glm::distance(tw, aim) > reach) return;
         for (size_t i = 0; i < points.size(); ++i) {
             if (!t.connectsTo(points[i].type, points[i].accepts)) continue;
-            const float d = glm::distance(placed[i], tw);
-            if (d > radius || (best && d >= best->distance)) continue;
-            best = SnapResult{tw - rotation * points[i].offset, tw, &t, d};
+            const glm::quat r = rotationFor(points[i], t);
+            // Close if the piece's point would land near the target, or if the
+            // player aims right at the target (a door at the middle of an
+            // opening, while the door's origin is at its bottom).
+            const float moved = glm::distance(aim + r * points[i].offset, tw);
+            const float d = std::min(moved, glm::distance(aim, tw));
+            if (d > radius) continue;
+            if (best && (d > best->score || (d == best->score && moved >= best->distance))) continue;
+            best = SnapResult{tw - r * points[i].offset, r, tw, &t, moved, d};
         }
     });
     return best;

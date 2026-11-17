@@ -1232,8 +1232,10 @@ void Editor::drawViewport()
         // Modular pieces: while moving, pull the object onto a nearby snap point of another.
         if (m_snapToPoints && m_gizmoOptions.mode == GizmoMode::Translate && (ev == Gizmo::Event::Changed || ev == Gizmo::Event::Ended)) {
             const auto points = placement::snapPointsOf(*sel);
-            if (auto s = placement::findSnap(m_engine->scene(), points, sel->transform().rotation(), sel->transform().position(), 0.6f, sel))
+            if (auto s = placement::findSnap(m_engine->scene(), points, sel->transform().rotation(), sel->transform().position(), 0.6f, sel)) {
                 sel->transform().setPosition(s->position);
+                sel->transform().setRotation(s->rotation); // fittings turn to match their opening
+            }
         }
         // Its snap points, so you can see what will connect.
         std::function<void(GameObject&)> drawSnaps = [&](GameObject& g) {

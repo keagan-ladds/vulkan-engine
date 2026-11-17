@@ -146,6 +146,8 @@ void registerBuiltinTypes()
         t.field("offset", &SnapPoint::offset).tooltip("local position of the connection point");
         t.field("type", &SnapPoint::type);
         t.field("accepts", &SnapPoint::accepts).tooltip("types it connects to, comma-separated (* = any)");
+        t.field("alignRotation", &SnapPoint::alignRotation).tooltip("also turn the piece so its facing lines up with the target's (doors, windows)");
+        t.field("facing", &SnapPoint::facing).tooltip("local direction lined up with the target point's facing");
     });
     r.add<PlacementBox>("PlacementBox", [](TypeBuilder<PlacementBox>& t) {
         t.category("Gameplay");

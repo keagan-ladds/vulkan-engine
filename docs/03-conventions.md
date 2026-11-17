@@ -366,6 +366,22 @@ if (placePressed && preview.valid()) ve::prefab::instantiate(scene(), piecePath,
 - Snap points are positions; the piece keeps the player's rotation. Lay
   them out on one lattice (Savanna: tile corners / edge midpoints every
   1 m, wall tops at 2.5 m, foundation tops at 0.5 m) and any pair lines up.
+- Fittings (doors, windows) go into openings:
+  - **Matching types:** the wall has a point typed `door-opening` (accepting
+    nothing), and the door a point typed `door` accepting `door-opening`.
+    Nothing else snaps there.
+  - **Rotation:** the door's point sets `alignRotation`, so the door also
+    turns to match the opening's facing (either way round, whichever is
+    nearer the player's rotation, so R still flips the swing).
+  - **Aiming:** `findSnap` also counts a target the player aims straight at,
+    so aiming into the hole works even though the door's origin is at its
+    bottom.
+  - **The build tool (game):** lets the fitting's volume touch its host (the
+    snap target's piece) in `fits`, only accepts fittings that snapped, and
+    removes fittings whose points sit on a removed piece's openings.
+- Saveable components on prefab pieces (a door's open state) must exist when
+  the instance is created. Declare them in the prefab, not in `start()`, or
+  a loaded game has nothing to restore them into.
 - Pieces that create colliders in `start()` skip them on ghosts
   (`PlacementGhost::is(*this)`).
 - Optionally clear the vegetation under a piece: add a `FoliageExclusion`

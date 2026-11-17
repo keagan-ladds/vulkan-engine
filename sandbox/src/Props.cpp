@@ -958,7 +958,7 @@ void AutoTest::update(float dt)
             m_site.y -= 0.1f;
             buildStep(0, m_site, 0.0f); // stone foundation
         }
-    } else if (m_step >= 26 && m_step <= 39 && m_t > 0.4f && m_frames - m_stepFrame >= 4) {
+    } else if (m_step >= 26 && m_step <= 44 && m_t > 0.4f && m_frames - m_stepFrame >= 4) {
         auto* b = scene().findFirst<Builder>();
         auto pos = [&](size_t i) {
             ve::GameObject* o = i < m_built.size() ? scene().findById(m_built[i]) : nullptr;
@@ -1017,14 +1017,70 @@ void AutoTest::update(float dt)
                 break;
             }
             placeLog("stairs", a + glm::vec3(0.0f, 0.0f, 1.5f));
-            buildStep(12, pos(1) + glm::vec3(3.2f, 0.0f, 0.4f), 0.0f); // a fence off the second foundation, then remove it
+            // A door into the door wall's opening, aimed with a skewed rotation: it turns to match.
+            buildStep(13, pos(3) + glm::vec3(0.25f, 1.2f, 0.3f), 37.0f);
             break;
         case 35: {
+            placeLog("door (into the opening)", pos(3));
+            auto yawGap = [&](size_t piece, size_t host) { // degrees between their x axes, mod 180
+                ve::GameObject* x = piece < m_built.size() ? scene().findById(m_built[piece]) : nullptr;
+                ve::GameObject* y = host < m_built.size() ? scene().findById(m_built[host]) : nullptr;
+                if (!x || !y) return -1.0f;
+                const glm::vec3 ax = x->transform().rotation() * glm::vec3(1, 0, 0), ay = y->transform().rotation() * glm::vec3(1, 0, 0);
+                return glm::degrees(std::acos(std::clamp(std::abs(glm::dot(ax, ay)), 0.0f, 1.0f)));
+            };
+            log("build: door turned to its wall: " + std::to_string(yawGap(8, 3)) + " deg off (aimed at 37 deg)");
+            buildStep(14, pos(4) + glm::vec3(0.2f, 1.5f, 0.1f), 100.0f); // a window into the window wall
+            break;
+        }
+        case 36: {
+            placeLog("window (into the opening)", pos(4));
+            ve::GameObject* x = m_built.size() > 9 ? scene().findById(m_built[9]) : nullptr;
+            ve::GameObject* y = scene().findById(m_built[4]);
+            const float gap = x && y ? glm::degrees(std::acos(std::clamp(std::abs(glm::dot(x->transform().rotation() * glm::vec3(1, 0, 0),
+                                                                                             y->transform().rotation() * glm::vec3(1, 0, 0))),
+                                                                       0.0f, 1.0f)))
+                                     : -1.0f;
+            log("build: window turned to its wall: " + std::to_string(gap) + " deg off (aimed at 100 deg)");
+            // Open the door the way the player does (Use on its Interactable).
+            if (ve::GameObject* door = scene().findById(m_built[8]))
+                if (auto* use = door->getComponent<ve::Interactable>()) use->use(*scene().find("Player"));
+            buildStep(12, pos(1) + glm::vec3(3.2f, 0.0f, 0.4f), 0.0f); // a fence off the second foundation, then remove it
+            break;
+        }
+        case 37: {
+            float leaf = -1.0f;
+            if (ve::GameObject* door = scene().findById(m_built[8]))
+                for (ve::Transform* c : door->transform().children())
+                    if (c->gameObject().name() == "Door leaf") leaf = glm::degrees(glm::angle(c->localRotation()));
+            auto* hinge = scene().findById(m_built[8]) ? scene().findById(m_built[8])->getComponent<DoorHinge>() : nullptr;
+            log(std::string("build: door opened with Use: ") + (hinge && hinge->open() ? "yes" : "NO") + ", leaf swung " +
+                std::to_string(leaf) + " deg");
             placeLog("fence", b->previewPosition());
             ve::GameObject* fence = m_built.empty() ? nullptr : scene().findById(m_built.back());
-            const bool removed = b->remove(fence);
+            const int removed = b->remove(fence);
             if (removed) m_built.pop_back();
-            log(std::string("build: fence removed ") + (removed ? "yes" : "NO"));
+            log("build: fence removed " + std::to_string(removed));
+            // Removing a wall takes the door fitted into it along.
+            buildStep(4, pos(1) + glm::vec3(0.1f, 0.6f, 0.85f), 0.0f);
+            break;
+        }
+        case 38:
+            placeLog("2nd door wall", pos(1) + glm::vec3(0.0f, BuildPiece::kFoundation, 1.0f));
+            buildStep(13, pos(m_built.size() - 1) + glm::vec3(0.2f, 1.0f, 0.2f), 200.0f);
+            break;
+        case 39:
+            placeLog("2nd door", pos(m_built.size() - 1));
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            ++m_step;
+            break;
+        case 40: {
+            const uint64_t wall = m_built[m_built.size() - 2], door = m_built.back();
+            const int removed = b->remove(scene().findById(wall));
+            log("build: removing the 2nd door wall removed " + std::to_string(removed) + " piece(s), its door gone " +
+                (scene().findById(door) ? "NO" : "yes"));
+            m_built.resize(m_built.size() - 2);
             b->setAimOverride(std::nullopt);
             b->setActive(false);
             // Exclusions while playing: a box dropped on an existing foliage instance clears it
@@ -1048,7 +1104,7 @@ void AutoTest::update(float dt)
             ++m_step;
             break;
         }
-        case 36: {
+        case 41: {
             const int during = foliageAt(m_exclusionAt, 0.3f);
             if (ve::GameObject* ex = scene().findById(m_exclusionObject)) ex->destroy();
             log("build: foliage at a spot " + std::to_string(m_foliageOnSite) + " before an exclusion box, " + std::to_string(during) +
@@ -1059,28 +1115,28 @@ void AutoTest::update(float dt)
             ++m_step;
             break;
         }
-        case 37: {
+        case 42: {
             log("build: ... and " + std::to_string(foliageAt(m_exclusionAt, 0.3f)) + " after removing it");
             m_t = 0.0f;
             m_stepFrame = m_frames;
             ++m_step;
             break;
         }
-        case 38: {
+        case 43: {
             // Save, then load (the level rebuilt behind the loading screen): the pieces come back.
             s_expect.pieces.clear();
             for (size_t i = 0; i < m_built.size(); ++i)
                 if (ve::GameObject* o = scene().findById(m_built[i])) s_expect.pieces.push_back({o->name(), o->transform().position()});
             const bool saved = ve::save::saveGame(scene(), "buildtest");
             log("build: " + std::to_string(s_expect.pieces.size()) + " pieces, saved " + (saved ? "yes" : "NO"));
-            s_resume = 40;
+            s_resume = 45;
             log(std::string("build: loading the save: ") + (loadProgress("buildtest") ? "started" : "NO SAVE"));
             ++m_step;
             break;
         }
         default: break;
         }
-    } else if (m_step == 40 && m_t > 3.0f) {
+    } else if (m_step == 45 && m_t > 3.0f) {
         int found = 0;
         float worst = 0.0f;
         for (const auto& [name, p] : s_expect.pieces) {
@@ -1094,6 +1150,9 @@ void AutoTest::update(float dt)
         }
         log("build: after loading, " + std::to_string(found) + " of " + std::to_string(s_expect.pieces.size()) +
             " pieces back in place (worst " + std::to_string(worst) + " m)");
+        bool doorOpen = false;
+        scene().forEach<DoorHinge>([&](DoorHinge& h) { doorOpen = doorOpen || h.open(); });
+        log(std::string("build: the door is still open after loading: ") + (doorOpen ? "yes" : "NO"));
         ve::save::remove("buildtest");
         // Look at the little house for the screenshot.
         if (!s_expect.pieces.empty()) {
@@ -1103,7 +1162,7 @@ void AutoTest::update(float dt)
         }
         m_t = 0.0f;
         ++m_step;
-    } else if (m_step == 41 && m_t > 1.5f) {
+    } else if (m_step == 46 && m_t > 1.5f) {
         shot("7-building");
         if (m_t > 2.0f) {
             engine().quit();

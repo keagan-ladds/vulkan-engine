@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "object": {
+    "type": "BuildPiece",
+    "name": "Plank door",
+    "active": true,
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotation": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "scale": [
+      1,
+      1,
+      1
+    ],
+    "fields": {
+      "kind": 12,
+      "material": 2
+    },
+    "components": [
+      {
+        "type": "DoorHinge",
+        "enabled": true,
+        "fields": {
+          "openAngle": 100.0,
+          "speed": 3.0
+        }
+      }
+    ]
+  }
+}

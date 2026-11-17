@@ -51,8 +51,15 @@ public:
     glm::vec3 offset{0.0f};       // in the object's local space
     std::string type = "grid";    // what this point is
     std::string accepts = "grid"; // types it connects to (comma-separated, "*" = any)
+    // Fittings (doors into openings): when this point snaps, the piece also
+    // turns so its `facing` lines up with the target point's (about Y, either
+    // way round: whichever is closer to the rotation the player chose, so
+    // they can still flip a door's swing).
+    bool alignRotation = false;
+    glm::vec3 facing{0.0f, 0.0f, 1.0f}; // local direction (horizontal)
 
     glm::vec3 worldPosition() const;
+    glm::vec3 worldFacing() const;
     bool connectsTo(const std::string& otherType, const std::string& otherAccepts) const; // either side accepts the other
 };
 
@@ -90,20 +97,26 @@ struct OrientedBox {
 struct LocalSnap {
     glm::vec3 offset;
     std::string type, accepts;
+    bool alignRotation = false;
+    glm::vec3 facing{0.0f, 0.0f, 1.0f};
 };
 struct SnapResult {
     glm::vec3 position;            // where the piece's origin goes
+    glm::quat rotation;            // its rotation: the one asked for, or aligned (alignRotation)
     glm::vec3 point;               // the joint, world
-    const SnapPoint* target;       // the scene point it snapped to
+    const SnapPoint* target;       // the scene point it snapped to (its object is the "host")
     float distance;                // how far the snap moved the piece
+    float score;                   // what chose it: min(distance, aim to the target point)
 };
 
 // Every enabled SnapPoint in the object's subtree, relative to its root (unrotated, unscaled origin).
 std::vector<LocalSnap> snapPointsOf(const GameObject& root);
 // A piece (its points, rotated by `rotation`) aimed at `aim`: the placement that
-// puts one of its points on a scene point, choosing the pair closest together
-// when the piece's origin is at `aim`, within `radius`. Points on `ignore`
-// (and its children) and on ghosts are skipped.
+// puts one of its points on a scene point. A pair counts as close if the
+// piece's point would land within `radius` of the target with its origin at
+// `aim`, or if `aim` itself is within `radius` of the target (aiming straight
+// at an opening); the closest wins. Points on `ignore` (and its children) and
+// on ghosts are skipped.
 std::optional<SnapResult> findSnap(const Scene& scene, const std::vector<LocalSnap>& points, const glm::quat& rotation,
                                    const glm::vec3& aim, float radius, const GameObject* ignore = nullptr);
 

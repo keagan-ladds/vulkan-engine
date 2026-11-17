@@ -17,6 +17,7 @@
 #include <ve/scene/Reflection.hpp>
 #include <ve/gameplay/Placement.hpp>
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/SaveGame.hpp>
 
 #include <glm/glm.hpp>
 
@@ -28,7 +29,9 @@ namespace savanna {
 
 class BuildPiece : public ve::GameObject {
 public:
-    enum class Kind { Foundation, Floor, Wall, WallDoor, WallWindow, Railing, Post, Beam, RoofMetal, RoofThatch, Stairs, Fence };
+    // (Appended only: prefabs store the index.) Door / Window are fittings: they
+    // snap into a WallDoor / WallWindow opening, turning to match it.
+    enum class Kind { Foundation, Floor, Wall, WallDoor, WallWindow, Railing, Post, Beam, RoofMetal, RoofThatch, Stairs, Fence, Door, Window };
     enum class Material { Mud, Plaster, Timber, Stone };
 
     BuildPiece() : GameObject("Piece") {}
@@ -42,6 +45,27 @@ public:
     static constexpr float kFoundation = 0.5f;  // foundation top above its origin
 
     static BuildPiece* of(ve::GameObject* object); // the piece an object belongs to (itself or a parent)
+    bool isFitting() const { return kind == Kind::Door || kind == Kind::Window; }
+};
+
+// A door's hinge (on the Door piece): Use opens / closes it, the leaf swings
+// over a moment. Its state is part of save games.
+class DoorHinge : public ve::Component, public ve::Saveable {
+public:
+    float openAngle = 100.0f; // degrees
+    float speed = 3.0f;       // 1 / seconds for a full swing
+    bool open() const { return m_open; }
+    void setOpen(bool open) { m_open = open; }
+    void setLeaf(ve::GameObject* leaf) { m_leaf = leaf ? leaf->id() : 0; }
+
+    void update(float dt) override;
+    void saveState(ve::Json& out) const override { out = {{"open", m_open}}; }
+    void loadState(const ve::Json& in) override;
+
+private:
+    uint64_t m_leaf = 0;
+    bool m_open = false;
+    float m_t = 0.0f; // 0 closed .. 1 open
 };
 
 class Builder : public ve::GameObject {
@@ -67,7 +91,10 @@ public:
     // Tests: aim here instead of where the camera looks; place() = the Place action.
     void setAimOverride(std::optional<glm::vec3> aim) { m_aimOverride = aim; }
     ve::GameObject* place();             // the placed piece, or null (invalid / not ready)
-    bool remove(ve::GameObject* piece);  // a placed piece (or part of one)
+    // A placed piece (or part of one), and the fittings in its openings.
+    // Returns how many pieces went (0 = nothing removable there).
+    int remove(ve::GameObject* piece);
+    glm::quat previewRotation() const { return m_rot; }
     bool previewValid() const { return m_preview.valid(); }
     bool previewSnapped() const { return m_snapped; }
     glm::vec3 previewPosition() const { return m_pos; }

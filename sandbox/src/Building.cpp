@@ -20,17 +20,26 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <imgui.h>
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <map>
 
 namespace savanna {
 
+VE_REGISTER_TYPE(DoorHinge, "DoorHinge")
+{
+    t.category("Savanna");
+    t.field("openAngle", &DoorHinge::openAngle).range(0.0f, 180.0f);
+    t.field("speed", &DoorHinge::speed).range(0.1f, 20.0f);
+}
+
 VE_REGISTER_TYPE(BuildPiece, "BuildPiece")
 {
     t.category("Savanna");
     t.enumField("kind", &BuildPiece::kind,
-                {"Foundation", "Floor", "Wall", "WallDoor", "WallWindow", "Railing", "Post", "Beam", "RoofMetal", "RoofThatch", "Stairs", "Fence"});
+                {"Foundation", "Floor", "Wall", "WallDoor", "WallWindow", "Railing", "Post", "Beam", "RoofMetal", "RoofThatch", "Stairs", "Fence",
+                 "Door", "Window"});
     t.enumField("material", &BuildPiece::material, {"Mud", "Plaster", "Timber", "Stone"});
 }
 
@@ -102,12 +111,21 @@ void wallBody(Builder3& b, Mat m, float ox0, float ox1, float oy0, float oy1)
     part(ox1, kHalf, 0.0f, h);
     part(ox0, ox1, 0.0f, oy0);
     part(ox0, ox1, oy1, h);
-    // Timber frame around the opening.
-    const float f = 0.07f, d = t + 0.02f;
-    b.box({ox0 - f, oy0, -d}, {ox0, oy1, d}, kTimber);
-    b.box({ox1, oy0, -d}, {ox1 + f, oy1, d}, kTimber);
-    b.box({ox0 - f, oy1, -d}, {ox1 + f, oy1 + f, d}, kTimber);
-    if (oy0 > 0.01f) b.box({ox0 - f, oy0 - f, -d - 0.04f}, {ox1 + f, oy0, d + 0.04f}, kTimber); // sill
+    // (The frame comes with the door / window that's fitted into the opening.)
+}
+
+// Door / window openings in the walls (local, from the wall's origin).
+constexpr float kDoorX = 0.5f, kDoorTop = 2.1f;
+constexpr float kWinX = 0.45f, kWinBottom = 1.0f, kWinTop = 1.9f;
+
+// A fitting's frame inside an opening, proud of both wall faces.
+void frame(Builder3& b, float x0, float x1, float y0, float y1, bool sill)
+{
+    const float f = 0.07f, d = kThick * 0.5f + 0.025f;
+    b.box({x0, y0, -d}, {x0 + f, y1, d}, kTimber, glm::mat4(1.0f), true);
+    b.box({x1 - f, y0, -d}, {x1, y1, d}, kTimber, glm::mat4(1.0f), true);
+    b.box({x0, y1 - f, -d}, {x1, y1, d}, kTimber, glm::mat4(1.0f), true);
+    if (sill) b.box({x0 - 0.05f, y0, -d - 0.05f}, {x1 + 0.05f, y0 + f, d + 0.05f}, kTimber, glm::mat4(1.0f), true);
 }
 
 void build(Builder3& b, Kind kind, Mat mat)
@@ -140,23 +158,21 @@ void build(Builder3& b, Kind kind, Mat mat)
         break;
     }
     case Kind::Wall: wallBody(b, mat, 0.0f, 0.0f, 0.0f, 0.0f); break;
-    case Kind::WallDoor: {
-        wallBody(b, mat, -0.5f, 0.5f, 0.0f, 2.1f);
-        // A plank door, open inwards on its hinge.
-        const glm::mat4 hinge = glm::rotate(glm::translate(glm::mat4(1.0f), {-0.5f, 0.0f, 0.0f}), glm::radians(-75.0f), {0, 1, 0});
-        for (int i = 0; i < 4; ++i)
-            b.box({0.02f + float(i) * 0.24f, 0.02f, -0.03f}, {0.25f + float(i) * 0.24f, 2.05f, 0.03f}, kTimber * (0.85f + 0.08f * float(i % 2)), hinge);
+    case Kind::WallDoor: wallBody(b, mat, -kDoorX, kDoorX, 0.0f, kDoorTop); break;
+    case Kind::WallWindow: wallBody(b, mat, -kWinX, kWinX, kWinBottom, kWinTop); break;
+    case Kind::Door:
+        // The frame; the leaf is its own object (it swings), see BuildPiece::start.
+        frame(b, -kDoorX, kDoorX, 0.0f, kDoorTop, false);
         break;
-    }
-    case Kind::WallWindow: {
-        wallBody(b, mat, -0.45f, 0.45f, 1.0f, 1.9f);
+    case Kind::Window: {
+        frame(b, -kWinX, kWinX, kWinBottom, kWinTop, true);
         for (int i = 1; i <= 3; ++i) { // bars
-            const float x = -0.45f + 0.225f * float(i);
-            b.box({x - 0.015f, 1.0f, -0.015f}, {x + 0.015f, 1.9f, 0.015f}, glm::vec3(0.15f));
+            const float x = -kWinX + 2.0f * kWinX * 0.25f * float(i);
+            b.box({x - 0.015f, kWinBottom, -0.015f}, {x + 0.015f, kWinTop, 0.015f}, glm::vec3(0.15f), glm::mat4(1.0f), true);
         }
-        for (int s = -1; s <= 1; s += 2) { // shutters, opened back against the wall
-            const float x = s < 0 ? -0.95f : 0.5f;
-            b.box({x, 1.0f, kThick * 0.5f + 0.02f}, {x + 0.45f, 1.9f, kThick * 0.5f + 0.06f}, glm::vec3(0.25f, 0.38f, 0.42f));
+        for (int s = -1; s <= 1; s += 2) { // shutters, folded back against the outside
+            const float x0 = s < 0 ? -kWinX - 0.47f : kWinX + 0.02f;
+            b.box({x0, kWinBottom, kThick * 0.5f + 0.03f}, {x0 + 0.45f, kWinTop, kThick * 0.5f + 0.07f}, glm::vec3(0.25f, 0.38f, 0.42f));
         }
         break;
     }
@@ -228,39 +244,81 @@ void build(Builder3& b, Kind kind, Mat mat)
 }
 
 // Where each kind connects (local, before the piece's rotation).
-std::vector<glm::vec3> snapPoints(Kind kind)
+struct PieceSnap {
+    glm::vec3 offset;
+    const char* type = "grid";
+    const char* accepts = "grid";
+    bool align = false;
+};
+
+std::vector<PieceSnap> snapPoints(Kind kind)
 {
-    std::vector<glm::vec3> p;
+    std::vector<PieceSnap> p;
     auto edges = [&](float y) { // a tile's corners and edge midpoints
         for (int z = -1; z <= 1; ++z)
             for (int x = -1; x <= 1; ++x)
-                if (x || z) p.push_back({float(x) * kHalf, y, float(z) * kHalf});
+                if (x || z) p.push_back({{float(x) * kHalf, y, float(z) * kHalf}});
     };
     auto line = [&](float y) { // a wall-like piece along x: its ends and middle
-        for (int x = -1; x <= 1; ++x) p.push_back({float(x) * kHalf, y, 0.0f});
+        for (int x = -1; x <= 1; ++x) p.push_back({{float(x) * kHalf, y, 0.0f}});
     };
     switch (kind) {
     case Kind::Foundation: edges(BuildPiece::kFoundation); break;
     case Kind::Floor: edges(0.0f); break;
-    case Kind::Wall:
-    case Kind::WallDoor:
-    case Kind::WallWindow: line(0.0f); line(BuildPiece::kWall); break;
+    case Kind::Wall: line(0.0f); line(BuildPiece::kWall); break;
+    case Kind::WallDoor: // + the opening a door fits into
+        line(0.0f);
+        line(BuildPiece::kWall);
+        p.push_back({{0.0f, kDoorTop * 0.5f, 0.0f}, "door-opening", ""});
+        break;
+    case Kind::WallWindow:
+        line(0.0f);
+        line(BuildPiece::kWall);
+        p.push_back({{0.0f, (kWinBottom + kWinTop) * 0.5f, 0.0f}, "window-opening", ""});
+        break;
+    case Kind::Door: p.push_back({{0.0f, kDoorTop * 0.5f, 0.0f}, "door", "door-opening", true}); break;
+    case Kind::Window: p.push_back({{0.0f, (kWinBottom + kWinTop) * 0.5f, 0.0f}, "window", "window-opening", true}); break;
     case Kind::Railing:
-    case Kind::Beam:
-    case Kind::Fence: line(0.0f); break;
-    case Kind::Post: p = {{0, 0, 0}, {0, BuildPiece::kWall, 0}}; break;
+    case Kind::Beam: line(0.0f); break;
+    case Kind::Fence: // fences join fences, and stand on foundations / floors
+        line(0.0f);
+        for (PieceSnap& s : p) {
+            s.type = "fence";
+            s.accepts = "fence, grid";
+        }
+        break;
+    case Kind::Post: p = {{{0, 0, 0}}, {{0, BuildPiece::kWall, 0}}}; break;
     case Kind::RoofMetal:
     case Kind::RoofThatch:
         for (int x = -1; x <= 1; ++x) {
-            p.push_back({float(x) * kHalf, 0.0f, kHalf});
-            p.push_back({float(x) * kHalf, kRise, -kHalf});
+            p.push_back({{float(x) * kHalf, 0.0f, kHalf}});
+            p.push_back({{float(x) * kHalf, kRise, -kHalf}});
         }
         break;
     case Kind::Stairs:
-        for (int x = -1; x <= 1; ++x) p.push_back({float(x) * kHalf, BuildPiece::kFoundation, -0.5f});
+        for (int x = -1; x <= 1; ++x) p.push_back({{float(x) * kHalf, BuildPiece::kFoundation, -0.5f}});
         break;
     }
     return p;
+}
+
+// The door leaf: planks on a hinge at its left edge (local x = 0 is the hinge).
+std::shared_ptr<ve::Mesh> doorLeafMesh(Builder3& b)
+{
+    static std::weak_ptr<ve::Mesh> cache;
+    const float w = 2.0f * kDoorX - 0.14f;
+    for (int i = 0; i < 4; ++i)
+        b.box({0.005f + float(i) * w * 0.25f, 0.02f, -0.03f}, {float(i + 1) * w * 0.25f - 0.005f, kDoorTop - 0.08f, 0.03f},
+              kTimber * (0.85f + 0.08f * float(i % 2)));
+    b.box({0.0f, 0.4f, -0.045f}, {w, 0.5f, -0.03f}, kTimberDark); // ledges
+    b.box({0.0f, 1.5f, -0.045f}, {w, 1.6f, -0.03f}, kTimberDark);
+    b.collider({0.0f, 0.02f, -0.03f}, {w, kDoorTop - 0.08f, 0.03f});
+    if (auto m = cache.lock()) return m;
+    ve::MeshData md = b.md;
+    md.makeFlatShaded();
+    auto mesh = ve::Mesh::create(ve::Engine::get().renderer(), md, {}, "door leaf");
+    cache = mesh;
+    return mesh;
 }
 
 // Meshes are shared by every piece of the same kind and material.
@@ -294,26 +352,74 @@ void BuildPiece::start()
 {
     Builder3 b;
     addComponent<ve::MeshRenderer>(pieceMesh(kind, material, b), propMaterial());
-    for (const glm::vec3& p : snapPoints(kind)) {
+    for (const PieceSnap& p : snapPoints(kind)) {
         auto& sp = addComponent<ve::SnapPoint>();
-        sp.offset = p;
-        if (kind == Kind::Fence) { // fences join fences, and stand on foundations / floors
-            sp.type = "fence";
-            sp.accepts = "fence, grid";
+        sp.offset = p.offset;
+        sp.type = p.type;
+        sp.accepts = p.accepts;
+        sp.alignRotation = p.align; // fittings turn to match their opening
+    }
+    const bool ghost = ve::PlacementGhost::is(*this);
+    // A door's leaf swings on a hinge: its own object, its own (moving) collider.
+    Builder3 leaf;
+    ve::GameObject* leafObject = nullptr;
+    if (kind == Kind::Door) {
+        auto& l = scene().spawn("Door leaf");
+        l.setParent(this, false);
+        l.transform().setLocalPosition({-kDoorX + 0.07f, 0.0f, 0.0f});
+        l.addComponent<ve::MeshRenderer>(doorLeafMesh(leaf), propMaterial());
+        leafObject = &l;
+        // The hinge comes from the prefab (it's Saveable: it must exist as soon as the piece
+        // is created, so a loaded game can restore it); add one if a prefab forgot it.
+        DoorHinge* h = getComponent<DoorHinge>();
+        auto& hinge = h ? *h : addComponent<DoorHinge>();
+        hinge.setLeaf(&l);
+        auto& use = addComponent<ve::Interactable>();
+        use.reach = 3.0f;
+        use.focusOffset = {0.0f, 1.2f, 0.0f};
+        use.promptFn = [&hinge] { return hinge.open() ? std::string("Close door") : std::string("Open door"); };
+        use.onUse = [&hinge](ve::GameObject&) { hinge.setOpen(!hinge.open()); };
+    }
+    // The solid volume, for the placement fit test (the leaf closed).
+    auto addBoxes = [&](const Builder3& from, const glm::vec3& at) {
+        for (const auto& c : from.colliders) {
+            auto& box = addComponent<ve::PlacementBox>();
+            box.center = c.center + at;
+            box.halfExtents = c.half;
+            box.rotation = c.rot;
         }
-    }
-    for (const auto& c : b.colliders) { // the solid volume, for the placement fit test
-        auto& box = addComponent<ve::PlacementBox>();
-        box.center = c.center;
-        box.halfExtents = c.half;
-        box.rotation = c.rot;
-    }
-    if (ve::PlacementGhost::is(*this)) return; // a preview: no physics
+    };
+    addBoxes(b, glm::vec3(0.0f));
+    if (leafObject) addBoxes(leaf, leafObject->transform().localPosition());
+    if (ghost) return; // a preview: no physics
     for (const auto& c : b.colliders) {
         auto& col = scene().spawn(name()); // (shown when aimed at)
         col.setParent(this, false);
         col.addComponent<ve::Rigidbody>(ve::Collider::box(c.half).offset(c.center, c.rot), ve::BodyType::Static);
     }
+    if (leafObject)
+        for (const auto& c : leaf.colliders) // kinematic: it follows the swinging leaf
+            leafObject->addComponent<ve::Rigidbody>(ve::Collider::box(c.half).offset(c.center, c.rot), ve::BodyType::Kinematic);
+}
+
+// -----------------------------------------------------------------------------
+// DoorHinge
+// -----------------------------------------------------------------------------
+
+void DoorHinge::update(float dt)
+{
+    const float target = m_open ? 1.0f : 0.0f;
+    if (m_t == target) return;
+    m_t = m_t < target ? std::min(target, m_t + dt * speed) : std::max(target, m_t - dt * speed);
+    const float e = m_t * m_t * (3.0f - 2.0f * m_t);
+    if (ve::GameObject* leaf = m_leaf ? gameObject().scene().findById(m_leaf) : nullptr)
+        leaf->transform().setLocalRotation(glm::angleAxis(glm::radians(-openAngle * e), glm::vec3(0, 1, 0)));
+}
+
+void DoorHinge::loadState(const ve::Json& in)
+{
+    m_open = in.value("open", m_open);
+    m_t = m_open ? 0.999f : 0.001f; // jump there (the next update finishes it)
 }
 
 // -----------------------------------------------------------------------------
@@ -427,16 +533,24 @@ void Builder::updatePreview()
     m_rot = glm::angleAxis(ve::placement::snapAngle(m_yaw, glm::radians(45.0f)), glm::vec3(0, 1, 0));
     m_pos = aim;
     m_snapped = false;
+    const BuildPiece* host = nullptr; // what a fitting snapped into
     if (auto s = ve::placement::findSnap(scene(), m_preview.snapPoints(), m_rot, aim, 0.9f, m_preview.object())) {
         m_pos = s->position;
+        m_rot = s->rotation; // fittings turn to match their opening
         m_snapped = true;
+        host = BuildPiece::of(const_cast<ve::GameObject*>(&s->target->gameObject()));
     }
+    const BuildPiece* self = BuildPiece::of(m_preview.object());
+    const bool fitting = self && self->isFitting();
     // Fits: nothing in the way (the ground may cut into it: foundations sit on
-    // slopes), and resting on something: the ground or another piece.
-    const bool fits = ve::placement::fits(physics(), m_preview.volume(), m_pos, m_rot, 0.1f,
-                                          [](const ve::RaycastHit& h) { return h.gameObject && dynamic_cast<ve::Terrain*>(h.gameObject); });
+    // slopes; a fitting's frame may touch the wall it's fitted into), and
+    // resting on something: the ground or another piece. Fittings only go into openings.
+    const bool fits = ve::placement::fits(physics(), m_preview.volume(), m_pos, m_rot, 0.1f, [&](const ve::RaycastHit& h) {
+        if (h.gameObject && dynamic_cast<ve::Terrain*>(h.gameObject)) return true;
+        return fitting && host && h.gameObject && BuildPiece::of(h.gameObject) == host;
+    });
     m_preview.setPose(m_pos, m_rot);
-    m_preview.setValid(fits && (m_snapped || m_aimHit) && m_preview.ready());
+    m_preview.setValid(fits && (fitting ? m_snapped : (m_snapped || m_aimHit)) && m_preview.ready());
 }
 
 ve::GameObject* Builder::place()
@@ -447,14 +561,30 @@ ve::GameObject* Builder::place()
     return piece;
 }
 
-bool Builder::remove(ve::GameObject* object)
+int Builder::remove(ve::GameObject* object)
 {
     BuildPiece* piece = BuildPiece::of(object);
-    if (!piece || !piece->getComponent<ve::PrefabInstance>()) return false; // only built pieces
+    if (!piece || !piece->getComponent<ve::PrefabInstance>()) return 0; // only built pieces
+    // Fittings in its openings go with it (found by their snap points sitting
+    // on the openings', so it works for pieces loaded from a save too).
+    std::vector<glm::vec3> openings;
+    for (const auto& c : piece->components())
+        if (auto* sp = dynamic_cast<ve::SnapPoint*>(c.get()); sp && sp->type.find("-opening") != std::string::npos)
+            openings.push_back(sp->worldPosition());
+    std::vector<BuildPiece*> gone{piece};
+    if (!openings.empty()) {
+        scene().forEach<ve::SnapPoint>([&](ve::SnapPoint& sp) {
+            auto* other = BuildPiece::of(&sp.gameObject());
+            if (!other || other == piece || !other->isFitting() || ve::PlacementGhost::is(*other)) return;
+            for (const glm::vec3& o : openings)
+                if (glm::distance(sp.worldPosition(), o) < 0.05f && std::find(gone.begin(), gone.end(), other) == gone.end())
+                    gone.push_back(other);
+        });
+    }
     const glm::vec3 at = piece->transform().position();
-    piece->destroy();
+    for (BuildPiece* p : gone) p->destroy();
     rebuildNavigation(at);
-    return true;
+    return int(gone.size());
 }
 
 void Builder::rebuildNavigation(const glm::vec3& at)

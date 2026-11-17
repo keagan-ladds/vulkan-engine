@@ -589,8 +589,14 @@ stores nothing per blade.
 
 - **Placement** (`ve/gameplay/Placement.hpp`), the mechanics of building:
   - `SnapPoint` components are typed points on a piece. `findSnap` keeps the
-    piece's rotation and moves it so its point closest to a scene point
-    (within a radius of the aim) lands on it.
+    piece's rotation and moves it so one of its points lands on a scene
+    point. A pair counts as close if the piece's point would land within a
+    radius of the target with its origin at the aim, or if the aim itself is
+    within the radius of the target.
+  - With `alignRotation` (fittings), the piece also turns about Y so its
+    `facing` matches the target's, whichever way round is nearer the
+    player's rotation. `SnapResult` gives the rotation and the target, i.e.
+    the host piece.
   - `snapToGrid` / `snapAngle` are the grid helpers.
   - `fits` tests the piece's volume against physics: its `PlacementBox`es,
     or the bounds of what it draws if it has none, shrunk by a margin so
@@ -834,7 +840,7 @@ Optional add-ons built only on public engine APIs:
 | `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading): acacia, baobab, fever tree, bushes, rocks; jungle trees, palms, undergrowth; quiver trees and dry bushes for the desert. LOD chains + impostors, registered in `ve::MeshLibrary` for the scene's `FoliageType` layers |
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
-| `Building.*` | Building kit on the engine's prefabs + placement: `BuildPiece` (12 kinds x materials, mesh / colliders / snap points / placement boxes from code; the kit is `assets/prefabs/building/*.prefab` + `building/catalogue.json`), `Builder` (build mode B: ghost, snap, fit, place, remove, navmesh rebuild) |
+| `Building.*` | Building kit on the engine's prefabs + placement: `BuildPiece` (14 kinds x materials, doors / windows as fittings snapping into wall openings, `DoorHinge` (Use, saved), mesh / colliders / snap points / placement boxes from code; the kit is `assets/prefabs/building/*.prefab` + `building/catalogue.json`), `Builder` (build mode B: ghost, snap, fit, place, remove, navmesh rebuild) |
 | `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |

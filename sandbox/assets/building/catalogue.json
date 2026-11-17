@@ -51,6 +51,14 @@
     {
       "name": "Timber fence",
       "prefab": "prefabs/building/fence_timber.prefab"
+    },
+    {
+      "name": "Plank door",
+      "prefab": "prefabs/building/door_timber.prefab"
+    },
+    {
+      "name": "Shuttered window",
+      "prefab": "prefabs/building/window_shuttered.prefab"
     }
   ]
 }
