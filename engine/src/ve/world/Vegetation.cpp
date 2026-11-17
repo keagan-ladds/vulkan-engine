@@ -1,5 +1,7 @@
 #include "ve/world/Vegetation.hpp"
 
+#include "ve/core/Engine.hpp"
+
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Strings.hpp"
@@ -430,10 +432,21 @@ void Foliage::rebuild()
     GameObject* focus = colliderFocus.empty() ? nullptr : scene().find(colliderFocus);
     sys.colliderFocus = focus;
     if (preload && !m_built) {
-        glm::vec3 viewer(0.0f);
-        if (Camera* cam = scene().mainCamera()) viewer = cam->transform().position();
-        if (focus) viewer = focus->transform().position();
-        sys.preload(viewer);
+        if (engine().loading()) {
+            // Behind a loading screen: the workers fill the cells over the
+            // next frames instead of blocking the main thread.
+            const uint64_t id = sys.id();
+            Scene* s = &scene();
+            engine().addLoadTask("Placing vegetation", [s, id] {
+                auto* f = dynamic_cast<FoliageSystem*>(s->findById(id));
+                return f ? f->streamProgress() : 1.0f;
+            });
+        } else {
+            glm::vec3 viewer(0.0f);
+            if (Camera* cam = scene().mainCamera()) viewer = cam->transform().position();
+            if (focus) viewer = focus->transform().position();
+            sys.preload(viewer);
+        }
     }
     m_built = true;
 }

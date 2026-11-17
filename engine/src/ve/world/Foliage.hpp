@@ -215,6 +215,8 @@ public:
 
     // Synchronously loads everything visible from `viewer` (+ colliders).
     void preload(const glm::vec3& viewer);
+    // Fraction of the cells in view that are fully placed (streaming; loading screens).
+    float streamProgress() const;
 
     // The ground changed inside `area` (world x0, z0, x1, z1; e.g. terrain
     // brush edits): new world callbacks and layer densities (same layers, in
@@ -349,7 +351,7 @@ private:
     bool m_bodiesWaiting = false; // colliders not all created (body budget)
     FoliageStats m_stats;
 
-    std::thread m_worker;
+    std::vector<std::thread> m_workers; // placement workers (cores - 1, at least 1)
     std::mutex m_mutex;
     std::condition_variable m_cv;
     std::vector<Job> m_jobs;

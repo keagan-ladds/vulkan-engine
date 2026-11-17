@@ -9,6 +9,7 @@
 // =============================================================================
 
 #include "EditorTest.hpp"
+#include "LoadingScreen.hpp"
 #include "Player.hpp"
 #include "Harvest.hpp"
 #include "Props.hpp"
@@ -192,10 +193,9 @@ private:
     int m_state = 0;
 };
 
-void buildWorld(ve::Engine& engine)
+void buildEffects(ve::Engine& engine)
 {
     ve::Renderer& r = engine.renderer();
-    ve::Scene& scene = engine.scene();
 
     // --- Optional effects: sky, clouds, fog, particles, bloom ----------------------
     vfx::Effects fx = vfx::addDefaultEffects(r);
@@ -213,6 +213,12 @@ void buildWorld(ve::Engine& engine)
     // Turn it on in F1 > Render passes > Color grading and pick a preset, or SAVANNA_GRADE=1.
     auto& grading = r.graph().addPass<vfx::ColorGradingPass>();
     grading.enabled = std::getenv("SAVANNA_GRADE") && std::string(std::getenv("SAVANNA_GRADE")) == "1";
+}
+
+void buildWorld(ve::Engine& engine)
+{
+    ve::Renderer& r = engine.renderer();
+    ve::Scene& scene = engine.scene();
 
     // --- The level: scenes/savanna.json (edit it in the editor, F2) ------------------------
     // Terrain (shape, biomes, stamps), water, weather, day/night, the camp (huts +
@@ -335,10 +341,16 @@ int main()
         if (const char* v = std::getenv("VE_VALIDATION")) config.validation = v[0] == '1';
 
         ve::Engine engine(config);
-        buildWorld(engine);
-        // SAVANNA_EDITOR=1: start in the editor (same as pressing F2).
-        if (std::getenv("SAVANNA_EDITOR") && engine.editor()) engine.editor()->setMode(ve::Editor::Mode::Edit);
-        if (std::getenv("SAVANNA_EDITORTEST")) engine.scene().spawn<savanna::EditorTest>();
+        // A loading screen (its own small scene, LoadingScreen.hpp) until the
+        // world is ready; building it runs as load steps between its frames.
+        engine.beginLoading(savanna::makeLoadingScene(), 0.5f);
+        engine.addLoadStep("Preparing the sky", [&] { buildEffects(engine); });
+        engine.addLoadStep("Loading the savanna", [&] { buildWorld(engine); });
+        engine.addLoadStep("Waking up the camp", [&] {
+            // SAVANNA_EDITOR=1: start in the editor (same as pressing F2).
+            if (std::getenv("SAVANNA_EDITOR") && engine.editor()) engine.editor()->setMode(ve::Editor::Mode::Edit);
+            if (std::getenv("SAVANNA_EDITORTEST")) engine.scene().spawn<savanna::EditorTest>();
+        });
         engine.run();
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << '\n';

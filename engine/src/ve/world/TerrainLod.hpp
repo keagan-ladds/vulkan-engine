@@ -55,6 +55,7 @@ public:
     };
     struct Stats {
         uint32_t drawn = 0, cached = 0, pending = 0, built = 0;
+        uint32_t missing = 0; // nodes the view wants that have no mesh yet (a coarser one stands in)
         float buildMs = 0.0f; // worker time per node, smoothed
     };
 

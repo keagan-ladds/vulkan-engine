@@ -217,8 +217,14 @@ void UiPass::execute(RenderContext& ctx)
     ImGui::Render();
     m_layer.m_rendered = true;
     ImDrawData* drawData = ImGui::GetDrawData();
-    if (!drawData || drawData->CmdListsCount == 0) return;
-    ctx.beginRendering({{renderer().backbuffer()}});
+    // Loading-screen frames draw nothing else: the UI starts from a cleared screen.
+    const bool loading = renderer().loadingFrames();
+    if (!loading && (!drawData || drawData->CmdListsCount == 0)) return;
+    ctx.beginRendering({{renderer().backbuffer(), loading, renderer().loadingClearColor()}});
+    if (!drawData || drawData->CmdListsCount == 0) {
+        ctx.endRendering();
+        return;
+    }
     ImGui_ImplVulkan_RenderDrawData(drawData, ctx.cmd);
     ctx.endRendering();
 }

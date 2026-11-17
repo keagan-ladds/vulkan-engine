@@ -1,6 +1,7 @@
 #include "ve/world/Terrain.hpp"
 
 #include "ve/assets/AssetManager.hpp"
+#include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Strings.hpp"
 #include "ve/physics/Physics.hpp"
@@ -545,8 +546,29 @@ void Terrain::rebuild()
     ls.lodFactor = std::max(lodFactor, 1.1f);
     m_lod->setData(fresh, *this, ls, editsOnly ? &area : nullptr);
     updateMaterials();
+    if (engine().loading() && !m_loadTask) {
+        // Behind a loading screen: meshes come from the worker over the next
+        // frames (colliders follow in update()) instead of blocking here.
+        m_loadTask = true;
+        updateNodes(false);
+        const uint64_t id = this->id();
+        Scene* s = &scene();
+        engine().addLoadTask("Shaping the land", [s, id] {
+            auto* t = dynamic_cast<Terrain*>(s->findById(id));
+            return t ? t->loadProgress() : 1.0f;
+        });
+        return;
+    }
     updateColliders(!editsOnly, editsOnly ? &area : nullptr);
     updateNodes(!editsOnly);
+}
+
+float Terrain::loadProgress() const
+{
+    if (!m_lod) return 0.0f;
+    const TerrainLod::Stats& s = m_lod->stats();
+    if (s.missing == 0 && s.pending == 0) return 1.0f;
+    return std::min(0.99f, float(s.drawn) / float(s.drawn + s.missing + s.pending));
 }
 
 bool Terrain::changedOnlyIn(uint64_t version, glm::vec4& area) const

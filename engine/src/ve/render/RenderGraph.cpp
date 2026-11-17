@@ -364,7 +364,7 @@ void RenderGraph::resize(VkExtent2D screenExtent)
 void RenderGraph::prepare(FrameData& frame)
 {
     for (auto& p : m_passes) {
-        if (p->enabled && int(p->stage()) < maxStage) p->prepare(frame);
+        if (p->enabled && int(p->stage()) < maxStage && (!loadingFrame || p->runsWhileLoading)) p->prepare(frame);
     }
 }
 
@@ -372,7 +372,7 @@ void RenderGraph::execute(RenderContext& ctx)
 {
     m_executed.clear();
     for (auto& pass : m_passes) {
-        if (!pass->enabled || int(pass->stage()) >= maxStage) continue;
+        if (!pass->enabled || int(pass->stage()) >= maxStage || (loadingFrame && !pass->runsWhileLoading)) continue;
         PassBuilder builder(*this);
         pass->declare(builder);
         for (const auto& u : builder.usages) {

@@ -23,7 +23,7 @@ namespace ve {
 // GPU skinning of every active SkinnedMeshRenderer (first thing in the frame).
 class SkinningPass : public RenderPass {
 public:
-    SkinningPass() : RenderPass("Skinning", RenderStage::Shadow, -200) {}
+    SkinningPass() : RenderPass("Skinning", RenderStage::Shadow, -200) { runsWhileLoading = true; }
     void declare(PassBuilder&) override {}
     void execute(RenderContext& ctx) override;
 };
@@ -32,7 +32,7 @@ public:
 // (camera + directional shadow cascades) before anything is drawn.
 class InstanceCullPass : public RenderPass {
 public:
-    InstanceCullPass() : RenderPass("Instance culling", RenderStage::Shadow, -100) {}
+    InstanceCullPass() : RenderPass("Instance culling", RenderStage::Shadow, -100) { runsWhileLoading = true; } // instance uploads
     void declare(PassBuilder& builder) override; // last frame's depth pyramid, if occlusion culling
     void execute(RenderContext& ctx) override;
     void onGui() override;

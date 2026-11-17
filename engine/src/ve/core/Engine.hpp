@@ -21,6 +21,7 @@
 #include "ve/render/Renderer.hpp"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -86,9 +87,34 @@ public:
     // UI and audio keep running.
     bool gamePaused = false;
 
+    // ---- Loading screens -------------------------------------------------------
+    // Shows `loadingScene` (a small scene the game makes, usually one object
+    // drawing UI in onGui) until the world is ready:
+    //   - load steps run on the main thread, one per frame, in order (e.g.
+    //     "load the scene file"); the screen is redrawn between them;
+    //   - load tasks report the progress of work that happens over many frames
+    //     (foliage registers one while it fills its cells on worker threads).
+    // Meanwhile the world updates like in the editor's Edit mode (only
+    // runInEditor objects: terrain, foliage and grass stream, gameplay waits,
+    // no physics) and isn't drawn: frames draw only the UI over clearColor.
+    // Loading ends when every step ran, every task reports 1, and at least
+    // minSeconds passed; the loading scene is then destroyed.
+    //   engine.beginLoading(makeLoadingScene());
+    //   engine.addLoadStep("Loading the savanna", [&] { scene.load(...); });
+    void beginLoading(std::unique_ptr<Scene> loadingScene, float minSeconds = 0.0f,
+                      const glm::vec4& clearColor = glm::vec4(0.02f, 0.02f, 0.025f, 1.0f));
+    void addLoadStep(std::string name, std::function<void()> step);
+    void addLoadTask(std::string name, std::function<float()> progress); // 0..1, 1 = done
+    bool loading() const { return m_loadingScene != nullptr; }
+    float loadProgress() const;                        // 0..1 over steps and tasks
+    const std::string& loadStatus() const { return m_loadStatus; } // what's happening now
+    Scene* loadingScene() { return m_loadingScene.get(); }
+
 private:
     void pollEvents();
     void tickFrame();
+    void tickLoading(); // a loading-screen frame
+    void endLoading();
     void benchFrame(float cpuMs);
 
     // VE_BENCH=<frames>[,<warmup>]: average CPU/GPU timings over a run, log them, quit.
@@ -106,6 +132,21 @@ private:
     std::unique_ptr<UiLayer> m_ui;
     std::unique_ptr<Editor> m_editor;
     std::unique_ptr<Scene> m_scene;
+    std::unique_ptr<Scene> m_loadingScene;
+    struct LoadStep {
+        std::string name;
+        std::function<void()> run;
+    };
+    struct LoadTask {
+        std::string name;
+        std::function<float()> progress;
+        float last = 0.0f;
+    };
+    std::vector<LoadStep> m_loadSteps;
+    std::vector<LoadTask> m_loadTasks;
+    size_t m_loadStepsTotal = 0, m_loadStepsDone = 0;
+    float m_loadMinSeconds = 0.0f, m_loadElapsed = 0.0f;
+    std::string m_loadStatus;
     bool m_running = false;
     double m_accumulator = 0.0;
     float m_fixedFrameDt = 0.0f; // VE_FIXED_DT (tests): fixed time per frame

@@ -15,6 +15,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <thread>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -223,9 +224,10 @@ void Engine::run()
         m_time.time += m_time.deltaTime;
         m_time.realTime = std::chrono::duration<float>(now - startTime).count();
         m_time.fixedDeltaTime = m_config.fixedTimestep;
+        const bool loadingFrame = loading();
         if (m_bench) m_bench->frameStart = threadCpuMs();
         tickFrame();
-        if (m_bench) benchFrame(std::chrono::duration<float, std::milli>(Clock::now() - now).count());
+        if (m_bench && !loadingFrame) benchFrame(std::chrono::duration<float, std::milli>(Clock::now() - now).count());
         ++m_time.frameCount;
     }
 
@@ -233,8 +235,108 @@ void Engine::run()
     m_ui->shutdown();
 }
 
+void Engine::beginLoading(std::unique_ptr<Scene> loadingScene, float minSeconds, const glm::vec4& clearColor)
+{
+    m_loadingScene = loadingScene ? std::move(loadingScene) : std::make_unique<Scene>();
+    m_loadMinSeconds = minSeconds;
+    m_loadElapsed = 0.0f;
+    m_loadSteps.clear();
+    m_loadTasks.clear();
+    m_loadStepsTotal = m_loadStepsDone = 0;
+    m_loadStatus = "Loading";
+    m_renderer->setLoadingFrames(true, clearColor);
+}
+
+void Engine::addLoadStep(std::string name, std::function<void()> step)
+{
+    if (!loading()) {
+        step(); // nothing to show progress on: just do it
+        return;
+    }
+    m_loadSteps.push_back({std::move(name), std::move(step)});
+    ++m_loadStepsTotal;
+}
+
+void Engine::addLoadTask(std::string name, std::function<float()> progress)
+{
+    if (loading()) m_loadTasks.push_back({std::move(name), std::move(progress), 0.0f});
+}
+
+float Engine::loadProgress() const
+{
+    // Steps and tasks weigh the same; each task counts with its own progress.
+    const size_t parts = m_loadStepsTotal + m_loadTasks.size();
+    if (parts == 0) return loading() ? 0.0f : 1.0f;
+    float done = float(m_loadStepsDone);
+    for (const LoadTask& t : m_loadTasks) done += t.last;
+    return std::clamp(done / float(parts), 0.0f, 1.0f);
+}
+
+void Engine::endLoading()
+{
+    m_loadingScene.reset();
+    m_loadTasks.clear();
+    m_loadSteps.clear();
+    m_renderer->setLoadingFrames(false);
+    m_accumulator = 0.0; // no burst of fixed steps for the time spent loading
+    log::info("Loading done in {:.1f} s", m_loadElapsed);
+}
+
+void Engine::tickLoading()
+{
+    const auto frameStart = std::chrono::steady_clock::now();
+    m_ui->beginFrame();
+    m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
+    m_loadElapsed += m_time.unscaledDeltaTime;
+
+    // One main-thread step per frame (the screen is redrawn in between).
+    if (!m_loadSteps.empty()) {
+        LoadStep step = std::move(m_loadSteps.front());
+        m_loadSteps.erase(m_loadSteps.begin());
+        m_loadStatus = step.name;
+        step.run();
+        ++m_loadStepsDone;
+    }
+    // The world streams (runInEditor objects only), gameplay waits.
+    m_scene->startPending();
+    m_scene->update(m_time.deltaTime, true);
+    m_scene->lateUpdate(m_time.deltaTime, true);
+
+    bool tasksDone = true;
+    for (LoadTask& t : m_loadTasks) {
+        t.last = std::clamp(t.progress ? t.progress() : 1.0f, 0.0f, 1.0f);
+        if (t.last < 1.0f) {
+            if (tasksDone && m_loadSteps.empty()) m_loadStatus = t.name;
+            tasksDone = false;
+        }
+    }
+    if (!m_loadSteps.empty()) m_loadStatus = m_loadSteps.front().name;
+
+    m_loadingScene->startPending();
+    m_loadingScene->update(m_time.unscaledDeltaTime);
+    m_loadingScene->lateUpdate(m_time.unscaledDeltaTime);
+    m_loadingScene->onGui();
+    m_renderer->render(*m_loadingScene, m_time);
+    m_ui->endFrameIfNotRendered();
+    m_loadingScene->flushDestroyed();
+    m_scene->flushDestroyed();
+
+    if (m_loadSteps.empty() && tasksDone && m_loadElapsed >= m_loadMinSeconds) {
+        endLoading();
+        return;
+    }
+    // A loading screen needs no more than ~30 Hz: the cores are better spent
+    // on the loading workers (software renderers and weak CPUs especially).
+    const auto frameTime = std::chrono::steady_clock::now() - frameStart;
+    if (frameTime < std::chrono::milliseconds(33)) std::this_thread::sleep_for(std::chrono::milliseconds(33) - frameTime);
+}
+
 void Engine::tickFrame()
 {
+    if (m_loadingScene) {
+        tickLoading();
+        return;
+    }
     m_ui->beginFrame();
     m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
 

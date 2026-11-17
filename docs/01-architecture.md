@@ -85,6 +85,20 @@ loop:
   Scene::flushDestroyed()            deferred destruction
 ```
 
+**Loading screens** (`Engine::beginLoading(loadingScene)`): until loading
+ends, a frame instead runs one queued load step (`addLoadStep`, main-thread
+work such as loading the scene file), updates the world like the editor's
+Edit mode (only `runInEditor` objects: terrain, foliage and grass keep
+streaming; no fixed steps / physics, gameplay waits), polls the load tasks
+(`addLoadTask`, progress 0..1 of work spread over frames, e.g. foliage
+filling its cells on worker threads) and updates + draws the loading scene,
+a small scene of the game's (usually one object drawing UI in `onGui`).
+Those frames draw only the passes with `RenderPass::runsWhileLoading`
+(instance uploads, skinning, the UI over a cleared screen). Loading ends
+when every step ran and every task reports 1 (and `minSeconds` passed); the
+loading scene is destroyed and the next frame is the world's.
+`VE_CAPTURE_FRAME` / benchmarks count world frames only.
+
 ## 4. Scene model (Unity-style)
 
 - **`GameObject`** has a name, a `Transform` (position / rotation quat / scale,

@@ -1292,6 +1292,7 @@ bool Renderer::render(Scene& scene, const Time& time)
         m_jitter = glm::vec2(halton(k, 2), halton(k, 3)) - 0.5f;
     }
     m_graph->maxStage = photo ? int(RenderStage::Overlay) : (1 << 30);
+    m_graph->loadingFrame = m_loadingFrames;
     m_skinning->beginFrame(slotIndex);
     gatherScene(scene);
     fillGlobals(time);
@@ -1348,12 +1349,15 @@ bool Renderer::render(Scene& scene, const Time& time)
         vkCmdCopyImageToBuffer(slot.cmd, image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer.handle, 1, &region);
     };
     if (photo) readback(m_photo.target, m_photo.readback);
-    if (headless && !m_envCapturePath.empty() && m_frameNumber >= m_envCaptureFrame &&
-        m_frameNumber < m_envCaptureFrame + m_envCaptureCount) {
+    // VE_CAPTURE_FRAME counts world frames (loading-screen frames don't count).
+    const uint64_t worldFrame = m_worldFrames;
+    if (!m_loadingFrames) ++m_worldFrames;
+    if (headless && !m_loadingFrames && !m_envCapturePath.empty() && worldFrame >= m_envCaptureFrame &&
+        worldFrame < m_envCaptureFrame + m_envCaptureCount) {
         m_capturePath = m_envCapturePath;
         if (m_envCaptureCount > 1) {
             const std::filesystem::path p(m_envCapturePath);
-            m_capturePath = (p.parent_path() / (p.stem().string() + "_" + std::to_string(m_frameNumber - m_envCaptureFrame) +
+            m_capturePath = (p.parent_path() / (p.stem().string() + "_" + std::to_string(worldFrame - m_envCaptureFrame) +
                                                 p.extension().string())).string();
         }
     }

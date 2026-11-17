@@ -312,6 +312,7 @@ public:
 
     // Streaming state (F1 overlay / tests).
     uint32_t drawnNodes() const;
+    float loadProgress() const; // LOD meshes the view needs that exist (loading screens)
     size_t colliderTiles() const { return m_colliderTiles.size(); }
 
 private:
@@ -348,6 +349,7 @@ private:
     std::vector<Change> m_changes; // recent rebuilds (changedOnlyIn)
     bool m_dirty = false;
     bool m_started = false;
+    bool m_loadTask = false; // registered a loading-screen task (first build)
     float m_sinceRebuild = 0.0f;
     float m_sinceCheck = 0.0f; // edit-state checks are throttled (they serialize the fields)
 };

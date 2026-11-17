@@ -431,16 +431,18 @@ Ordered roughly by how much they'll bite while building a game.
 - [ ] Multithreaded scene gathering / command recording
 
 ### F4 — Building & gameplay systems
-- [ ] Grid/snap building system (pieces, sockets, structural stability)
-- [ ] Inventory/crafting data model (data files)
-- [~] Interaction system (raycast "use" with prompts): Savanna's `Interactable` (Harvest.hpp) does it for promoted foliage; generalise it (and `Sunstone`) into the engine
-- [ ] AI (state machines / behaviour trees), navmesh (Recast/Detour)
-- [ ] Combat (hitboxes, damage, stamina), boss encounters
+Engine provides mechanisms, the game (Savanna here) the rules and content.
+- [ ] Interaction (engine): `Interactable` + camera raycast + focus / prompt / use events; Savanna's harvesting and sunstones move onto it (today: Savanna's own `Interactable` in Harvest.hpp)
+- [ ] Navmesh (engine: Recast/Detour build from colliders + terrain tiles, `NavAgent` component); AI behaviours (state machines for villagers / animals) in the game
+- [ ] Inventory / crafting data model (game; data files)
+- [ ] Grid/snap building system (game: pieces, sockets, structural stability; engine helpers only if something is generic)
+- [ ] Combat (game: hitboxes, damage, stamina), boss encounters
 
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)
-- [ ] Scene/prefab serialization (JSON)
-- [ ] Retained-mode game UI (inventory grids, health bars) beyond ImGui
-- [ ] Gamepad input + rebinding UI
-- [ ] Save/load
-- [ ] CPU profiler zones (GPU per-pass timing already exists)
+- [x] Scene serialization (JSON scene files, editor save / load); prefabs are E3
+- [x] Loading screens (engine): `Engine::beginLoading(loadingScene)` + load steps (main thread, one per frame) + load tasks (progress of work over frames); the game's loading scene (UI) is drawn while the world streams in editor-paused mode. Foliage fills its cells on a worker pool (cores − 1) instead of the blocking preload. Savanna: sunset title, progress bar, tips
+- [ ] Save/load (engine: save slots, scene-state snapshot, per-component save hooks, foliage overrides, terrain edits; game: what it stores)
+- [ ] Gamepad input + rebinding UI (engine)
+- [ ] CPU profiler zones (engine; GPU per-pass timing already exists)
+- [ ] Retained-mode game UI (inventory grids, health bars) beyond ImGui (engine widgets, game layouts)

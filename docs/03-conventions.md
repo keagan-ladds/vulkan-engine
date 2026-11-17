@@ -199,6 +199,24 @@ Put files under `<game>/assets/` (copied next to the exe on build), then
 `assets().loadTexture("textures/x.png", srgb)`, `loadModel("models/x.gltf")`
 followed by `scene.instantiate(*model)`, or `loadAudio("audio/x.wav")`.
 
+### Loading screens
+
+```cpp
+ve::Engine engine(config);
+engine.beginLoading(makeLoadingScene(), 0.5f);            // your own small scene (UI in onGui)
+engine.addLoadStep("Loading the world", [&] { loadWorld(engine); }); // main thread, one step per frame
+engine.run();
+```
+
+The loading scene's objects read `engine().loadProgress()` (0..1) and
+`engine().loadStatus()` (the current step / task name). Systems that fill
+the world over several frames register a task:
+`engine().addLoadTask("Placing vegetation", [] { return progress; })`
+(Foliage does, instead of its synchronous preload). The world updates in
+editor-paused mode meanwhile, so only `runInEditor` objects run. The
+backbuffer is sRGB: convert display colours to linear for ImGui (see the
+sandbox's `LoadingScreen.cpp`).
+
 ### Animated characters (skinned glTF)
 
 ```cpp

@@ -185,6 +185,7 @@ void TerrainLod::update(const glm::vec3& camera, bool preload)
     m_stats.drawn = uint32_t(m_drawn.size());
     m_stats.cached = uint32_t(m_nodes.size());
     m_stats.pending = uint32_t(m_jobs.size()) + uint32_t(m_busy) + uint32_t(m_results.size());
+    m_stats.missing = uint32_t(m_requests.size());
 }
 
 void TerrainLod::upload(Result& r)

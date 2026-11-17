@@ -189,6 +189,15 @@ public:
     std::shared_ptr<Shader> builtinShader(BuiltinShader which) const { return m_builtinShaders[size_t(which)]; }
     std::shared_ptr<Material> createMaterial(std::shared_ptr<Shader> shader);
     SkinningSystem& skinning() { return *m_skinning; }
+    // Loading screens (Engine::beginLoading): frames draw only the UI over a
+    // cleared screen, plus the passes with runsWhileLoading.
+    void setLoadingFrames(bool on, const glm::vec4& clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f))
+    {
+        m_loadingFrames = on;
+        m_loadingClear = clearColor;
+    }
+    bool loadingFrames() const { return m_loadingFrames; }
+    const glm::vec4& loadingClearColor() const { return m_loadingClear; }
     // Thousands of copies of a mesh, culled and drawn on the GPU (see Instancing.hpp).
     std::shared_ptr<InstanceGroup> createInstanceGroup(InstanceGroupDesc desc, uint32_t capacity);
     InstanceSystem& instances() { return *m_instances; }
@@ -368,7 +377,10 @@ private:
     void photoAccumulate();
     void photoFinish();
     void saveCapture(); // headless VE_CAPTURE / requestCapture: m_captureBuffer -> PNG
-    uint64_t m_envCaptureFrame = 0;
+    uint64_t m_envCaptureFrame = 0; // counted in world frames (not loading screens)
+    uint64_t m_worldFrames = 0;
+    bool m_loadingFrames = false;
+    glm::vec4 m_loadingClear{0.0f, 0.0f, 0.0f, 1.0f};
     uint64_t m_envCaptureCount = 1;
     std::string m_envCapturePath;
     TextureId m_dirShadowMap = kNoTexture;

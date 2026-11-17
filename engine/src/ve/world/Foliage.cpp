@@ -74,7 +74,7 @@ FoliageSystem::~FoliageSystem()
         m_quit = true;
     }
     m_cv.notify_all();
-    if (m_worker.joinable()) m_worker.join();
+    for (std::thread& w : m_workers) w.join();
     for (auto& [key, cell] : m_cells) destroyBodies(cell);
 }
 
@@ -322,7 +322,8 @@ void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<
         m_quit = true;
     }
     m_cv.notify_all();
-    if (m_worker.joinable()) m_worker.join();
+    for (std::thread& w : m_workers) w.join();
+    m_workers.clear();
     m_quit = false;
     m_jobs.clear();
     m_results.clear();
@@ -353,9 +354,20 @@ void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<
     startWorker();
 }
 
+float FoliageSystem::streamProgress() const
+{
+    if (m_scanViewer.x > 1e29f) return 0.0f; // not scanned yet
+    size_t done = 0;
+    for (const auto& [key, cell] : m_cells) done += cell.state == CellState::Loaded ? 1 : 0;
+    return m_cells.empty() ? 1.0f : float(done) / float(m_cells.size());
+}
+
 void FoliageSystem::startWorker()
 {
-    if (!m_worker.joinable()) m_worker = std::thread([this] { workerLoop(); });
+    if (!m_workers.empty()) return;
+    // Placement is independent per cell: one worker per spare core.
+    const unsigned n = std::max(1u, std::min(std::thread::hardware_concurrency(), 16u) - 1u);
+    for (unsigned i = 0; i < n; ++i) m_workers.emplace_back([this] { workerLoop(); });
 }
 
 void FoliageSystem::workerLoop()
@@ -583,7 +595,7 @@ void FoliageSystem::update(float)
         results.swap(m_results);
         m_stats.pending = static_cast<uint32_t>(m_jobs.size());
     }
-    if (!newJobs.empty()) m_cv.notify_one();
+    if (!newJobs.empty()) m_cv.notify_all();
     for (Result& r : results) {
         m_stats.generateMs = m_stats.generateMs * 0.95f + r.ms * 0.05f;
         auto it = m_cells.find(r.key);
