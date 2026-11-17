@@ -41,6 +41,7 @@ class Renderer;
 class Window;
 class Scene;
 class Texture;
+class TemporalAAPass;
 class Mesh;
 struct Time;
 
@@ -55,9 +56,25 @@ struct RendererSettings {
     uint32_t directionalShadowResolution = 2048;
     float cascadeSplitLambda = 0.8f; // 0 = uniform splits, 1 = logarithmic
     float maxShadowDistance = 200.0f;
+    // Tallest instanced geometry (trees) above the highest regular mesh: bounds
+    // how far towards the sun directional shadow casters are gathered.
+    float shadowInstanceHeight = 40.0f;
+    // Directional shadows: casters are gathered at most this far towards the
+    // sun beyond each cascade (distant mountains at sunset within it still
+    // shadow the scene). Larger = longer sunset shadows, more overdraw.
+    float shadowCasterReach = 600.0f;
+    // Directional shadows are rendered from the light direction snapped to
+    // steps of this many degrees, so a moving sun doesn't make shadow edges
+    // crawl every frame (they move in small steps instead). 0 = continuous.
+    float shadowDirectionStep = 0.2f;
     // --- Point light shadows: cube maps ---
     uint32_t maxShadowedPointLights = 4;
     uint32_t pointShadowResolution = 512;
+    // Re-render a point light's cube face only when something it depends on
+    // changed (light position/range, or any caster in range moved, appeared or
+    // changed material). Static lights over a static camp then cost nothing;
+    // intensity flicker doesn't affect the depth cubes.
+    bool cachePointShadows = true;
     // --- Bias (tweak in the F1 overlay) ---
     float shadowNormalBias = 1.5f;   // in shadow texels
     float shadowDepthBiasConstant = 1.0f;
@@ -71,6 +88,14 @@ struct RendererSettings {
     uint32_t shadowLodBias = 1;    // shadows use this many LODs coarser than the camera
     bool lodCrossfade = true;      // dithered transitions instead of popping
     float lodFadeBand = 0.15f;     // transition width, fraction of the LOD threshold
+    // Point lights are binned into screen/depth clusters so each pixel only
+    // evaluates the lights that reach it (off = every pixel loops over all).
+    bool clusteredLights = true;
+    // --- Anti-aliasing ---
+    // Temporal AA: the camera jitters by a sub-pixel offset every frame and
+    // TemporalAAPass blends each frame into a reprojected history. Smooths
+    // edges, foliage cutouts and dithering; moving objects can smear slightly.
+    bool temporalAA = false;
     uint32_t maxInstances = 262144;               // total across all groups (64 B each)
     uint32_t maxVisibleInstancesPerView = 1u << 20; // sum over batches of group capacity (4 B each, per cull view)
 };
@@ -125,6 +150,12 @@ public:
     const FrameData& frameData() const { return m_frame; }
     const RenderStats& stats() const { return m_frame.stats; }
     float gpuFrameTimeMs() const { return m_gpuFrameMs; }
+    float lastGpuFrameTimeMs() const { return m_lastGpuFrameMs; } // raw, latest read back
+    float lastFenceWaitMs() const { return m_lastFenceWaitMs; }  // CPU time spent waiting for the GPU in render()
+    float lastSubmitMs() const { return m_lastSubmitMs; }        // CPU time inside queue submit + present (driver)
+    // Bumped whenever cached GPU content may be stale (shadow maps recreated,
+    // shaders hot-reloaded). Passes that keep results across frames compare it.
+    uint64_t contentEpoch() const { return m_contentEpoch; }
     Window& window() { return *m_window; }
 
     RendererSettings& settings() { return m_settings; }
@@ -257,6 +288,7 @@ private:
     void createFrameSlots();
     void createShadowMaps();
     void writeShadowDescriptors();
+    friend class InstanceSystem; // rewrites its descriptors when the visible list grows
     void writeInstanceDescriptors();
     void createDefaults();
     void createDefaultPasses();
@@ -265,6 +297,8 @@ private:
     void gatherScene(Scene& scene);
     void setupCamera(Scene& scene);
     void gatherLights(Scene& scene);
+    void buildLightClusters(uint32_t pointLights);
+    glm::vec3 shadowDirection(const glm::vec3& lightDirection) const;
     void buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uint32_t shadowSlot, GpuDirectionalLight& gpu);
     void fillGlobals(const Time& time);
     VkPipeline buildFullscreenPipeline(const FullscreenPipelineDesc& desc);
@@ -276,6 +310,7 @@ private:
         FullscreenPipelineDesc fullscreen;
         std::string computeShader;
     };
+    PipelineHandle addRawPipeline(RawPipeline raw); // reuses a free handle id
     std::vector<RawPipeline> m_rawPipelines; // PipelineHandle id - 1
     std::vector<uint32_t> m_freeRawPipelines;
     std::vector<std::weak_ptr<Shader>> m_shaders; // for hot-reload
@@ -322,7 +357,9 @@ private:
     void photoBegin();
     void photoAccumulate();
     void photoFinish();
+    void saveCapture(); // headless VE_CAPTURE / requestCapture: m_captureBuffer -> PNG
     uint64_t m_envCaptureFrame = 0;
+    uint64_t m_envCaptureCount = 1;
     std::string m_envCapturePath;
     TextureId m_dirShadowMap = kNoTexture;
     TextureId m_pointShadowMap = kNoTexture;
@@ -332,10 +369,17 @@ private:
     std::vector<uint32_t> m_freeMaterials;
     uint32_t m_materialHighWater = 0;
 
-    std::unique_ptr<LightBuffer> m_lights; // ~30 KB, heap allocated
+    std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
+    uint32_t m_clusterWords = 0;          // used words of LightBuffer::clusterLights
+    TemporalAAPass* m_taaPass = nullptr;  // the camera only jitters while it runs
     FrameData m_frame;
     glm::mat4 m_prevViewProj{1.0f};
     float m_gpuFrameMs = 0.0f;
+    float m_lastGpuFrameMs = 0.0f;
+    float m_lastFenceWaitMs = 0.0f;
+    float m_lastSubmitMs = 0.0f;
+    float m_sceneTop = 0.0f; // highest point of this frame's draw items
+    uint64_t m_contentEpoch = 1;
 
     std::array<std::shared_ptr<Shader>, size_t(BuiltinShader::Count)> m_builtinShaders;
     std::shared_ptr<Texture> m_white, m_black, m_flatNormal;

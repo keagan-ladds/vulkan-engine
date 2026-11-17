@@ -4,7 +4,36 @@
 
 #include <imgui.h>
 
+#include <cstring>
+
 namespace ve {
+
+namespace {
+
+// 64-bit hash of a point-shadow face's inputs (see RendererSettings::cachePointShadows).
+struct FaceHash {
+    uint64_t h = 0x9E3779B97F4A7C15ull;
+    void add(uint64_t v)
+    {
+        h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+        h *= 0xFF51AFD7ED558CCDull;
+        h ^= h >> 33;
+    }
+    void addBytes(const void* data, size_t size)
+    {
+        const auto* p = static_cast<const unsigned char*>(data);
+        for (; size >= 8; size -= 8, p += 8) {
+            uint64_t v;
+            std::memcpy(&v, p, 8);
+            add(v);
+        }
+        uint64_t tail = 0;
+        std::memcpy(&tail, p, size);
+        add(tail);
+    }
+};
+
+} // namespace
 
 // -----------------------------------------------------------------------------
 // InstanceCullPass
@@ -65,6 +94,33 @@ void ShadowPass::execute(RenderContext& ctx)
             m_scratch.push_back(i);
         }
 
+        if (sv.point && s.cachePointShadows) {
+            // Same light, same casters in the same places as last time: the
+            // cube face still holds exactly what we'd render. Keep it.
+            FaceHash fh;
+            fh.add(r.contentEpoch());
+            fh.addBytes(&sv.viewProj, sizeof(sv.viewProj));
+            fh.add(uint64_t(sv.range * 1000.0f));
+            for (uint32_t i : m_scratch) {
+                const DrawItem& it = frame.items[i];
+                fh.add(reinterpret_cast<uintptr_t>(it.mesh));
+                fh.add(reinterpret_cast<uintptr_t>(it.submesh));
+                fh.add(reinterpret_cast<uintptr_t>(&it.material->shader()));
+                fh.addBytes(&it.world, sizeof(it.world));
+                fh.addBytes(&r.materialData(it.material->gpuIndex()), sizeof(GpuMaterial)); // cutout textures/params
+            }
+            const uint64_t hash = fh.h | 1; // never 0 (= nothing cached)
+            if (m_pointFaceHash.size() <= sv.layer) m_pointFaceHash.resize(sv.layer + 1, 0);
+            if (m_pointFaceHash[sv.layer] == hash) {
+                ++m_pointFacesCached;
+                continue;
+            }
+            m_pointFaceHash[sv.layer] = hash;
+            ++m_pointFacesRendered;
+        } else if (sv.point && sv.layer < m_pointFaceHash.size()) {
+            m_pointFaceHash[sv.layer] = 0;
+        }
+
         DepthTarget depth;
         depth.texture = sv.point ? r.pointShadowMap() : r.dirShadowMap();
         depth.clear = true;
@@ -92,12 +148,15 @@ void ShadowPass::onGui()
 {
     RendererSettings& s = renderer().settings();
     ImGui::Checkbox("Visualize cascades", &s.debugCascades);
+    ImGui::Checkbox("Cache static point shadows", &s.cachePointShadows);
+    ImGui::Text("Point faces: %u rendered, %u reused (since start)", m_pointFacesRendered, m_pointFacesCached);
     ImGui::SliderFloat("Normal bias (texels)", &s.shadowNormalBias, 0.0f, 5.0f);
     ImGui::SliderFloat("Depth bias constant", &s.shadowDepthBiasConstant, 0.0f, 10.0f);
     ImGui::SliderFloat("Depth bias slope", &s.shadowDepthBiasSlope, 0.0f, 10.0f);
     ImGui::SliderFloat("PCF radius (texels)", &s.shadowPcfRadius, 0.0f, 3.0f);
     ImGui::SliderFloat("Split lambda", &s.cascadeSplitLambda, 0.0f, 1.0f);
     ImGui::SliderFloat("Max distance", &s.maxShadowDistance, 20.0f, 1000.0f);
+    ImGui::SliderFloat("Sun direction step (deg)", &s.shadowDirectionStep, 0.0f, 1.0f, "%.2f");
     int cascades = static_cast<int>(s.cascadeCount);
     int dirCount = static_cast<int>(s.maxShadowedDirectionalLights);
     int pointCount = static_cast<int>(s.maxShadowedPointLights);
@@ -166,6 +225,81 @@ void TransparentPass::execute(RenderContext& ctx)
 }
 
 // -----------------------------------------------------------------------------
+// TemporalAAPass
+// -----------------------------------------------------------------------------
+
+namespace {
+struct TaaPush { // taa.frag
+    uint32_t current;
+    uint32_t history;
+    uint32_t depth;
+    uint32_t historyValid;
+    float feedback;
+};
+} // namespace
+
+TemporalAAPass::~TemporalAAPass()
+{
+    renderer().destroyPipeline(m_pipeline);
+}
+
+void TemporalAAPass::setup(RenderGraph& g)
+{
+    for (int i = 0; i < 2; ++i)
+        m_history[i] = g.createTexture("TAAHistory" + std::to_string(i), {.format = Renderer::kSceneColorFormat});
+    m_pipeline = renderer().createFullscreenPipeline({.fragment = "taa.frag", .colorFormats = {Renderer::kSceneColorFormat}});
+}
+
+void TemporalAAPass::declare(PassBuilder& b)
+{
+    m_active = renderer().settings().temporalAA;
+    if (!m_active) return;
+    Renderer& r = renderer();
+    const uint32_t w = m_frame & 1u;
+    b.use(r.sceneDepth(), Access::Sampled);
+    b.use(r.sceneColor(), Access::Sampled); // then the copy target
+    b.use(m_history[w], Access::ColorAttachment);
+    b.use(m_history[w ^ 1u], Access::Sampled);
+}
+
+void TemporalAAPass::execute(RenderContext& ctx)
+{
+    if (!m_active) {
+        m_frame = 0; // history is stale when turned back on
+        return;
+    }
+    Renderer& r = renderer();
+    RenderGraph& g = graph();
+    const uint32_t w = m_frame & 1u;
+    const Image& color = g.get(r.sceneColor()).image;
+    const bool valid = m_frame > 0 && ctx.frame->frameNumber == m_lastFrame + 1 &&
+                       color.extent.width == m_extent.width && color.extent.height == m_extent.height;
+    m_extent = color.extent;
+    m_lastFrame = ctx.frame->frameNumber;
+
+    // 1. Resolve into this frame's history.
+    ctx.fullscreen({{m_history[w]}}, m_pipeline,
+                   TaaPush{g.sampled(r.sceneColor()), g.sampled(m_history[w ^ 1u]), g.sampled(r.sceneDepth()), valid ? 1u : 0u,
+                           feedback});
+    // 2. Copy it back over the scene colour for the following passes.
+    g.transition(ctx.cmd, m_history[w], Access::TransferSrc);
+    g.transition(ctx.cmd, r.sceneColor(), Access::TransferDst);
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.extent = color.extent;
+    vkCmdCopyImage(ctx.cmd, g.get(m_history[w]).image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, color.handle,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    ++m_frame;
+}
+
+void TemporalAAPass::onGui()
+{
+    ImGui::Checkbox("Enabled (jitters the camera)", &renderer().settings().temporalAA);
+    ImGui::SliderFloat("Feedback", &feedback, 0.5f, 0.98f);
+}
+
+// -----------------------------------------------------------------------------
 // CompositePass
 // -----------------------------------------------------------------------------
 
@@ -190,7 +324,7 @@ CompositePass::CompositePass()
 void CompositePass::prepare(FrameData&)
 {
     if (m_graded != kNoTexture) {
-        setPush(CompositePush{graph().get(m_graded).sampledIndex, 1.0f, 1.0f, 1.0f, glm::vec4(1.0f, 1.0f, 1.0f, vignette), 2, 1u});
+        setPush(CompositePush{graph().sampled(m_graded), 1.0f, 1.0f, 1.0f, glm::vec4(1.0f, 1.0f, 1.0f, vignette), 2, 1u});
     } else {
         setPush(CompositePush{inputIndex(0), effectiveExposure(), contrast, saturation, glm::vec4(tint, vignette), tonemapper, 0u});
     }

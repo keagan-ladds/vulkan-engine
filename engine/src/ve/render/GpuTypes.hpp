@@ -18,6 +18,11 @@ namespace ve {
 
 constexpr uint32_t kMaxDirectionalLights = 4;
 constexpr uint32_t kMaxPointLights = 256;
+// Clustered point lights: the view frustum is split into a grid of clusters
+// (screen tiles x logarithmic depth slices), each listing the lights that reach it.
+constexpr uint32_t kClusterX = 16, kClusterY = 9, kClusterZ = 24;
+constexpr uint32_t kClusterCount = kClusterX * kClusterY * kClusterZ;
+constexpr uint32_t kClusterIndexCapacity = 65536; // light indices (8 bits each, 4 per uint)
 constexpr uint32_t kMaxCascades = 4;
 constexpr uint32_t kMaxShadowViews = 128; // directional cascades + 6 per shadowed point light
 constexpr uint32_t kMaxMaterials = 4096;
@@ -43,6 +48,7 @@ struct FrameGlobals {
     glm::vec4 shadowParams;   // x = normal bias (texels), y = PCF radius (texels), z = dir shadow map size, w = point shadow map size
     glm::uvec4 builtinTextures; // x = SceneDepth, y = SceneColor, z = SceneNormal (bindless indices), w = reserved
     glm::vec4 globalParams[kGlobalParamCount]; // free-form game/effect globals (see vfx.glsl for the effects convention)
+    glm::vec4 jitter; // xy = how far this frame's sub-pixel camera jitter moved the image, in UV units (TAA, photo mode)
 };
 
 struct GpuDirectionalLight {
@@ -65,6 +71,11 @@ struct LightBuffer {
     GpuDirectionalLight directional[kMaxDirectionalLights];
     GpuPointLight point[kMaxPointLights];
     glm::mat4 shadowViews[kMaxShadowViews]; // view-projection matrices used to render/sample shadows
+    // x, y = depth slice = log(view depth) * x + y; z = 1 if the clusters are valid
+    // (0 = shaders loop over every point light), w unused
+    glm::vec4 clusterParams;
+    uint32_t clusters[kClusterCount];                       // first index << 9 | light count
+    uint32_t clusterLights[kClusterIndexCapacity / 4];      // point light indices, 8 bits each
 };
 
 // set 0, binding 2 (storage buffer, array). 256 bytes per material.

@@ -41,11 +41,14 @@ void main()
         float banded = floor(ndl * bands + 0.5) / bands;
         color += albedo * L.color.rgb * banded;
     }
-    // Point lights: same idea with the engine's falloff.
-    for (uint i = 0u; i < frame.lightCounts.y; ++i) {
-        VePointLight L = lights.point[i];
+    // Point lights: same idea with the engine's falloff, only those whose
+    // range reaches this pixel's light cluster.
+    VeLightList list = veLightList(inWorldPos, viewDepth);
+    for (uint k = 0u; k < list.count; ++k) {
+        VePointLight L = lights.point[veLightAt(list, k)];
         vec3 toLight = L.positionRange.xyz - inWorldPos;
         float d = length(toLight);
+        if (d >= L.positionRange.w) continue;
         float ndl = max(dot(N, toLight / d), 0.0) * vePointAttenuation(d, L.positionRange.w);
         color += albedo * L.color.rgb * floor(ndl * bands * 4.0 + 0.5) / (bands * 4.0);
     }

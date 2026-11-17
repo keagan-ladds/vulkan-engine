@@ -52,6 +52,7 @@
 #include <condition_variable>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -74,14 +75,47 @@ struct FoliageSample {
     glm::vec3 normal;
 };
 
-struct FoliageLayer {
-    std::string name = "foliage";
+// Stable identity of one placed instance: its layer and placement grid
+// square. Placement is deterministic, so the id is the same every run and can
+// be stored (save games, quest state).
+struct FoliageInstanceId {
+    uint32_t layer = 0xFFFFFFFFu;
+    int gx = 0, gz = 0;
+    bool valid() const { return layer != 0xFFFFFFFFu; }
+    uint64_t packed() const
+    {
+        return (uint64_t(layer & 0xFFFFu) << 48) | (uint64_t(uint32_t(gx) & 0xFFFFFFu) << 24) | uint64_t(uint32_t(gz) & 0xFFFFFFu);
+    }
+    static FoliageInstanceId unpack(uint64_t k)
+    {
+        auto s24 = [](uint64_t v) { return int(int32_t(uint32_t(v & 0xFFFFFFu) << 8) >> 8); };
+        return {uint32_t(k >> 48), s24(k >> 24), s24(k)};
+    }
+    bool operator==(const FoliageInstanceId&) const = default;
+};
 
-    // ---- What ----
-    std::vector<std::vector<InstanceLod>> variants; // one LOD chain per mesh variant (picked at random)
+// State value meaning "not there" (felled and cleared, harvested away...).
+constexpr uint32_t kFoliageRemoved = 0xFFFFFFFFu;
+
+struct FoliageInstanceInfo {
+    FoliageInstanceId id;
+    glm::vec3 position{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    float scale = 1.0f;
+    uint32_t variant = 0;
+    uint32_t state = 0; // 0 = the layer's own look, n = FoliageLayer::states[n - 1], or kFoliageRemoved
+};
+
+// An alternative look an instance can be switched to (a stump, a picked bush).
+struct FoliageState {
+    std::string name;
+    std::vector<std::vector<InstanceLod>> variants; // one per layer variant, or a single shared one; empty = invisible
     std::vector<Collider> colliders;                // none / one shared / one per variant
-    uint32_t colliderUserValue = 0;                 // RaycastHit::userValue of this layer's colliders
+};
 
+// Placement and streaming rules: shared by FoliageLayer (code) and the
+// FoliageType scene component (editor / scene files), which derive from it.
+struct FoliageRules {
     // ---- Where (all optional except spacing) ----
     float spacing = 4.0f;    // one candidate per spacing x spacing square
     float jitter = 0.8f;     // 0 = perfect grid, 1 = anywhere in the square (can touch neighbours)
@@ -92,14 +126,6 @@ struct FoliageLayer {
     // coverage = rough fraction of the world the clusters cover.
     float clusterFrequency = 0.0f;
     float clusterCoverage = 0.5f;
-    // Biome rules: return the chance (0..1) of keeping a candidate.
-    std::function<float(const FoliageSample&)> density;
-    // Keep at least `radius` metres from instances of an earlier layer.
-    struct Avoid {
-        uint32_t layer;
-        float radius;
-    };
-    std::vector<Avoid> avoid;
 
     // ---- How ----
     float minScale = 1.0f, maxScale = 1.0f;
@@ -114,6 +140,53 @@ struct FoliageLayer {
     float colliderDistance = 60.0f;  // colliders exist within this distance of colliderFocus
     uint32_t maxInstances = 0;       // loaded at once; 0 = estimate from viewDistance/spacing
     uint32_t seed = 0;
+};
+
+struct FoliageLayer : FoliageRules {
+    std::string name = "foliage";
+
+    // ---- What ----
+    std::vector<std::vector<InstanceLod>> variants; // one LOD chain per mesh variant (picked at random)
+    std::vector<Collider> colliders;                // none / one shared / one per variant
+    uint32_t colliderUserValue = 0;                 // RaycastHit::userValue of this layer's colliders
+
+    // ---- More "where" ----
+    // Biome rules: return the chance (0..1) of keeping a candidate.
+    std::function<float(const FoliageSample&)> density;
+    // Keep at least `radius` metres from instances of an earlier layer.
+    struct Avoid {
+        uint32_t layer;
+        float radius;
+    };
+    std::vector<Avoid> avoid;
+
+    // ---- Interaction (see FoliageSystem::setState / FoliageLink) ----
+    std::vector<FoliageState> states; // extra looks, states 1..n
+    // > 0: instances this close to FoliageSystem::colliderFocus become
+    // GameObjects (with a FoliageLink) so gameplay code can live on them; they
+    // turn back into instances further away.
+    float promoteDistance = 0.0f;
+    // Creates the GameObject for a promoted instance (e.g. a registered
+    // ChoppableTree); null = a plain GameObject. The system positions it and,
+    // unless it has its own, adds the instance's mesh and collider.
+    std::function<GameObject*(Scene&, const FoliageInstanceInfo&)> promote;
+};
+
+class FoliageSystem;
+
+// On every promoted GameObject: which instance it stands for, and the way to
+// change it (the change outlives the object: the system keeps it).
+class FoliageLink : public Component {
+public:
+    FoliageInstanceInfo info;
+    FoliageSystem* system() const;
+    void setState(uint32_t state);
+    void setState(const std::string& name); // "" = the default look
+    std::string stateName() const;
+
+private:
+    friend class FoliageSystem;
+    uint64_t m_system = 0; // FoliageSystem object id
 };
 
 struct FoliageSettings {
@@ -148,13 +221,31 @@ public:
 
     void update(float dt) override;
     void onGui() override;
+    void onDestroy() override;
     const FoliageStats& stats() const { return m_stats; }
 
     // Instances layer `layer` would place near `p` (deterministic, works for unloaded cells too).
     std::vector<glm::vec3> query(uint32_t layer, glm::vec2 p, float radius) const;
 
+    // ---- Interaction: per-instance state that survives streaming ----
+    // The nearest instance of `layer` within `radius` (also in unloaded cells).
+    std::optional<FoliageInstanceInfo> nearest(uint32_t layer, glm::vec2 p, float radius) const;
+    std::optional<FoliageInstanceInfo> instance(FoliageInstanceId id) const; // null if the rules place nothing there
+    uint32_t state(FoliageInstanceId id) const;
+    // Switches an instance's look (and collider) now and whenever its cell streams in again.
+    void setState(FoliageInstanceId id, uint32_t state);
+    void remove(FoliageInstanceId id) { setState(id, kFoliageRemoved); }
+    int stateIndex(uint32_t layer, const std::string& name) const; // "" -> 0; -1 = unknown
+    const std::string& stateName(uint32_t layer, uint32_t state) const;
+    // Every changed instance as (id.packed(), state): store it in a save game, give it back after loading.
+    std::vector<std::pair<uint64_t, uint32_t>> overrides() const;
+    void setOverrides(const std::vector<std::pair<uint64_t, uint32_t>>& states);
+    // The GameObject standing in for an instance while it's promoted (else null).
+    GameObject* promoted(FoliageInstanceId id) const;
+
 private:
     struct Instance {
+        int gx, gz; // placement grid square (the id)
         uint32_t variant;
         glm::vec3 position;
         glm::quat rotation;
@@ -170,8 +261,18 @@ private:
     };
     struct LayerData {
         FoliageLayer desc;
-        std::vector<std::shared_ptr<InstanceGroup>> groups; // per variant
+        std::vector<std::vector<std::shared_ptr<InstanceGroup>>> groups; // [state][variant]; extra states created on first use
+        uint32_t capacity = 0;                                          // per base variant group
         uint32_t capacityWarned = 0;
+    };
+    // What became of one generated instance.
+    struct Slot {
+        uint32_t state = 0;
+        int group = -1; // index into the state's groups, -1 = not drawn
+        InstanceGroup::Handle handle = InstanceGroup::kInvalid;
+        uint32_t body = 0;
+        bool hasBody = false;
+        uint64_t promoted = 0; // GameObject id while promoted
     };
     enum class CellState { Queued, Ready, Loaded };
     struct Cell {
@@ -180,10 +281,10 @@ private:
         uint32_t ticket;
         CellState state = CellState::Queued;
         std::vector<Instance> instances;
-        size_t applied = 0; // instances added so far
-        std::vector<std::pair<uint32_t, InstanceGroup::Handle>> handles;
-        std::vector<uint32_t> bodies;
-        size_t bodiesCreated = 0;
+        std::vector<Slot> slots;   // per applied instance
+        size_t applied = 0;        // instances added so far
+        size_t bodiesCreated = 0;  // instances [0, bodiesCreated) had their collider turn
+        uint32_t bodies = 0;       // live bodies
         bool wantBodies = false;
     };
     struct Job {
@@ -201,6 +302,18 @@ private:
 
     static uint64_t cellKey(uint32_t layer, int cx, int cz);
     bool candidate(uint32_t layer, int gx, int gz, Candidate* out) const;
+    bool makeInstance(uint32_t layer, int gx, int gz, Instance* out) const;
+    int cellOf(uint32_t layer, int g) const; // cell column/row holding grid square g
+    Cell* loadedCell(FoliageInstanceId id, size_t* index);
+    InstanceGroup* groupFor(LayerData& layer, uint32_t state, uint32_t variant, int* index);
+    const std::vector<Collider>& collidersFor(const LayerData& layer, uint32_t state) const;
+    void showInstance(Cell& cell, size_t i);
+    void hideInstance(Cell& cell, size_t i);
+    void createBody(Cell& cell, size_t i);
+    void destroyBody(Cell& cell, size_t i);
+    void promote(Cell& cell, size_t i);
+    void demote(Cell& cell, size_t i);
+    void updatePromotion(glm::vec2 focus);
     std::vector<Instance> generate(uint32_t layer, int cx, int cz) const;
     float cellDistance(int cx, int cz, glm::vec2 p) const;
     bool cellInBounds(int cx, int cz) const;
@@ -219,7 +332,15 @@ private:
     std::vector<LayerData> m_layers;
     std::vector<std::pair<glm::vec2, float>> m_exclusions;
     std::unordered_map<uint64_t, Cell> m_cells;
+    std::unordered_map<uint64_t, uint32_t> m_overrides; // instance id -> state (main thread only)
+    std::vector<FoliageInstanceId> m_promoted;          // instances currently stood in for by GameObjects
     uint32_t m_nextTicket = 1;
+    // update() only redoes the expensive walks over every cell when something
+    // they depend on changed (big worlds have tens of thousands of cells).
+    glm::vec2 m_scanViewer{1e30f}, m_scanFocus{1e30f};
+    bool m_rescan = true;        // layers / preload changed the cell set
+    bool m_readyWaiting = false; // ready cells not fully added (instance budget)
+    bool m_bodiesWaiting = false; // colliders not all created (body budget)
     FoliageStats m_stats;
 
     std::thread m_worker;

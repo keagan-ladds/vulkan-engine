@@ -56,6 +56,16 @@ All of these run with Vulkan validation on in Debug builds. Any
 | Performance | `SAVANNA_DEBUG=1` → F1 overlay shows FPS, total GPU ms and **per-pass GPU ms** |
 | Engine still usable by games | `cp -r templates/game /tmp/g && cmake -S /tmp/g -B /tmp/g/build -G Ninja -DVE_ENGINE_DIR=$PWD && cmake --build /tmp/g/build && /tmp/g/build/bin/mygame` |
 | Clean shutdown | send SIGTERM (`timeout 10 ./savanna`): SDL turns it into a normal quit, so the whole shutdown path runs |
+| Benchmark | `VE_HEADLESS=1 VE_BENCH=120,30 SAVANNA_TIME=17.6 SAVANNA_WEATHER=0 ./savanna` (Release) → `[bench]` lines: main-thread CPU ms, frame ms, physics step, total and per-pass GPU ms, then exit |
+| Screenshot | `VE_HEADLESS=1 VE_CAPTURE=shot.png VE_CAPTURE_FRAME=60 ./savanna` (any test hook works alongside) |
+| Consecutive frames (flicker / jitter checks) | add `VE_CAPTURE_COUNT=8`: saves `shot_0.png` … `shot_7.png`; with `VE_FIXED_DT=0.016667` each frame advances 1/60 s however slow the software renderer is |
+
+**Machines without a display or GPU** (CI, cloud containers): install
+`xvfb mesa-vulkan-drivers` and prefix commands with `xvfb-run -a`. Lavapipe
+renders Vulkan 1.4 on the CPU: correct images and validation, but frames take
+~0.5–1 s, and its worker threads share the cores, so judge CPU changes by the
+benchmark's *main thread* time and GPU changes by per-pass time. Compare two
+builds by alternating runs (A, B, A, B): absolute numbers drift with load.
 
 Screenshots without a display server tool: capture the window with
 `xwd -name "Savanna - vulkan-engine test scene" -silent -display :0 > shot.xwd`
@@ -66,6 +76,10 @@ Weather values: 0 Clear, 1 Hazy, 2 Overcast, 3 Rain. Pose yaw: 0 looks
 north (-Z), 90 looks west (-X).
 
 ## 5. Gotchas (learned the hard way)
+
+- **Remember other objects by `id()`, not by pointer** (`scene.findById(id)`
+  each frame is O(1)). The editor can delete or replace any object; a stored
+  raw pointer then dangles, and even `isDestroyed()` reads freed memory.
 
 - **`GpuTypes.hpp` ↔ `ve.glsl` must match byte for byte.** If you add a field,
   add it in both places, keep 16-byte alignment, and update `fillGlobals()`.
@@ -91,7 +105,9 @@ north (-Z), 90 looks west (-X).
 - **FoliageSystem callbacks run on a worker thread.** `FoliageWorld::height`,
   `normal` and every `FoliageLayer::density` must only read immutable data.
   Add layers and exclusions before the first `update()`/`preload()`.
-- **Components are registered by their exact type** (see Known issue 9).
+- **Don't call a base class's empty hook** (`ve::GameObject::update(dt)`,
+  `ve::Component::onGui()`) from an override. The base versions mark the hook
+  as "not overridden" and the Scene stops calling it for that object.
 - **glm + GCC "most vexing parse":** `glm::mat3 m(glm::vec3(x[0]) / s, ...)` can
   parse as a declaration. Use brace initialisation.
 - **ImGui**: `ImGui::Render()` is called inside `UiPass::execute`. If a frame

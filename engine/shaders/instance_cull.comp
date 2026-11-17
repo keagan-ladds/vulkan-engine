@@ -1,12 +1,12 @@
 #version 460
 // GPU instance culling.
 //
-// One thread per instance of one InstanceGroup (x), one dispatch row per view
-// (y: view 0 = camera, then directional shadow cascades). For every instance
-// that survives the distance + frustum test, the thread picks a LOD (from the
-// distance to the camera, so all views agree) and appends the instance to the
-// visible list of each of that LOD's draw batches, bumping the batch's
-// indirect draw instanceCount with an atomic.
+// One thread per instance of one InstanceGroup. The thread loads the instance
+// and computes its bounding sphere and LOD (from the distance to the camera, so
+// all views agree) once, then tests every view (0 = camera, then directional
+// shadow cascades). For every view it survives (distance, size, frustum), it
+// appends the instance to the visible list of each of that LOD's draw
+// batches, bumping the batch's indirect draw instanceCount with an atomic.
 //
 // The draw passes then issue vkCmdDrawIndexedIndirect per batch; the vertex
 // shader maps gl_InstanceIndex -> veVisibleInstances[] -> veInstances[].
@@ -69,6 +69,7 @@ layout(push_constant) uniform Push {
     float lodBias;       // metric multiplier: > 1 = more detail
     uint shadowLodBias;  // shadow views use LOD + this
     float fadeBand;      // crossfade width, as a fraction of the threshold
+    uint viewCount;      // camera + shadow cascades
 } pc;
 
 void emit(uint view, uint first, uint count, uint entry)
@@ -81,13 +82,23 @@ void emit(uint view, uint first, uint count, uint entry)
     }
 }
 
+// Sphere vs. a view: big enough to matter there (e.g. a bush in a far shadow
+// cascade covering less than ~2 shadow texels doesn't), and inside the frustum.
+bool visibleIn(uint view, vec3 centre, float radius)
+{
+    CullView v = views[view];
+    if (radius < v.position.w) return false;
+    for (int p = 0; p < 6; ++p) {
+        if (dot(v.planes[p].xyz, centre) + v.planes[p].w < -radius) return false;
+    }
+    return true;
+}
+
 void main()
 {
     Group g = groups[pc.groupIndex];
     uint local = gl_GlobalInvocationID.x;
     if (local >= g.count) return;
-    uint view = gl_GlobalInvocationID.y;
-    if (view > 0u && (g.flags & 1u) == 0u) return; // not a shadow caster
 
     uint index = g.firstInstance + local;
     Instance inst = instances[index];
@@ -103,39 +114,33 @@ void main()
 
     float dist = distance(centre, views[0].position.xyz);
     if (dist - radius > g.cullDistance) return;
-    if (view > 0u && dist - radius > g.shadowDistance) return;
-
-    CullView v = views[view];
-    // Too small to matter in this view (e.g. a bush in a far shadow cascade
-    // where it would cover less than ~2 shadow texels).
-    if (radius < v.position.w) return;
-    for (int p = 0; p < 6; ++p) {
-        if (dot(v.planes[p].xyz, centre) + v.planes[p].w < -radius) return;
-    }
 
     bool screenSize = (g.flags & 2u) != 0u;
     float metric = (screenSize ? radius * pc.lodScale / max(dist, 1e-3) : 1.0 / max(dist, 1e-3)) * pc.lodBias;
     uint lod = 0u;
     while (lod + 1u < g.lodCount && metric < g.lodDistances[lod]) ++lod;
 
-    if (view > 0u) {
-        // Shadows: coarser LOD, no crossfade (depth-only shaders can't dither).
-        lod = min(lod + pc.shadowLodBias, g.lodCount - 1u);
-        emit(view, g.lodBatchStart[lod], g.lodBatchCount[lod], index);
-        return;
+    // --- Camera -----------------------------------------------------------------
+    if (visibleIn(0u, centre, radius)) {
+        // Crossfade: f = 0 well above the threshold -> 1 right at it.
+        uint q = 0u;
+        if (lod + 1u < g.lodCount && pc.fadeBand > 0.0) {
+            float thr = g.lodDistances[lod];
+            float f = clamp(1.0 - (metric - thr) / max(thr * pc.fadeBand, 1e-6), 0.0, 1.0);
+            q = uint(f * 255.0 + 0.5);
+        }
+        if (q == 0u) {
+            emit(0u, g.lodBatchStart[lod], g.lodBatchCount[lod], index);
+        } else {
+            emit(0u, g.lodBatchStart[lod], g.lodBatchCount[lod], index | (q << 23));                  // fading out
+            emit(0u, g.lodBatchStart[lod + 1u], g.lodBatchCount[lod + 1u], index | (q << 23) | (1u << 31)); // fading in
+        }
     }
 
-    // Crossfade: f = 0 well above the threshold -> 1 right at it.
-    uint q = 0u;
-    if (lod + 1u < g.lodCount && pc.fadeBand > 0.0) {
-        float thr = g.lodDistances[lod];
-        float f = clamp(1.0 - (metric - thr) / max(thr * pc.fadeBand, 1e-6), 0.0, 1.0);
-        q = uint(f * 255.0 + 0.5);
-    }
-    if (q == 0u) {
-        emit(view, g.lodBatchStart[lod], g.lodBatchCount[lod], index);
-    } else {
-        emit(view, g.lodBatchStart[lod], g.lodBatchCount[lod], index | (q << 23));                  // fading out
-        emit(view, g.lodBatchStart[lod + 1u], g.lodBatchCount[lod + 1u], index | (q << 23) | (1u << 31)); // fading in
+    // --- Shadow cascades: coarser LOD, no crossfade (depth-only shaders can't dither)
+    if ((g.flags & 1u) == 0u || dist - radius > g.shadowDistance) return;
+    uint shadowLod = min(lod + pc.shadowLodBias, g.lodCount - 1u);
+    for (uint view = 1u; view < pc.viewCount; ++view) {
+        if (visibleIn(view, centre, radius)) emit(view, g.lodBatchStart[shadowLod], g.lodBatchCount[shadowLod], index);
     }
 }

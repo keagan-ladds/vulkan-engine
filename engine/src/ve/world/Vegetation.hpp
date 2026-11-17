@@ -86,8 +86,12 @@ public:
 
 // One foliage layer, on a child of a Foliage object. Its object's name is the
 // layer name (used by `avoid`).
-class FoliageType : public Component {
+// The placement / streaming fields (spacing, scale, viewDistance...) come
+// from FoliageRules, the same struct FoliageLayer uses.
+class FoliageType : public Component, public FoliageRules {
 public:
+    FoliageType();
+
     enum class Collision { Auto, None, Capsule, Cylinder, Sphere, Box, ConvexHull };
     enum class LodMode { ScreenSize, Distance };
 
@@ -107,33 +111,26 @@ public:
     // ---- Where ----
     std::string biomes;          // "Savannah:1, Swamp:0.2" (empty = everywhere)
     float biomeThreshold = 0.0f; // 0 = density is a probability; >0 = all-or-nothing at this density
-    float spacing = 6.0f;
-    float jitter = 0.8f;
-    float probability = 1.0f;
-    float minHeight = -1e6f, maxHeight = 1e6f;
-    float maxSlope = 1.0f;
-    float clusterFrequency = 0.0f;
-    float clusterCoverage = 0.5f;
     std::string avoid;           // "Acacias:2.5, Rocks:1" (earlier layers of the same Foliage)
 
-    // ---- How ----
-    float minScale = 1.0f, maxScale = 1.0f;
-    float tint = 0.1f;
-    float alignToNormal = 0.0f;
-    float sink = 0.0f;
-    float viewDistance = 500.0f;
-    float shadowDistance = 1e6f;
-    bool castShadows = true;
-    float colliderDistance = 60.0f;
-    int maxInstances = 0;
-    int seed = 0;
+    // ---- Interaction (FoliageSystem::setState, FoliageLink) ----
+    // Extra looks: "Stump = acacia stump; Picked = models/bush_picked.glb"
+    // (a MeshLibrary name, or glTF path(s) loaded like `mesh`; empty = invisible).
+    std::string states;
+    float promoteDistance = 0.0f; // > 0: instances this close to the player become GameObjects...
+    std::string promoteType;      // ...of this registered type (empty = a plain GameObject)
 
     // Meshes for the current settings (cached while mesh / LOD settings stay the same).
     std::shared_ptr<const FoliageMeshes> meshes(Renderer& renderer);
+    // The extra states' meshes, in `states` order (built by meshes()).
+    const std::vector<std::pair<std::string, std::shared_ptr<const FoliageMeshes>>>& stateMeshes() const { return m_stateMeshes; }
 
 private:
+    std::shared_ptr<const FoliageMeshes> buildMeshes(Renderer& renderer, const std::string& mesh, const std::string& library,
+                                                     const std::string& owner);
     std::string m_meshKey;
     std::shared_ptr<const FoliageMeshes> m_meshes;
+    std::vector<std::pair<std::string, std::shared_ptr<const FoliageMeshes>>> m_stateMeshes;
 };
 
 class Foliage : public GameObject {

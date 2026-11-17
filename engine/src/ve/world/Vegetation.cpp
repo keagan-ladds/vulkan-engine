@@ -2,6 +2,7 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Strings.hpp"
 #include "ve/render/Impostor.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/Mesh.hpp"
@@ -19,7 +20,6 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
-#include <set>
 #include <sstream>
 
 namespace ve {
@@ -37,19 +37,6 @@ std::map<std::string, LibraryEntry>& library()
 {
     static std::map<std::string, LibraryEntry> entries;
     return entries;
-}
-
-std::string trim(std::string s)
-{
-    s.erase(0, s.find_first_not_of(" \t\n"));
-    s.erase(s.find_last_not_of(" \t\n") + 1);
-    return s;
-}
-
-void warnOnce(const std::string& message)
-{
-    static std::set<std::string> said;
-    if (said.insert(message).second) log::warn("{}", message);
 }
 
 // Every Component of type T on `root` and its descendants, in hierarchy order.
@@ -86,16 +73,12 @@ std::string exclusionState(const Scene& scene, bool grass)
 std::vector<std::pair<std::string, float>> parseNameValues(const std::string& spec)
 {
     std::vector<std::pair<std::string, float>> out;
-    std::stringstream ss(spec);
-    std::string item;
-    while (std::getline(ss, item, ',')) {
-        item = trim(item);
-        if (item.empty()) continue;
+    for (const std::string& item : str::split(spec, ',')) {
         const size_t colon = item.rfind(':');
         float value = 1.0f;
         std::string name = item;
         if (colon != std::string::npos) {
-            name = trim(item.substr(0, colon));
+            name = str::trim(std::string_view(item).substr(0, colon));
             try {
                 value = std::stof(item.substr(colon + 1));
             } catch (const std::exception&) {
@@ -141,7 +124,7 @@ std::vector<std::pair<int, float>> parseBiomeWeights(const std::string& spec, co
     for (const auto& [name, value] : parseNameValues(spec)) {
         const int index = name == "*" ? -1 : terrain.biomeIndex(name);
         if (index < 0 && name != "*") {
-            warnOnce(owner + ": the terrain has no biome '" + name + "'");
+            log::warnOnce(owner + ": the terrain has no biome '" + name + "'");
             continue;
         }
         out.push_back({index, value});
@@ -161,23 +144,52 @@ float biomeDensity(const std::vector<std::pair<int, float>>& weights, const Terr
 // FoliageType
 // -----------------------------------------------------------------------------
 
+FoliageType::FoliageType()
+{
+    // Scene-file defaults (they differ from FoliageLayer's code defaults:
+    // finite bounds keep the JSON tidy, and props are usually sparser).
+    spacing = 6.0f;
+    minHeight = -1e6f;
+    maxHeight = 1e6f;
+    shadowDistance = 1e6f;
+}
+
 std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
 {
     std::ostringstream key;
     key << mesh << '|' << library << '|' << int(lodMode) << '|' << lodThresholds.x << ',' << lodThresholds.y << ','
         << lodThresholds.z << '|' << autoLods << '|' << impostor << '|' << int(collision) << '|' << colliderSize.x << ','
-        << colliderSize.y << ',' << colliderSize.z << '|' << colliderUserValue;
+        << colliderSize.y << ',' << colliderSize.z << '|' << colliderUserValue << '|' << states;
     if (key.str() == m_meshKey) return m_meshes;
     m_meshKey = key.str();
-    m_meshes = nullptr;
     const std::string owner = "FoliageType '" + gameObject().name() + "'";
+    m_meshes = buildMeshes(r, mesh, library, owner);
+    // Extra states: "Name = library name or glTF path(s)"; a spec with a '.' is a file.
+    m_stateMeshes.clear();
+    for (const std::string& entry : str::split(states, ';')) {
+        const size_t eq = entry.find('=');
+        const std::string name = str::trim(std::string_view(entry).substr(0, eq));
+        const std::string spec = eq == std::string::npos ? std::string() : str::trim(std::string_view(entry).substr(eq + 1));
+        std::shared_ptr<const FoliageMeshes> sm;
+        if (!spec.empty()) {
+            const bool file = spec.find('.') != std::string::npos;
+            sm = buildMeshes(r, file ? spec : std::string(), file ? std::string() : spec, owner + " state '" + name + "'");
+            if (!sm) log::warnOnce(owner + ": state '" + name + "' has no meshes (" + spec + ")");
+        }
+        m_stateMeshes.push_back({name, sm ? sm : std::make_shared<FoliageMeshes>()});
+    }
+    return m_meshes;
+}
 
+std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const std::string& mesh, const std::string& library,
+                                                              const std::string& owner)
+{
     auto out = std::make_shared<FoliageMeshes>();
     std::vector<MeshData> hulls; // per variant, for ConvexHull
     if (!library.empty() && mesh.empty()) {
         auto lib = MeshLibrary::get(r, library);
         if (!lib) {
-            warnOnce(owner + ": no MeshLibrary entry '" + library + "'");
+            log::warnOnce(owner + ": no MeshLibrary entry '" + library + "'");
             return nullptr;
         }
         *out = *lib;
@@ -186,7 +198,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
         try {
             model = loadLodModel(assets(), mesh);
         } catch (const std::exception& e) {
-            warnOnce(owner + ": " + e.what());
+            log::warnOnce(owner + ": " + e.what());
             return nullptr;
         }
         auto threshold = [&](size_t level) {
@@ -238,7 +250,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
             if (authoredColliders.size() == model.variants.size() || authoredColliders.size() == 1)
                 for (const MeshData& c : authoredColliders) out->colliders.push_back(Collider::convexHull(c));
             else if (!authoredColliders.empty())
-                warnOnce(owner + ": some variants have *_COL shapes and some don't: colliders ignored");
+                log::warnOnce(owner + ": some variants have *_COL shapes and some don't: colliders ignored");
         }
         log::info("{}: {} variant(s) from {}, {} level(s){}, {} authored collider(s)", owner, model.variants.size(), mesh,
                   model.variants.front().levels.size(), impostor ? " + impostor" : "", authoredColliders.size());
@@ -268,7 +280,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
         break;
     case Collision::ConvexHull:
         if (hulls.empty()) {
-            warnOnce(owner + ": ConvexHull needs a glTF mesh (library meshes bring their own colliders)");
+            log::warnOnce(owner + ": ConvexHull needs a glTF mesh (library meshes bring their own colliders)");
         } else {
             out->colliders.clear();
             for (const MeshData& h : hulls) out->colliders.push_back(Collider::convexHull(h));
@@ -276,8 +288,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
         break;
     }
     if (colliderUserValue != 0) out->colliderUserValue = uint32_t(colliderUserValue);
-    m_meshes = out;
-    return m_meshes;
+    return out;
 }
 
 // -----------------------------------------------------------------------------
@@ -372,7 +383,7 @@ void Foliage::rebuild()
         const std::string layerName = t->gameObject().name();
         auto meshes = t->meshes(renderer());
         if (!meshes) {
-            if (t->mesh.empty() && t->library.empty()) warnOnce(self + ": layer '" + layerName + "' has no mesh or library");
+            if (t->mesh.empty() && t->library.empty()) log::warnOnce(self + ": layer '" + layerName + "' has no mesh or library");
             continue;
         }
         FoliageLayer l;
@@ -380,25 +391,23 @@ void Foliage::rebuild()
         l.variants = meshes->variants;
         l.colliders = meshes->colliders;
         l.colliderUserValue = meshes->colliderUserValue;
-        l.spacing = std::max(t->spacing, 0.1f);
-        l.jitter = t->jitter;
-        l.probability = t->probability;
-        l.minHeight = t->minHeight;
-        l.maxHeight = t->maxHeight;
-        l.maxSlope = t->maxSlope;
-        l.clusterFrequency = t->clusterFrequency;
-        l.clusterCoverage = t->clusterCoverage;
-        l.minScale = t->minScale;
-        l.maxScale = std::max(t->maxScale, t->minScale);
-        l.tint = t->tint;
-        l.alignToNormal = t->alignToNormal;
-        l.sink = t->sink;
-        l.viewDistance = t->viewDistance;
-        l.shadowDistance = t->shadowDistance;
-        l.castShadows = t->castShadows;
-        l.colliderDistance = t->colliderDistance;
-        l.maxInstances = uint32_t(std::max(t->maxInstances, 0));
-        l.seed = t->seed != 0 ? uint32_t(t->seed) : uint32_t(std::hash<std::string>{}(layerName));
+        for (const auto& [stateName, sm] : t->stateMeshes()) l.states.push_back({stateName, sm->variants, sm->colliders});
+        l.promoteDistance = t->promoteDistance;
+        if (!t->promoteType.empty()) {
+            const std::string type = t->promoteType;
+            l.promote = [type, self](Scene& s, const FoliageInstanceInfo&) -> GameObject* {
+                const TypeInfo* info = TypeRegistry::get().find(type);
+                if (!info || !info->spawn) {
+                    log::warnOnce(self + ": promoteType '" + type + "' isn't a registered GameObject type");
+                    return &s.spawn(type);
+                }
+                return info->spawn(s);
+            };
+        }
+        static_cast<FoliageRules&>(l) = *t; // the shared placement / streaming fields
+        l.spacing = std::max(l.spacing, 0.1f);
+        l.maxScale = std::max(l.maxScale, l.minScale);
+        if (l.seed == 0) l.seed = uint32_t(std::hash<std::string>{}(layerName));
         auto weights = parseBiomeWeights(t->biomes, *td, "FoliageType '" + layerName + "'");
         if (!weights.empty() || t->biomeThreshold > 0.0f) {
             const float threshold = t->biomeThreshold;
@@ -409,14 +418,14 @@ void Foliage::rebuild()
         }
         for (const auto& [other, radius] : parseNameValues(t->avoid)) {
             const int index = layerIndex(other);
-            if (index < 0) warnOnce(self + ": layer '" + layerName + "' avoids '" + other + "', which isn't an earlier layer");
+            if (index < 0) log::warnOnce(self + ": layer '" + layerName + "' avoids '" + other + "', which isn't an earlier layer");
             else l.avoid.push_back({uint32_t(index), radius});
         }
         try {
             sys.addLayer(std::move(l));
             m_layerNames.push_back(layerName);
         } catch (const std::exception& e) {
-            warnOnce(self + ": " + e.what());
+            log::warnOnce(self + ": " + e.what());
         }
     }
 
@@ -525,6 +534,8 @@ void GrassLayer::rebuild()
     const float size = d.boundsMax.x - d.boundsMin.x;
     d.maskResolution = uint32_t(std::clamp(size * maskResolution, 16.0f, 4096.0f));
     d.height = [td](glm::vec2 p) { return td->height(p.x, p.y); };
+    // Big worlds: bake only a window around the camera (it follows on a worker thread).
+    d.window = 4.0f * radius + 64.0f;
 
     struct Exclusion {
         glm::vec2 p;
@@ -538,7 +549,14 @@ void GrassLayer::rebuild()
     });
     auto weights = parseBiomeWeights(biomes, *td, self);
     const auto s = uint32_t(seed);
-    d.mask = [=, this](glm::vec2 p) {
+    // Copies of the settings (not `this`): windowed grass bakes on a worker
+    // thread, which must not read a layer being edited or destroyed.
+    const float minGroundHeight = this->minGroundHeight, maxGroundHeight = this->maxGroundHeight;
+    const float biomeThreshold = this->biomeThreshold, maxSlope = this->maxSlope;
+    const float patchFrequency = this->patchFrequency, patchContrast = this->patchContrast, patchOffset = this->patchOffset;
+    const float colorFrequency = this->colorFrequency, heightFrequency = this->heightFrequency;
+    const float heightVariation = this->heightVariation;
+    d.mask = [=](glm::vec2 p) {
         const float h = td->height(p.x, p.y);
         if (h < minGroundHeight || h > maxGroundHeight) return glm::vec4(0.0f);
         float density = biomeDensity(weights, *td, p);
@@ -570,7 +588,7 @@ void GrassLayer::rebuild()
         try {
             const LodModel model = loadLodModel(assets(), mesh);
             const LodVariant& v = model.variants.front();
-            if (model.variants.size() > 1) warnOnce(self + ": " + mesh + " has several variants; grass uses the first");
+            if (model.variants.size() > 1) log::warnOnce(self + ": " + mesh + " has several variants; grass uses the first");
             log::info("{}: {} LOD(s) from {}", self, v.levels.size(), mesh);
             // Unit height: every level scaled like LOD0 (root at the origin).
             float top = 0.0f;
@@ -597,7 +615,7 @@ void GrassLayer::rebuild()
                 d.lods.push_back(std::move(lod));
             }
         } catch (const std::exception& e) {
-            warnOnce(self + ": " + e.what());
+            log::warnOnce(self + ": " + e.what());
         }
     } else if (cards > 0) {
         d.cardMesh = GrassDesc::cardMeshCrossed(uint32_t(cards), 1.1f);
@@ -656,6 +674,10 @@ void registerVegetationTypes(TypeRegistry& r)
         t.field("colliderDistance", &FoliageType::colliderDistance).range(0.0f, 10000.0f);
         t.field("maxInstances", &FoliageType::maxInstances).range(0.0f, 1e7f);
         t.field("seed", &FoliageType::seed).tooltip("0 = from the object name");
+        t.field("states", &FoliageType::states).tooltip("extra looks: 'Stump = library name; Picked = model.glb'");
+        t.field("promoteDistance", &FoliageType::promoteDistance).range(0.0f, 200.0f)
+            .tooltip("> 0: instances this close to the player become GameObjects (with a FoliageLink)");
+        t.field("promoteType", &FoliageType::promoteType).tooltip("registered GameObject type to promote to (empty = plain)");
     });
     r.add<Foliage>("Foliage", [](TypeBuilder<Foliage>& t) {
         t.category("World");

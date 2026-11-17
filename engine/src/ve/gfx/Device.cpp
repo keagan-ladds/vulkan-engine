@@ -117,6 +117,78 @@ bool vk::isDepthFormat(VkFormat f)
            f == VK_FORMAT_D32_SFLOAT_S8_UINT || f == VK_FORMAT_X8_D24_UNORM_PACK32;
 }
 
+void vk::imageBarrier(VkCommandBuffer cmd, VkImage image, const VkImageSubresourceRange& range, VkImageLayout from,
+                      VkImageLayout to, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                      VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
+{
+    VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+    b.srcStageMask = srcStage;
+    b.srcAccessMask = srcAccess;
+    b.dstStageMask = dstStage;
+    b.dstAccessMask = dstAccess;
+    b.oldLayout = from;
+    b.newLayout = to;
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = image;
+    b.subresourceRange = range;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.imageMemoryBarrierCount = 1;
+    dep.pImageMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+void vk::memoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                       VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
+{
+    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = srcStage;
+    b.srcAccessMask = srcAccess;
+    b.dstStageMask = dstStage;
+    b.dstAccessMask = dstAccess;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+void recordMipChain(VkCommandBuffer cmd, const Image& image, VkImageLayout mip0Layout, VkPipelineStageFlags2 mip0Stage,
+                    VkAccessFlags2 mip0Access)
+{
+    auto range = [&](uint32_t mip, uint32_t count) {
+        return VkImageSubresourceRange{image.aspect, mip, count, 0, image.layers};
+    };
+    vk::imageBarrier(cmd, image.handle, range(0, 1), mip0Layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mip0Stage,
+                     mip0Access, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+    if (image.mipLevels > 1) {
+        vk::imageBarrier(cmd, image.handle, range(1, image.mipLevels - 1), VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
+                         VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    }
+    // Each level is a half-size linear blit of the previous one.
+    int32_t w = static_cast<int32_t>(image.extent.width);
+    int32_t h = static_cast<int32_t>(image.extent.height);
+    int32_t d = static_cast<int32_t>(image.extent.depth);
+    for (uint32_t mip = 1; mip < image.mipLevels; ++mip) {
+        const int32_t nw = std::max(1, w / 2), nh = std::max(1, h / 2), nd = std::max(1, d / 2);
+        VkImageBlit blit{};
+        blit.srcSubresource = {image.aspect, mip - 1, 0, image.layers};
+        blit.srcOffsets[1] = {w, h, d};
+        blit.dstSubresource = {image.aspect, mip, 0, image.layers};
+        blit.dstOffsets[1] = {nw, nh, nd};
+        vkCmdBlitImage(cmd, image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.handle,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+        vk::imageBarrier(cmd, image.handle, range(mip, 1), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                         VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        w = nw;
+        h = nh;
+        d = nd;
+    }
+    vk::imageBarrier(cmd, image.handle, range(0, image.mipLevels), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+}
+
 // -----------------------------------------------------------------------------
 // Init / shutdown
 // -----------------------------------------------------------------------------
@@ -475,64 +547,24 @@ void Device::uploadImage(const Image& image, const void* pixels, VkDeviceSize si
     std::memcpy(staging.mapped, pixels, static_cast<size_t>(size));
 
     immediateSubmit([&](VkCommandBuffer cmd) {
-        auto barrier = [&](uint32_t baseMip, uint32_t mipCount, VkImageLayout from, VkImageLayout to,
-                           VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
-                           VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess) {
-            VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-            b.srcStageMask = srcStage;
-            b.srcAccessMask = srcAccess;
-            b.dstStageMask = dstStage;
-            b.dstAccessMask = dstAccess;
-            b.oldLayout = from;
-            b.newLayout = to;
-            b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            b.image = image.handle;
-            b.subresourceRange = {image.aspect, baseMip, mipCount, 0, image.layers};
-            VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-            dep.imageMemoryBarrierCount = 1;
-            dep.pImageMemoryBarriers = &b;
-            vkCmdPipelineBarrier2(cmd, &dep);
-        };
-
         // Whole image -> TRANSFER_DST, copy mip 0.
-        barrier(0, image.mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-
+        vk::imageBarrier(cmd, image.handle, {image.aspect, 0, image.mipLevels, 0, image.layers}, VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
+                         VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
         VkBufferImageCopy copy{};
         copy.imageSubresource = {image.aspect, 0, 0, image.layers};
         copy.imageExtent = image.extent;
         vkCmdCopyBufferToImage(cmd, staging.handle, image.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
-        // Build the mip chain: each level is a half-size linear blit of the previous.
-        int32_t w = static_cast<int32_t>(image.extent.width);
-        int32_t h = static_cast<int32_t>(image.extent.height);
-        int32_t d = static_cast<int32_t>(image.extent.depth);
-        const uint32_t levels = generateMips ? image.mipLevels : 1;
-        for (uint32_t mip = 1; mip < levels; ++mip) {
-            barrier(mip - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                    VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
-            const int32_t nw = std::max(1, w / 2), nh = std::max(1, h / 2), nd = std::max(1, d / 2);
-            VkImageBlit blit{};
-            blit.srcSubresource = {image.aspect, mip - 1, 0, image.layers};
-            blit.srcOffsets[1] = {w, h, d};
-            blit.dstSubresource = {image.aspect, mip, 0, image.layers};
-            blit.dstOffsets[1] = {nw, nh, nd};
-            vkCmdBlitImage(cmd, image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image.handle,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-            barrier(mip - 1, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
-                    VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-                    VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-            w = nw; h = nh; d = nd;
+        if (generateMips) {
+            recordMipChain(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                           VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        } else {
+            vk::imageBarrier(cmd, image.handle, {image.aspect, 0, image.mipLevels, 0, image.layers},
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+                             VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         }
-        // Remaining levels (the last generated mip, or all of them if no
-        // mipmaps were generated) are still TRANSFER_DST.
-        const uint32_t firstRemaining = levels - 1;
-        barrier(firstRemaining, image.mipLevels - firstRemaining,
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
-                VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     });
     destroyBuffer(staging);
 }

@@ -3,6 +3,7 @@
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Strings.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/world/Terrain.hpp"
 #include "ve/world/Vegetation.hpp"
@@ -11,18 +12,10 @@
 
 #include <algorithm>
 #include <cmath>
-#include <set>
-#include <sstream>
 
 namespace ve {
 
 namespace {
-
-void warnOnce(const std::string& message)
-{
-    static std::set<std::string> said;
-    if (said.insert(message).second) log::warn("{}", message);
-}
 
 float smooth01(float edge0, float edge1, float x)
 {
@@ -61,7 +54,11 @@ float AmbientLayer::computeTarget()
 
     if (!parameters.empty() && t > 0.0f) {
         float base = 1.0f, sum = 0.0f;
-        for (const auto& [name, k] : parseNameValues(parameters)) {
+        if (parameters != m_paramsSpec) {
+            m_paramsSpec = parameters;
+            m_params = parseNameValues(parameters);
+        }
+        for (const auto& [name, k] : m_params) {
             if (name == "*") base = k;
             else sum += k * sys.parameter(name);
         }
@@ -72,9 +69,9 @@ float AmbientLayer::computeTarget()
         const Terrain* terrain = Terrain::find(gameObject().scene());
         const std::shared_ptr<const TerrainData> td = terrain ? terrain->data() : nullptr;
         if (td) {
-            const std::string key = biomes + '|' + std::to_string(terrain->version());
-            if (key != m_biomeKey) {
-                m_biomeKey = key;
+            if (biomes != m_biomeSpec || terrain->version() != m_biomeVersion) {
+                m_biomeSpec = biomes;
+                m_biomeVersion = terrain->version();
                 m_biomeWeights = parseBiomeWeights(biomes, *td, "AmbientLayer '" + gameObject().name() + "'");
             }
             // The listener and four points around it: borders crossfade over ~biomeRadius.
@@ -100,13 +97,14 @@ void AmbientLayer::update(float dt)
     if (!sys.available()) return;
 
     // ---- Loop ----
-    const std::string loopPath = loop ? loop->path() : std::string();
+    static const std::string kNoLoop;
+    const std::string& loopPath = loop ? loop->path() : kNoLoop;
     if (loopPath != m_loopPath) releaseLoop();
     if (loop && m_level > 1e-3f && !m_loop) {
         m_loop = new ma_sound();
         if (ma_sound_init_from_file(sys.engine(), loop->path().c_str(), MA_SOUND_FLAG_STREAM, sys.bus(bus).group, nullptr,
                                     m_loop) != MA_SUCCESS) {
-            warnOnce("AmbientLayer: failed to load " + loop->path());
+            log::warnOnce("AmbientLayer: failed to load " + loop->path());
             delete m_loop;
             m_loop = nullptr;
         } else {
@@ -130,16 +128,11 @@ void AmbientLayer::update(float dt)
     if (oneShots != m_shotsSpec) {
         m_shotsSpec = oneShots;
         m_shots.clear();
-        std::stringstream ss(oneShots);
-        std::string item;
-        while (std::getline(ss, item, ';')) {
-            item.erase(0, item.find_first_not_of(" \t\n"));
-            item.erase(item.find_last_not_of(" \t\n") + 1);
-            if (item.empty()) continue;
+        for (const std::string& item : str::split(oneShots, ';')) {
             try {
                 m_shots.push_back(assets().loadAudio(item));
             } catch (const std::exception&) {
-                warnOnce("AmbientLayer '" + gameObject().name() + "': sound not found: " + item);
+                log::warnOnce("AmbientLayer '" + gameObject().name() + "': sound not found: " + item);
             }
         }
     }

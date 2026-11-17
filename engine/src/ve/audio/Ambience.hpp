@@ -81,7 +81,10 @@ private:
     std::vector<std::shared_ptr<AudioClip>> m_shots;
     std::string m_shotsSpec;
     std::vector<std::pair<int, float>> m_biomeWeights;
-    std::string m_biomeKey;
+    std::string m_biomeSpec;    // `biomes` that m_biomeWeights was parsed from...
+    uint64_t m_biomeVersion = 0; // ...for this terrain version
+    std::vector<std::pair<std::string, float>> m_params; // parsed `parameters`
+    std::string m_paramsSpec;
     float m_level = 0.0f, m_target = 0.0f;
     float m_shotTimer = -1.0f;
     std::mt19937 m_rng;

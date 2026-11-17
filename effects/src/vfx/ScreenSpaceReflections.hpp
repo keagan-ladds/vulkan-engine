@@ -16,22 +16,13 @@
 // remains).
 // =============================================================================
 
-#include "vfx/TemporalAccumulator.hpp"
-
-#include <ve/render/PipelineHandle.hpp>
-#include <ve/render/RenderGraph.hpp>
+#include "vfx/ScreenSpaceTrace.hpp"
 
 namespace vfx {
 
-class ScreenSpaceReflectionsPass : public ve::RenderPass {
+class ScreenSpaceReflectionsPass : public ScreenSpaceTracePass {
 public:
     explicit ScreenSpaceReflectionsPass(float resolutionScale = 0.5f);
-    ~ScreenSpaceReflectionsPass() override;
-
-    void setup(ve::RenderGraph& graph) override;
-    void declare(ve::PassBuilder& builder) override;
-    void execute(ve::RenderContext& ctx) override;
-    void onResize(ve::RenderGraph&) override { temporal.invalidate(); }
     void onGui() override;
 
     float maxDistance = 40.0f;  // ray length (m)
@@ -40,13 +31,10 @@ public:
     float maxRoughness = 0.6f;  // rougher surfaces get no SSR
     float intensity = 1.0f;
     float edgeFade = 0.1f;      // fraction of the screen to fade reflections over at the edges
-    TemporalAccumulator temporal; // accumulates over frames (removes ray-step noise)
 
-private:
-    float m_scale;
-    ve::TextureId m_buffer = ve::kNoTexture;
-    ve::PipelineHandle m_trace;
-    ve::PipelineHandle m_apply;
+protected:
+    void pushTrace(ve::RenderContext& ctx, const Inputs& in) override;
+    void pushApply(ve::RenderContext& ctx, const Inputs& in, uint32_t result, glm::vec2 size) override;
 };
 
 } // namespace vfx

@@ -14,6 +14,10 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cfloat>
+#include <array>
+#include <initializer_list>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -22,6 +26,28 @@
 #include <stb_image_write.h>
 
 namespace ve {
+
+namespace {
+
+// Writes consecutive bindings of a set-0 copy: buffers or images (one each).
+void writeDescriptors(VkDevice dev, VkDescriptorSet set, uint32_t firstBinding, VkDescriptorType type,
+                      std::initializer_list<VkDescriptorBufferInfo> buffers,
+                      std::initializer_list<VkDescriptorImageInfo> images = {})
+{
+    std::array<VkWriteDescriptorSet, 8> writes{};
+    uint32_t n = 0;
+    for (const VkDescriptorBufferInfo& b : buffers) {
+        writes[n] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, firstBinding + n, 0, 1, type, nullptr, &b};
+        ++n;
+    }
+    for (const VkDescriptorImageInfo& img : images) {
+        writes[n] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, firstBinding + n, 0, 1, type, &img};
+        ++n;
+    }
+    vkUpdateDescriptorSets(dev, n, writes.data(), 0, nullptr);
+}
+
+} // namespace
 
 Renderer::~Renderer()
 {
@@ -67,6 +93,9 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
             m_envCapturePath = c;
             const char* f = std::getenv("VE_CAPTURE_FRAME");
             m_envCaptureFrame = f && *f ? std::strtoull(f, nullptr, 10) : 150;
+            // VE_CAPTURE_COUNT=n: n consecutive frames, saved as name_0.png ... name_<n-1>.png
+            const char* n = std::getenv("VE_CAPTURE_COUNT");
+            m_envCaptureCount = n && *n ? std::max<uint64_t>(1, std::strtoull(n, nullptr, 10)) : 1;
         }
     }
     createShadowMaps();
@@ -74,8 +103,7 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
 
     createDefaults();
     m_instances = std::make_unique<InstanceSystem>();
-    m_instances->init(*this, m_settings.maxInstances, m_settings.maxVisibleInstancesPerView,
-                      1 + m_settings.maxShadowedDirectionalLights * m_settings.cascadeCount);
+    m_instances->init(*this, m_settings.maxInstances, m_settings.maxVisibleInstancesPerView);
     writeInstanceDescriptors();
     createDefaultPasses();
     m_hotReload = std::make_unique<ShaderHotReload>(m_shaderDirs);
@@ -207,21 +235,9 @@ void Renderer::createFrameSlots()
         setAlloc.pSetLayouts = &m_globalSetLayout;
         VK_CHECK(vkAllocateDescriptorSets(dev, &setAlloc, &s.set));
 
-        VkDescriptorBufferInfo bufs[3] = {
-            {s.globals.handle, 0, VK_WHOLE_SIZE},
-            {s.lights.handle, 0, VK_WHOLE_SIZE},
-            {s.materials.handle, 0, VK_WHOLE_SIZE},
-        };
-        VkWriteDescriptorSet writes[3]{};
-        for (uint32_t i = 0; i < 3; ++i) {
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = s.set;
-            writes[i].dstBinding = i;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[i].pBufferInfo = &bufs[i];
-        }
-        vkUpdateDescriptorSets(dev, 3, writes, 0, nullptr);
+        writeDescriptors(dev, s.set, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, {{s.globals.handle, 0, VK_WHOLE_SIZE}});
+        writeDescriptors(dev, s.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                         {{s.lights.handle, 0, VK_WHOLE_SIZE}, {s.materials.handle, 0, VK_WHOLE_SIZE}});
     }
 }
 
@@ -262,43 +278,21 @@ void Renderer::writeShadowDescriptors()
 {
     VkSampler cmp = m_samplers.get(SamplerType::ShadowCompare);
     for (FrameSlot& s : m_slots) {
-        VkDescriptorImageInfo imgs[2] = {
-            {cmp, m_graph->get(m_dirShadowMap).image.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL},
-            {cmp, m_graph->get(m_pointShadowMap).image.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL},
-        };
-        VkWriteDescriptorSet writes[2]{};
-        for (uint32_t i = 0; i < 2; ++i) {
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = s.set;
-            writes[i].dstBinding = 3 + i;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[i].pImageInfo = &imgs[i];
-        }
-        vkUpdateDescriptorSets(m_device.handle(), 2, writes, 0, nullptr);
+        writeDescriptors(m_device.handle(), s.set, 3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, {},
+                         {{cmp, m_graph->get(m_dirShadowMap).image.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL},
+                          {cmp, m_graph->get(m_pointShadowMap).image.view, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL}});
     }
 }
 
 void Renderer::writeInstanceDescriptors()
 {
     for (uint32_t slot = 0; slot < Device::kFramesInFlight; ++slot) {
-        const VkDescriptorBufferInfo bufs[5] = {
-            {m_instances->instanceBuffer(), 0, VK_WHOLE_SIZE},
-            {m_instances->visibleBuffer(), 0, VK_WHOLE_SIZE},
-            {m_instances->commandBuffer(), 0, VK_WHOLE_SIZE},
-            {m_instances->groupBuffer(slot), 0, VK_WHOLE_SIZE},
-            {m_instances->viewBuffer(slot), 0, VK_WHOLE_SIZE},
-        };
-        VkWriteDescriptorSet writes[5]{};
-        for (uint32_t i = 0; i < 5; ++i) {
-            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[i].dstSet = m_slots[slot].set;
-            writes[i].dstBinding = 5 + i;
-            writes[i].descriptorCount = 1;
-            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-            writes[i].pBufferInfo = &bufs[i];
-        }
-        vkUpdateDescriptorSets(m_device.handle(), 5, writes, 0, nullptr);
+        writeDescriptors(m_device.handle(), m_slots[slot].set, 5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                         {{m_instances->instanceBuffer(), 0, VK_WHOLE_SIZE},
+                          {m_instances->visibleBuffer(), 0, VK_WHOLE_SIZE},
+                          {m_instances->commandBuffer(), 0, VK_WHOLE_SIZE},
+                          {m_instances->groupBuffer(slot), 0, VK_WHOLE_SIZE},
+                          {m_instances->viewBuffer(slot), 0, VK_WHOLE_SIZE}});
     }
 }
 
@@ -360,6 +354,7 @@ void Renderer::createDefaultPasses()
     m_graph->addPass<ShadowPass>();
     m_graph->addPass<OpaquePass>();
     m_graph->addPass<TransparentPass>();
+    m_taaPass = &m_graph->addPass<TemporalAAPass>();
     m_graph->addPass<CompositePass>();
 }
 
@@ -368,6 +363,7 @@ void Renderer::applySettings()
     m_device.waitIdle();
     createShadowMaps();
     writeShadowDescriptors();
+    ++m_contentEpoch;
     m_swapchainDirty = true; // picks up vsync changes
 }
 
@@ -485,23 +481,16 @@ VkPipeline Renderer::pipeline(const PipelineHandle& h) const
 
 PipelineHandle Renderer::createFullscreenPipeline(const FullscreenPipelineDesc& desc)
 {
-    RawPipeline raw{buildFullscreenPipeline(desc), false, desc, {}};
-    PipelineHandle h;
-    h.m_renderer = this;
-    if (!m_freeRawPipelines.empty()) {
-        h.m_id = m_freeRawPipelines.back();
-        m_freeRawPipelines.pop_back();
-        m_rawPipelines[h.m_id - 1] = std::move(raw);
-    } else {
-        m_rawPipelines.push_back(std::move(raw));
-        h.m_id = static_cast<uint32_t>(m_rawPipelines.size());
-    }
-    return h;
+    return addRawPipeline({buildFullscreenPipeline(desc), false, desc, {}});
 }
 
 PipelineHandle Renderer::createComputePipeline(const std::string& shaderName)
 {
-    RawPipeline raw{buildComputePipeline(shaderName), true, {}, shaderName};
+    return addRawPipeline({buildComputePipeline(shaderName), true, {}, shaderName});
+}
+
+PipelineHandle Renderer::addRawPipeline(RawPipeline raw)
+{
     PipelineHandle h;
     h.m_renderer = this;
     if (!m_freeRawPipelines.empty()) {
@@ -552,6 +541,7 @@ void Renderer::reloadShaders(const std::vector<std::string>& names)
             ++rebuilt;
         }
     }
+    ++m_contentEpoch;
     log::info("Shader hot-reload: {} pipeline(s) rebuilt", rebuilt);
 }
 
@@ -606,6 +596,9 @@ void Renderer::freeMaterialSlot(uint32_t index)
 
 void Renderer::uploadMaterialsNow()
 {
+    // Both frame slots are rewritten, including one the GPU may still be
+    // reading: wait for it first (load-time path: impostor baking).
+    m_device.waitIdle();
     for (FrameSlot& s : m_slots) {
         std::memcpy(s.materials.mapped, m_materials.data(), sizeof(GpuMaterial) * m_materialHighWater);
     }
@@ -692,7 +685,8 @@ void Renderer::setupCamera(Scene& scene)
     // near plane and 0 at the far plane. Then flip Y for Vulkan's clip space.
     cam.proj = glm::perspective(cam.fovY, cam.aspect, cam.farPlane, cam.nearPlane);
     cam.proj[1][1] *= -1.0f;
-    // Sub-pixel jitter (photo capture): shift the image by a fraction of a pixel.
+    cam.viewProjNoJitter = cam.proj * cam.view;
+    // Sub-pixel jitter (TAA, photo capture): shift the image by a fraction of a pixel.
     cam.proj[2][0] += m_jitter.x * 2.0f / float(std::max(1u, ext.width));
     cam.proj[2][1] += m_jitter.y * 2.0f / float(std::max(1u, ext.height));
     cam.viewProj = cam.proj * cam.view;
@@ -701,6 +695,7 @@ void Renderer::setupCamera(Scene& scene)
 
 void Renderer::gatherScene(Scene& scene)
 {
+    m_sceneTop = -FLT_MAX; // highest drawn geometry (shadow caster reach, buildCascades)
     m_frame.items.clear();
     m_frame.opaque.clear();
     m_frame.transparent.clear();
@@ -725,6 +720,7 @@ void Renderer::gatherScene(Scene& scene)
             item.distance = glm::length(item.bounds.center() - cam.position);
             item.castShadows = mr.castShadows;
             item.owner = &mr.gameObject();
+            m_sceneTop = std::max(m_sceneTop, item.bounds.max.y);
             m_frame.items.push_back(item);
         }
     });
@@ -752,6 +748,24 @@ void Renderer::gatherScene(Scene& scene)
               [&](uint32_t a, uint32_t b) { return items[a].distance > items[b].distance; });
 
     gatherLights(scene);
+}
+
+// The direction directional shadow maps are rendered from: the light's,
+// snapped to shadowDirectionStep-degree steps of azimuth and elevation. A sun
+// that moves every frame would otherwise re-rasterise every shadow edge from a
+// slightly different angle each frame, and the edges' stair steps crawl
+// (the whole scene seems to shimmer). Snapped, shadows stand still and move in
+// small steps; lighting keeps the exact direction.
+glm::vec3 Renderer::shadowDirection(const glm::vec3& dir) const
+{
+    const float step = glm::radians(m_settings.shadowDirectionStep);
+    if (step <= 0.0f) return dir;
+    float elevation = std::asin(std::clamp(dir.y, -1.0f, 1.0f));
+    if (std::abs(dir.y) > 0.9995f) return dir; // overhead: azimuth is meaningless
+    float azimuth = std::atan2(dir.z, dir.x);
+    elevation = std::round(elevation / step) * step;
+    azimuth = std::round(azimuth / step) * step;
+    return {std::cos(elevation) * std::cos(azimuth), std::sin(elevation), std::cos(elevation) * std::sin(azimuth)};
 }
 
 void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uint32_t slot, GpuDirectionalLight& gpu)
@@ -822,7 +836,23 @@ void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uin
         // sun and the cascade (beyond casterMargin, e.g. a distant mountain at
         // sunset) still land in the map at depth 0. Don't cull them by the near
         // plane.
-        if (m_device.features().depthClamp) sv.frustum.planes[4] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        if (m_device.features().depthClamp) {
+            // ...but only as far as a caster could still shadow this cascade:
+            // going towards the sun, the ray from a receiver climbs sin(elevation)
+            // per metre, so nothing further than (scene top - cascade bottom) /
+            // sin(elevation) can reach down into it. With a low sun over a big
+            // world this skips everything beyond the hills that matter.
+            const float sinElevation = -lightDir.y;
+            const float top = (m_sceneTop > -FLT_MAX ? m_sceneTop : centroid.y) + m_settings.shadowInstanceHeight;
+            const float rise = std::max(top - (centroid.y - radius), 0.0f);
+            // Near sunset that bound grows without limit, and everything towards
+            // the sun is pancaked into every cascade (overdraw across whole
+            // maps); shadowCasterReach caps it.
+            float reach = std::max(m_settings.shadowCasterReach, casterMargin);
+            if (sinElevation > 0.02f) reach = std::min(reach, std::max(rise / sinElevation, casterMargin));
+            const glm::vec3 p0 = centroid - lightDir * (radius + reach);
+            sv.frustum.planes[4] = glm::vec4(lightDir, -glm::dot(lightDir, p0));
+        }
         sv.viewIndex = viewIndex;
         sv.layer = baseLayer + c;
         sv.lightIndex = lightIndex;
@@ -835,6 +865,85 @@ void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uin
         prevSplit = split;
     }
     gpu.shadow = glm::ivec4(static_cast<int>(baseView), static_cast<int>(n), static_cast<int>(baseLayer), 0);
+}
+
+// Bins the point lights into the camera's clusters (on the CPU: there are at
+// most a few hundred, already frustum culled). Each light covers the screen
+// tiles of its bounding box's projection in the depth slices it spans. If the
+// index list overflows, the clusters are flagged invalid and shaders fall back
+// to looping over every light.
+void Renderer::buildLightClusters(uint32_t count)
+{
+    const CameraData& cam = m_frame.camera;
+    LightBuffer& lb = *m_lights;
+    const float z0 = std::max(cam.nearPlane, 0.5f), z1 = std::max(cam.farPlane, z0 * 2.0f);
+    const float scale = float(kClusterZ) / std::log(z1 / z0);
+    lb.clusterParams = glm::vec4(scale, -std::log(z0) * scale, m_settings.clusteredLights ? 1.0f : 0.0f, 0.0f);
+    m_clusterWords = 0;
+    if (!m_settings.clusteredLights) return;
+    if (count == 0) {
+        std::memset(lb.clusters, 0, sizeof(lb.clusters));
+        return;
+    }
+    auto slice = [&](float z) { return std::clamp(int(std::floor(std::log(std::max(z, 1e-3f)) * lb.clusterParams.x + lb.clusterParams.y)), 0, int(kClusterZ) - 1); };
+
+    // Per light: its cluster box (tile and slice ranges).
+    struct Range {
+        int x0, x1, y0, y1, z0, z1;
+    };
+    std::vector<Range> ranges(count);
+    std::vector<uint16_t> perCluster(kClusterCount, 0);
+    for (uint32_t i = 0; i < count; ++i) {
+        const glm::vec4 pr = lb.point[i].positionRange;
+        const glm::vec3 vc = glm::vec3(cam.view * glm::vec4(glm::vec3(pr), 1.0f));
+        const float r = pr.w, depth = -vc.z;
+        Range& R = ranges[i];
+        R = {0, int(kClusterX) - 1, 0, int(kClusterY) - 1, slice(depth - r), slice(depth + r)};
+        if (depth - r > cam.nearPlane) {
+            // In front of the camera: the screen rectangle of its view-space box.
+            glm::vec2 lo(1e9f), hi(-1e9f);
+            for (int c = 0; c < 8; ++c) {
+                const glm::vec3 v = vc + glm::vec3(c & 1 ? r : -r, c & 2 ? r : -r, c & 4 ? r : -r);
+                const glm::vec4 clip = cam.proj * glm::vec4(v, 1.0f);
+                const glm::vec2 uv = glm::vec2(clip) / clip.w * 0.5f + 0.5f;
+                lo = glm::min(lo, uv);
+                hi = glm::max(hi, uv);
+            }
+            if (hi.x < 0.0f || hi.y < 0.0f || lo.x > 1.0f || lo.y > 1.0f) {
+                R.z1 = R.z0 - 1; // off screen
+                continue;
+            }
+            R.x0 = std::clamp(int(lo.x * kClusterX), 0, int(kClusterX) - 1);
+            R.x1 = std::clamp(int(hi.x * kClusterX), 0, int(kClusterX) - 1);
+            R.y0 = std::clamp(int(lo.y * kClusterY), 0, int(kClusterY) - 1);
+            R.y1 = std::clamp(int(hi.y * kClusterY), 0, int(kClusterY) - 1);
+        }
+        for (int z = R.z0; z <= R.z1; ++z)
+            for (int y = R.y0; y <= R.y1; ++y)
+                for (int x = R.x0; x <= R.x1; ++x) ++perCluster[size_t((z * kClusterY + y) * kClusterX + x)];
+    }
+    // Offsets (prefix sum), then the lists.
+    uint32_t total = 0;
+    for (uint32_t c = 0; c < kClusterCount; ++c) {
+        lb.clusters[c] = total << 9 | perCluster[c];
+        total += perCluster[c];
+        perCluster[c] = 0;
+    }
+    if (total > kClusterIndexCapacity) {
+        lb.clusterParams.z = 0.0f; // too many: every pixel loops over all lights
+        return;
+    }
+    auto* bytes = reinterpret_cast<uint8_t*>(lb.clusterLights);
+    for (uint32_t i = 0; i < count; ++i) {
+        const Range& R = ranges[i];
+        for (int z = R.z0; z <= R.z1; ++z)
+            for (int y = R.y0; y <= R.y1; ++y)
+                for (int x = R.x0; x <= R.x1; ++x) {
+                    const size_t c = size_t((z * kClusterY + y) * kClusterX + x);
+                    bytes[(lb.clusters[c] >> 9) + perCluster[c]++] = uint8_t(i); // little-endian: byte k = bits 8k..8k+7
+                }
+    }
+    m_clusterWords = (total + 3) / 4;
 }
 
 void Renderer::gatherLights(Scene& scene)
@@ -859,7 +968,7 @@ void Renderer::gatherLights(Scene& scene)
         g.cascadeSplits = glm::vec4(0.0f);
         g.cascadeTexel = glm::vec4(0.0f);
         if (l.castShadows && dirShadowSlots < m_settings.maxShadowedDirectionalLights) {
-            buildCascades(dir, i, dirShadowSlots++, g);
+            buildCascades(shadowDirection(dir), i, dirShadowSlots++, g);
         }
     }
 
@@ -921,6 +1030,7 @@ void Renderer::gatherLights(Scene& scene)
     m_frame.stats.pointLights = static_cast<uint32_t>(points.size());
     m_frame.stats.shadowViews = static_cast<uint32_t>(m_frame.shadowViews.size());
     m_frame.globals.lightCounts = glm::uvec4(dirs.size(), points.size(), m_settings.cascadeCount, 0);
+    buildLightClusters(uint32_t(points.size()));
 }
 
 void Renderer::fillGlobals(const Time& time)
@@ -934,7 +1044,12 @@ void Renderer::fillGlobals(const Time& time)
     g.invView = glm::inverse(cam.view);
     g.invProj = glm::inverse(cam.proj);
     g.invViewProj = glm::inverse(cam.viewProj);
-    g.prevViewProj = m_frameNumber == 0 ? cam.viewProj : m_prevViewProj;
+    // Unjittered: reprojection (TAA, temporal accumulators) maps to where a
+    // point was, not to last frame's jittered sample of it.
+    g.prevViewProj = m_frameNumber == 0 ? cam.viewProjNoJitter : m_prevViewProj;
+    // How far the image moved: adding j to proj[2] moves NDC by -j * proj[2][3]
+    // (= -j, as clip.w = -z), so content shifts by minus the jitter.
+    g.jitter = glm::vec4(-m_jitter.x / float(ext.width), -m_jitter.y / float(ext.height), 0.0f, 0.0f);
     g.cameraPosition = glm::vec4(cam.position, cam.nearPlane);
     g.cameraForward = glm::vec4(cam.forward, cam.farPlane);
     g.screenSize = glm::vec4(float(ext.width), float(ext.height), 1.0f / float(ext.width), 1.0f / float(ext.height));
@@ -945,8 +1060,8 @@ void Renderer::fillGlobals(const Time& time)
     g.lightCounts.w = m_settings.debugCascades ? 1u : 0u;
     g.shadowParams = glm::vec4(m_settings.shadowNormalBias, m_settings.shadowPcfRadius,
                                float(m_settings.directionalShadowResolution), float(m_settings.pointShadowResolution));
-    g.builtinTextures = glm::uvec4(m_graph->get(m_sceneDepth).sampledIndex, m_graph->get(m_sceneColor).sampledIndex,
-                                   m_graph->get(m_sceneNormal).sampledIndex, 0);
+    g.builtinTextures = glm::uvec4(m_graph->sampled(m_sceneDepth), m_graph->sampled(m_sceneColor),
+                                   m_graph->sampled(m_sceneNormal), 0);
     for (uint32_t i = 0; i < kGlobalParamCount; ++i) g.globalParams[i] = m_globalParams[i];
 }
 
@@ -1056,6 +1171,23 @@ void Renderer::photoFinish()
     m_graph->resize(m_swapchain.extent());
 }
 
+void Renderer::saveCapture()
+{
+    vmaInvalidateAllocation(m_device.allocator(), m_captureBuffer.allocation, 0, VK_WHOLE_SIZE);
+    const VkExtent3D e = m_headlessTarget.extent;
+    std::vector<uint8_t> px(size_t(e.width) * e.height * 4);
+    std::memcpy(px.data(), m_captureBuffer.mapped, px.size());
+    const VkFormat f = m_headlessTarget.format;
+    if (f == VK_FORMAT_B8G8R8A8_SRGB || f == VK_FORMAT_B8G8R8A8_UNORM)
+        for (size_t i = 0; i < px.size(); i += 4) std::swap(px[i], px[i + 2]);
+    for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+    if (stbi_write_png(m_capturePath.c_str(), int(e.width), int(e.height), 4, px.data(), int(e.width) * 4))
+        log::info("Renderer: captured frame {} to {}", m_frameNumber, m_capturePath);
+    else
+        log::error("Renderer: failed to write {}", m_capturePath);
+    m_capturePath.clear();
+}
+
 bool Renderer::render(Scene& scene, const Time& time)
 {
     if (!m_initialized) return false;
@@ -1073,7 +1205,9 @@ bool Renderer::render(Scene& scene, const Time& time)
     const uint32_t slotIndex = static_cast<uint32_t>(m_frameNumber % Device::kFramesInFlight);
     FrameSlot& slot = m_slots[slotIndex];
 
+    const auto waitStart = std::chrono::steady_clock::now();
     VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
+    m_lastFenceWaitMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
     m_device.collectGarbage(m_frameNumber);
     m_instances->collectStats(slotIndex);
 
@@ -1084,6 +1218,7 @@ bool Renderer::render(Scene& scene, const Time& time)
                                   ts.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
             m_graph->applyTimings(ts, slot.timedPasses, m_timestampPeriodNs);
             const float total = static_cast<float>(ts.back() - ts.front()) * m_timestampPeriodNs * 1e-6f;
+            m_lastGpuFrameMs = total;
             m_gpuFrameMs = m_gpuFrameMs * 0.9f + total * 0.1f;
         }
     }
@@ -1108,18 +1243,21 @@ bool Renderer::render(Scene& scene, const Time& time)
     m_frame.deltaTime = time.deltaTime;
     m_frame.time = time.time;
     m_frame.frameNumber = m_frameNumber;
+    // Halton (2, 3): evenly spread sub-pixel offsets for any sample count.
+    auto halton = [](uint32_t i, uint32_t base) {
+        float f = 1.0f, r = 0.0f;
+        for (; i > 0; i /= base) {
+            f /= float(base);
+            r += f * float(i % base);
+        }
+        return r;
+    };
     m_jitter = glm::vec2(0.0f);
     if (photo && m_photo.frame >= m_photo.settings.warmupFrames) {
-        // Halton (2, 3): evenly spread sub-pixel offsets for any sample count.
-        auto halton = [](uint32_t i, uint32_t base) {
-            float f = 1.0f, r = 0.0f;
-            for (; i > 0; i /= base) {
-                f /= float(base);
-                r += f * float(i % base);
-            }
-            return r;
-        };
         const uint32_t k = m_photo.frame - m_photo.settings.warmupFrames + 1;
+        m_jitter = glm::vec2(halton(k, 2), halton(k, 3)) - 0.5f;
+    } else if (m_settings.temporalAA && m_taaPass->enabled) { // no jitter without the resolve
+        const uint32_t k = m_frameNumber % 8u + 1u; // 8 positions
         m_jitter = glm::vec2(halton(k, 2), halton(k, 3)) - 0.5f;
     }
     m_graph->maxStage = photo ? int(RenderStage::Overlay) : (1 << 30);
@@ -1129,7 +1267,8 @@ bool Renderer::render(Scene& scene, const Time& time)
     m_graph->prepare(m_frame);
 
     std::memcpy(slot.globals.mapped, &m_frame.globals, sizeof(FrameGlobals));
-    std::memcpy(slot.lights.mapped, m_lights.get(), sizeof(LightBuffer));
+    // The light buffer up to the used part of the cluster light lists.
+    std::memcpy(slot.lights.mapped, m_lights.get(), offsetof(LightBuffer, clusterLights) + m_clusterWords * sizeof(uint32_t));
     std::memcpy(slot.materials.mapped, m_materials.data(), sizeof(GpuMaterial) * m_materialHighWater);
 
     // --- Record -------------------------------------------------------------------
@@ -1169,14 +1308,23 @@ bool Renderer::render(Scene& scene, const Time& time)
     m_instances->recordReadback(slot.cmd, slotIndex);
     slot.timestampsWritten = slot.timestamps != VK_NULL_HANDLE;
     m_graph->transition(slot.cmd, m_backbuffer, offscreen ? Access::TransferSrc : Access::Present);
-    if (photo) {
+    // Read the finished frame back: photo accumulation, or a headless capture.
+    auto readback = [&](const Image& image, const Buffer& buffer) {
         VkBufferImageCopy region{};
         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = m_photo.target.extent;
-        vkCmdCopyImageToBuffer(slot.cmd, m_photo.target.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               m_photo.readback.handle, 1, &region);
+        region.imageExtent = image.extent;
+        vkCmdCopyImageToBuffer(slot.cmd, image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer.handle, 1, &region);
+    };
+    if (photo) readback(m_photo.target, m_photo.readback);
+    if (headless && !m_envCapturePath.empty() && m_frameNumber >= m_envCaptureFrame &&
+        m_frameNumber < m_envCaptureFrame + m_envCaptureCount) {
+        m_capturePath = m_envCapturePath;
+        if (m_envCaptureCount > 1) {
+            const std::filesystem::path p(m_envCapturePath);
+            m_capturePath = (p.parent_path() / (p.stem().string() + "_" + std::to_string(m_frameNumber - m_envCaptureFrame) +
+                                                p.extension().string())).string();
+        }
     }
-    if (headless && !m_envCapturePath.empty() && m_frameNumber == m_envCaptureFrame) m_capturePath = m_envCapturePath;
     const bool capture = headless && !photo && !m_capturePath.empty();
     if (capture) {
         const VkExtent3D e = m_headlessTarget.extent;
@@ -1186,11 +1334,7 @@ bool Renderer::render(Scene& scene, const Time& time)
             m_captureBuffer = m_device.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryUsage::GpuToCpu,
                                                     "capture readback");
         }
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = {e.width, e.height, 1};
-        vkCmdCopyImageToBuffer(slot.cmd, m_headlessTarget.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               m_captureBuffer.handle, 1, &region);
+        readback(m_headlessTarget, m_captureBuffer);
     }
     VK_CHECK(vkEndCommandBuffer(slot.cmd));
 
@@ -1211,7 +1355,9 @@ bool Renderer::render(Scene& scene, const Time& time)
     submit.pCommandBufferInfos = &cmdInfo;
     submit.signalSemaphoreInfoCount = offscreen ? 0 : 1;
     submit.pSignalSemaphoreInfos = &signal;
+    const auto submitStart = std::chrono::steady_clock::now();
     VK_CHECK(vkQueueSubmit2(m_device.graphicsQueue(), 1, &submit, slot.inFlight));
+    m_lastSubmitMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - submitStart).count();
     if (photo) {
         VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
         photoAccumulate(); // may finish the photo
@@ -1219,21 +1365,9 @@ bool Renderer::render(Scene& scene, const Time& time)
     if (offscreen) {
         if (capture) {
             VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
-            vmaInvalidateAllocation(m_device.allocator(), m_captureBuffer.allocation, 0, VK_WHOLE_SIZE);
-            const VkExtent3D e = m_headlessTarget.extent;
-            std::vector<uint8_t> px(size_t(e.width) * e.height * 4);
-            std::memcpy(px.data(), m_captureBuffer.mapped, px.size());
-            const VkFormat f = m_headlessTarget.format;
-            if (f == VK_FORMAT_B8G8R8A8_SRGB || f == VK_FORMAT_B8G8R8A8_UNORM)
-                for (size_t i = 0; i < px.size(); i += 4) std::swap(px[i], px[i + 2]);
-            for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
-            if (stbi_write_png(m_capturePath.c_str(), int(e.width), int(e.height), 4, px.data(), int(e.width) * 4))
-                log::info("Renderer: captured frame {} to {}", m_frameNumber, m_capturePath);
-            else
-                log::error("Renderer: failed to write {}", m_capturePath);
-            m_capturePath.clear();
+            saveCapture();
         }
-        m_prevViewProj = m_frame.camera.viewProj;
+        m_prevViewProj = m_frame.camera.viewProjNoJitter;
         ++m_frameNumber;
         return true;
     }
@@ -1245,11 +1379,13 @@ bool Renderer::render(Scene& scene, const Time& time)
     present.swapchainCount = 1;
     present.pSwapchains = &sc;
     present.pImageIndices = &imageIndex;
+    const auto presentStart = std::chrono::steady_clock::now();
     const VkResult pres = vkQueuePresentKHR(m_device.graphicsQueue(), &present);
+    m_lastSubmitMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - presentStart).count();
     if (pres == VK_ERROR_OUT_OF_DATE_KHR || pres == VK_SUBOPTIMAL_KHR) m_swapchainDirty = true;
     else VK_CHECK(pres);
 
-    m_prevViewProj = m_frame.camera.viewProj;
+    m_prevViewProj = m_frame.camera.viewProjNoJitter;
     ++m_frameNumber;
     return true;
 }

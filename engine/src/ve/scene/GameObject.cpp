@@ -38,6 +38,13 @@ bool GameObject::activeInHierarchy() const
     return p ? p->gameObject().activeInHierarchy() : true;
 }
 
+void GameObject::setId(uint64_t id)
+{
+    const uint64_t old = m_id;
+    m_id = id;
+    if (m_scene) m_scene->reindex(this, old);
+}
+
 void GameObject::destroy()
 {
     if (m_destroyed) return;
@@ -55,6 +62,7 @@ void GameObject::attachComponent(std::unique_ptr<Component> component, std::type
 {
     component->m_owner = this;
     component->m_type = type;
+    m_componentsNoHook = 0; // the new component's hooks are unknown until it runs
     Component* raw = component.get();
     m_components.push_back(std::move(component));
     if (m_scene) m_scene->registerComponent(raw);

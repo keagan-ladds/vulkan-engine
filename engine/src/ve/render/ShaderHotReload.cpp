@@ -69,7 +69,8 @@ ShaderHotReload::ShaderHotReload(const std::vector<std::filesystem::path>& shade
             if (e.command.empty()) continue;
             readDepfile(e);
             if (e.sources.empty()) continue;
-            e.stamp = newest(e);
+            StampCache seen;
+            e.stamp = newest(e, seen);
             m_entries.push_back(std::move(e));
         }
     }
@@ -111,14 +112,19 @@ void ShaderHotReload::readDepfile(Entry& e)
     e.sources = std::move(deps);
 }
 
-std::filesystem::file_time_type ShaderHotReload::newest(const Entry& e)
+std::filesystem::file_time_type ShaderHotReload::newest(const Entry& e, StampCache& seen)
 {
     // Not {}: libstdc++'s file clock epoch is in the future, so real times are negative.
-    auto t = std::filesystem::file_time_type::min();
-    std::error_code ec;
+    constexpr auto kNone = std::filesystem::file_time_type::min();
+    auto t = kNone;
     for (const auto& s : e.sources) {
-        const auto m = std::filesystem::last_write_time(s, ec);
-        if (!ec && m > t) t = m;
+        auto [it, fresh] = seen.try_emplace(s.string(), kNone);
+        if (fresh) {
+            std::error_code ec;
+            const auto m = std::filesystem::last_write_time(s, ec);
+            if (!ec) it->second = m;
+        }
+        t = std::max(t, it->second);
     }
     return t;
 }
@@ -134,8 +140,9 @@ std::vector<std::string> ShaderHotReload::pollNow()
 {
     m_lastPoll = std::chrono::steady_clock::now();
     std::vector<Entry*> changed;
+    StampCache seen;
     for (Entry& e : m_entries) {
-        const auto t = newest(e);
+        const auto t = newest(e, seen);
         if (t > e.stamp) {
             e.stamp = t; // also on failure: don't retry until the next save
             changed.push_back(&e);
@@ -153,8 +160,8 @@ std::vector<std::string> ShaderHotReload::pollNow()
         Entry& e = *changed[i];
         const CompileResult r = jobs[i].get();
         if (r.ok) {
-            readDepfile(e); // includes may have changed
-            e.stamp = std::max(e.stamp, newest(e));
+            readDepfile(e); // includes may have changed (new ones aren't in `seen` yet)
+            e.stamp = std::max(e.stamp, newest(e, seen));
             ok.push_back(e.name);
         } else {
             m_lastError = e.name + ":\n" + r.output;

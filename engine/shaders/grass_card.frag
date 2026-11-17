@@ -25,13 +25,20 @@ void main()
     VeSurface s = veDefaultSurface(inWorldPos, N, tex.rgb * inColor.rgb);
     s.roughness = 0.9;
     s.ao = mix(0.7, 1.0, inTip);
-    vec3 color = veEvaluateLighting(s);
+    float sunShadow;
+    vec3 color = veEvaluateLighting(s, sunShadow);
     if (frame.lightCounts.x > 0u) {
         VeDirectionalLight L = lights.directional[0];
         vec3 V = normalize(frame.cameraPosition.xyz - inWorldPos);
         float back = pow(clamp(dot(-V, -L.direction.xyz), 0.0, 1.0), 6.0);
-        float viewDepth = dot(inWorldPos - frame.cameraPosition.xyz, frame.cameraForward.xyz);
-        color += L.color.rgb * back * s.albedo * inTip * 0.12 * veDirectionalShadow(0u, inWorldPos, N, viewDepth);
+        if (back > 0.0) {
+            // Reuse the sun shadow veEvaluateLighting already took (same point, normal and depth).
+            if (sunShadow < 0.0) {
+                float viewDepth = dot(inWorldPos - frame.cameraPosition.xyz, frame.cameraForward.xyz);
+                sunShadow = veDirectionalShadow(0u, inWorldPos, N, viewDepth);
+            }
+            color += L.color.rgb * back * s.albedo * inTip * 0.12 * sunShadow;
+        }
     }
     outColor = vec4(color, 1.0);
     outGBuffer = veGBuffer(N, 0.9);

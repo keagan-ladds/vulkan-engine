@@ -21,7 +21,12 @@ void main()
     mat4 model = veModelMatrix(); // regular draw or GPU instance
     vec4 world = model * vec4(inPosition, 1.0);
     // Inverse-transpose keeps normals perpendicular under non-uniform scale.
-    mat3 normalMatrix = transpose(inverse(mat3(model)));
+    // The cofactor matrix is the inverse-transpose times det(M), so it needs no
+    // division or inverse(); the sign of det keeps mirrored instances' normals
+    // pointing out, and the result is normalized below anyway.
+    mat3 m = mat3(model);
+    mat3 normalMatrix = mat3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
+    normalMatrix *= sign(dot(m[0], cross(m[1], m[2])));
     outWorldPos = world.xyz;
     outNormal = normalize(normalMatrix * inNormal);
     outTangent = vec4(normalize(mat3(model) * inTangent.xyz), inTangent.w);

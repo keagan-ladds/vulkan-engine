@@ -91,15 +91,29 @@ loop:
   parent/children, cached world matrix), an active flag, and a list of
   components. It is *subclassable*: override the lifecycle hooks to write
   behaviour (`class Player : public ve::GameObject`).
-- **`Component`** is the same set of hooks, attached with
+- **`Component`** is the same set of hooks (both derive from `ve::Behaviour`,
+  which declares them once), attached with
   `go.addComponent<T>(args...)`. Engine components:
   `Camera`, `MeshRenderer`, `DirectionalLight`, `PointLight`, `AudioSource`
   (plus `vfx::ParticleEmitter` in effects).
 - **`Scene`** owns objects (`std::unique_ptr`). It provides
-  `spawn<T>(args...)`, `find(name)`, and `components<T>()`, a typed registry
-  so the renderer can iterate e.g. all `MeshRenderer`s without scanning every object.
+  `spawn<T>(args...)`, `find(name)`, and `forEach<T>()`, a typed registry
+  so the renderer can iterate e.g. all `MeshRenderer`s without scanning every
+  object. Components are bucketed by their exact type; a query for `T` caches
+  the list of buckets whose type is `T` or derives from it, and rebuilds it only
+  when a new component type appears.
+- **Hooks cost nothing unless overridden.** The base `update`, `fixedUpdate`,
+  `lateUpdate` and `onGui` set a "not overridden" bit the first time they run.
+  The Scene then skips them, and skips objects with no such hook on themselves
+  or any component without walking their hierarchy (model
+  nodes, static props).
 - Spawning during an update is safe: new objects get `start()` at the start of the next frame.
   `destroy()` is deferred to end of frame and also destroys children.
+- **Ids, not pointers, across frames.** Every GameObject has a random 64-bit
+  `id()`; `scene.findById(id)` is O(1) and returns null once the object is
+  destroyed, so remembering an id (not a raw pointer) can't dangle when the
+  editor deletes or replaces objects. `scene.findFirst<T>()` finds the first
+  object of a class (e.g. the scene's `vfx::Weather`).
 - Global access: `ve::Engine::get()` and helper accessors on GameObject
   (`input()`, `time()`, `assets()`, `audio()`, `renderer()`, `scene()`).
 
@@ -111,8 +125,8 @@ Every pipeline uses **one global pipeline layout**:
 
 | Set/binding | Contents | Notes |
 |---|---|---|
-| set 0, b0 | `FrameGlobals` UBO | view/proj (+inverses, prev), camera pos, screen size, time, ambient, light counts, 8 user `globalParams` vec4s, builtin texture indices |
-| set 0, b1 | `LightBuffer` SSBO | directional lights (with cascade matrices/splits), point lights, shadow view matrices |
+| set 0, b0 | `FrameGlobals` UBO | view/proj (+inverses, unjittered prev), camera pos, screen size, time, ambient, light counts, 8 user `globalParams` vec4s, builtin texture indices, camera jitter |
+| set 0, b1 | `LightBuffer` SSBO | directional lights (with cascade matrices/splits), point lights, shadow view matrices, light clusters |
 | set 0, b2 | `MaterialBuffer` SSBO | `MaterialData[]`: 12 × vec4 params + 16 uint texture indices = 256 B each |
 | set 0, b3 | `sampler2DArrayShadow` | directional shadow cascades (all lights × cascades as layers) |
 | set 0, b4 | `samplerCubeArrayShadow` | point light shadow cubes |
@@ -120,6 +134,25 @@ Every pipeline uses **one global pipeline layout**:
 | set 1, b0 | `image2D storageImages[]` | bindless storage images (compute) |
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
+
+**Clustered point lights.** The camera frustum is split into 16 × 9 screen
+tiles × 24 logarithmic depth slices. Every frame the renderer bins the point
+lights (≤ 256, already frustum culled and sorted on the CPU) into the clusters
+their bounding boxes touch: `LightBuffer::clusters` holds each cluster's
+range in `clusterLights` (8-bit light indices). `veEvaluateLighting` (and any
+shader using `veLightList(P)`) only visits the lights of the point's cluster;
+off screen, or if the list overflows (`clusterParams.z == 0`), it falls back
+to every light. Only the used part of the buffer is uploaded.
+
+**Temporal AA** (`RendererSettings::temporalAA`, off by default; Savanna turns
+it on). The projection is jittered by an 8-position Halton (2, 3) sequence
+(`frame.jitter`); `TemporalAAPass` (first PostProcess pass) reprojects last
+frame's result with the camera motion from depth (closest of 3×3, unjittered
+`prevViewProj`), samples it with Catmull-Rom, clips it to the current 3×3
+YCoCg variance box and blends it in with weight `feedback` (0.9), on
+tonemapped values. There are no per-object motion vectors, so moving objects
+rely on the clipping (slight softening, no trails). `prevViewProj` is the
+unjittered matrix for every temporal effect.
 
 Set 0 has one copy per frame in flight. Set 1 is a single update-after-bind
 bindless set. Because every shader shares the layout, descriptor sets are bound
@@ -242,7 +275,12 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
    `settings.maxShadowedDirectionalLights`, each with `settings.cascadeCount`
    cascades) and point shadow slots (closest `settings.maxShadowedPointLights`
    within range). Compute cascade splits (practical split scheme) and
-   texel-snapped, sphere-fitted orthographic matrices. Compute the six cube-face matrices.
+   texel-snapped, sphere-fitted orthographic matrices, seen from the light
+   direction snapped to `settings.shadowDirectionStep` degrees (0.2): with a
+   day/night cycle the sun moves every frame, and re-rasterising every shadow
+   edge from a new angle each frame made the edges crawl (2–4 % of the ground's
+   pixels changed per frame with a still camera; ~0.02 % snapped). Lighting
+   uses the exact direction. Compute the six cube-face matrices.
 4. `pass->prepare()` for all enabled passes.
 5. Upload FrameGlobals, LightBuffer and MaterialBuffer (host-visible, per frame in flight).
 6. Acquire swapchain image, record graph (barriers + passes), submit, present.
@@ -257,6 +295,16 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
 - Point: a `D32F` cube-array with `maxShadowedPointLights × 6` layers. The
   fragment shader writes `distance / range` as depth, and lookups compare
   against the same value.
+- Point faces are cached (`RendererSettings::cachePointShadows`, on by
+  default): `ShadowPass` hashes each face's inputs (view, range, every
+  caster's mesh, submesh, shader, world matrix and material data, plus
+  `Renderer::contentEpoch()`, which bumps when shadow maps are recreated or
+  shaders hot-reload) and skips faces whose hash matches their last render.
+  Static torches and campfires re-render only when something in range moves.
+  The shadow maps persist across frames, so a skipped face keeps its depth.
+- Directional shadows sample a 3×3 PCF kernel as 4 bilinear taps with the
+  same weights (exact for the default 1-texel radius; other radii fall back
+  to 9 taps).
 - Everything is configurable via `RendererSettings` (counts, cascade count,
   resolutions, split lambda, biases, max shadow distance).
 
@@ -271,13 +319,14 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
   `custom` is a free vec4 per instance; `standard.vert` uses `w > 0` to tint vertex colours.
 - Storage: one device-local instance buffer (64 B per instance), sub-allocated
   per group. Only changed slot ranges are uploaded, through a per-frame staging buffer.
-- Each frame `InstanceCullPass` dispatches `instance_cull.comp` per group, with
-  one row per **cull view**: view 0 is the camera, then every directional
-  shadow cascade (`ShadowView::cullView`). For each instance it tests the
-  distance limits, a minimum size (shadow views skip casters smaller than
-  `shadowMinCasterTexels` cascade texels) and the frustum. It then picks the LOD
-  by camera distance and appends the instance to that LOD's batches, with an
-  atomic on the indirect command's `instanceCount`.
+- Each frame `InstanceCullPass` dispatches `instance_cull.comp` per group, one
+  thread per instance. The thread computes the bounding sphere and LOD (by
+  camera distance) once, then tests every **cull view**: view 0 is the camera,
+  then every directional shadow cascade (`ShadowView::cullView`). Per view it
+  tests the distance limits, a minimum size (shadow views skip casters smaller
+  than `shadowMinCasterTexels` cascade texels) and the frustum, and appends the
+  instance to that LOD's batches with an atomic on the indirect command's
+  `instanceCount`.
 - **LOD:** each group has up to 4 `InstanceLod`s, selected per instance by
   screen size (`radius · cot(fov/2) / distance`, if `screenSize` is set) or
   distance, scaled by `RendererSettings::lodBias`. Shadow views use
@@ -294,13 +343,16 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
   its pipeline uses clockwise front faces (otherwise normals bake inverted).
 - Draw batches are (group × LOD × submesh). Opaque and shadow passes call
   `instances().draw(ctx, cullView, kind, shadowViewIndex)`, which issues one
-  `vkCmdDrawIndexedIndirect` per batch with `DrawPush::flags = INSTANCED`. In
+  `vkCmdDrawIndexedIndirect` per batch with `DrawPush::flags = INSTANCED`, from
+  per-pass batch lists (forward / shadow casters) sorted by shader and mesh. In
   the vertex shader `veModelMatrix()` resolves
   `veInstances[veVisibleInstances[gl_InstanceIndex]]`.
 - Limits: `RendererSettings::maxInstances`, `maxVisibleInstancesPerView`
-  (sum of batch capacities; the visible buffer is sized for camera + all
-  cascades), 1024 groups, 2048 batches. Point-light shadows and transparent
-  materials don't draw instances.
+  (cap on the sum of batch capacities), 1024 groups, 2048 batches, cull views
+  for every possible cascade (`kMaxDirectionalLights × kMaxCascades`). The
+  visible buffer holds active views × the sum of batch capacities and grows
+  when groups are added. Point-light shadows and transparent materials don't
+  draw instances.
 - Stats (visible camera/shadow instance draws) are read back from the GPU one
   frame-slot later and shown in the F1 overlay.
 - Cutout materials (`StandardMaterial::Mode::Cutout`) use `shadow_cutout.frag` /
@@ -324,7 +376,42 @@ helpers (the instancing helpers are vertex-only).
 - `PipelineBuilder`: fluent builder (from tinyvulkan) extended with depth,
   multiple attachments, blending presets, depth bias and custom vertex input.
 
-### 5.9 World: foliage streaming and GPU grass (`ve/world`)
+### 5.9 World: terrain, foliage streaming and GPU grass (`ve/world`)
+
+**`Terrain`** (a GameObject; shape in `TerrainShape`, colours in
+`TerrainLook`, stamps are `TerrainStamp` components) streams everything:
+- **Data.** `data()` returns an immutable `TerrainData`: the generator inputs
+  (a copy of the shape, biomes and stamps) plus a thread-safe LRU cache of
+  64-cell sample tiles (heights + biome weights). Tiles are generated on
+  demand by whoever queries (main thread, foliage worker, grass bake, mesh
+  worker); a per-thread memo of recent tiles keeps lookups lock-free. Memory
+  follows what is queried (`tileCacheMB`), not the world size. Edits produce a
+  new snapshot (`version()` bumps); holders of the old one keep it alive.
+- **Rendering.** `TerrainLod` walks a quadtree of 33×33-vertex nodes (level L
+  samples every 2^L-th grid point). A node splits while the camera is within
+  `lodFactor` × its size *and* all four children have meshes, so a coarser
+  level always covers the ground. Vertices carry their parent-grid height and
+  normal (`tangent`), and `ve_terrain.glsl` morphs them with camera distance,
+  reaching the parent shape exactly where a node hands over: no popping.
+  Skirts hide the cracks between levels. Meshes are built on a worker thread
+  (tiles for the finest levels, the pure generator for coarse ones), uploaded
+  under a per-frame budget, cached LRU, and drawn through pooled
+  MeshRenderers on one hidden child, so culling, picking and every shadow pass
+  just work (`terrain_shadow.vert` morphs too).
+- **Ground materials.** Biomes (and rock) may have a `TerrainMaterial`
+  (albedo / normal / roughness / AO, size, tint). Each node picks the three
+  splat layers that weigh most in it: their indices go in `color.a`, their
+  weights in `uv` and `tangent.w` (the parent normal is stored as x/z). A
+  small float texture holds each layer's texture indices and scale;
+  `terrain.frag` blends the layers by weight and texture height, samples rock
+  triplanar, and blends a rotated, larger second copy with distance against
+  tiling. Leftover weight shows the biome vertex colour.
+- **Physics.** 64-cell heightfield tiles exist around the camera, every
+  `CharacterController` and every dynamic `Rigidbody` (`colliderDistance`,
+  25 % hysteresis). The render mesh, `height()` and the grass all split cells
+  along Jolt's (i, j)–(i+1, j+1) diagonal, so the visible ground is the
+  physical one.
+
 
 **`FoliageSystem`** (a GameObject) scatters `InstanceGroup` instances using
 `FoliageLayer` rules.
@@ -347,6 +434,17 @@ helpers (the instancing helpers are vertex-only).
   hysteresis. `preload(pos)` loads the start area synchronously. Cell scans
   are clamped to the world bounds, so a 3 km view distance on a small map
   costs nothing.
+
+**Interactive foliage.** Instances have stable ids (`FoliageInstanceId`: layer
++ placement grid square). `setState(id, s)` switches one to an alternative
+look (`FoliageLayer::states`: meshes + colliders; `kFoliageRemoved` = nothing).
+The system keeps these overrides (main thread only, so the worker needs no
+lock) and re-applies them whenever a cell streams in; `overrides()` exports
+them for save games. Each extra state gets its own InstanceGroups, created on
+first use. Within `promoteDistance` of the collider focus, instances are
+hidden and replaced by GameObjects (`promote`, plus a `FoliageLink` and,
+unless provided, the instance's mesh and collider), and restored beyond
+125 % of that distance or when the object is destroyed.
 
 **`GrassPass`** (a RenderPass, Opaque stage, order 10; one pass per grass layer)
 stores nothing per blade.
@@ -481,7 +579,10 @@ Optional add-ons built only on public engine APIs:
   and a matching 4-tap box upsample blends the result over SceneColor.
 - `BloomPass`: threshold + progressive downsample/upsample chain added back into SceneColor.
 - **Screen-space passes (opt-in; not added by `addDefaultEffects`).** They read
-  the thin G-buffer `SceneNormal` (§5.4):
+  the thin G-buffer `SceneNormal` (§5.4). SSGI and SSR share
+  `ScreenSpaceTracePass` (trace at reduced resolution → `TemporalAccumulator`
+  → upsample-and-blend over SceneColor); each only supplies its shaders and
+  push constants:
   - `ScreenSpaceGIPass`: 3 cosine rays × 8 steps per half-res pixel, marched
     through SceneDepth. Hits gather the lit SceneColor (one diffuse bounce,
     luminance-clamped against fireflies) and count as occlusion. The ray
@@ -543,11 +644,11 @@ Optional add-ons built only on public engine APIs:
 
 | File | What it demonstrates |
 |---|---|
-| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading), LOD chains + impostors, registered in `ve::MeshLibrary` for the scene's `FoliageType` layers |
+| `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading): acacia, baobab, fever tree, bushes, rocks; jungle trees, palms, undergrowth; quiver trees and dry bushes for the desert. LOD chains + impostors, registered in `ve::MeshLibrary` for the scene's `FoliageType` layers |
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Props.*` | Campfire/torches (point shadows, particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
-| `assets/scenes/savanna.json` | The level (edit with F2): Terrain + biomes + stamps, Water, Weather, DayNight, Foliage (6 FoliageTypes) + GrassLayers (grass, reeds with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
+| `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 
 Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..4`,

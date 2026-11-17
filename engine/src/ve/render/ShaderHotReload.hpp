@@ -19,6 +19,7 @@
 #include <chrono>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ve {
@@ -47,7 +48,10 @@ private:
     };
 
     void readDepfile(Entry& e);
-    static std::filesystem::file_time_type newest(const Entry& e);
+    // Newest modification time of e's sources. `seen` caches stat() results
+    // within one poll: shared includes (ve.glsl) are checked once, not per shader.
+    using StampCache = std::unordered_map<std::string, std::filesystem::file_time_type>;
+    static std::filesystem::file_time_type newest(const Entry& e, StampCache& seen);
 
     std::vector<Entry> m_entries;
     std::chrono::steady_clock::time_point m_lastPoll{};

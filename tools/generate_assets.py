@@ -7,11 +7,13 @@ downloads (and so the engine's importers get exercised on real files):
   sandbox/assets/textures/mud_wall.png        red-clay wall texture
   sandbox/assets/textures/thatch.png          straw roof texture
   sandbox/assets/textures/reed_screen.png     woven reed screen with holes (alpha cutout test)
+  sandbox/assets/textures/ground/*.png        terrain splat materials (soil, sand, leaf litter,
+                                              rock): albedo (alpha = height), normal, roughness, AO
   sandbox/assets/models/rondavel.gltf (+.bin) round African hut: walls + thatched
                                               roof (one mesh, two materials) + door node
   sandbox/assets/audio/*.wav                  wind / fire / rain loops, pickup chime
 
-Requires Pillow (python3-pil). Run from anywhere:
+Requires Pillow (python3-pil) and numpy (terrain materials). Run from anywhere:
     python3 tools/generate_assets.py
 """
 import base64
@@ -325,7 +327,163 @@ def lut_neutral(size=32):
     img.save(out("textures", f"lut_neutral_{size}.png"))
 
 
+# --------------------------------------------------------------------------- terrain materials
+def terrain_textures(size=512):
+    """Tileable splat materials. Everything starts from a height field; the
+    normal and AO maps are derived from it, so the four maps agree."""
+    import numpy as np
+
+    def spectral(seed, beta, lo=1.0, hi=None):
+        # Periodic noise with a 1/f^beta spectrum between frequencies lo..hi (cycles per tile).
+        rng = np.random.default_rng(seed)
+        f = np.fft.fftfreq(size) * size
+        fx, fy = np.meshgrid(f, f)
+        r = np.hypot(fx, fy)
+        amp = np.where((r >= lo) & ((r <= hi) if hi else True), 1.0 / np.maximum(r, 1.0) ** beta, 0.0)
+        n = np.real(np.fft.ifft2(np.fft.fft2(rng.standard_normal((size, size))) * amp))
+        return (n - n.min()) / (n.max() - n.min())
+
+    def blur(a, radius):
+        f = np.fft.fftfreq(size)
+        fx, fy = np.meshgrid(f, f)
+        return np.real(np.fft.ifft2(np.fft.fft2(a) * np.exp(-(fx ** 2 + fy ** 2) * (2 * np.pi * radius) ** 2 / 2)))
+
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+
+    def cells(seed, count):
+        # Worley noise (wrapped): distance to the nearest and second nearest point, and the nearest's id.
+        rng = np.random.default_rng(seed)
+        pts = rng.random((count, 2)) * size
+        d1 = np.full((size, size), 1e9)
+        d2 = np.full((size, size), 1e9)
+        ids = np.zeros((size, size), dtype=np.int32)
+        for k, (px, py) in enumerate(pts):
+            dx = np.abs(xx - px)
+            dy = np.abs(yy - py)
+            d = np.hypot(np.minimum(dx, size - dx), np.minimum(dy, size - dy))
+            closer = d < d1
+            d2 = np.where(closer, d1, np.minimum(d2, d))
+            ids = np.where(closer, k, ids)
+            d1 = np.minimum(d1, d)
+        return d1, d2, ids
+
+    def save(name, albedo, height, roughness, strength, ao_strength=1.0):
+        h = (height - height.min()) / (height.max() - height.min())
+        # Normal (OpenGL convention: green = up = towards smaller row numbers).
+        dx = (np.roll(h, -1, 1) - np.roll(h, 1, 1)) * 0.5 * strength
+        dy = (np.roll(h, -1, 0) - np.roll(h, 1, 0)) * 0.5 * strength
+        n = np.stack([-dx, dy, np.ones_like(h)], -1)
+        n /= np.linalg.norm(n, axis=-1, keepdims=True)
+        # AO: how far below its surroundings a texel lies.
+        cavity = np.clip(blur(h, 6.0) - h, 0.0, None)
+        ao = np.clip(1.0 - cavity * 4.0 * ao_strength, 0.25, 1.0)
+        u8 = lambda a: (np.clip(a, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+        rgba = np.concatenate([np.clip(albedo, 0, 1), h[..., None]], -1)
+        Image.fromarray(u8(rgba), "RGBA").save(out("textures", "ground", name + "_albedo.png"), optimize=True)
+        Image.fromarray(u8(n * 0.5 + 0.5), "RGB").save(out("textures", "ground", name + "_normal.png"), optimize=True)
+        Image.fromarray(u8(roughness), "L").save(out("textures", "ground", name + "_roughness.png"), optimize=True)
+        Image.fromarray(u8(ao), "L").save(out("textures", "ground", name + "_ao.png"), optimize=True)
+
+    def col(c):
+        return np.array(c, dtype=np.float64)[None, None, :]
+
+    # Savannah soil: dry red earth, crusted, with pebbles and bits of dead grass.
+    base = spectral(1, 1.6, 2)
+    fine = spectral(2, 0.6, 40)
+    d1, d2, ids = cells(3, 140)
+    rng = np.random.default_rng(4)
+    sizes = rng.uniform(3.0, 8.0, 140)[ids]
+    pebble = np.clip(1.0 - d1 / sizes, 0.0, 1.0) ** 0.6 * (rng.random(140)[ids] < 0.55)
+    straws = np.zeros((size, size))
+    for k in range(260):
+        x0, y0, ang, length = rng.random() * size, rng.random() * size, rng.random() * np.pi, rng.uniform(12, 40)
+        t = np.linspace(0.0, 1.0, int(length * 2))
+        sx = (x0 + np.cos(ang) * length * t).astype(int) % size
+        sy = (y0 + np.sin(ang) * length * t).astype(int) % size
+        straws[sy, sx] = np.maximum(straws[sy, sx], rng.uniform(0.5, 1.0))
+    straws = np.clip(blur(straws, 0.6) * 3.0, 0, 1)
+    height = base * 0.5 + fine * 0.15 + pebble * 0.6 + straws * 0.15
+    earth = col((0.47, 0.30, 0.19)) * (0.8 + 0.4 * base[..., None]) * (0.9 + 0.2 * fine[..., None])
+    stone = col((0.62, 0.55, 0.47)) * (0.8 + 0.3 * rng.random(140)[ids][..., None])
+    albedo = earth * (1 - pebble[..., None]) + stone * pebble[..., None]
+    albedo = albedo * (1 - straws[..., None] * 0.8) + col((0.78, 0.66, 0.42)) * straws[..., None] * 0.8
+    rough = 0.92 - pebble * 0.2 - straws * 0.1
+    save("soil", albedo, height, rough, 18.0)
+
+    # Desert sand: wind ripples (bent by large-scale noise) over fine grain.
+    warp = spectral(11, 2.0, 1, 6)
+    warp2 = spectral(12, 2.0, 1, 6)
+    phase = (yy / size * 24.0 + xx / size * 3.0 + warp * 3.0 + warp2 * 1.5) * 2.0 * np.pi
+    ripple = (np.sin(phase) * 0.5 + 0.5) ** 1.6 # sharper crests
+    grain = spectral(13, 0.2, 80)
+    dunes = spectral(14, 2.2, 1, 4)
+    height = ripple * 0.55 + grain * 0.12 + dunes * 0.6
+    albedo = col((0.80, 0.62, 0.40)) * (0.85 + 0.25 * ripple[..., None]) * (0.92 + 0.16 * grain[..., None])
+    albedo *= 0.9 + 0.2 * dunes[..., None]
+    rough = 0.88 + 0.08 * grain
+    save("sand", albedo, height, rough, 10.0, 0.5)
+
+    # Jungle floor: layers of fallen leaves on dark soil, a few twigs.
+    soil = spectral(21, 1.0, 4)
+    height = soil * 0.15
+    albedo = col((0.16, 0.11, 0.07)) * (0.8 + 0.4 * soil[..., None])
+    rough = 0.8 + 0.1 * soil
+    rng = np.random.default_rng(22)
+    palette = [(0.33, 0.20, 0.09), (0.45, 0.29, 0.12), (0.26, 0.24, 0.10), (0.20, 0.25, 0.09), (0.52, 0.36, 0.17), (0.30, 0.15, 0.08)]
+    for k in range(900):
+        cx, cy = rng.random() * size, rng.random() * size
+        ang = rng.random() * np.pi
+        ln, wd = rng.uniform(14, 34), 0.0
+        wd = ln * rng.uniform(0.28, 0.45)
+        r = int(ln) + 2
+        x0, y0 = int(cx) - r, int(cy) - r
+        ys = (np.arange(y0, y0 + 2 * r + 1) % size)
+        xs = (np.arange(x0, x0 + 2 * r + 1) % size)
+        ly, lx = np.mgrid[y0:y0 + 2 * r + 1, x0:x0 + 2 * r + 1].astype(np.float64)
+        u = (lx - cx) * np.cos(ang) + (ly - cy) * np.sin(ang)
+        v = -(lx - cx) * np.sin(ang) + (ly - cy) * np.cos(ang)
+        # Leaf: pointed ellipse, curled up at the edges, a darker midrib.
+        e = (u / ln) ** 2 + (v / (wd * (1.0 - (u / ln) ** 2 * 0.0 + 1e-6))) ** 2
+        shape = (np.abs(u) < ln) & (np.abs(v) < wd * np.sqrt(np.clip(1.0 - (u / ln) ** 2, 0, 1)) ** 0.8)
+        if not shape.any():
+            continue
+        c = np.array(palette[rng.integers(len(palette))]) * rng.uniform(0.8, 1.15)
+        base_h = height[np.ix_(ys, xs)].max() + 0.03  # on top of what's there
+        edge = np.abs(v) / np.maximum(wd, 1e-3)
+        leaf_h = base_h + 0.04 * edge
+        rib = np.exp(-(v / 1.2) ** 2) * 0.35
+        vein = 0.08 * np.sin(u * 0.9 + np.abs(v) * 1.1)
+        sub_a = albedo[np.ix_(ys, xs)]
+        sub_h = height[np.ix_(ys, xs)]
+        sub_r = rough[np.ix_(ys, xs)]
+        leaf_col = c[None, None, :] * (1.0 - rib[..., None] - vein[..., None])
+        sub_a[shape] = leaf_col[shape]
+        sub_h[shape] = np.minimum(leaf_h[shape], 1.0 + base_h)
+        sub_r[shape] = rng.uniform(0.55, 0.75)
+        albedo[np.ix_(ys, xs)] = sub_a
+        height[np.ix_(ys, xs)] = sub_h
+        rough[np.ix_(ys, xs)] = sub_r
+    height = blur(height, 0.7)
+    save("leaves", albedo, height, rough, 30.0, 1.5)
+
+    # Rock: layered, cracked stone.
+    big = spectral(31, 2.0, 1)
+    mid = spectral(32, 1.2, 4)
+    d1, d2, ids = cells(33, 45)
+    cracks = np.clip((d2 - d1) / 3.0, 0.0, 1.0)  # 0 at cell borders
+    strata = np.sin((yy / size * 7.0 + big * 2.0) * 2.0 * np.pi) * 0.5 + 0.5
+    rng = np.random.default_rng(34)
+    slab = rng.random(45)[ids]
+    height = big * 0.6 + mid * 0.3 + slab * 0.25 + strata * 0.1 - (1.0 - cracks) * 0.35
+    albedo = col((0.50, 0.46, 0.41)) * (0.75 + 0.3 * mid[..., None]) * (0.85 + 0.25 * slab[..., None])
+    albedo *= (0.92 + 0.12 * strata[..., None])
+    albedo = albedo * (0.55 + 0.45 * cracks[..., None])
+    rough = 0.72 + 0.15 * mid + 0.1 * (1 - cracks)
+    save("rock", albedo, height, rough, 14.0)
+
+
 if __name__ == "__main__":
+    terrain_textures()
     lut_neutral()
     textures()
     reed_screen()

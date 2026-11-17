@@ -80,22 +80,23 @@ void VolumetricFogPass::execute(ve::RenderContext& ctx)
     p.sunColor = glm::vec4(glm::vec3(frame.globals.globalParams[SlotSunColor]), sunShafts);
     p.tint = glm::vec4(albedo, pointLightGlow);
     p.wind = m_wind;
-    p.depthTex = g.get(r.sceneDepth()).sampledIndex;
-    p.skyLut = g.get(m_lut).sampledIndex;
+    p.depthTex = g.sampled(r.sceneDepth());
+    p.skyLut = g.sampled(m_lut);
     p.noiseTex = m_noise;
 
     // 1. Raymarch at reduced resolution.
-    ctx.beginRendering({{m_fog}});
-    ctx.bindPipeline(m_march);
-    ctx.push(p);
-    ctx.drawFullscreen();
-    ctx.endRendering();
+    ctx.fullscreen({{m_fog}}, m_march, p);
     g.transition(ctx.cmd, m_fog, ve::Access::Sampled);
 
     // 2. Upsample + blend over the scene.
     ctx.beginRendering({{r.sceneColor()}});
     ctx.bindPipeline(m_apply);
-    ctx.push(g.get(m_fog).sampledIndex);
+    struct ApplyPush {
+        glm::vec2 size;
+        uint32_t fog;
+    };
+    const ve::GraphTexture& fog = g.get(m_fog);
+    ctx.push(ApplyPush{{float(fog.extent.width), float(fog.extent.height)}, fog.sampledIndex});
     ctx.drawFullscreen();
     ctx.endRendering();
 }

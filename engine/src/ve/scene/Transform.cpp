@@ -15,7 +15,10 @@ Transform::~Transform()
 
 void Transform::markDirty()
 {
-    if (m_dirty) return; // children are already dirty too
+    // Invariant: a dirty transform's descendants are all dirty too (a child is
+    // only cleaned through worldMatrix(), which cleans its parents first), so
+    // an already-dirty one has nothing left to propagate.
+    if (m_dirty) return;
     m_dirty = true;
     for (Transform* c : m_children) c->markDirty();
 }
@@ -23,29 +26,31 @@ void Transform::markDirty()
 void Transform::setLocalPosition(const glm::vec3& p)
 {
     m_position = p;
-    m_dirty = false; // force propagation even if already dirty
     markDirty();
 }
 
 void Transform::setLocalRotation(const glm::quat& r)
 {
     m_rotation = glm::normalize(r);
-    m_dirty = false;
     markDirty();
 }
 
 void Transform::setLocalScale(const glm::vec3& s)
 {
     m_scale = s;
-    m_dirty = false;
     markDirty();
 }
 
 glm::mat4 Transform::localMatrix() const
 {
-    // T * R * S: scale first, then rotate, then move.
-    return glm::translate(glm::mat4(1.0f), m_position) * glm::mat4_cast(m_rotation) *
-           glm::scale(glm::mat4(1.0f), m_scale);
+    // T * R * S (scale first, then rotate, then move), composed directly:
+    // the rotation's columns scaled, the translation in the last column.
+    glm::mat4 m = glm::mat4_cast(m_rotation);
+    m[0] *= m_scale.x;
+    m[1] *= m_scale.y;
+    m[2] *= m_scale.z;
+    m[3] = glm::vec4(m_position, 1.0f);
+    return m;
 }
 
 const glm::mat4& Transform::worldMatrix() const

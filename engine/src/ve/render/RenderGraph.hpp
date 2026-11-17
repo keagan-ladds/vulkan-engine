@@ -154,6 +154,18 @@ public:
         pushConstants(&data, sizeof(T));
     }
     void drawFullscreen(); // 3-vertex triangle, see fullscreen.vert
+
+    // A whole full-screen draw: begin rendering into `colors`, bind, push, draw, end.
+    //   ctx.fullscreen({{m_output}}, m_pipeline, MyPush{...});
+    template <class T>
+    void fullscreen(std::initializer_list<ColorTarget> colors, VkPipeline pipeline, const T& pushData)
+    {
+        beginRendering(colors);
+        bindPipeline(pipeline);
+        push(pushData);
+        drawFullscreen();
+        endRendering();
+    }
 };
 
 class RenderPass {
@@ -178,7 +190,8 @@ public:
     RenderStage stage() const { return m_stage; }
     int order() const { return m_order; }
     bool enabled = true;
-    float gpuTimeMs = 0.0f; // measured with GPU timestamps (shown in the F1 overlay)
+    float gpuTimeMs = 0.0f;     // measured with GPU timestamps, smoothed (shown in the F1 overlay)
+    float lastGpuTimeMs = 0.0f; // the latest raw measurement (benchmarks)
 
 protected:
     Renderer& renderer() const { return *m_renderer; }
@@ -212,6 +225,8 @@ public:
     TextureId texture(const std::string& name) const; // kNoTexture if missing
     GraphTexture& get(TextureId id) { return m_textures[id]; }
     const GraphTexture& get(TextureId id) const { return m_textures[id]; }
+    // Bindless index to sample `id` with in shaders (veSample(index, uv)).
+    uint32_t sampled(TextureId id) const { return m_textures[id].sampledIndex; }
     // Clears an image once and leaves it READ_ONLY (so it can be sampled before being rendered).
     void initializeDepth(TextureId id, float clearValue);
 

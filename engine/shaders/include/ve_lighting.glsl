@@ -60,6 +60,25 @@ float veSampleCascade(VeDirectionalLight L, int c, vec3 P, vec3 N)
     float layer = float(L.shadow.z + c);
 
     // 3x3 PCF; each tap is itself a bilinear 2x2 comparison in hardware.
+    // With the default 1-texel spacing the 9 taps weigh the texels around the
+    // sample as [1-f, 1, 1, f] per axis (f = sub-texel position), which 2x2
+    // bilinear taps reproduce exactly when each is placed at the weighted
+    // centre of its texel pair (Castano's "optimized PCF"): same result,
+    // 4 fetches instead of 9.
+    if (frame.shadowParams.y == 1.0) {
+        float size = frame.shadowParams.z;
+        vec2 s = uv * size - 0.5;
+        vec2 base = floor(s);
+        vec2 f = s - base;
+        vec2 wA = 2.0 - f, wB = 1.0 + f;              // weights of texel pairs (base-1, base) and (base+1, base+2)
+        vec2 uA = (base - 0.5 + 1.0 / wA) / size;     // weighted centre of each pair
+        vec2 uB = (base + 1.5 + f / wB) / size;
+        float sum = wA.x * wA.y * texture(veDirShadowMap, vec4(uA.x, uA.y, layer, ndc.z))
+                  + wB.x * wA.y * texture(veDirShadowMap, vec4(uB.x, uA.y, layer, ndc.z))
+                  + wA.x * wB.y * texture(veDirShadowMap, vec4(uA.x, uB.y, layer, ndc.z))
+                  + wB.x * wB.y * texture(veDirShadowMap, vec4(uB.x, uB.y, layer, ndc.z));
+        return sum / 9.0;
+    }
     vec2 texel = vec2(frame.shadowParams.y / frame.shadowParams.z);
     float sum = 0.0;
     for (int y = -1; y <= 1; ++y) {
@@ -214,20 +233,64 @@ vec3 veAmbient(VeSurface s, vec3 V)
     return (diffuse + specular) * s.ao;
 }
 
-vec3 veEvaluateLighting(VeSurface s)
+// The point lights that can reach a point (its light cluster), for shaders
+// with their own lighting loop:
+//   VeLightList list = veLightList(P, viewDepth);
+//   for (uint k = 0u; k < list.count; ++k) {
+//       VePointLight L = lights.point[veLightAt(list, k)];
+//       ...
+//   }
+// Off screen, or if the clusters overflowed, the list is every point light.
+struct VeLightList {
+    uint first, count;
+    bool clustered;
+};
+
+VeLightList veLightList(vec3 P, float viewDepth)
+{
+    VeLightList list = VeLightList(0u, frame.lightCounts.y, false);
+    if (lights.clusterParams.z == 0.0 || frame.lightCounts.y == 0u) return list;
+    vec4 clip = frame.viewProj * vec4(P, 1.0);
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (clip.w <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) return list;
+    ivec3 c = ivec3(int(uv.x * VE_CLUSTER_X), int(uv.y * VE_CLUSTER_Y),
+                    clamp(int(floor(log(max(viewDepth, 1e-3)) * lights.clusterParams.x + lights.clusterParams.y)), 0, VE_CLUSTER_Z - 1));
+    uint v = lights.clusters[(c.z * VE_CLUSTER_Y + c.y) * VE_CLUSTER_X + c.x];
+    return VeLightList(v >> 9, v & 0x1FFu, true);
+}
+
+VeLightList veLightList(vec3 P) { return veLightList(P, dot(P - frame.cameraPosition.xyz, frame.cameraForward.xyz)); }
+
+uint veLightAt(VeLightList list, uint k)
+{
+    if (!list.clustered) return k;
+    uint i = list.first + k;
+    return (lights.clusterLights[i >> 2] >> (8u * (i & 3u))) & 0xFFu;
+}
+
+// `sun0Shadow` returns the shadow of directional light 0 at the surface if it
+// was computed (the light faces the surface), or -1, so shaders that add their
+// own sun terms (grass translucency) don't sample the shadow map twice.
+vec3 veEvaluateLighting(VeSurface s, out float sun0Shadow)
 {
     vec3 V = normalize(frame.cameraPosition.xyz - s.position);
     float viewDepth = dot(s.position - frame.cameraPosition.xyz, frame.cameraForward.xyz);
     vec3 color = vec3(0.0);
+    sun0Shadow = -1.0;
 
     for (uint i = 0; i < frame.lightCounts.x; ++i) {
         VeDirectionalLight L = lights.directional[i];
         vec3 l = -L.direction.xyz;
         if (dot(s.normal, l) <= 0.0) continue;
         float shadow = veDirectionalShadow(i, s.position, s.normal, viewDepth);
+        if (i == 0u) sun0Shadow = shadow;
         color += veBRDF(s, V, l, L.color.rgb * shadow);
     }
-    for (uint i = 0; i < frame.lightCounts.y; ++i) {
+    // Point lights: only those listed in this point's cluster (all of them
+    // if the clusters overflowed or the point is off screen).
+    VeLightList list = veLightList(s.position, viewDepth);
+    for (uint k = 0; k < list.count; ++k) {
+        uint i = veLightAt(list, k);
         VePointLight L = lights.point[i];
         vec3 toLight = L.positionRange.xyz - s.position;
         float dist = length(toLight);
@@ -246,6 +309,12 @@ vec3 veEvaluateLighting(VeSurface s)
         if (c >= 0) color *= tints[c];
     }
     return color;
+}
+
+vec3 veEvaluateLighting(VeSurface s)
+{
+    float sun0Shadow;
+    return veEvaluateLighting(s, sun0Shadow);
 }
 
 #endif // VE_LIGHTING_GLSL

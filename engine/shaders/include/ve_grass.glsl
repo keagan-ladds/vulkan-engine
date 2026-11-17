@@ -24,6 +24,8 @@
 
 #include "ve.glsl"
 
+// Fields other than `visible`, `mask`, `fade` and `distance` are only filled in
+// for visible clumps.
 struct VeGrassClump {
     vec3 root;    // world position of the clump on the ground
     float height; // blade height (0 = hidden)
@@ -40,7 +42,7 @@ struct VeGrassClump {
 
 // Ground height from exact samples (texelFetch: R32F needn't be filterable),
 // interpolated over the same two triangles per cell as the terrain mesh
-// (split along the (i, j+1) -> (i+1, j) diagonal), so roots sit on the
+// (split along the (i, j) -> (i+1, j+1) diagonal, like the physics heightfield), so roots sit on the
 // rendered surface instead of a bilinear one that floats or sinks mid-cell.
 float veGrassGroundHeight(VeMaterial m, vec2 xz)
 {
@@ -52,8 +54,8 @@ float veGrassGroundHeight(VeMaterial m, vec2 xz)
     float h10 = texelFetch(veTextures[nonuniformEXT(m.textures[0])], i + ivec2(1, 0), 0).r;
     float h01 = texelFetch(veTextures[nonuniformEXT(m.textures[0])], i + ivec2(0, 1), 0).r;
     float h11 = texelFetch(veTextures[nonuniformEXT(m.textures[0])], i + ivec2(1, 1), 0).r;
-    if (f.x + f.y < 1.0) return h00 + (h10 - h00) * f.x + (h01 - h00) * f.y;
-    return h11 + (h01 - h11) * (1.0 - f.x) + (h10 - h11) * (1.0 - f.y);
+    if (f.x >= f.y) return h00 + (h10 - h00) * f.x + (h11 - h10) * f.y;
+    return h00 + (h01 - h00) * f.y + (h11 - h01) * f.x;
 }
 
 VeGrassClump veGrassClump(VeMaterial m)
@@ -79,6 +81,9 @@ VeGrassClump veGrassClump(VeMaterial m)
     c.visible = margin > 0.0 && all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
     float lodDistance = c.distance + (veHash12(xz * 4.37 + 2.9) - 0.5) * m.params[6].z;
     c.visible = c.visible && lodDistance >= m.params[6].x && lodDistance < m.params[6].y;
+    // Hidden clumps (thinned out, other LOD, outside the map) are discarded by
+    // the caller: skip the rest of the per-clump hashes and the ground lookup.
+    if (!c.visible) return c;
 
     float r = veHash12(xz * 13.7 + 0.31);
     c.height = mix(m.params[3].x, m.params[3].y, r) * c.mask.z * mix(0.4, 1.0, c.fade);

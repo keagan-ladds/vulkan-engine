@@ -7,7 +7,7 @@ verification workflow.
 
 Legend: `[x]` done · `[ ]` todo · `[~]` partially done (see note)
 
-## Status snapshot (2026-11-14)
+## Status snapshot (2026-11-16)
 
 Phases 0–10 are implemented and verified on Linux with an Intel Iris Xe
 (Mesa 25, Vulkan 1.4):
@@ -197,8 +197,8 @@ too. Next up: physics follow-ups, F2 (animation) and building/gameplay systems. 
 - [ ] **Physics materials**: per-shape friction/restitution + surface type
   (footstep sounds, impact particles).
 - [ ] **Determinism / save-state** (later): body state serialisation for save games.
-- [ ] Known issue: the heightfield collider triangulates differently from the
-  render mesh (a few cm on steep slopes), and Jolt quantises heights to 8 bits per block.
+- [~] Known issue: Jolt quantises heightfield heights to 8 bits per block (a
+  few cm on steep slopes). The triangulation now matches the render mesh.
 
 **Accept:** player walks on terrain and can't walk through trees, rocks or huts;
 thrown rocks collide and come to rest; crates topple when hit; raycasts report
@@ -268,11 +268,34 @@ million grass blades), scaling up on discrete GPUs.
 - [x] Savanna: all props are foliage layers (savannah/swamp/kopje rules); grass and reeds are GrassPasses; autotest teleports across the map and checks streaming
 - [x] Scene data (Phase W4/W5, docs/06-world.md): `Foliage` + `FoliageType`, `GrassLayer` (glTF LOD chains: mesh -> mesh -> cards), `FoliageExclusion`, `MeshLibrary`; per-biome densities; regenerates on terrain edits
 - **Result:** preload about 110 ms for about 9.4k props; worker about 0.06 ms per (cell, layer); static bodies 3.3k → about 450 (near the player only); grass + reeds about 0.3–0.7 ms GPU; same visuals and draw counts as the old one-shot scatter
-- Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); removal/persistence API (felled trees); grass interaction (player bending blades); a multi-threaded worker pool
+- [x] Interactive foliage: stable `FoliageInstanceId`s, per-instance states (alternative meshes + colliders, or removed) that are re-applied whenever a cell streams in, `overrides()` / `setOverrides()` for save games, and promotion of instances near the player to GameObjects (`promoteDistance`, `promote`) with a `FoliageLink`. Savanna: chop acacias into stumps (`ChoppableTree`), pick berry bushes that regrow (`BerryBush`, `Regrowth`); autotest chops, walks 1.3 km away and back, picks and waits for regrowth
+- Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); grass interaction (player bending blades); a multi-threaded worker pool; saving overrides to disk (waits for the save system)
 
-### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds)
-- [ ] Engine terrain module: chunked heightfield streaming, LOD (geomorphing or clipmaps), splat materials
-- [ ] Physics heightfield tiles streamed with the terrain
+### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds) ✅
+- [x] Chunked heightfield streaming: `TerrainData` is an immutable generator
+  snapshot plus a thread-safe LRU cache of 64-cell sample tiles (heights +
+  biome weights) generated on demand (`tileCacheMB`); no whole-world grid
+- [x] LOD: quadtree of 33×33-vertex nodes (`TerrainLod`), geomorphing towards the
+  parent grid in `terrain.vert` / `terrain_shadow.vert`, skirts, worker-thread
+  mesh building with an upload budget, LRU node cache, old meshes kept until
+  edits are rebuilt
+- [x] Physics heightfield tiles streamed around the camera, characters and
+  dynamic bodies (`colliderDistance`); render mesh, queries and grass use
+  Jolt's quad diagonal, so the visible and physical ground match
+- [x] Grass bakes a window around the camera on big worlds (`GrassDesc::window`)
+- [x] Foliage streaming stays cheap with tens of thousands of cells (update
+  only re-walks cells when the viewer moves or something changed)
+- [x] Savanna is 4 km wide: savannah around the camp, a desert with dunes and
+  quiver trees to the east, a jungle with hills, jungle trees, palms and
+  undergrowth to the west; the autotest walks into both
+- [x] Splat materials: optional per-biome `material` (albedo, normal,
+  roughness, AO, size, tint) and a triplanar `rockMaterial`; three layers per
+  vertex with height-based blending; distance anti-tiling (rotated 3.7×
+  second copy + macro noise); untextured biomes keep their vertex colours.
+  Savanna: soil, sand ripples, leaf litter, rock
+- **Result** (lavapipe, Release): 4 km world, 2049² samples, ~62k foliage
+  instances preloaded in ~1.2 s; main thread ~1.8 ms per frame, as on the
+  640 m map (it was 21 ms before foliage stopped re-walking every cell)
 
 ---
 
@@ -296,26 +319,91 @@ million grass blades), scaling up on discrete GPUs.
 
 ---
 
+### Performance & simplification pass ✅ (2026-11-16)
+Reviewed by three scout agents (renderer/GPU layer, scene/world/physics,
+effects/shaders); every change was checked with the autotest, the editor test,
+zero validation messages, screenshot diffs and A/B benchmarks (`VE_BENCH`).
+No feature or quality setting was removed; shader changes give the same image
+(fp rounding), apart from the bug fixes noted.
+- [x] Shaders, exact: 3×3 PCF as 4 bilinear taps; grass reuses the sun shadow
+  from `veEvaluateLighting`; cofactor normal matrix; fog tracks its cascade
+  along the ray (no per-step search/mat4); clouds return before texture fetches
+  where density is provably zero; SSGI/SSR project the ray once; grass vertex
+  shader stops at hidden clumps; arithmetic `veBayer4()`; water glint shadow
+  only where the glint is non-zero
+- [x] Shader bug fixes: `fog_apply` is now an exact 4×4 box (the Bayer dither
+  didn't cancel, and it assumed half resolution); impostors sample with
+  explicit gradients (implicit ones were undefined in divergent flow)
+- [x] Point-light shadow cache (`cachePointShadows`, D16): a static camp
+  re-renders ~1.5 of 24 cube faces per frame
+- [x] Instancing: one cull thread per instance (was per instance × view),
+  sorted per-pass draw lists, visible list sized to need (Savanna: 3.6 MB
+  instead of 36 MB), cull views for every possible cascade (runtime-added
+  shadowed lights lost instanced shadows)
+- [x] Scene: hooks nobody overrides are skipped (D14); `forEach<T>` matches
+  subclasses (D15, old known issue 5); id → object map (`findById` O(1),
+  `findFirst<T>()`); destroy flush survives `onDestroy()` spawning or
+  destroying (could leave freed components registered)
+- [x] Dangling pointers fixed: `DayNightCycle` and the sandbox HUD cached
+  Weather/DayNight pointers the editor could delete; they now use ids
+- [x] Per-frame CPU: terrain edit-state JSON 4×/s instead of every frame,
+  `Terrain::find` without a scene scan, ambience parsing cached, resting
+  bodies don't rewrite transforms, transforms don't re-walk dirty subtrees,
+  grass material set once per frame, hot-reload stats each file once per poll,
+  primitives of the same shape share a mesh
+- [x] Consolidation: `ve::Behaviour` declares the hooks `GameObject` and
+  `Component` share; `FoliageRules` holds the fields `FoliageType` and
+  `FoliageLayer` both declared; `ctx.fullscreen(...)` and `graph.sampled(id)`
+  replace repeated pass boilerplate
+- [x] Simplification: `ve/core/Strings.hpp` + `log::warnOnce` (5 copies),
+  `vk::imageBarrier`/`memoryBarrier`/`recordMipChain` (3 copies),
+  `vfx::ScreenSpaceTracePass` (SSGI + SSR shared their whole pass), one
+  descriptor-write helper, `sandbox/Noise2D.hpp` removed (duplicate of
+  `ve/world/Noise.hpp`)
+- [x] Tooling: `VE_BENCH`, headless testing on GPU-less machines (lavapipe +
+  Xvfb), see 04-agent-handoff.md §4
+- **Result** (Release, 1600×900, Mesa lavapipe on 4 CPU cores, 3 alternating
+  runs each; lavapipe weighs GPU work very differently from real GPUs, so
+  re-measure the GPU side on hardware):
+
+  | | camp at dusk | vista |
+  |---|---|---|
+  | Main thread (engine CPU) | 2.00 → 1.77 ms (−11 %) | 1.53 → 1.51 ms |
+  | GPU total | −5.5 % | −4.2 % |
+  | Shadows | −7.6 % | −6.3 % |
+  | Volumetric fog | −7.0 % | −10.7 % |
+  | SSGI | −5.1 % | −4.2 % |
+  | Instance culling | −17.5 % | −3.8 % |
+  | Atmosphere | +11.5 % | +9.7 % |
+
+  On lavapipe the cloud early-outs made Atmosphere slower; whether to keep
+  them depends on real-GPU numbers.
+- Not done (measured or judged not worth it yet): depth prepass for foliage
+  overdraw (bigger change; measure on real GPUs first), caching distant
+  shadow cascades (would lag a frame), subgroup-aggregated cull atomics, a
+  1×1 sky-ambient texture for fog, folding bloom's final blend into the
+  composite (the engine would have to know about an effect).
+
+---
+
 ## Known issues / tech debt
 
 Ordered roughly by how much they'll bite while building a game.
 
-1. **No temporal accumulation for clouds/fog.** They use per-pixel jitter plus
-   a blur and look slightly soft. TAA or temporal reprojection would allow fewer
-   steps and sharper results.
+1. **No per-object motion vectors.** TAA and the temporal accumulators
+   reproject with camera motion only; moving objects (characters, wind-blown
+   foliage) rely on neighbourhood clipping and get slightly softer. Clouds and
+   fog still blur their own dither instead of reprojecting it.
 2. **Material params are positional** (slot indices, no reflection). Each
    shader documents its layout in a comment. A SPIR-V reflection layer could
    add named parameters.
 3. Sky-view LUT assumes a viewer near y = 0 and a flat ground; very high
    cameras get an approximate sky.
-4. Physics: the heightfield collider's triangle diagonals can differ from the
-   render mesh, so feet may float or sink up to a few cm on steep slopes.
-   Jolt also quantises heights to 8 bits per 2×2 block. Characters can't
+4. Physics: Jolt quantises heightfield heights to 8 bits per 2×2 block, so
+   feet may float or sink a few cm on steep slopes (the triangle diagonals
+   match the render mesh since Phase 13). Characters can't
    climb up onto dynamic crates reliably (a CharacterVirtual limitation unless
    you tune `mMaxStrength` and the supporting volume).
-5. `Scene::forEach<T>()` only finds components registered under exactly `T`
-   (a `class MyLight : public PointLight` added as `MyLight` is not seen by the
-   renderer). Add as `addComponent<PointLight>` or extend the registry.
 
 ---
 
@@ -327,14 +415,18 @@ Ordered roughly by how much they'll bite while building a game.
 - [ ] GPU skinning (compute pre-pass writing skinned vertices, or vertex shader)
 
 ### F3 — World & performance
-- [ ] Clustered/tiled light culling for many point lights
-- [ ] Temporal AA (+ temporal reprojection for fog/clouds)
+- [x] Clustered point lights: 16×9×24 clusters binned on the CPU each frame
+  (lights are already culled there), `veLightList()` for custom shaders, full
+  loop as a fallback
+- [x] Temporal AA (`RendererSettings::temporalAA`): Halton jitter, camera
+  reprojection from depth, Catmull-Rom history, YCoCg variance clipping
+- [ ] Temporal reprojection for fog/clouds (fewer steps)
 - [ ] Multithreaded scene gathering / command recording
 
 ### F4 — Building & gameplay systems
 - [ ] Grid/snap building system (pieces, sockets, structural stability)
 - [ ] Inventory/crafting data model (data files)
-- [ ] Interaction system (raycast "use" with prompts) — generalise `Sunstone` (raycasts now available)
+- [~] Interaction system (raycast "use" with prompts): Savanna's `Interactable` (Harvest.hpp) does it for promoted foliage; generalise it (and `Sunstone`) into the engine
 - [ ] AI (state machines / behaviour trees), navmesh (Recast/Detour)
 - [ ] Combat (hitboxes, damage, stamina), boss encounters
 

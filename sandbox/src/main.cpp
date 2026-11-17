@@ -9,14 +9,16 @@
 // =============================================================================
 
 #include "EditorTest.hpp"
-#include "Noise2D.hpp"
 #include "Player.hpp"
+#include "Harvest.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
 #include "Vegetation.hpp"
 
 #include <ve/editor/Editor.hpp>
 #include <ve/world/Terrain.hpp>
+
+#include <random>
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SceneSerializer.hpp>
 #include <ve/ve.hpp>
@@ -155,6 +157,7 @@ void buildWorld(ve::Engine& engine)
     player.teleport({start.x, terrain.height(start.x, start.y), start.y}, startYaw);
 
     scene.spawn<Hud>(player);
+    scene.spawn<Regrowth>(); // berry bushes grow back (Harvest.hpp)
     auto& photoMode = scene.spawn<vfx::PhotoMode>(); // F12: free camera, DOF, max-quality screenshots
 
     // Environment objects from the scene file (Weather, DayNightCycle, Water).
@@ -173,6 +176,27 @@ void buildWorld(ve::Engine& engine)
     }
     if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
     if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser
+    r.settings().temporalAA = true;
+    if (const char* s = std::getenv("SAVANNA_SUNSTEP")) r.settings().shadowDirectionStep = std::strtof(s, nullptr); // degrees, 0 = continuous
+    // SAVANNA_LIGHTS=<n>[,0]: n small coloured point lights scattered around the camp
+    // (clustered lighting test; ",0" turns the clusters off for comparison).
+    if (const char* l = std::getenv("SAVANNA_LIGHTS")) {
+        int count = 0, clustered = 1;
+        std::sscanf(l, "%d,%d", &count, &clustered);
+        r.settings().clusteredLights = clustered != 0;
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        for (int i = 0; i < count; ++i) {
+            const float x = (u(rng) - 0.5f) * 120.0f, z = (u(rng) - 0.5f) * 120.0f;
+            auto& o = scene.spawn("TestLight");
+            o.transform().setLocalPosition({x, (terrainPtr ? terrainPtr->height(x, z) : 0.0f) + 1.0f, z});
+            auto& pl = o.addComponent<ve::PointLight>();
+            pl.color = glm::vec3(u(rng), u(rng), u(rng)) * 0.8f + 0.2f;
+            pl.intensity = 6.0f;
+            pl.range = 6.0f + u(rng) * 6.0f;
+        }
+    }
+    if (const char* a = std::getenv("SAVANNA_TAA")) r.settings().temporalAA = a[0] == '1'; // SAVANNA_TAA=0 turns it off
     if (std::getenv("SAVANNA_AUTOTEST")) scene.spawn<AutoTest>(terrain);
     // SAVANNA_PHOTO=<samples>[,<resolution 0..4>[,<dof aperture>]]: take a photo-mode shot of the start view and quit.
     if (const char* p = std::getenv("SAVANNA_PHOTO")) {
@@ -200,6 +224,9 @@ int main()
         config.renderer.cascadeCount = 4;
         config.renderer.maxShadowedPointLights = 4;      // campfire + torches
         config.renderer.maxShadowDistance = 180.0f;
+        // ~150k foliage instances in the 4 km world, and the editor briefly
+        // holds the old and the new set while it reopens a scene.
+        config.renderer.maxInstances = 1u << 19;
         if (const char* v = std::getenv("VE_VALIDATION")) config.validation = v[0] == '1';
 
         ve::Engine engine(config);

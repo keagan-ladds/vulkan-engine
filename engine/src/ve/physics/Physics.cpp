@@ -393,15 +393,14 @@ void PhysicsWorld::step(Scene& scene, float dt)
 
 namespace {
 
-void sendCollision(GameObject* to, void (Component::*componentHook)(const Collision&),
-                   void (GameObject::*objectHook)(const Collision&), const Collision& c)
+void sendCollision(GameObject* to, void (Behaviour::*hook)(const Collision&), const Collision& c)
 {
     if (!to || to->isDestroyed()) return;
-    (to->*objectHook)(c);
+    (to->*hook)(c);
     // Index loop: a handler may add components.
     for (size_t i = 0; i < to->components().size(); ++i) {
         Component* comp = to->components()[i].get();
-        if (comp->enabled) (comp->*componentHook)(c);
+        if (comp->enabled) (comp->*hook)(c);
     }
 }
 
@@ -488,18 +487,13 @@ void PhysicsWorld::Impl::dispatchContacts()
             sendTrigger(b.gameObject, a.gameObject, o.phase == Phase::Enter);
             continue;
         }
-        auto hooks = [&](Phase ph) {
-            switch (ph) {
-            case Phase::Enter: return std::pair{&Component::onCollisionEnter, &GameObject::onCollisionEnter};
-            case Phase::Stay: return std::pair{&Component::onCollisionStay, &GameObject::onCollisionStay};
-            default: return std::pair{&Component::onCollisionExit, &GameObject::onCollisionExit};
-            }
-        };
-        const auto [ch, oh] = hooks(o.phase);
+        void (Behaviour::*hook)(const Collision&) = &Behaviour::onCollisionExit;
+        if (o.phase == Phase::Enter) hook = &Behaviour::onCollisionEnter;
+        else if (o.phase == Phase::Stay) hook = &Behaviour::onCollisionStay;
         Collision ca{b.gameObject, b.body, b.userValue, o.point, -o.normal, o.speed}; // seen from a
         Collision cb{a.gameObject, a.body, a.userValue, o.point, o.normal, o.speed};  // seen from b
-        sendCollision(a.gameObject, ch, oh, ca);
-        sendCollision(b.gameObject, ch, oh, cb);
+        sendCollision(a.gameObject, hook, ca);
+        sendCollision(b.gameObject, hook, cb);
     }
 }
 
@@ -507,6 +501,10 @@ void PhysicsWorld::interpolate(Scene& scene, float alpha)
 {
     scene.forEach<Rigidbody>([&](Rigidbody& rb) {
         if (!rb.created() || rb.type != BodyType::Dynamic) return;
+        // Resting (asleep) bodies: already in place, don't dirty their transforms.
+        if (rb.m_prevPos == rb.m_currPos && rb.m_prevRot == rb.m_currRot && rb.transform().position() == rb.m_currPos &&
+            rb.transform().rotation() == rb.m_currRot)
+            return;
         const float a = rb.interpolate ? alpha : 1.0f;
         rb.transform().setPosition(glm::mix(rb.m_prevPos, rb.m_currPos, a));
         rb.transform().setRotation(glm::slerp(rb.m_prevRot, rb.m_currRot, a));

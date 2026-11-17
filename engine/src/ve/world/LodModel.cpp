@@ -2,6 +2,7 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/assets/Model.hpp"
+#include "ve/core/Strings.hpp"
 #include "ve/render/Material.hpp"
 
 #include <algorithm>
@@ -223,17 +224,7 @@ LodModel lodModelFrom(const Model& model)
 
 LodModel loadLodModel(AssetManager& assets, const std::string& paths)
 {
-    std::vector<std::string> files;
-    size_t start = 0;
-    while (start <= paths.size()) {
-        size_t end = paths.find(';', start);
-        if (end == std::string::npos) end = paths.size();
-        std::string f = paths.substr(start, end - start);
-        f.erase(0, f.find_first_not_of(" \t"));
-        f.erase(f.find_last_not_of(" \t") + 1);
-        if (!f.empty()) files.push_back(f);
-        start = end + 1;
-    }
+    const std::vector<std::string> files = str::split(paths, ';');
     if (files.empty()) throw std::runtime_error("no model path");
 
     LodModel result;

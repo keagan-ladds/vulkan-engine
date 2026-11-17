@@ -89,6 +89,11 @@ public:
 private:
     void pollEvents();
     void tickFrame();
+    void benchFrame(float cpuMs);
+
+    // VE_BENCH=<frames>[,<warmup>]: average CPU/GPU timings over a run, log them, quit.
+    struct Benchmark;
+    std::unique_ptr<Benchmark> m_bench;
 
     EngineConfig m_config;
     Input m_input;
@@ -103,6 +108,7 @@ private:
     std::unique_ptr<Scene> m_scene;
     bool m_running = false;
     double m_accumulator = 0.0;
+    float m_fixedFrameDt = 0.0f; // VE_FIXED_DT (tests): fixed time per frame
 };
 
 } // namespace ve

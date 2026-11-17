@@ -36,7 +36,8 @@ public:
     // Night brightness. Exposure rises towards this at night (crude eye
     // adaptation): 1 = no adaptation (darkest), 3 = bright "game" nights.
     float nightExposure = 1.4f;
-    Weather* weather = nullptr;   // found in the scene automatically when null
+    // The scene's Weather (found automatically), or null. Valid for the current frame.
+    Weather* weather() const { return m_weather; }
 
     ve::DirectionalLight* sun() const { return m_sun; }
     ve::DirectionalLight* moon() const { return m_moon; }
@@ -44,6 +45,8 @@ public:
     static glm::vec3 sunDirection(float hours);
 
 private:
+    Weather* m_weather = nullptr; // looked up every frame by id (can't dangle)
+    uint64_t m_weatherId = 0;
     ve::DirectionalLight* m_sun = nullptr;
     ve::DirectionalLight* m_moon = nullptr;
     ve::GameObject* m_sunObject = nullptr;

@@ -6,8 +6,10 @@
 // =============================================================================
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/world/Foliage.hpp>
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -32,6 +34,7 @@ class Player;
 struct GameState {
     int collected = 0;
     int total = 0;
+    int wood = 0, berries = 0; // from chopped trees / picked bushes (Harvest.hpp)
     float messageTimer = 0.0f;
     std::string message;
 };
@@ -115,11 +118,16 @@ public:
     void update(float dt) override;
 
 private:
+    glm::vec3 groundAt(glm::vec2 p) const;
+    void shot(const char* name);
+    std::set<std::string> m_shotTaken;
     const ve::Terrain* m_terrain;
+    ve::FoliageInstanceId m_tree, m_bush; // interactive foliage checks
     std::vector<glm::vec3> m_crateStart;
     bool m_throwPending = false;
     bool m_inTrigger = false;
     glm::vec3 m_triggerCenter{0.0f}, m_triggerFeet{0.0f};
+    ve::GameObject* m_destroyProbe = nullptr;
     float m_t = 0.0f;
     int m_step = 0;
 };
@@ -133,8 +141,9 @@ public:
 private:
     void findEnvironment(); // the scene's Weather / DayNightCycle (scene objects)
     Player& m_player;
-    vfx::DayNightCycle* m_dayNight = nullptr;
+    vfx::DayNightCycle* m_dayNight = nullptr; // looked up by id every frame (the editor can delete them)
     vfx::Weather* m_weather = nullptr;
+    uint64_t m_dayNightId = 0, m_weatherId = 0;
     bool m_showHelp = true;
     bool m_combat = false; // M: stand-in for a fight (pushes the "Combat" music mood)
 };

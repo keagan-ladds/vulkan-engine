@@ -38,6 +38,11 @@ cmake --build build
 
 Smoke tests without a window on screen (offscreen rendering):
 `VE_HEADLESS=1 SAVANNA_AUTOTEST=1 ./build/bin/savanna` (or `SAVANNA_EDITORTEST=1`).
+Headless still needs a display server for SDL's Vulkan window: on a machine
+without one, prefix `xvfb-run -a`. No GPU? Mesa's `mesa-vulkan-drivers`
+(lavapipe) renders on the CPU. Performance: `VE_BENCH=120,30` averages CPU and
+per-pass GPU times over 120 frames after 30 warm-up frames, logs them and quits
+(see [docs/04-agent-handoff.md](docs/04-agent-handoff.md#4-verification-toolkit)).
 
 Or in VS Code press **F5** and pick a configuration: Sandbox (the game) or Editor (starts in the in-engine editor; F2 toggles it anywhere), each in Debug or Release, plus the Debug Autotest and Editor test smoke tests.
 

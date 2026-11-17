@@ -14,6 +14,7 @@
 
 #include "ve/gfx/Samplers.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -57,6 +58,13 @@ private:
     std::unordered_map<std::string, std::shared_ptr<Model>> m_models;
     std::unordered_map<std::string, std::shared_ptr<AudioClip>> m_audio;
 };
+
+// 8-bit RGBA pixels of an image file (for building textures on the CPU).
+struct ImagePixels {
+    int width = 0, height = 0;
+    std::vector<uint8_t> rgba;
+};
+ImagePixels loadImagePixels(const std::filesystem::path& file);
 
 // Lower-level loaders (used by AssetManager; usable directly).
 std::shared_ptr<Texture> loadTextureFile(Renderer& renderer, const std::filesystem::path& file, bool srgb,

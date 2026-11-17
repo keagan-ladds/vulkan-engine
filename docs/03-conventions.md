@@ -93,6 +93,10 @@ go.addComponent<Spin>().speed = 3.0f;
    **Opaque shaders also write the thin G-buffer** (used by SSGI/SSR):
    `layout(location = 1) out vec4 outGBuffer;` … `outGBuffer = veGBuffer(N, roughness);`.
    If you leave it out, the shader still works, but SSGI/SSR see garbage for those pixels.
+   Shaders with their own lighting loop should only visit the point lights of
+   the pixel's cluster: `VeLightList list = veLightList(P);` then
+   `lights.point[veLightAt(list, k)]` for `k < list.count` (see the template's
+   `mygame_toon.frag`).
 2. Document the parameter layout at the top of the shader.
 3. In C++:
    ```cpp
@@ -172,6 +176,16 @@ built with `ve::PipelineBuilder` (always `.layout(renderer.pipelineLayout())`),
 push constants, and draw. You can reuse `renderer.drawItems(ctx, indices, PassKind::Forward)`
 to draw scene meshes. If you need to switch a texture from writing to
 sampling inside one pass, call `graph().transition(ctx.cmd, tex, Access::Sampled)`.
+
+Multi-step full-screen passes (downsample chains, trace + apply) don't need
+`FullscreenPass`: create pipelines with `renderer.createFullscreenPipeline(...)`
+and record each step as one call, with `graph().sampled(tex)` giving the
+bindless index a shader samples:
+```cpp
+ctx.fullscreen({{m_half}}, m_trace, TracePush{graph().sampled(r.sceneDepth())});
+graph().transition(ctx.cmd, m_half, ve::Access::Sampled);
+ctx.fullscreen({{r.sceneColor()}}, m_apply, ApplyPush{graph().sampled(m_half)});
+```
 
 ### Global shader parameters
 
@@ -253,9 +267,41 @@ foliage.colliderFocus = &player;
 foliage.preload(player.transform().position());
 ```
 Rules are deterministic, so the same world appears every run without saving
-anything. To make a change persistent (e.g. a felled tree), keep your own
-"removed" set and exclude it, either in `density` or by `addExclusion` before
-loading. A built-in removal API is a roadmap item.
+anything.
+
+### Interactive foliage: chop trees, pick fruit
+
+The engine keeps per-instance state; what it means is up to the game.
+```cpp
+// Scene file (FoliageType): an extra look, and promotion near the player.
+//   "states": "Stump = acacia stump",        // MeshLibrary name or glTF path(s)
+//   "promoteDistance": 8, "promoteType": "ChoppableTree"
+// Code (FoliageLayer): layer.states = {{"Stump", stumpChains, stumpColliders}};
+//                      layer.promoteDistance = 8; layer.promote = [](Scene& s, auto&) { return &s.spawn<ChoppableTree>(); };
+
+class ChoppableTree : public ve::GameObject {          // VE_REGISTER_TYPE(ChoppableTree, "ChoppableTree")
+    void chopped() { getComponent<ve::FoliageLink>()->setState("Stump"); } // a stump for good
+};
+
+auto info = foliage.nearest(layer, playerXZ, 5.0f);   // or raycast the promoted object
+foliage.setState(info->id, foliage.stateIndex(layer, "Stump"));
+foliage.remove(info->id);                               // gone (no mesh, no collider)
+auto save = foliage.overrides();                        // [(id, state)]: store in your save game
+foliage.setOverrides(save);                             // ...and give it back after loading
+```
+- An id (`FoliageInstanceId`: layer + placement square) is the same every run,
+  as long as the layer order and rules don't change.
+- A changed instance shows its state's mesh and collider now and whenever its
+  cell streams in again: walk away and back and the stump is still there.
+- Within `promoteDistance` of `colliderFocus` (the player) each instance is
+  replaced by a GameObject (`promote`, or a plain one) carrying a
+  `FoliageLink` (its id, transform, state and `setState`). Unless the object
+  has its own, the system gives it the instance's mesh and a static collider,
+  so the swap is invisible; it goes back to being an instance further away
+  (+25 %). The object is the system's: keep game state that must last (a
+  regrowth timer, chop progress you want to keep) in your game, keyed by the id.
+- Savanna's `Harvest.hpp`: `ChoppableTree` (3 chops, then a stump), `BerryBush`
+  (picked look, regrows via the game's `Regrowth` timer).
 
 ### Grass
 
@@ -268,7 +314,9 @@ g.mask = [&](glm::vec2 p) { return glm::vec4(density, colourMix, heightScale, 0.
 g.colorA = {...}; g.colorB = {...};
 renderer.graph().addPass<ve::GrassPass>(g);            // one pass per grass type (e.g. grass + reeds)
 ```
-Tweak live via `pass.desc()` or F1. For a custom look, set `g.fragmentShader`
+Tweak live via `pass.desc()` or F1. `height` and `mask` are sampled once into
+textures when the pass is set up and then released (so whatever they capture,
+e.g. a terrain snapshot, is freed); to change the ground, add a new pass. For a custom look, set `g.fragmentShader`
 to a shader with `grass_field.frag`'s inputs (the savanna's `grass.frag` adds
 wetness). Every clump gets a random yaw plus a tilt up to `g.maxTilt` radians. Grass
 casts sun shadows within `g.shadowDistance` (default 30 m; `g.castShadows = false`
@@ -364,8 +412,8 @@ Rules:
   that, move dynamic bodies with `teleport()`/forces (not the Transform), and
   static ones with `syncFromTransform()`.
 - `Collider::mesh` and `heightfield` are static-only. Use `convexHull` for moving things.
-- Add physics components as their exact type (`addComponent<ve::Rigidbody>`).
-  The world finds them through the typed registry.
+- The world finds physics components through the typed registry, which also
+  matches subclasses (`class Door : public ve::Rigidbody` works).
 - Events are sent after each physics step on the main thread, to every
   component of both objects (`Collision::normal` points from the other object
   towards you; `impactSpeed` is the closing speed when the contact began).

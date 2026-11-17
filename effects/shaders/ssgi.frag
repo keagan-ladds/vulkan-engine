@@ -38,12 +38,10 @@ void main()
     vec3 T = normalize(abs(N.y) < 0.99 ? cross(N, vec3(0.0, 1.0, 0.0)) : cross(N, vec3(1.0, 0.0, 0.0)));
     vec3 B = cross(N, T);
 
-    const float bayer[16] = float[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
-    ivec2 bp = ivec2(gl_FragCoord.xy) & 3;
-    // Both change every frame (golden-ratio sequence) so the temporal pass
-    // (ssgi_temporal.frag) accumulates new samples instead of the same ones.
+    // Both change every frame (golden-ratio sequence) so the temporal
+    // accumulator (temporal_accumulate.frag) gathers new samples instead of the same ones.
     float frameOffset = fract(frame.time.z * 0.6180340);
-    float rotation = fract((bayer[bp.y * 4 + bp.x] + 0.5) / 16.0 + frameOffset);
+    float rotation = fract(veBayer4(ivec2(gl_FragCoord.xy)) + frameOffset);
     float stepJitter = fract(veInterleavedGradientNoise(gl_FragCoord.xy) + frameOffset * 1.618034);
 
     vec3 bounce = vec3(0.0);
@@ -57,12 +55,14 @@ void main()
         float phi = 6.2831853 * (float(i) * 0.618034 + rotation);
         float sinTheta = sqrt(u);
         vec3 dir = normalize(T * (cos(phi) * sinTheta) + B * (sin(phi) * sinTheta) + N * sqrt(1.0 - u));
+        // Clip position of origin + dir * t is affine in t: project once per ray.
+        vec4 clip0 = frame.viewProj * vec4(origin, 1.0);
+        vec4 clipDir = frame.viewProj * vec4(dir, 0.0);
 
         for (int s = 0; s < steps; ++s) {
             float f = (float(s) + stepJitter) / float(steps);
             float t = radius * f * f + 0.05;
-            vec3 Q = origin + dir * t;
-            vec4 clip = frame.viewProj * vec4(Q, 1.0);
+            vec4 clip = clip0 + clipDir * t;
             if (clip.w <= frame.cameraPosition.w) break;
             vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
             if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) break;

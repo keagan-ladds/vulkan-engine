@@ -58,7 +58,8 @@ void main()
     R.y = abs(R.y);
     vec3 sky = m.textures[0] != VE_INVALID ? vfxSampleSky(m.textures[0], R, VFX_SUN.xyz) : frame.ambientSky.rgb;
     float glint = pow(max(dot(R, VFX_SUN.xyz), 0.0), 900.0) * 60.0;
-    vec3 reflection = sky * 0.55 + VFX_SUN_COLOR.rgb * glint * vfxSunShadow(inWorldPos);
+    // The glint is exactly 0 on almost every pixel: only look up its shadow where it isn't.
+    vec3 reflection = sky * 0.55 + (glint > 0.0 ? VFX_SUN_COLOR.rgb * glint * vfxSunShadow(inWorldPos) : vec3(0.0));
 
     // Foam where the water is very shallow.
     float foam = smoothstep(0.25, 0.0, depth) * m.params[2].y * (0.6 + 0.4 * h0);

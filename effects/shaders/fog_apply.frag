@@ -5,6 +5,7 @@
 #include "ve.glsl"
 
 layout(push_constant) uniform Push {
+    vec2 size; // FogBuffer size in texels
     uint fog;
 } pc;
 
@@ -13,12 +14,14 @@ layout(location = 0) out vec4 outColor;
 
 void main()
 {
-    // 4 bilinear taps, each averaging 2x2 low-res texels = a 4x4 box, which
-    // matches the 4x4 Bayer jitter pattern used by fog.frag.
-    vec2 texel = 2.0 * frame.screenSize.zw; // FogBuffer is half resolution
-    vec4 c = veSampleLod(pc.fog, inUV + vec2(-texel.x, -texel.y), 0.0);
-    c += veSampleLod(pc.fog, inUV + vec2(texel.x, -texel.y), 0.0);
-    c += veSampleLod(pc.fog, inUV + vec2(-texel.x, texel.y), 0.0);
-    c += veSampleLod(pc.fog, inUV + vec2(texel.x, texel.y), 0.0);
+    // Exact 4x4 box over FogBuffer texels, matching fog.frag's 4x4 Bayer
+    // jitter so the dither cancels: 4 bilinear taps on the shared corners of
+    // 2x2 texel groups, each an exact 2x2 average (same scheme as ssgi_apply).
+    vec2 p = inUV * pc.size - 0.5; // texel space, centres on integers
+    vec2 k = floor(p + 1.0);       // window = texels k-2 .. k+1
+    vec4 c = veSampleLod(pc.fog, (k + vec2(-1.0, -1.0)) / pc.size, 0.0);
+    c += veSampleLod(pc.fog, (k + vec2(1.0, -1.0)) / pc.size, 0.0);
+    c += veSampleLod(pc.fog, (k + vec2(-1.0, 1.0)) / pc.size, 0.0);
+    c += veSampleLod(pc.fog, (k + vec2(1.0, 1.0)) / pc.size, 0.0);
     outColor = c * 0.25;
 }

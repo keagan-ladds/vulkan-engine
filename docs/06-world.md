@@ -87,6 +87,14 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
 - The terrain watches its parameters and its stamps' transforms, and rebuilds
   (throttled) when they change. Dependent systems (foliage, grass) see the
   terrain's `version()` change and regenerate.
+- **Any size.** Samples are generated per 64-cell tile when something needs
+  them; the visible ground is a quadtree LOD and colliders exist only near the
+  camera, characters and dynamic bodies (see 01-architecture §5.9). Savanna is
+  4 km wide (`size` 4096, `cellSize` 2: 2049² samples).
+- **Regions.** A Raise stamp with `height` 0 and a large `biomeRadius` paints a
+  whole region's biome; its ridged noise (`ridgeAmount`, `ridgeFrequency`)
+  shapes it: Savanna's desert uses ~80 m ridges for dunes, its jungle broad
+  ridges for rolling hills.
 
 **Biomes.**
 - A biome has a name, a ground colour (+ variation colour), and rules: height
@@ -95,6 +103,38 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
   stamp forcing it. Biome 0 is the default (fills the rest).
 - Steep slopes show a "rock" colour regardless of biome; near the water line
   the ground goes to mud.
+- **Ground materials (splat layers).** A biome can have a tiling `material`
+  instead of (or on top of) its colours, and the terrain an optional
+  `rockMaterial` for steep slopes and the border mountains. Every map is
+  optional:
+
+  ```json
+  "material": {"albedo": "textures/ground/sand_albedo.png",
+               "normal": "textures/ground/sand_normal.png",
+               "roughness": "textures/ground/sand_roughness.png",
+               "ao": "textures/ground/sand_ao.png",
+               "size": 4.0, "tint": [1, 1, 1], "normalStrength": 1.0, "roughnessValue": 0.9}
+  ```
+
+  `size` is metres per repeat. Normal maps use the OpenGL convention (green =
+  up). Without an albedo the layer keeps the biome colour but still adds the
+  normal / roughness / AO detail. The albedo's alpha, if present, is a height:
+  where layers meet, the higher texels win (stones poke through sand) instead
+  of a soft cross-fade. Normal, roughness and AO are packed into one texture
+  on load, so a layer costs two texture fetches.
+- `biomeColor` (0..1) recolours a layer with the biome's own colour (with its
+  noise and patches), keeping only the texture's light/dark detail: the
+  palette stays art-directable, the texture adds pebbles, straw, cracks.
+  Savanna's savannah soil uses it so the ground stays golden next to the grass.
+- Each terrain vertex blends up to three layers (the three that weigh most in
+  its LOD node); whatever weight is left (untextured biomes, mud) shows the
+  vertex colour. Rock is projected from three sides, so cliffs don't stretch.
+- Distance tiling: beyond ~6 repeats a second copy of each texture, rotated
+  and 3.7× larger, is blended in so the repeats stop lining up, and a large
+  scale noise (`detailTexture` at `detailScales.y`) varies the brightness.
+- Savanna: soil (savannah, camp), sand (desert), leaf litter (jungle) and rock
+  (rocky, cliffs); the swamp keeps its colours. The textures come from
+  `tools/generate_assets.py`.
 - `Terrain::biomeWeights(x, z)` gives the per-biome weights to anyone
   (foliage, grass, gameplay).
 
