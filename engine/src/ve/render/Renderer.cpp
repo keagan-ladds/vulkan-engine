@@ -354,6 +354,8 @@ void Renderer::createDefaultPasses()
     m_graph->addPass<ShadowPass>();
     m_graph->addPass<OpaquePass>();
     m_graph->addPass<TransparentPass>();
+    m_graph->addPass<HiZPass>();
+    m_graph->addPass<VelocityPass>();
     m_taaPass = &m_graph->addPass<TemporalAAPass>();
     m_graph->addPass<CompositePass>();
 }
@@ -699,15 +701,22 @@ void Renderer::gatherScene(Scene& scene)
     m_frame.items.clear();
     m_frame.opaque.clear();
     m_frame.transparent.clear();
+    m_frame.moving.clear();
     m_frame.shadowViews.clear();
     m_frame.stats = {};
 
     setupCamera(scene);
     const CameraData& cam = m_frame.camera;
 
+    // Last frame's world matrices (motion vectors for moving objects).
+    std::unordered_map<const MeshRenderer*, glm::mat4> worlds;
+    worlds.reserve(m_prevWorlds.size());
     scene.forEach<MeshRenderer>([&](MeshRenderer& mr) {
         if (!mr.isActive() || !mr.visible || !mr.mesh) return;
         const glm::mat4& world = mr.transform().worldMatrix();
+        const auto prev = m_prevWorlds.find(&mr);
+        const glm::mat4 prevWorld = prev != m_prevWorlds.end() ? prev->second : world;
+        worlds.emplace(&mr, world);
         for (const Submesh& sm : mr.mesh->submeshes()) {
             Material* mat = mr.material(sm.materialSlot);
             if (!mat) mat = m_fallbackMaterial.get();
@@ -716,6 +725,7 @@ void Renderer::gatherScene(Scene& scene)
             item.submesh = &sm;
             item.material = mat;
             item.world = world;
+            item.prevWorld = prevWorld;
             item.bounds = sm.bounds.transformed(world);
             item.distance = glm::length(item.bounds.center() - cam.position);
             item.castShadows = mr.castShadows;
@@ -724,12 +734,15 @@ void Renderer::gatherScene(Scene& scene)
             m_frame.items.push_back(item);
         }
     });
+    m_prevWorlds.swap(worlds);
     m_frame.stats.totalObjects = static_cast<uint32_t>(m_frame.items.size());
 
     for (uint32_t i = 0; i < m_frame.items.size(); ++i) {
         const DrawItem& it = m_frame.items[i];
         if (!cam.frustum.intersects(it.bounds)) continue;
-        (it.material->shader().transparent() ? m_frame.transparent : m_frame.opaque).push_back(i);
+        const bool transparent = it.material->shader().transparent();
+        (transparent ? m_frame.transparent : m_frame.opaque).push_back(i);
+        if (!transparent && it.prevWorld != it.world) m_frame.moving.push_back(i);
     }
     m_frame.stats.visibleObjects = static_cast<uint32_t>(m_frame.opaque.size() + m_frame.transparent.size());
 

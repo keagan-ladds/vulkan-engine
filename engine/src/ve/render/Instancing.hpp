@@ -125,6 +125,9 @@ public:
     void prepare(uint32_t slot, FrameData& frame);
     // In InstanceCullPass: upload changes, reset commands, cull.
     void recordCulling(VkCommandBuffer cmd, uint32_t slot);
+    // Occlusion: last frame's depth pyramid (HiZPass) for this frame's camera
+    // cull; `levels` = bindless indices, empty = no occlusion culling.
+    void setOcclusion(const std::array<uint32_t, kHiZLevels>* levels) { m_hiz = levels ? *levels : std::array<uint32_t, kHiZLevels>{}; m_hizValid = levels != nullptr; }
     // In draw passes: one indirect draw per batch for `cullView`.
     void draw(RenderContext& ctx, uint32_t cullView, PassKind kind, uint32_t shadowViewIndex);
     // After the frame: copy draw counts for stats; read them back when the slot comes around again.
@@ -194,6 +197,8 @@ private:
     uint32_t m_activeViews = 1;
     uint32_t m_drawsThisFrame = 0;
     float m_lodScale = 1.0f;
+    std::array<uint32_t, kHiZLevels> m_hiz{};
+    bool m_hizValid = false;
     bool m_layoutDirty = true;
     PipelineHandle m_cullPipeline;
     InstanceStats m_stats;

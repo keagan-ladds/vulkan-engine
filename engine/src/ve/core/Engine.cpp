@@ -153,6 +153,8 @@ void Engine::benchFrame(float cpuMs)
     log::info("[bench] {} frames: main thread {:.3f} ms, frame {:.3f} ms (max {:.3f}), gpu wait {:.3f} ms, submit {:.3f} ms, "
               "physics step {:.3f} ms, gpu {:.3f} ms",
               n, b.threadMs / n, b.cpuMs / n, b.cpuMax, b.waitMs / n, b.submitMs / n, b.physicsMs / n, b.gpuMs / n);
+    const InstanceStats& is = m_renderer->instances().stats();
+    log::info("[bench] instances {} (camera draws {}, shadow draws {})", is.instances, is.visibleCamera, is.visibleShadow);
     for (const auto& [name, ms] : b.passMs) log::info("[bench]   {:<28} {:8.3f} ms", name, ms / n);
     quit();
 }

@@ -47,6 +47,61 @@
 using namespace savanna;
 
 namespace {
+// Test hook: five grass benders placed in front of the camera once it exists.
+class BenderRing : public ve::GameObject {
+public:
+    BenderRing(ve::Terrain* terrain, float ahead, float side) : m_terrain(terrain), m_ahead(ahead), m_side(side) {}
+    void update(float) override
+    {
+        ve::Camera* cam = scene().mainCamera();
+        if (m_placed || !cam) return;
+        m_placed = true;
+        const glm::vec3 eye = cam->transform().position();
+        glm::vec3 f = cam->transform().forward();
+        f = glm::normalize(glm::vec3(f.x, 0.0f, f.z));
+        const glm::vec3 r(-f.z, 0.0f, f.x);
+        const glm::vec3 c = eye + f * m_ahead + r * m_side;
+        for (int i = 0; i < 5; ++i) {
+            const float a = float(i) * 1.2566f, x = c.x + std::cos(a) * 3.0f, z = c.z + std::sin(a) * 3.0f;
+            auto& o = scene().spawn("TestBender");
+            o.transform().setLocalPosition({x, m_terrain->height(x, z), z});
+            o.addComponent<ve::GrassBender>().radius = 0.4f + 0.3f * float(i);
+        }
+    }
+
+private:
+    ve::Terrain* m_terrain;
+    float m_ahead, m_side;
+    bool m_placed = false;
+};
+
+// Test hook: a striped box sliding left/right in front of the camera (TAA motion vectors).
+class Mover : public ve::GameObject {
+public:
+    void update(float dt) override
+    {
+        ve::Camera* cam = scene().mainCamera();
+        if (!cam) return;
+        if (!m_started) {
+            m_started = true;
+            const glm::vec3 f = glm::normalize(glm::vec3(cam->transform().forward().x, 0.0f, cam->transform().forward().z));
+            m_right = glm::vec3(-f.z, 0.0f, f.x);
+            m_centre = cam->transform().position() + f * 5.0f - glm::vec3(0.0f, 0.4f, 0.0f);
+            auto& box = addComponent<ve::PrimitiveRenderer>();
+            box.size = {1.0f, 1.0f, 1.0f};
+            box.color = {0.9f, 0.9f, 0.9f, 1.0f};
+            box.texture = "textures/reed_screen.png"; // high-contrast detail to judge sharpness
+        }
+        m_t += dt;
+        transform().setLocalPosition(m_centre + m_right * (std::sin(m_t * 1.5f) * 2.0f));
+    }
+
+private:
+    glm::vec3 m_centre{0.0f}, m_right{1.0f, 0.0f, 0.0f};
+    float m_t = 0.0f;
+    bool m_started = false;
+};
+
 
 // SAVANNA_PHOTO test hook: enters photo mode after the world settled, takes a
 // 1-sample normal-quality reference shot and then the real one (same frozen
@@ -177,6 +232,20 @@ void buildWorld(ve::Engine& engine)
     if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
     if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser
     r.settings().temporalAA = true;
+    if (const char* o = std::getenv("SAVANNA_OCCLUSION")) r.settings().occlusionCulling = o[0] == '1'; // occlusion culling on/off
+    // SAVANNA_MOVER=1: a textured box sliding sideways 5 m in front of the camera.
+    // SAVANNA_VELOCITY=0 turns the motion vector pass off (TAA uses camera motion only).
+    if (std::getenv("SAVANNA_MOVER")) scene.spawn<Mover>();
+    if (const char* v = std::getenv("SAVANNA_VELOCITY"); v && v[0] == '0') {
+        if (auto* p = r.graph().findPass<ve::VelocityPass>()) p->enabled = false;
+    }
+    // SAVANNA_BENDERS=ahead,side: a ring of grass benders (radius 0.4..1.6 m) on the
+    // ground `ahead` m in front of the camera and `side` m to its right (screenshots).
+    if (const char* b = std::getenv("SAVANNA_BENDERS")) {
+        float ahead = 8.0f, side = 0.0f;
+        std::sscanf(b, "%f,%f", &ahead, &side);
+        scene.spawn<BenderRing>(terrainPtr, ahead, side);
+    }
     if (const char* s = std::getenv("SAVANNA_SUNSTEP")) r.settings().shadowDirectionStep = std::strtof(s, nullptr); // degrees, 0 = continuous
     // SAVANNA_LIGHTS=<n>[,0]: n small coloured point lights scattered around the camp
     // (clustered lighting test; ",0" turns the clusters off for comparison).

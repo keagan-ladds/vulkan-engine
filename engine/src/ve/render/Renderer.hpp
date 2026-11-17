@@ -31,13 +31,13 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace ve {
 
 class Renderer;
-
-
+class MeshRenderer;
 class Window;
 class Scene;
 class Texture;
@@ -92,6 +92,10 @@ struct RendererSettings {
     // Point lights are binned into screen/depth clusters so each pixel only
     // evaluates the lights that reach it (off = every pixel loops over all).
     bool clusteredLights = true;
+    // Instances (trees, rocks...) hidden behind what was drawn last frame are
+    // skipped (Hi-Z occlusion culling of the camera view; HiZPass). Something
+    // that comes into view from behind cover can appear a frame late.
+    bool occlusionCulling = true;
     // --- Anti-aliasing ---
     // Temporal AA: the camera jitters by a sub-pixel offset every frame and
     // TemporalAAPass blends each frame into a reprojected history. Smooths
@@ -371,6 +375,7 @@ private:
     uint32_t m_materialHighWater = 0;
 
     std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
+    std::unordered_map<const MeshRenderer*, glm::mat4> m_prevWorlds; // motion vectors
     uint32_t m_clusterWords = 0;          // used words of LightBuffer::clusterLights
     TemporalAAPass* m_taaPass = nullptr;  // the camera only jitters while it runs
     FrameData m_frame;

@@ -269,7 +269,9 @@ million grass blades), scaling up on discrete GPUs.
 - [x] Scene data (Phase W4/W5, docs/06-world.md): `Foliage` + `FoliageType`, `GrassLayer` (glTF LOD chains: mesh -> mesh -> cards), `FoliageExclusion`, `MeshLibrary`; per-biome densities; regenerates on terrain edits
 - **Result:** preload about 110 ms for about 9.4k props; worker about 0.06 ms per (cell, layer); static bodies 3.3k → about 450 (near the player only); grass + reeds about 0.3–0.7 ms GPU; same visuals and draw counts as the old one-shot scatter
 - [x] Interactive foliage: stable `FoliageInstanceId`s, per-instance states (alternative meshes + colliders, or removed) that are re-applied whenever a cell streams in, `overrides()` / `setOverrides()` for save games, and promotion of instances near the player to GameObjects (`promoteDistance`, `promote`) with a `FoliageLink`. Savanna: chop acacias into stumps (`ChoppableTree`), pick berry bushes that regrow (`BerryBush`, `Regrowth`); autotest chops, walks 1.3 km away and back, picks and waits for regrowth
-- Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); grass interaction (player bending blades); a multi-threaded worker pool; saving overrides to disk (waits for the save system)
+- [x] Hi-Z occlusion culling of instances (camera view, last frame's depth pyramid): camera instance draws −55 % in the jungle, −59 % at the camp
+- [x] Grass interaction: `GrassBender` components push blades aside (the player has one)
+- Not done: a multi-threaded worker pool; saving overrides to disk (waits for the save system)
 
 ### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds) ✅
 - [x] Chunked heightfield streaming: `TerrainData` is an immutable generator
@@ -390,10 +392,10 @@ No feature or quality setting was removed; shader changes give the same image
 
 Ordered roughly by how much they'll bite while building a game.
 
-1. **No per-object motion vectors.** TAA and the temporal accumulators
-   reproject with camera motion only; moving objects (characters, wind-blown
-   foliage) rely on neighbourhood clipping and get slightly softer. Clouds and
-   fog still blur their own dither instead of reprojecting it.
+1. **Motion vectors cover moving objects, not vertex animation.** Wind-blown
+   foliage and grass rely on TAA's neighbourhood clipping and get slightly
+   softer. Clouds and fog still blur their own dither instead of
+   reprojecting it.
 2. **Material params are positional** (slot indices, no reflection). Each
    shader documents its layout in a comment. A SPIR-V reflection layer could
    add named parameters.

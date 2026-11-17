@@ -37,6 +37,7 @@
 #include "ve/render/Mesh.hpp"
 #include "ve/render/RenderGraph.hpp"
 #include "ve/render/Renderer.hpp"
+#include "ve/scene/GameObject.hpp"
 
 #include <glm/glm.hpp>
 
@@ -118,6 +119,16 @@ struct GrassDesc {
     // fragmentShader above (procedural blades if cardMesh is empty).
     std::vector<GrassLod> lods;
     float lodBlend = 4.0f; // m over which neighbouring LODs are dithered
+};
+
+// Pushes grass aside around its object (players, animals, rolling rocks).
+// Each frame the kMaxGrassBenders benders nearest the camera go to every
+// grass pass (frame.grassBenders); blades within `radius` of the object's
+// position (its feet) lean away, more the closer they are.
+class GrassBender : public Component {
+public:
+    float radius = 0.8f;   // m
+    float strength = 1.0f; // 0..1: how far blades lean over
 };
 
 class GrassPass : public RenderPass, public ShadowCaster {

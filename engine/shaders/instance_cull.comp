@@ -16,6 +16,11 @@
 // metric >= lodThresholds[i]. Near a threshold the instance is emitted into
 // BOTH LODs with complementary dither masks (crossfade, no popping).
 //
+// Occlusion (camera only, RendererSettings::occlusionCulling): the instance's
+// bounding box, projected with last frame's camera, is compared with last
+// frame's depth pyramid (HiZPass) at the level where it covers <= 2x2 texels.
+// If its nearest point is behind the farthest depth there, it is hidden.
+//
 // Visible entry encoding: bits 0-22 instance index, 23-30 fade (0..255),
 // bit 31 = 1 for the incoming (next-LOD) copy. See ve.glsl.
 #define VE_CUSTOM_PUSH_CONSTANTS
@@ -70,7 +75,37 @@ layout(push_constant) uniform Push {
     uint shadowLodBias;  // shadow views use LOD + this
     float fadeBand;      // crossfade width, as a fraction of the threshold
     uint viewCount;      // camera + shadow cascades
+    uint hizValid;       // 1 = occlusion test against hiz[]
+    uint hiz[10];        // last frame's depth pyramid, 512x256 .. 1x1 (bindless)
 } pc;
+
+bool occluded(vec3 centre, float radius)
+{
+    if (pc.hizValid == 0u) return false;
+    vec2 lo = vec2(1e9), hi = vec2(-1e9);
+    float nearest = 0.0; // reversed-Z: larger = closer
+    for (int i = 0; i < 8; ++i) {
+        vec3 corner = centre + radius * vec3((i & 1) != 0 ? 1.0 : -1.0, (i & 2) != 0 ? 1.0 : -1.0, (i & 4) != 0 ? 1.0 : -1.0);
+        vec4 clip = frame.prevViewProj * vec4(corner, 1.0);
+        if (clip.w <= 1e-3) return false; // reaches behind last frame's camera
+        vec3 ndc = clip.xyz / clip.w;
+        lo = min(lo, ndc.xy);
+        hi = max(hi, ndc.xy);
+        nearest = max(nearest, ndc.z);
+    }
+    vec2 uvLo = lo * 0.5 + 0.5, uvHi = hi * 0.5 + 0.5;
+    // Off screen last frame: nothing known about what hides it.
+    if (any(lessThan(uvLo, vec2(0.0))) || any(greaterThan(uvHi, vec2(1.0)))) return false;
+    vec2 extent = (uvHi - uvLo) * vec2(512.0, 256.0);
+    uint level = min(uint(ceil(log2(max(max(extent.x, extent.y), 1.0)))), 9u);
+    ivec2 dim = max(ivec2(512, 256) >> int(level), ivec2(1));
+    ivec2 a = clamp(ivec2(uvLo * vec2(dim)), ivec2(0), dim - 1);
+    ivec2 b = clamp(ivec2(uvHi * vec2(dim)), ivec2(0), dim - 1);
+    uint t = pc.hiz[level];
+    float farthest = min(min(texelFetch(veTextures[nonuniformEXT(t)], a, 0).r, texelFetch(veTextures[nonuniformEXT(t)], ivec2(b.x, a.y), 0).r),
+                         min(texelFetch(veTextures[nonuniformEXT(t)], ivec2(a.x, b.y), 0).r, texelFetch(veTextures[nonuniformEXT(t)], b, 0).r));
+    return nearest < farthest;
+}
 
 void emit(uint view, uint first, uint count, uint entry)
 {
@@ -121,7 +156,7 @@ void main()
     while (lod + 1u < g.lodCount && metric < g.lodDistances[lod]) ++lod;
 
     // --- Camera -----------------------------------------------------------------
-    if (visibleIn(0u, centre, radius)) {
+    if (visibleIn(0u, centre, radius) && !occluded(centre, radius)) {
         // Crossfade: f = 0 well above the threshold -> 1 right at it.
         uint q = 0u;
         if (lod + 1u < g.lodCount && pc.fadeBand > 0.0) {

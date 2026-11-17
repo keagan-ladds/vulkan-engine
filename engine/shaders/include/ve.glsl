@@ -19,6 +19,7 @@
 
 #define VE_MAX_DIRECTIONAL_LIGHTS 4
 #define VE_MAX_POINT_LIGHTS 256
+#define VE_MAX_GRASS_BENDERS 8
 #define VE_MAX_SHADOW_VIEWS 128
 #define VE_CLUSTER_X 16
 #define VE_CLUSTER_Y 9
@@ -48,6 +49,7 @@ layout(set = 0, binding = 0, std140) uniform VeFrameGlobals {
     uvec4 builtinTextures; // SceneDepth, SceneColor, SceneNormal
     vec4 globalParams[8];
     vec4 jitter;           // xy = how far the sub-pixel camera jitter moved the image, in UV units (TAA, photo mode)
+    vec4 grassBenders[VE_MAX_GRASS_BENDERS]; // xyz = position (feet), w = radius (0 = unused)
 } frame;
 
 struct VeDirectionalLight {

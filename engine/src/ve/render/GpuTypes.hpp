@@ -18,6 +18,8 @@ namespace ve {
 
 constexpr uint32_t kMaxDirectionalLights = 4;
 constexpr uint32_t kMaxPointLights = 256;
+constexpr uint32_t kHiZLevels = 10; // depth pyramid 512x256 .. 1x1 (occlusion culling)
+constexpr uint32_t kMaxGrassBenders = 8; // objects pushing grass aside (ve::GrassBender), nearest to the camera
 // Clustered point lights: the view frustum is split into a grid of clusters
 // (screen tiles x logarithmic depth slices), each listing the lights that reach it.
 constexpr uint32_t kClusterX = 16, kClusterY = 9, kClusterZ = 24;
@@ -49,6 +51,7 @@ struct FrameGlobals {
     glm::uvec4 builtinTextures; // x = SceneDepth, y = SceneColor, z = SceneNormal (bindless indices), w = reserved
     glm::vec4 globalParams[kGlobalParamCount]; // free-form game/effect globals (see vfx.glsl for the effects convention)
     glm::vec4 jitter; // xy = how far this frame's sub-pixel camera jitter moved the image, in UV units (TAA, photo mode)
+    glm::vec4 grassBenders[kMaxGrassBenders]; // xyz = position (feet), w = radius (0 = unused); see ve::GrassBender
 };
 
 struct GpuDirectionalLight {

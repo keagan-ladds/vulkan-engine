@@ -1,5 +1,7 @@
 #include "ve/render/passes/BuiltinPasses.hpp"
 
+#include "ve/gfx/Pipeline.hpp"
+#include "ve/render/Mesh.hpp"
 #include "ve/render/Renderer.hpp"
 
 #include <imgui.h>
@@ -39,8 +41,17 @@ struct FaceHash {
 // InstanceCullPass
 // -----------------------------------------------------------------------------
 
+void InstanceCullPass::declare(PassBuilder& b)
+{
+    if (!renderer().settings().occlusionCulling) return;
+    if (const auto* hiz = graph().findPass<HiZPass>(); hiz && hiz->lastFrame(renderer().frameNumber()))
+        for (TextureId t : hiz->textures()) b.use(t, Access::Sampled);
+}
+
 void InstanceCullPass::execute(RenderContext& ctx)
 {
+    const auto* hiz = graph().findPass<HiZPass>();
+    renderer().instances().setOcclusion(renderer().settings().occlusionCulling && hiz ? hiz->lastFrame(ctx.frame->frameNumber) : nullptr);
     renderer().instances().recordCulling(ctx.cmd, ctx.frameSlot);
 }
 
@@ -225,6 +236,134 @@ void TransparentPass::execute(RenderContext& ctx)
 }
 
 // -----------------------------------------------------------------------------
+// HiZPass
+// -----------------------------------------------------------------------------
+
+namespace {
+struct HiZPush { // hiz.frag
+    uint32_t source;   // SceneDepth (level 0) or the previous level
+    uint32_t pad;
+    glm::uvec2 sourceSize;
+    glm::uvec2 size;   // this level's
+};
+constexpr uint32_t kHiZWidth = 512, kHiZHeight = 256;
+} // namespace
+
+HiZPass::~HiZPass()
+{
+    renderer().destroyPipeline(m_pipeline);
+}
+
+void HiZPass::setup(RenderGraph& g)
+{
+    for (uint32_t i = 0; i < kHiZLevels; ++i) {
+        m_levels[i] = g.createTexture("HiZ" + std::to_string(i),
+                                      {.format = VK_FORMAT_R32_SFLOAT,
+                                       .width = std::max(kHiZWidth >> i, 1u),
+                                       .height = std::max(kHiZHeight >> i, 1u),
+                                       .sampler = SamplerType::NearestClamp});
+    }
+    m_pipeline = renderer().createFullscreenPipeline({.fragment = "hiz.frag", .colorFormats = {VK_FORMAT_R32_SFLOAT}});
+}
+
+void HiZPass::declare(PassBuilder& b)
+{
+    m_active = renderer().settings().occlusionCulling;
+    if (!m_active) return;
+    b.use(renderer().sceneDepth(), Access::Sampled);
+    for (TextureId t : m_levels) b.use(t, Access::ColorAttachment);
+}
+
+void HiZPass::execute(RenderContext& ctx)
+{
+    if (!m_active) {
+        m_builtFrame = ~0ull;
+        return;
+    }
+    RenderGraph& g = graph();
+    for (uint32_t i = 0; i < kHiZLevels; ++i) {
+        const TextureId src = i == 0 ? renderer().sceneDepth() : m_levels[i - 1];
+        const VkExtent3D e = g.get(src).image.extent, d = g.get(m_levels[i]).image.extent;
+        ctx.fullscreen({{m_levels[i]}}, m_pipeline, HiZPush{g.sampled(src), 0u, {e.width, e.height}, {d.width, d.height}});
+        g.transition(ctx.cmd, m_levels[i], Access::Sampled);
+        m_indices[i] = g.sampled(m_levels[i]);
+    }
+    m_builtFrame = ctx.frame->frameNumber;
+}
+
+const std::array<uint32_t, kHiZLevels>* HiZPass::lastFrame(uint64_t frameNumber) const
+{
+    return m_builtFrame + 1 == frameNumber ? &m_indices : nullptr;
+}
+
+// -----------------------------------------------------------------------------
+// VelocityPass
+// -----------------------------------------------------------------------------
+
+namespace {
+struct VelocityPush { // velocity.vert
+    glm::mat4 model;
+    glm::mat4 prevModel;
+};
+} // namespace
+
+VelocityPass::~VelocityPass()
+{
+    renderer().destroyPipeline(m_pipeline);
+}
+
+void VelocityPass::setup(RenderGraph& g)
+{
+    m_velocity = g.createTexture("Velocity", {.format = VK_FORMAT_R16G16_SFLOAT, .sampler = SamplerType::NearestClamp});
+    Renderer& r = renderer();
+    VkShaderModule vert = r.loadShader("velocity.vert"), frag = r.loadShader("velocity.frag");
+    const auto binding = Vertex::binding();
+    const auto attributes = Vertex::attributes();
+    PipelineBuilder b;
+    b.shaders(vert, frag)
+        .vertexInput({&binding, 1}, attributes)
+        .layout(r.pipelineLayout())
+        .cull(CullMode::None)
+        .colorAttachment(VK_FORMAT_R16G16_SFLOAT);
+    m_pipeline = b.build(r.device().handle());
+    vkDestroyShaderModule(r.device().handle(), vert, nullptr);
+    vkDestroyShaderModule(r.device().handle(), frag, nullptr);
+}
+
+void VelocityPass::declare(PassBuilder& b)
+{
+    m_active = renderer().settings().temporalAA;
+    if (!m_active) return;
+    b.use(m_velocity, Access::ColorAttachment);
+    b.use(renderer().sceneDepth(), Access::Sampled); // velocity.frag keeps only the visible surface
+}
+
+void VelocityPass::execute(RenderContext& ctx)
+{
+    if (!m_active) return;
+    // Cleared to "not moving" (TAA then reprojects with the camera).
+    ctx.beginRendering({{m_velocity, true, glm::vec4(100.0f)}});
+    const FrameData& f = *ctx.frame;
+    if (!f.moving.empty()) {
+        vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
+        const Mesh* bound = nullptr;
+        for (uint32_t idx : f.moving) {
+            const DrawItem& item = f.items[idx];
+            if (item.mesh != bound) {
+                VkBuffer vb = item.mesh->vertexBuffer();
+                VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
+                vkCmdBindIndexBuffer(ctx.cmd, item.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+                bound = item.mesh;
+            }
+            ctx.push(VelocityPush{item.world, item.prevWorld});
+            vkCmdDrawIndexed(ctx.cmd, item.submesh->indexCount, 1, item.submesh->firstIndex, 0, 0);
+        }
+    }
+    ctx.endRendering();
+}
+
+// -----------------------------------------------------------------------------
 // TemporalAAPass
 // -----------------------------------------------------------------------------
 
@@ -235,6 +374,7 @@ struct TaaPush { // taa.frag
     uint32_t depth;
     uint32_t historyValid;
     float feedback;
+    uint32_t velocity; // VelocityPass output (~0u = none)
 };
 } // namespace
 
@@ -260,6 +400,7 @@ void TemporalAAPass::declare(PassBuilder& b)
     b.use(r.sceneColor(), Access::Sampled); // then the copy target
     b.use(m_history[w], Access::ColorAttachment);
     b.use(m_history[w ^ 1u], Access::Sampled);
+    if (auto* v = graph().findPass<VelocityPass>(); v && v->enabled) b.use(v->velocity(), Access::Sampled);
 }
 
 void TemporalAAPass::execute(RenderContext& ctx)
@@ -278,9 +419,10 @@ void TemporalAAPass::execute(RenderContext& ctx)
     m_lastFrame = ctx.frame->frameNumber;
 
     // 1. Resolve into this frame's history.
+    const auto* vel = g.findPass<VelocityPass>();
     ctx.fullscreen({{m_history[w]}}, m_pipeline,
                    TaaPush{g.sampled(r.sceneColor()), g.sampled(m_history[w ^ 1u]), g.sampled(r.sceneDepth()), valid ? 1u : 0u,
-                           feedback});
+                           feedback, vel && vel->enabled ? g.sampled(vel->velocity()) : ~0u});
     // 2. Copy it back over the scene colour for the following passes.
     g.transition(ctx.cmd, m_history[w], Access::TransferSrc);
     g.transition(ctx.cmd, r.sceneColor(), Access::TransferDst);

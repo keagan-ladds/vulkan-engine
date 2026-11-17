@@ -1,5 +1,6 @@
 #include "Player.hpp"
 
+#include <ve/world/Grass.hpp>
 #include <ve/world/Terrain.hpp>
 
 #include <ve/core/Engine.hpp>
@@ -34,6 +35,7 @@ Player::Player() : GameObject("Player")
     m_controller->height = 1.8f;
     m_controller->maxSlopeDegrees = 48.0f;
     m_controller->stepHeight = 0.45f;
+    addComponent<ve::GrassBender>().radius = 0.7f; // walking through grass parts it
 }
 
 void Player::start()

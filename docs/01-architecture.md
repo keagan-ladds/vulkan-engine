@@ -150,9 +150,17 @@ it on). The projection is jittered by an 8-position Halton (2, 3) sequence
 frame's result with the camera motion from depth (closest of 3×3, unjittered
 `prevViewProj`), samples it with Catmull-Rom, clips it to the current 3×3
 YCoCg variance box and blends it in with weight `feedback` (0.9), on
-tonemapped values. There are no per-object motion vectors, so moving objects
-rely on the clipping (slight softening, no trails). `prevViewProj` is the
-unjittered matrix for every temporal effect.
+tonemapped values. `prevViewProj` is the unjittered matrix for every temporal
+effect.
+
+**Motion vectors.** The renderer keeps every MeshRenderer's last world
+matrix; opaque items whose matrix changed go to `FrameData::moving`.
+`VelocityPass` (AfterOpaque, with TAA) draws just those into `Velocity`
+(RG16F: last frame's unjittered UV minus this frame's) where they are the
+visible surface (compared with SceneDepth), over a "not moving" clear value.
+TAA uses that motion where present and camera motion from depth elsewhere,
+so moving objects keep their history instead of ghosting. Vertex animation
+(wind, and later skinning) isn't included yet.
 
 Set 0 has one copy per frame in flight. Set 1 is a single update-after-bind
 bindless set. Because every shader shares the layout, descriptor sets are bound
@@ -328,6 +336,15 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
   than `shadowMinCasterTexels` cascade texels) and the frustum, and appends the
   instance to that LOD's batches with an atomic on the indirect command's
   `instanceCount`.
+- **Occlusion** (camera view, `RendererSettings::occlusionCulling`, on):
+  `HiZPass` (after the opaque geometry) reduces SceneDepth to a pyramid of
+  512×256 … 1×1 R32F levels holding the farthest depth of their area. Next
+  frame the cull projects each instance's bounding box with last frame's
+  camera (`prevViewProj`), picks the level where it covers ≤ 2×2 texels and
+  skips it if its nearest point is behind all four. Boxes reaching off
+  screen or behind the camera always pass. Savanna: camera instance draws
+  −55 % in the jungle, −59 % at the camp, identical images. Something coming
+  out from behind cover can appear one frame late.
 - **LOD:** each group has up to 4 `InstanceLod`s, selected per instance by
   screen size (`radius · cot(fov/2) / distance`, if `screenSize` is set) or
   distance, scaled by `RendererSettings::lodBias`. Shadow views use
@@ -463,6 +480,11 @@ stores nothing per blade.
   keep coverage. Hidden clumps are moved outside the depth range.
 - **Wind and output.** Wind comes from `frame.globalParams[windSlot]`. Blades
   write the thin G-buffer.
+- **Benders.** `GrassBender` components (the Savanna player has one) push
+  grass aside: each frame the 8 nearest the camera go to
+  `frame.grassBenders` (position of the feet, radius), and `veGrassPlace`
+  rotates every blade within the radius about its root, away from the
+  bender, by up to ~70° near the centre (shadows bend the same way).
 - **Shadows.** `GrassPass` is a `ShadowCaster` (a `Renderer::addShadowCaster`
   hook that `ShadowPass` calls for each directional cascade). It draws tiles
   within `shadowDistance` into cascades with texels ≤ `shadowMaxTexel`, using

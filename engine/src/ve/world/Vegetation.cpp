@@ -688,6 +688,11 @@ void registerVegetationTypes(TypeRegistry& r)
         t.field("colliderFocus", &Foliage::colliderFocus).tooltip("object name; colliders stream around it (else the camera)");
         t.field("preload", &Foliage::preload);
     });
+    r.add<GrassBender>("GrassBender", [](TypeBuilder<GrassBender>& t) {
+        t.category("World");
+        t.field("radius", &GrassBender::radius).range(0.0f, 20.0f).speed(0.01f).tooltip("grass within this distance of the object leans away");
+        t.field("strength", &GrassBender::strength).range(0.0f, 1.0f).speed(0.01f);
+    });
     r.add<GrassLayer>("GrassLayer", [](TypeBuilder<GrassLayer>& t) {
         t.category("World");
         t.field("mesh", &GrassLayer::mesh).assets(".gltf .glb").tooltip("empty = procedural blades; glTF with *_LOD0, *_LOD1... nodes");

@@ -24,6 +24,7 @@ struct DrawItem {
     const Submesh* submesh = nullptr;
     Material* material = nullptr;
     glm::mat4 world{1.0f};
+    glm::mat4 prevWorld{1.0f}; // last frame's world matrix (motion vectors)
     AABB bounds;          // world space
     float distance = 0.0f; // distance from the camera (sorting)
     bool castShadows = true;
@@ -79,6 +80,7 @@ struct FrameData {
     std::vector<DrawItem> items;      // every visible-flagged MeshRenderer submesh (for shadows)
     std::vector<uint32_t> opaque;     // indices into items, camera-culled, sorted
     std::vector<uint32_t> transparent;
+    std::vector<uint32_t> moving;      // opaque items whose world matrix changed since last frame (motion vectors)
     std::vector<ShadowView> shadowViews;
     RenderStats stats;
     float deltaTime = 0.0f;

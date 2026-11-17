@@ -253,8 +253,32 @@ MeshData GrassPass::bladeClump() const
     return md;
 }
 
+namespace {
+// The benders nearest the camera, once per frame (shared by every grass pass).
+void gatherBenders(FrameData& frame)
+{
+    static uint64_t lastFrame = ~0ull;
+    if (frame.frameNumber == lastFrame || !frame.scene) return;
+    lastFrame = frame.frameNumber;
+    struct Near {
+        float distance;
+        glm::vec4 bender;
+    };
+    std::vector<Near> near;
+    frame.scene->forEach<GrassBender>([&](GrassBender& b) {
+        if (!b.isActive() || b.radius <= 0.0f || b.strength <= 0.0f) return;
+        const glm::vec3 p = b.transform().position();
+        // Strength scales the radius the shader sees (w); 0..1 strength maps to how far blades lean.
+        near.push_back({glm::length(p - frame.camera.position), glm::vec4(p, b.radius * std::min(b.strength, 1.0f))});
+    });
+    std::sort(near.begin(), near.end(), [](const Near& a, const Near& b) { return a.distance < b.distance; });
+    for (uint32_t i = 0; i < kMaxGrassBenders; ++i) frame.globals.grassBenders[i] = i < near.size() ? near[i].bender : glm::vec4(0.0f);
+}
+} // namespace
+
 void GrassPass::prepare(FrameData& frame)
 {
+    gatherBenders(frame);
     if (m_windowSize > 0.0f) {
         // A finished re-bake replaces the window; otherwise start one once the
         // camera has crossed a quarter of it (the grass radius stays inside).
