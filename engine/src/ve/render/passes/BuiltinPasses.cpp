@@ -41,6 +41,11 @@ struct FaceHash {
 // InstanceCullPass
 // -----------------------------------------------------------------------------
 
+void SkinningPass::execute(RenderContext& ctx)
+{
+    renderer().skinning().record(ctx.cmd);
+}
+
 void InstanceCullPass::declare(PassBuilder& b)
 {
     if (!renderer().settings().occlusionCulling) return;
@@ -351,7 +356,7 @@ void VelocityPass::execute(RenderContext& ctx)
             const DrawItem& item = f.items[idx];
             if (item.mesh != bound) {
                 VkBuffer vb = item.mesh->vertexBuffer();
-                VkDeviceSize offset = 0;
+                VkDeviceSize offset = item.mesh->vertexOffset();
                 vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
                 vkCmdBindIndexBuffer(ctx.cmd, item.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
                 bound = item.mesh;

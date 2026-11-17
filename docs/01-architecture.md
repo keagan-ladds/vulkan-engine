@@ -131,6 +131,7 @@ Every pipeline uses **one global pipeline layout**:
 | set 0, b3 | `sampler2DArrayShadow` | directional shadow cascades (all lights × cascades as layers) |
 | set 0, b4 | `samplerCubeArrayShadow` | point light shadow cubes |
 | set 0, b5–b9 | instancing SSBOs | instances, visible-instance lists, indirect draw commands, instance groups, cull views (see §5.7) |
+| set 0, b10–b13 | skinning SSBOs | rest vertices, joint weights, this frame's joint matrices, skinned output (see §5.7b) |
 | set 1, b0 | `image2D storageImages[]` | bindless storage images (compute) |
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
@@ -380,6 +381,38 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
 Shader stages: CMake defines `VE_VERTEX_STAGE` / `VE_FRAGMENT_STAGE` /
 `VE_COMPUTE_STAGE` per file, so shared includes can expose stage-specific
 helpers (the instancing helpers are vertex-only).
+
+### 5.7b Skeletal animation and GPU skinning (`ve/anim`, `render/Skinning`)
+
+- **Import.** The glTF loader reads skins (joint nodes + inverse bind
+  matrices), `JOINTS_0` / `WEIGHTS_0` (a `SkinnedMeshSource` per skinned mesh:
+  rest vertices, 4 joints + weights per vertex, and per joint the reach of its
+  vertices for bounds) and animation clips (translation / rotation / scale
+  channels; step, linear and cubic-spline keys).
+- **Skeleton = objects.** `Scene::instantiate` makes every glTF node a
+  GameObject as before, so joints are objects: attach a spear to a hand by
+  parenting it. Skinned mesh nodes get a `SkinnedMeshRenderer` (a
+  `MeshRenderer`) bound to the joint objects; animated models get an
+  `Animator` on their root.
+- **Animator.** Plays clips with crossfades: every playing clip has a weight
+  that fades in or out; per animated node the clips' poses (rest pose for
+  channels a clip doesn't animate) are blended (translation / scale
+  weighted, rotations normalised-weighted in one hemisphere) and written to
+  the node objects' local transforms. `play(name, fade, loop, speed)`.
+- **GPU skinning.** `SkinningSystem` keeps four shared storage buffers (set
+  0, bindings 10–13): rest vertices and weights (once per source, refcounted),
+  this frame's joint matrices (per frame slot) and the skinned output, which
+  is also a vertex buffer. Each frame the renderer asks every active
+  `SkinnedMeshRenderer` for its joint matrices (in its own space:
+  `inverse(meshWorld) · jointWorld · inverseBind`) and bounds (joint
+  positions padded by their reach); `SkinningPass` (first pass of the frame)
+  runs `skin.comp` once per mesh. The output range is a `Mesh::createShared`
+  mesh (vertex buffer bound at an offset), so the colour, shadow, picking and
+  motion-vector pipelines draw skinned meshes unchanged.
+  Limits: `RendererSettings::maxSkinnedVertices` (262 144),
+  `maxSkinJoints` per frame (8 192).
+- Not yet: motion vectors from skinning (moving bones of a standing
+  character), additive layers / masks, root motion, IK.
 
 ### 5.8 GPU layer (gfx)
 

@@ -1,5 +1,7 @@
 #include "ve/scene/Scene.hpp"
 
+#include "ve/anim/Animation.hpp"
+
 #include "ve/assets/Model.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/scene/Components.hpp"
@@ -229,9 +231,11 @@ GameObject& Scene::instantiate(const Model& model, GameObject* parent, bool stat
     if (parent) root.setParent(parent, false);
 
     // Recursively create one GameObject per glTF node.
+    std::vector<GameObject*> objects(model.nodes.size(), nullptr);
     std::function<void(int, GameObject&)> build = [&](int nodeIndex, GameObject& parentObj) {
         const ModelNode& node = model.nodes[nodeIndex];
         GameObject& go = spawn(node.name.empty() ? std::string("Node") : node.name);
+        objects[size_t(nodeIndex)] = &go;
         go.setParent(&parentObj, false);
 
         glm::vec3 scale, translation, skew;
@@ -242,7 +246,11 @@ GameObject& Scene::instantiate(const Model& model, GameObject* parent, bool stat
         go.transform().setLocalRotation(rotation);
         go.transform().setLocalScale(scale);
 
-        if (node.mesh >= 0) {
+        if (node.mesh >= 0 && node.skin >= 0) {
+            // Bound below, once every joint object exists.
+            auto& skinned = go.addComponent<SkinnedMeshRenderer>();
+            skinned.materials = model.meshMaterials[node.mesh];
+        } else if (node.mesh >= 0) {
             go.addComponent<MeshRenderer>(model.meshes[node.mesh], model.meshMaterials[node.mesh]);
             if (staticColliders) {
                 if (model.meshColliders.size() != model.meshes.size()) model.meshColliders.resize(model.meshes.size());
@@ -254,6 +262,18 @@ GameObject& Scene::instantiate(const Model& model, GameObject* parent, bool stat
         for (int child : node.children) build(child, go);
     };
     for (int r : model.roots) build(r, root);
+
+    // Skeletal animation: skinned meshes follow their joint objects, an Animator plays the clips.
+    for (size_t n = 0; n < model.nodes.size(); ++n) {
+        const ModelNode& node = model.nodes[n];
+        if (node.skin < 0 || !objects[n]) continue;
+        const ModelSkin& skin = model.skins[size_t(node.skin)];
+        std::vector<GameObject*> joints;
+        for (int j : skin.joints) joints.push_back(j >= 0 && size_t(j) < objects.size() ? objects[size_t(j)] : nullptr);
+        if (auto* s = objects[n]->getComponent<SkinnedMeshRenderer>())
+            s->bind(model.skinnedMeshes[size_t(node.mesh)], joints, skin.inverseBind);
+    }
+    if (!model.animations.empty()) root.addComponent<Animator>().bind(model.animations, objects);
     return root;
 }
 

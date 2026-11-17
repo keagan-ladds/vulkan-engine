@@ -1,5 +1,7 @@
 #include "ve/scene/MeshComponents.hpp"
 
+#include "ve/anim/Animation.hpp"
+
 #include "ve/assets/AssetManager.hpp"
 #include "ve/assets/Model.hpp"
 #include "ve/core/Log.hpp"
@@ -43,6 +45,7 @@ void ModelInstance::rebuild()
             };
             hide(m_root->transform());
         }
+        if (auto* animator = m_root->getComponent<Animator>(); animator && !animation.empty()) animator->clip = animation;
     } catch (const std::exception& e) {
         log::warn("ModelInstance on '{}': {}", gameObject().name(), e.what());
     }

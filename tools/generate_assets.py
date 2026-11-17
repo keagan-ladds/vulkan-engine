@@ -9,6 +9,8 @@ downloads (and so the engine's importers get exercised on real files):
   sandbox/assets/textures/reed_screen.png     woven reed screen with holes (alpha cutout test)
   sandbox/assets/textures/ground/*.png        terrain splat materials (soil, sand, leaf litter,
                                               rock): albedo (alpha = height), normal, roughness, AO
+  sandbox/assets/models/villager.gltf (+.bin) skinned low-poly villager: 13 joints,
+                                              Idle and Walk animations (F2 animation test)
   sandbox/assets/models/rondavel.gltf (+.bin) round African hut: walls + thatched
                                               roof (one mesh, two materials) + door node
   sandbox/assets/audio/*.wav                  wind / fire / rain loops, pickup chime
@@ -482,7 +484,226 @@ def terrain_textures(size=512):
     save("rock", albedo, height, rough, 14.0)
 
 
+# --------------------------------------------------------------------------- skinned villager
+def villager():
+    """A low-poly villager with a 13-joint skeleton (facing +Z, glTF convention).
+    Limbs are tapered tubes whose rings blend between neighbouring joints, so
+    elbows and knees bend smoothly (exercises real skinning, not rigid parts)."""
+    # name, parent, rest position (model space; no rest rotations)
+    joints = [
+        ("Root", -1, (0.0, 0.0, 0.0)),
+        ("Hips", 0, (0.0, 0.95, 0.0)),
+        ("Spine", 1, (0.0, 1.18, 0.0)),
+        ("Chest", 2, (0.0, 1.40, 0.0)),
+        ("Head", 3, (0.0, 1.56, 0.0)),
+        ("UpperArm.L", 3, (0.21, 1.45, 0.0)),
+        ("LowerArm.L", 5, (0.23, 1.18, 0.0)),
+        ("UpperArm.R", 3, (-0.21, 1.45, 0.0)),
+        ("LowerArm.R", 7, (-0.23, 1.18, 0.0)),
+        ("UpperLeg.L", 1, (0.10, 0.92, 0.0)),
+        ("LowerLeg.L", 9, (0.10, 0.50, 0.0)),
+        ("UpperLeg.R", 1, (-0.10, 0.92, 0.0)),
+        ("LowerLeg.R", 11, (-0.10, 0.50, 0.0)),
+    ]
+    J = {name: i for i, (name, _, _) in enumerate(joints)}
+    parts = {}  # material -> (pos, nrm, uv, idx, joints, weights)
+
+    def part(mat):
+        return parts.setdefault(mat, ([], [], [], [], [], []))
+
+    def tube(mat, a, b, ra, rb, ja, jb, blend=0.25, seg=8, rings=5, cap=True):
+        """Tube from point a (radius ra) to b (rb). Weights go from joint ja at a
+        to jb at b over the last `blend` fraction (the bend)."""
+        pos, nrm, uv, idx, jn, wt = part(mat)
+        a, b = [float(x) for x in a], [float(x) for x in b]
+        axis = [b[i] - a[i] for i in range(3)]
+        length = math.sqrt(sum(x * x for x in axis))
+        d = [x / length for x in axis]
+        # Two vectors perpendicular to the axis.
+        up = (0.0, 0.0, 1.0) if abs(d[1]) > 0.9 else (0.0, 1.0, 0.0)
+        u = [d[1] * up[2] - d[2] * up[1], d[2] * up[0] - d[0] * up[2], d[0] * up[1] - d[1] * up[0]]
+        ul = math.sqrt(sum(x * x for x in u)); u = [x / ul for x in u]
+        v = [d[1] * u[2] - d[2] * u[1], d[2] * u[0] - d[0] * u[2], d[0] * u[1] - d[1] * u[0]]
+        base = len(pos)
+        for r in range(rings + 1):
+            t = r / rings
+            radius = ra + (rb - ra) * t
+            c = [a[i] + axis[i] * t for i in range(3)]
+            w = min(max((t - (1.0 - blend)) / blend, 0.0), 1.0) if jb is not None else 0.0
+            w = w * w * (3 - 2 * w) * 0.5  # half way at the far end: the next segment continues
+            for k in range(seg + 1):
+                ang = k / seg * 2 * math.pi
+                n = [math.cos(ang) * u[i] + math.sin(ang) * v[i] for i in range(3)]
+                pos.append(tuple(c[i] + n[i] * radius for i in range(3)))
+                nrm.append(tuple(n))
+                uv.append((k / seg, t))
+                jn.append((ja, jb if jb is not None else 0, 0, 0))
+                wt.append((1.0 - w, w, 0.0, 0.0))
+        for r in range(rings):
+            for k in range(seg):
+                i0 = base + r * (seg + 1) + k
+                i1 = i0 + seg + 1
+                idx += [i0, i1, i0 + 1, i0 + 1, i1, i1 + 1]
+        if cap:
+            for end, ring, jj in ((a, 0, ja), (b, rings, ja if jb is None else jb)):
+                centre = len(pos)
+                sign = -1.0 if ring == 0 else 1.0
+                pos.append(tuple(end)); nrm.append(tuple(sign * x for x in d)); uv.append((0.5, 0.5))
+                jn.append((jj, 0, 0, 0)); wt.append((1.0, 0.0, 0.0, 0.0))
+                first = len(pos)
+                for k in range(seg + 1):
+                    p0 = pos[base + ring * (seg + 1) + k]
+                    pos.append(p0); nrm.append(tuple(sign * x for x in d)); uv.append((0.5, 0.5))
+                    jn.append(jn[base + ring * (seg + 1) + k]); wt.append(wt[base + ring * (seg + 1) + k])
+                for k in range(seg):
+                    if ring == 0: idx += [centre, first + k + 1, first + k]
+                    else: idx += [centre, first + k, first + k + 1]
+
+    def box(mat, c, h, j):
+        pos, nrm, uv, idx, jn, wt = part(mat)
+        for axis in range(3):
+            for sign in (-1, 1):
+                n = [0.0, 0.0, 0.0]; n[axis] = float(sign)
+                o1, o2 = [(axis + 1) % 3, (axis + 2) % 3]
+                base = len(pos)
+                for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                    p = list(c); p[axis] += sign * h[axis]; p[o1] += a * h[o1]; p[o2] += b * h[o2]
+                    pos.append(tuple(p)); nrm.append(tuple(n)); uv.append(((a + 1) / 2, (b + 1) / 2))
+                    jn.append((j, 0, 0, 0)); wt.append((1.0, 0.0, 0.0, 0.0))
+                idx += [base, base + 2, base + 1, base, base + 3, base + 2] if sign > 0 else [base, base + 1, base + 2, base, base + 2, base + 3]
+
+    P = {name: pos for name, _, pos in joints}
+    # Torso: trousers below the hips, shirt above (rings blend hips -> spine -> chest).
+    tube("trousers", (0, 0.86, 0), P["Hips"], 0.16, 0.17, J["Hips"], None, cap=True)
+    tube("shirt", P["Hips"], P["Spine"], 0.17, 0.18, J["Hips"], J["Spine"], blend=0.5, cap=False)
+    tube("shirt", P["Spine"], (0, 1.50, 0), 0.18, 0.15, J["Spine"], J["Chest"], blend=0.6, cap=True)
+    # Head + neck.
+    tube("skin", (0, 1.48, 0), (0, 1.60, 0), 0.05, 0.05, J["Chest"], J["Head"], blend=0.6)
+    box("skin", (0, 1.70, 0.0), (0.095, 0.115, 0.105), J["Head"])
+    box("hair", (0, 1.80, -0.01), (0.1, 0.03, 0.11), J["Head"])
+    # Arms (shirt sleeves, skin forearms, hands).
+    for side in ("L", "R"):
+        sx = 1 if side == "L" else -1
+        tube("shirt", P["UpperArm." + side], P["LowerArm." + side], 0.055, 0.05, J["UpperArm." + side], J["LowerArm." + side])
+        tube("skin", P["LowerArm." + side], (sx * 0.24, 0.95, 0.0), 0.045, 0.035, J["LowerArm." + side], None)
+        box("skin", (sx * 0.245, 0.9, 0.0), (0.025, 0.05, 0.035), J["LowerArm." + side])
+        tube("trousers", P["UpperLeg." + side], P["LowerLeg." + side], 0.075, 0.06, J["UpperLeg." + side], J["LowerLeg." + side])
+        tube("trousers", P["LowerLeg." + side], (sx * 0.1, 0.08, 0.0), 0.06, 0.045, J["LowerLeg." + side], None)
+        box("shoes", (sx * 0.1, 0.04, 0.04), (0.05, 0.04, 0.11), J["LowerLeg." + side])
+
+    g = GltfBuilder()
+
+    def accessor_u16x4(values):
+        flat = [c for v in values for c in v]
+        view = g._view(struct.pack("<%dH" % len(flat), *flat), 34962)
+        g.accessors.append({"bufferView": view, "componentType": 5123, "count": len(values), "type": "VEC4"})
+        return len(g.accessors) - 1
+
+    def accessor_raw(fmt, values, type_, minmax=False):
+        flat = [c for v in values for c in (v if isinstance(v, (tuple, list)) else (v,))]
+        view = g._view(struct.pack("<%d%s" % (len(flat), fmt), *flat), None)
+        g.buffer_views[view].pop("target")
+        acc = {"bufferView": view, "componentType": 5126, "count": len(values), "type": type_}
+        if minmax:
+            acc["min"], acc["max"] = [min(values)], [max(values)]
+        g.accessors.append(acc)
+        return len(g.accessors) - 1
+
+    materials = {"skin": (0.62, 0.40, 0.27), "shirt": (0.75, 0.32, 0.18), "trousers": (0.30, 0.27, 0.22),
+                 "shoes": (0.18, 0.12, 0.08), "hair": (0.08, 0.06, 0.05)}
+    mat_names = list(materials)
+    prims = []
+    for mat, (pos, nrm, uv, idx, jn, wt) in parts.items():
+        prim = g.primitive(pos, nrm, uv, idx, mat_names.index(mat))
+        prim["attributes"]["JOINTS_0"] = accessor_u16x4(jn)
+        prim["attributes"]["WEIGHTS_0"] = g.accessor(wt, 4)
+        prims.append(prim)
+
+    # Nodes: 0 = "Villager" (scene root), 1 = "Body" (skinned mesh), 2.. = joints.
+    nodes = [{"name": "Villager", "children": [1, 2]}, {"name": "Body", "mesh": 0, "skin": 0}]
+    first = 2
+    for i, (name, parent, p) in enumerate(joints):
+        pp = joints[parent][2] if parent >= 0 else (0.0, 0.0, 0.0)
+        node = {"name": name, "translation": [p[k] - pp[k] for k in range(3)]}
+        kids = [first + c for c, (_, par, _) in enumerate(joints) if par == i]
+        if kids:
+            node["children"] = kids
+        nodes.append(node)
+    ibm = []
+    for _, _, p in joints:  # inverse bind = translate(-joint position), column-major
+        ibm.append((1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -p[0], -p[1], -p[2], 1))
+    skin = {"name": "Villager", "skeleton": first, "joints": [first + i for i in range(len(joints))],
+            "inverseBindMatrices": accessor_raw("f", ibm, "MAT4")}
+
+    def quat_axis(axis, angle):
+        s_, c_ = math.sin(angle / 2), math.cos(angle / 2)
+        return (axis[0] * s_, axis[1] * s_, axis[2] * s_, c_)
+
+    def clip(name, length, keys, curves):
+        """curves: joint -> function(t in 0..1) -> (axis, angle) or ('T', vec3 offset)."""
+        times = [length * k / keys for k in range(keys + 1)]
+        t_acc = accessor_raw("f", times, "SCALAR", minmax=True)
+        samplers, channels = [], []
+        for jname, (path, fn) in curves.items():
+            node = first + J[jname]
+            if path == "rotation":
+                vals = [quat_axis(*fn(k / keys)) for k in range(keys + 1)]
+                out_acc = accessor_raw("f", vals, "VEC4")
+            else:
+                rest = joints[J[jname]][2]; par = joints[joints[J[jname]][1]][2] if joints[J[jname]][1] >= 0 else (0, 0, 0)
+                vals = [tuple(rest[i] - par[i] + fn(k / keys)[i] for i in range(3)) for k in range(keys + 1)]
+                out_acc = accessor_raw("f", vals, "VEC3")
+            samplers.append({"input": t_acc, "output": out_acc, "interpolation": "LINEAR"})
+            channels.append({"sampler": len(samplers) - 1, "target": {"node": node, "path": path}})
+        return {"name": name, "samplers": samplers, "channels": channels}
+
+    X, Y, Z = (1, 0, 0), (0, 1, 0), (0, 0, 1)
+    tau = 2 * math.pi
+    sin = lambda t, phase=0.0: math.sin(tau * t + phase)
+    walk = clip("Walk", 1.0, 16, {
+        "Hips": ("translation", lambda t: (0.0, 0.03 * math.cos(2 * tau * t), 0.0)),
+        "Spine": ("rotation", lambda t: (Y, 0.08 * sin(t))),
+        "UpperLeg.L": ("rotation", lambda t: (X, -0.5 * sin(t))),
+        "UpperLeg.R": ("rotation", lambda t: (X, 0.5 * sin(t))),
+        "LowerLeg.L": ("rotation", lambda t: (X, 0.6 * max(0.0, sin(t, math.pi / 2)))),
+        "LowerLeg.R": ("rotation", lambda t: (X, 0.6 * max(0.0, sin(t, -math.pi / 2)))),
+        "UpperArm.L": ("rotation", lambda t: (X, 0.4 * sin(t))),
+        "UpperArm.R": ("rotation", lambda t: (X, -0.4 * sin(t))),
+        "LowerArm.L": ("rotation", lambda t: (X, -0.3 - 0.15 * sin(t))),
+        "LowerArm.R": ("rotation", lambda t: (X, -0.3 + 0.15 * sin(t))),
+    })
+    idle = clip("Idle", 3.0, 12, {
+        "Hips": ("translation", lambda t: (0.0, -0.008 + 0.008 * math.cos(tau * t), 0.0)),
+        "Chest": ("rotation", lambda t: (X, 0.03 * sin(t))),
+        "Head": ("rotation", lambda t: (Y, 0.25 * sin(t, 0.5))),
+        "UpperArm.L": ("rotation", lambda t: (Z, 0.06 + 0.03 * sin(t))),
+        "UpperArm.R": ("rotation", lambda t: (Z, -0.06 - 0.03 * sin(t))),
+        "LowerArm.L": ("rotation", lambda t: (X, -0.15)),
+        "LowerArm.R": ("rotation", lambda t: (X, -0.15)),
+    })
+
+    gltf = {
+        "asset": {"version": "2.0", "generator": "vulkan-engine tools/generate_assets.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": nodes,
+        "meshes": [{"name": "Villager", "primitives": prims}],
+        "skins": [skin],
+        "animations": [idle, walk],
+        "materials": [{"name": m, "pbrMetallicRoughness": {"baseColorFactor": list(c) + [1.0], "metallicFactor": 0.0,
+                                                          "roughnessFactor": 0.85}} for m, c in materials.items()],
+        "buffers": [{"uri": "villager.bin", "byteLength": len(g.bin)}],
+        "bufferViews": g.buffer_views,
+        "accessors": g.accessors,
+    }
+    with open(out("models", "villager.bin"), "wb") as f:
+        f.write(g.bin)
+    with open(out("models", "villager.gltf"), "w") as f:
+        json.dump(gltf, f, indent=1)
+
+
 if __name__ == "__main__":
+    villager()
     terrain_textures()
     lut_neutral()
     textures()

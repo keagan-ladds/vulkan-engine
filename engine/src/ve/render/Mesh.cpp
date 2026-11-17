@@ -197,6 +197,38 @@ std::shared_ptr<Mesh> Mesh::create(Renderer& renderer, const MeshData& data,
     return mesh;
 }
 
+std::shared_ptr<Mesh> Mesh::createShared(Renderer& renderer, VkBuffer vertices, VkDeviceSize vertexOffset, const MeshData& data,
+                                         std::vector<Submesh> submeshes, std::string name)
+{
+    if (data.vertices.empty() || data.indices.empty()) throw std::runtime_error("Mesh::createShared called with empty data: " + name);
+    Device& device = renderer.device();
+    std::shared_ptr<Mesh> mesh(new Mesh());
+    mesh->m_renderer = &renderer;
+    mesh->m_name = std::move(name);
+    mesh->m_vertexCount = static_cast<uint32_t>(data.vertices.size());
+    mesh->m_indexCount = static_cast<uint32_t>(data.indices.size());
+    mesh->m_sharedVertices = vertices;
+    mesh->m_vertexOffset = vertexOffset;
+    const VkDeviceSize ibSize = data.indices.size() * sizeof(uint32_t);
+    mesh->m_indices = device.createBuffer(ibSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                          MemoryUsage::GpuOnly, "mesh indices");
+    device.uploadBuffer(mesh->m_indices, data.indices.data(), ibSize);
+    if (submeshes.empty()) submeshes.push_back({0, mesh->m_indexCount, 0, {}});
+    for (auto& sm : submeshes) {
+        sm.bounds = AABB{};
+        for (uint32_t i = sm.firstIndex; i < sm.firstIndex + sm.indexCount; ++i) sm.bounds.expand(data.vertices[data.indices[i]].position);
+        mesh->m_bounds.expand(sm.bounds);
+    }
+    mesh->m_submeshes = std::move(submeshes);
+    return mesh;
+}
+
+void Mesh::setBounds(const AABB& bounds)
+{
+    m_bounds = bounds;
+    for (auto& sm : m_submeshes) sm.bounds = bounds;
+}
+
 Mesh::~Mesh()
 {
     // The GPU may still be drawing this mesh: destroy the buffers later.

@@ -414,10 +414,12 @@ Ordered roughly by how much they'll bite while building a game.
 
 ## Future phases (not started; ordered by usefulness for a Valheim-like game)
 
-### F2 — Animation
-- [ ] Skinned meshes from glTF (joints/weights in a second vertex stream so `Vertex` stays fixed)
-- [ ] Animation clips, sampler, blending, `Animator` component
-- [ ] GPU skinning (compute pre-pass writing skinned vertices, or vertex shader)
+### F2 — Animation ✅
+- [x] Skinned meshes from glTF (joints / weights kept per `SkinnedMeshSource`, so `Vertex` stays fixed)
+- [x] Animation clips (T/R/S channels, step / linear / cubic spline), crossfade blending, `Animator` component; joints are GameObjects
+- [x] GPU skinning: `skin.comp` pre-pass into a shared output buffer drawn by the regular pipelines (`Mesh::createShared`)
+- [x] Savanna: two `Villager`s (generated rigged model, Idle + Walk) wander around the camp; autotest checks clips, joints and skinned bounds
+- Later: motion vectors from skinning, animation layers / masks, root motion, IK, animation events
 
 ### F3 — World & performance
 - [x] Clustered point lights: 16×9×24 clusters binned on the CPU each frame

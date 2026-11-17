@@ -8,7 +8,9 @@
 
 #include <ve/world/Terrain.hpp>
 #include "Vegetation.hpp"
+#include "Villager.hpp"
 
+#include <ve/anim/Animation.hpp>
 #include <ve/assets/AssetManager.hpp>
 #include <ve/audio/Ambience.hpp>
 #include <ve/audio/Audio.hpp>
@@ -42,6 +44,15 @@
 #include <cstdio>
 
 namespace savanna {
+
+namespace {
+void forSubtree(ve::Transform& t, const std::function<void(ve::Transform&)>& fn)
+{
+    fn(t);
+    for (ve::Transform* c : t.children()) forSubtree(*c, fn);
+}
+} // namespace
+
 
 GameState& gameState()
 {
@@ -741,10 +752,37 @@ void AutoTest::update(float dt)
     } else if (m_step == 14 && m_t > 3.0f) {
         ve::FoliageSystem* foliage = scene().findFirst<ve::Foliage>()->system();
         log("after the regrowth time: berry bush state '" + stateLabel(*foliage, m_bush) + "'");
-        engine().quit();
+        m_t = 0.0f;
         ++m_step;
     } else if (m_step == 14 && m_t > 0.5f) {
         shot("4-berries-picked");
+    } else if ((m_step == 15 || m_step == 16) && m_t > 1.5f) {
+        // F2: the camp villagers (skinned, animated) wander and swing their legs.
+        std::string line;
+        size_t i = 0;
+        for (const auto& obj : scene().objects()) {
+            auto* vp = dynamic_cast<Villager*>(obj.get());
+            if (!vp || vp->isDestroyed()) continue;
+            Villager& v = *vp;
+            const ve::Animator* a = v.animator();
+            const ve::GameObject* thigh = nullptr;
+            forSubtree(v.transform(), [&](ve::Transform& t) {
+                if (!thigh && t.gameObject().name() == "UpperLeg.L") thigh = &t.gameObject();
+            });
+            const float angle = thigh ? glm::degrees(glm::angle(thigh->transform().localRotation())) : -1.0f;
+            const glm::vec3 p = v.transform().position();
+            float top = 0.0f;
+            forSubtree(v.transform(), [&](ve::Transform& t) {
+                if (const auto* sm = t.gameObject().getComponent<ve::SkinnedMeshRenderer>(); sm && sm->mesh) top = sm->mesh->bounds().max.y;
+            });
+            line += (i++ ? "; " : "") + std::string("clip '") + (a ? a->current() : "?") + "' thigh " + std::to_string(angle) + " deg at (" +
+                    std::to_string(p.x) + ", " + std::to_string(p.z) + "), skinned top " + std::to_string(top);
+        }
+        log("villagers " + std::to_string(i) + ": " + line + "; skinned this frame " + std::to_string(renderer().skinning().skinnedThisFrame()));
+        if (m_step == 15) shot("5-villagers");
+        if (m_step == 16) engine().quit();
+        m_t = 0.0f;
+        ++m_step;
     }
 }
 

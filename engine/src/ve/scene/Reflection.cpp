@@ -1,5 +1,7 @@
 #include "ve/scene/Reflection.hpp"
 
+#include "ve/anim/Animation.hpp"
+
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Ambience.hpp"
 #include "ve/audio/Audio.hpp"
@@ -114,7 +116,14 @@ void registerBuiltinTypes()
         t.field("path", &ModelInstance::path).assets(".gltf .glb");
         t.field("staticColliders", &ModelInstance::staticColliders).tooltip("Exact mesh colliders on every node");
         t.field("hiddenNodes", &ModelInstance::hiddenNodes).tooltip("Comma-separated node names to leave out, e.g. Door");
+        t.field("animation", &ModelInstance::animation).tooltip("Animated models: the clip to loop (empty = the first)");
         t.onChanged([](ModelInstance& m) { m.rebuild(); });
+    });
+    r.add<Animator>("Animator", [](TypeBuilder<Animator>& t) {
+        t.category("Animation");
+        t.field("clip", &Animator::clip).tooltip("played on start (empty = the model's first clip)");
+        t.field("speed", &Animator::speed).range(0.0f, 10.0f).speed(0.01f);
+        t.field("playOnStart", &Animator::playOnStart);
     });
     r.add<PrimitiveRenderer>("PrimitiveRenderer", [](TypeBuilder<PrimitiveRenderer>& t) {
         t.category("Rendering");

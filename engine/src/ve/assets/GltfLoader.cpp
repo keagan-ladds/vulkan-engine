@@ -9,6 +9,8 @@
 // =============================================================================
 
 #include "ve/assets/AssetManager.hpp"
+#include "ve/anim/Animation.hpp"
+#include "ve/render/Skinning.hpp"
 #include "ve/assets/Model.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/render/Mesh.hpp"
@@ -148,6 +150,9 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
     for (size_t mi = 0; mi < data->meshes_count; ++mi) {
         const cgltf_mesh& gm = data->meshes[mi];
         MeshData md;
+        std::vector<glm::uvec4> skinJoints; // per vertex (if any primitive has JOINTS_0)
+        std::vector<glm::vec4> skinWeights;
+        bool skinned = false;
         std::vector<Submesh> submeshes;
         std::vector<std::shared_ptr<Material>> slots;
         bool needTangents = false;
@@ -161,8 +166,28 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
             const cgltf_accessor* uv = findAttribute(prim, cgltf_attribute_type_texcoord);
             const cgltf_accessor* tan = findAttribute(prim, cgltf_attribute_type_tangent);
             const cgltf_accessor* col = findAttribute(prim, cgltf_attribute_type_color);
+            const cgltf_accessor* joints = findAttribute(prim, cgltf_attribute_type_joints);
+            const cgltf_accessor* weights = findAttribute(prim, cgltf_attribute_type_weights);
 
             const auto baseVertex = static_cast<uint32_t>(md.vertices.size());
+            if (joints && weights) {
+                skinned = true;
+                skinJoints.resize(baseVertex, glm::uvec4(0));
+                skinWeights.resize(baseVertex, glm::vec4(1, 0, 0, 0));
+                for (size_t v = 0; v < pos->count; ++v) {
+                    cgltf_uint j[4] = {0, 0, 0, 0};
+                    float w[4] = {1, 0, 0, 0};
+                    cgltf_accessor_read_uint(joints, v, j, 4);
+                    cgltf_accessor_read_float(weights, v, w, 4);
+                    const float sum = w[0] + w[1] + w[2] + w[3];
+                    const glm::vec4 wv = sum > 0.0f ? glm::vec4(w[0], w[1], w[2], w[3]) / sum : glm::vec4(1, 0, 0, 0);
+                    skinJoints.push_back({j[0], j[1], j[2], j[3]});
+                    skinWeights.push_back(wv);
+                }
+            } else if (skinned) {
+                skinJoints.resize(baseVertex + pos->count, glm::uvec4(0));
+                skinWeights.resize(baseVertex + pos->count, glm::vec4(1, 0, 0, 0));
+            }
             for (size_t v = 0; v < pos->count; ++v) {
                 Vertex vert;
                 cgltf_accessor_read_float(pos, v, &vert.position.x, 3);
@@ -215,12 +240,25 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
             model->meshes.push_back(nullptr);
             model->meshMaterials.push_back({});
             model->meshData.emplace_back();
+            model->skinnedMeshes.push_back(nullptr);
             continue;
         }
         if (needTangents) md.computeTangents();
+        std::shared_ptr<SkinnedMeshSource> skin;
+        if (skinned) {
+            skinJoints.resize(md.vertices.size(), glm::uvec4(0));
+            skinWeights.resize(md.vertices.size(), glm::vec4(1, 0, 0, 0));
+            skin = std::make_shared<SkinnedMeshSource>();
+            skin->data = md;
+            skin->submeshes = submeshes;
+            skin->joints = skinJoints;
+            skin->weights = skinWeights;
+            skin->name = gm.name ? gm.name : model->name;
+        }
         model->meshData.push_back(md);
         model->meshes.push_back(Mesh::create(renderer, md, submeshes, gm.name ? gm.name : model->name));
         model->meshMaterials.push_back(std::move(slots));
+        model->skinnedMeshes.push_back(std::move(skin));
     }
 
     // --- Nodes -----------------------------------------------------------------
@@ -232,6 +270,7 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
         cgltf_node_transform_local(&gn, &node.local[0][0]);
         node.mesh = gn.mesh ? static_cast<int>(gn.mesh - data->meshes) : -1;
         if (node.mesh >= 0 && !model->meshes[node.mesh]) node.mesh = -1;
+        node.skin = gn.skin && node.mesh >= 0 && model->skinnedMeshes[size_t(node.mesh)] ? static_cast<int>(gn.skin - data->skins) : -1;
         for (size_t c = 0; c < gn.children_count; ++c) {
             node.children.push_back(static_cast<int>(gn.children[c] - data->nodes));
         }
@@ -243,6 +282,64 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
         for (size_t ni = 0; ni < data->nodes_count; ++ni) {
             if (!data->nodes[ni].parent) model->roots.push_back(static_cast<int>(ni));
         }
+    }
+
+    // --- Skins -----------------------------------------------------------------
+    for (size_t si = 0; si < data->skins_count; ++si) {
+        const cgltf_skin& gs = data->skins[si];
+        ModelSkin skin;
+        skin.name = gs.name ? gs.name : "";
+        for (size_t j = 0; j < gs.joints_count; ++j) {
+            skin.joints.push_back(static_cast<int>(gs.joints[j] - data->nodes));
+            glm::mat4 ibm(1.0f);
+            if (gs.inverse_bind_matrices) cgltf_accessor_read_float(gs.inverse_bind_matrices, j, &ibm[0][0], 16);
+            skin.inverseBind.push_back(ibm);
+        }
+        model->skins.push_back(std::move(skin));
+    }
+    // Bounds padding per joint: how far its vertices reach from it (in the bind pose).
+    for (const ModelNode& node : model->nodes) {
+        if (node.skin < 0) continue;
+        auto& src = const_cast<SkinnedMeshSource&>(*model->skinnedMeshes[size_t(node.mesh)]);
+        const ModelSkin& skin = model->skins[size_t(node.skin)];
+        src.jointRadius.assign(skin.joints.size(), 0.0f);
+        for (size_t v = 0; v < src.data.vertices.size(); ++v) {
+            for (int k = 0; k < 4; ++k) {
+                const uint32_t j = src.joints[v][k];
+                if (src.weights[v][k] <= 0.0f || j >= skin.joints.size()) continue;
+                const glm::vec3 local = glm::vec3(skin.inverseBind[j] * glm::vec4(src.data.vertices[v].position, 1.0f));
+                src.jointRadius[j] = std::max(src.jointRadius[j], glm::length(local));
+            }
+        }
+    }
+
+    // --- Animations ------------------------------------------------------------
+    for (size_t ai = 0; ai < data->animations_count; ++ai) {
+        const cgltf_animation& ga = data->animations[ai];
+        auto clip = std::make_shared<AnimationClip>();
+        clip->name = ga.name ? ga.name : "Animation " + std::to_string(ai);
+        for (size_t ci = 0; ci < ga.channels_count; ++ci) {
+            const cgltf_animation_channel& gc = ga.channels[ci];
+            if (!gc.target_node || !gc.sampler) continue;
+            AnimationChannel ch;
+            ch.node = static_cast<int>(gc.target_node - data->nodes);
+            if (gc.target_path == cgltf_animation_path_type_translation) ch.path = AnimationChannel::Path::Translation;
+            else if (gc.target_path == cgltf_animation_path_type_rotation) ch.path = AnimationChannel::Path::Rotation;
+            else if (gc.target_path == cgltf_animation_path_type_scale) ch.path = AnimationChannel::Path::Scale;
+            else continue; // morph weights: not supported
+            const cgltf_animation_sampler& gsmp = *gc.sampler;
+            ch.interpolation = gsmp.interpolation == cgltf_interpolation_type_step           ? AnimationChannel::Interpolation::Step
+                               : gsmp.interpolation == cgltf_interpolation_type_cubic_spline ? AnimationChannel::Interpolation::CubicSpline
+                                                                                             : AnimationChannel::Interpolation::Linear;
+            ch.times.resize(gsmp.input->count);
+            for (size_t k = 0; k < gsmp.input->count; ++k) cgltf_accessor_read_float(gsmp.input, k, &ch.times[k], 1);
+            const int comps = ch.path == AnimationChannel::Path::Rotation ? 4 : 3;
+            ch.values.resize(gsmp.output->count, glm::vec4(0.0f));
+            for (size_t k = 0; k < gsmp.output->count; ++k) cgltf_accessor_read_float(gsmp.output, k, &ch.values[k].x, comps);
+            if (!ch.times.empty()) clip->duration = std::max(clip->duration, ch.times.back());
+            clip->channels.push_back(std::move(ch));
+        }
+        model->animations.push_back(std::move(clip));
     }
 
     cgltf_free(data);

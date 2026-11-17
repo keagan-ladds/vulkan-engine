@@ -20,6 +20,14 @@
 
 namespace ve {
 
+// GPU skinning of every active SkinnedMeshRenderer (first thing in the frame).
+class SkinningPass : public RenderPass {
+public:
+    SkinningPass() : RenderPass("Skinning", RenderStage::Shadow, -200) {}
+    void declare(PassBuilder&) override {}
+    void execute(RenderContext& ctx) override;
+};
+
 // Uploads changed instances and runs GPU culling for every InstanceGroup
 // (camera + directional shadow cascades) before anything is drawn.
 class InstanceCullPass : public RenderPass {

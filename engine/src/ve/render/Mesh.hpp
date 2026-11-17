@@ -72,12 +72,20 @@ public:
     // covering all indices is created.
     static std::shared_ptr<Mesh> create(Renderer& renderer, const MeshData& data,
                                         std::vector<Submesh> submeshes = {}, std::string name = {});
+    // A mesh whose vertices live in someone else's buffer (`vertexCount`
+    // vertices from byte `vertexOffset`; e.g. GPU-skinned output). Owns its
+    // indices only. Bounds come from `data` and can be updated (setBounds).
+    static std::shared_ptr<Mesh> createShared(Renderer& renderer, VkBuffer vertices, VkDeviceSize vertexOffset,
+                                              const MeshData& data, std::vector<Submesh> submeshes = {}, std::string name = {});
     ~Mesh();
 
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
 
-    VkBuffer vertexBuffer() const { return m_vertices.handle; }
+    VkBuffer vertexBuffer() const { return m_sharedVertices ? m_sharedVertices : m_vertices.handle; }
+    VkDeviceSize vertexOffset() const { return m_vertexOffset; } // bind the vertex buffer at this byte offset
+    // Moving geometry (skinning): every submesh gets these bounds.
+    void setBounds(const AABB& bounds);
     VkBuffer indexBuffer() const { return m_indices.handle; }
     const std::vector<Submesh>& submeshes() const { return m_submeshes; }
     const AABB& bounds() const { return m_bounds; }
@@ -90,6 +98,8 @@ private:
 
     Renderer* m_renderer = nullptr;
     Buffer m_vertices;
+    VkBuffer m_sharedVertices = VK_NULL_HANDLE; // createShared: not owned
+    VkDeviceSize m_vertexOffset = 0;
     Buffer m_indices;
     std::vector<Submesh> m_submeshes;
     AABB m_bounds;

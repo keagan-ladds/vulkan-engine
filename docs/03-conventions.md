@@ -199,6 +199,22 @@ Put files under `<game>/assets/` (copied next to the exe on build), then
 `assets().loadTexture("textures/x.png", srgb)`, `loadModel("models/x.gltf")`
 followed by `scene.instantiate(*model)`, or `loadAudio("audio/x.wav")`.
 
+### Animated characters (skinned glTF)
+
+```cpp
+auto model = assets().loadModel("models/villager.gltf"); // skin + clips (Idle, Walk)
+ve::GameObject& v = scene.instantiate(*model, this);    // under this object
+auto* anim = v.getComponent<ve::Animator>();
+anim->play("Walk", 0.3f);                               // crossfade 0.3 s
+anim->play("Idle", 0.3f);                               // and back
+ve::GameObject* hand = scene.find("LowerArm.R");        // joints are objects: parent props to them
+```
+
+In a scene file: a `ModelInstance` with `path` and `animation` (the clip to
+loop). Models face +Z (glTF). See the sandbox's `Villager` (wanders around
+the camp, walks and idles) and `tools/generate_assets.py` (`villager()`
+writes a rigged model with keyframed clips).
+
 ### Thousands of props: instancing
 
 ```cpp

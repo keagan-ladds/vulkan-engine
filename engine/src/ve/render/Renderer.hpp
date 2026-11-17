@@ -22,6 +22,7 @@
 #include "ve/gfx/Swapchain.hpp"
 #include "ve/render/FrameData.hpp"
 #include "ve/render/Instancing.hpp"
+#include "ve/render/Skinning.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/PipelineHandle.hpp"
 #include "ve/render/ShaderHotReload.hpp"
@@ -103,6 +104,9 @@ struct RendererSettings {
     bool temporalAA = false;
     uint32_t maxInstances = 262144;               // total across all groups (64 B each)
     uint32_t maxVisibleInstancesPerView = 1u << 20; // sum over batches of group capacity (4 B each, per cull view)
+    // --- GPU skinning (SkinnedMeshRenderer) ---
+    uint32_t maxSkinnedVertices = 262144; // rest + output vertices of all skinned meshes (64 B each, twice)
+    uint32_t maxSkinJoints = 8192;        // joint matrices per frame (64 B each, per frame in flight)
 };
 
 // Hemispherical ambient light. Effects (e.g. vfx::AtmospherePass) usually
@@ -184,6 +188,7 @@ public:
     std::shared_ptr<Shader> createShader(const ShaderDesc& desc);
     std::shared_ptr<Shader> builtinShader(BuiltinShader which) const { return m_builtinShaders[size_t(which)]; }
     std::shared_ptr<Material> createMaterial(std::shared_ptr<Shader> shader);
+    SkinningSystem& skinning() { return *m_skinning; }
     // Thousands of copies of a mesh, culled and drawn on the GPU (see Instancing.hpp).
     std::shared_ptr<InstanceGroup> createInstanceGroup(InstanceGroupDesc desc, uint32_t capacity);
     InstanceSystem& instances() { return *m_instances; }
@@ -374,6 +379,7 @@ private:
     std::vector<uint32_t> m_freeMaterials;
     uint32_t m_materialHighWater = 0;
 
+    std::unique_ptr<SkinningSystem> m_skinning;
     std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
     std::unordered_map<const MeshRenderer*, glm::mat4> m_prevWorlds; // motion vectors
     uint32_t m_clusterWords = 0;          // used words of LightBuffer::clusterLights
