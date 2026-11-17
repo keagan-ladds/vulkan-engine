@@ -34,6 +34,7 @@ struct CameraData {
     glm::mat4 view{1.0f};
     glm::mat4 proj{1.0f};     // reversed-Z, Y flipped for Vulkan
     glm::mat4 viewProj{1.0f};
+    glm::mat4 viewProjNoJitter{1.0f}; // without the TAA / photo sub-pixel jitter
     glm::vec3 position{0.0f};
     glm::vec3 forward{0.0f, 0.0f, -1.0f};
     glm::vec3 up{0.0f, 1.0f, 0.0f};

@@ -8,6 +8,7 @@
 //   ShadowPass       Shadow      directional cascades + point light cubes
 //   OpaquePass       Opaque      clears SceneColor/SceneDepth, draws opaque + alpha-test queues
 //   TransparentPass  Transparent draws the transparent queue back to front
+//   TemporalAAPass   PostProcess temporal anti-aliasing (RendererSettings::temporalAA), before other post effects
 //   CompositePass    Composite   exposure + tonemapping + simple grading -> Backbuffer
 //
 // Effects (sky, fog, bloom, particles) live in the optional ve_effects module
@@ -54,6 +55,29 @@ public:
     TransparentPass() : RenderPass("Transparent", RenderStage::Transparent) {}
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
+};
+
+// Temporal anti-aliasing: blends the (jittered) frame into a history
+// reprojected with the camera motion (from depth), clipped to the current
+// 3x3 neighbourhood so moving objects don't leave trails. Only runs while
+// RendererSettings::temporalAA is on (which also jitters the camera).
+class TemporalAAPass : public RenderPass {
+public:
+    TemporalAAPass() : RenderPass("Temporal AA", RenderStage::PostProcess, -100) {}
+    ~TemporalAAPass() override;
+    void setup(RenderGraph& graph) override;
+    void declare(PassBuilder& builder) override;
+    void execute(RenderContext& ctx) override;
+    void onGui() override;
+
+    float feedback = 0.9f; // history weight (higher = smoother, more ghosting)
+
+private:
+    TextureId m_history[2] = {kNoTexture, kNoTexture};
+    PipelineHandle m_pipeline;
+    uint32_t m_frame = 0;
+    VkExtent3D m_extent{};
+    bool m_active = false;
 };
 
 // HDR -> display. Settings are public so games can drive them (e.g. dim at night).

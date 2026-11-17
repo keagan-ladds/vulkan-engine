@@ -20,6 +20,10 @@
 #define VE_MAX_DIRECTIONAL_LIGHTS 4
 #define VE_MAX_POINT_LIGHTS 256
 #define VE_MAX_SHADOW_VIEWS 128
+#define VE_CLUSTER_X 16
+#define VE_CLUSTER_Y 9
+#define VE_CLUSTER_Z 24
+#define VE_CLUSTER_INDEX_CAPACITY 65536
 #define VE_INVALID 0xFFFFFFFFu
 #define VE_DRAW_FLAG_POINT_SHADOW 1u
 #define VE_DRAW_FLAG_INSTANCED 2u
@@ -43,6 +47,7 @@ layout(set = 0, binding = 0, std140) uniform VeFrameGlobals {
     vec4 shadowParams;     // normal bias (texels), pcf radius (texels), dir res, point res
     uvec4 builtinTextures; // SceneDepth, SceneColor, SceneNormal
     vec4 globalParams[8];
+    vec4 jitter;           // xy = sub-pixel camera jitter in UV units (TAA, photo mode)
 } frame;
 
 struct VeDirectionalLight {
@@ -64,6 +69,9 @@ layout(set = 0, binding = 1, std430) readonly buffer VeLightBuffer {
     VeDirectionalLight directional[VE_MAX_DIRECTIONAL_LIGHTS];
     VePointLight point[VE_MAX_POINT_LIGHTS];
     mat4 shadowViews[VE_MAX_SHADOW_VIEWS];
+    vec4 clusterParams;  // depth slice = log(view depth) * x + y; z = 1 if valid
+    uint clusters[VE_CLUSTER_X * VE_CLUSTER_Y * VE_CLUSTER_Z]; // first << 9 | count
+    uint clusterLights[VE_CLUSTER_INDEX_CAPACITY / 4];         // 8-bit point light indices
 } lights;
 
 struct VeMaterial {

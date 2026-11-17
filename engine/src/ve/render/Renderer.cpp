@@ -351,6 +351,7 @@ void Renderer::createDefaultPasses()
     m_graph->addPass<ShadowPass>();
     m_graph->addPass<OpaquePass>();
     m_graph->addPass<TransparentPass>();
+    m_graph->addPass<TemporalAAPass>();
     m_graph->addPass<CompositePass>();
 }
 
@@ -681,7 +682,8 @@ void Renderer::setupCamera(Scene& scene)
     // near plane and 0 at the far plane. Then flip Y for Vulkan's clip space.
     cam.proj = glm::perspective(cam.fovY, cam.aspect, cam.farPlane, cam.nearPlane);
     cam.proj[1][1] *= -1.0f;
-    // Sub-pixel jitter (photo capture): shift the image by a fraction of a pixel.
+    cam.viewProjNoJitter = cam.proj * cam.view;
+    // Sub-pixel jitter (TAA, photo capture): shift the image by a fraction of a pixel.
     cam.proj[2][0] += m_jitter.x * 2.0f / float(std::max(1u, ext.width));
     cam.proj[2][1] += m_jitter.y * 2.0f / float(std::max(1u, ext.height));
     cam.viewProj = cam.proj * cam.view;
@@ -844,6 +846,85 @@ void Renderer::buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uin
     gpu.shadow = glm::ivec4(static_cast<int>(baseView), static_cast<int>(n), static_cast<int>(baseLayer), 0);
 }
 
+// Bins the point lights into the camera's clusters (on the CPU: there are at
+// most a few hundred, already frustum culled). Each light covers the screen
+// tiles of its bounding box's projection in the depth slices it spans. If the
+// index list overflows, the clusters are flagged invalid and shaders fall back
+// to looping over every light.
+void Renderer::buildLightClusters(uint32_t count)
+{
+    const CameraData& cam = m_frame.camera;
+    LightBuffer& lb = *m_lights;
+    const float z0 = std::max(cam.nearPlane, 0.5f), z1 = std::max(cam.farPlane, z0 * 2.0f);
+    const float scale = float(kClusterZ) / std::log(z1 / z0);
+    lb.clusterParams = glm::vec4(scale, -std::log(z0) * scale, m_settings.clusteredLights ? 1.0f : 0.0f, 0.0f);
+    m_clusterWords = 0;
+    if (!m_settings.clusteredLights) return;
+    if (count == 0) {
+        std::memset(lb.clusters, 0, sizeof(lb.clusters));
+        return;
+    }
+    auto slice = [&](float z) { return std::clamp(int(std::floor(std::log(std::max(z, 1e-3f)) * lb.clusterParams.x + lb.clusterParams.y)), 0, int(kClusterZ) - 1); };
+
+    // Per light: its cluster box (tile and slice ranges).
+    struct Range {
+        int x0, x1, y0, y1, z0, z1;
+    };
+    std::vector<Range> ranges(count);
+    std::vector<uint16_t> perCluster(kClusterCount, 0);
+    for (uint32_t i = 0; i < count; ++i) {
+        const glm::vec4 pr = lb.point[i].positionRange;
+        const glm::vec3 vc = glm::vec3(cam.view * glm::vec4(glm::vec3(pr), 1.0f));
+        const float r = pr.w, depth = -vc.z;
+        Range& R = ranges[i];
+        R = {0, int(kClusterX) - 1, 0, int(kClusterY) - 1, slice(depth - r), slice(depth + r)};
+        if (depth - r > cam.nearPlane) {
+            // In front of the camera: the screen rectangle of its view-space box.
+            glm::vec2 lo(1e9f), hi(-1e9f);
+            for (int c = 0; c < 8; ++c) {
+                const glm::vec3 v = vc + glm::vec3(c & 1 ? r : -r, c & 2 ? r : -r, c & 4 ? r : -r);
+                const glm::vec4 clip = cam.proj * glm::vec4(v, 1.0f);
+                const glm::vec2 uv = glm::vec2(clip) / clip.w * 0.5f + 0.5f;
+                lo = glm::min(lo, uv);
+                hi = glm::max(hi, uv);
+            }
+            if (hi.x < 0.0f || hi.y < 0.0f || lo.x > 1.0f || lo.y > 1.0f) {
+                R.z1 = R.z0 - 1; // off screen
+                continue;
+            }
+            R.x0 = std::clamp(int(lo.x * kClusterX), 0, int(kClusterX) - 1);
+            R.x1 = std::clamp(int(hi.x * kClusterX), 0, int(kClusterX) - 1);
+            R.y0 = std::clamp(int(lo.y * kClusterY), 0, int(kClusterY) - 1);
+            R.y1 = std::clamp(int(hi.y * kClusterY), 0, int(kClusterY) - 1);
+        }
+        for (int z = R.z0; z <= R.z1; ++z)
+            for (int y = R.y0; y <= R.y1; ++y)
+                for (int x = R.x0; x <= R.x1; ++x) ++perCluster[size_t((z * kClusterY + y) * kClusterX + x)];
+    }
+    // Offsets (prefix sum), then the lists.
+    uint32_t total = 0;
+    for (uint32_t c = 0; c < kClusterCount; ++c) {
+        lb.clusters[c] = total << 9 | perCluster[c];
+        total += perCluster[c];
+        perCluster[c] = 0;
+    }
+    if (total > kClusterIndexCapacity) {
+        lb.clusterParams.z = 0.0f; // too many: every pixel loops over all lights
+        return;
+    }
+    auto* bytes = reinterpret_cast<uint8_t*>(lb.clusterLights);
+    for (uint32_t i = 0; i < count; ++i) {
+        const Range& R = ranges[i];
+        for (int z = R.z0; z <= R.z1; ++z)
+            for (int y = R.y0; y <= R.y1; ++y)
+                for (int x = R.x0; x <= R.x1; ++x) {
+                    const size_t c = size_t((z * kClusterY + y) * kClusterX + x);
+                    bytes[(lb.clusters[c] >> 9) + perCluster[c]++] = uint8_t(i); // little-endian: byte k = bits 8k..8k+7
+                }
+    }
+    m_clusterWords = (total + 3) / 4;
+}
+
 void Renderer::gatherLights(Scene& scene)
 {
     const CameraData& cam = m_frame.camera;
@@ -928,6 +1009,7 @@ void Renderer::gatherLights(Scene& scene)
     m_frame.stats.pointLights = static_cast<uint32_t>(points.size());
     m_frame.stats.shadowViews = static_cast<uint32_t>(m_frame.shadowViews.size());
     m_frame.globals.lightCounts = glm::uvec4(dirs.size(), points.size(), m_settings.cascadeCount, 0);
+    buildLightClusters(uint32_t(points.size()));
 }
 
 void Renderer::fillGlobals(const Time& time)
@@ -941,7 +1023,10 @@ void Renderer::fillGlobals(const Time& time)
     g.invView = glm::inverse(cam.view);
     g.invProj = glm::inverse(cam.proj);
     g.invViewProj = glm::inverse(cam.viewProj);
-    g.prevViewProj = m_frameNumber == 0 ? cam.viewProj : m_prevViewProj;
+    // Unjittered: reprojection (TAA, temporal accumulators) maps to where a
+    // point was, not to last frame's jittered sample of it.
+    g.prevViewProj = m_frameNumber == 0 ? cam.viewProjNoJitter : m_prevViewProj;
+    g.jitter = glm::vec4(m_jitter.x / float(ext.width), m_jitter.y / float(ext.height), 0.0f, 0.0f);
     g.cameraPosition = glm::vec4(cam.position, cam.nearPlane);
     g.cameraForward = glm::vec4(cam.forward, cam.farPlane);
     g.screenSize = glm::vec4(float(ext.width), float(ext.height), 1.0f / float(ext.width), 1.0f / float(ext.height));
@@ -1135,18 +1220,21 @@ bool Renderer::render(Scene& scene, const Time& time)
     m_frame.deltaTime = time.deltaTime;
     m_frame.time = time.time;
     m_frame.frameNumber = m_frameNumber;
+    // Halton (2, 3): evenly spread sub-pixel offsets for any sample count.
+    auto halton = [](uint32_t i, uint32_t base) {
+        float f = 1.0f, r = 0.0f;
+        for (; i > 0; i /= base) {
+            f /= float(base);
+            r += f * float(i % base);
+        }
+        return r;
+    };
     m_jitter = glm::vec2(0.0f);
     if (photo && m_photo.frame >= m_photo.settings.warmupFrames) {
-        // Halton (2, 3): evenly spread sub-pixel offsets for any sample count.
-        auto halton = [](uint32_t i, uint32_t base) {
-            float f = 1.0f, r = 0.0f;
-            for (; i > 0; i /= base) {
-                f /= float(base);
-                r += f * float(i % base);
-            }
-            return r;
-        };
         const uint32_t k = m_photo.frame - m_photo.settings.warmupFrames + 1;
+        m_jitter = glm::vec2(halton(k, 2), halton(k, 3)) - 0.5f;
+    } else if (m_settings.temporalAA) {
+        const uint32_t k = m_frameNumber % 8u + 1u; // 8 positions
         m_jitter = glm::vec2(halton(k, 2), halton(k, 3)) - 0.5f;
     }
     m_graph->maxStage = photo ? int(RenderStage::Overlay) : (1 << 30);
@@ -1156,7 +1244,8 @@ bool Renderer::render(Scene& scene, const Time& time)
     m_graph->prepare(m_frame);
 
     std::memcpy(slot.globals.mapped, &m_frame.globals, sizeof(FrameGlobals));
-    std::memcpy(slot.lights.mapped, m_lights.get(), sizeof(LightBuffer));
+    // The light buffer up to the used part of the cluster light lists.
+    std::memcpy(slot.lights.mapped, m_lights.get(), offsetof(LightBuffer, clusterLights) + m_clusterWords * sizeof(uint32_t));
     std::memcpy(slot.materials.mapped, m_materials.data(), sizeof(GpuMaterial) * m_materialHighWater);
 
     // --- Record -------------------------------------------------------------------
@@ -1247,7 +1336,7 @@ bool Renderer::render(Scene& scene, const Time& time)
             VK_CHECK(vkWaitForFences(dev, 1, &slot.inFlight, VK_TRUE, UINT64_MAX));
             saveCapture();
         }
-        m_prevViewProj = m_frame.camera.viewProj;
+        m_prevViewProj = m_frame.camera.viewProjNoJitter;
         ++m_frameNumber;
         return true;
     }
@@ -1265,7 +1354,7 @@ bool Renderer::render(Scene& scene, const Time& time)
     if (pres == VK_ERROR_OUT_OF_DATE_KHR || pres == VK_SUBOPTIMAL_KHR) m_swapchainDirty = true;
     else VK_CHECK(pres);
 
-    m_prevViewProj = m_frame.camera.viewProj;
+    m_prevViewProj = m_frame.camera.viewProjNoJitter;
     ++m_frameNumber;
     return true;
 }

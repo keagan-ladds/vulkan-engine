@@ -125,8 +125,8 @@ Every pipeline uses **one global pipeline layout**:
 
 | Set/binding | Contents | Notes |
 |---|---|---|
-| set 0, b0 | `FrameGlobals` UBO | view/proj (+inverses, prev), camera pos, screen size, time, ambient, light counts, 8 user `globalParams` vec4s, builtin texture indices |
-| set 0, b1 | `LightBuffer` SSBO | directional lights (with cascade matrices/splits), point lights, shadow view matrices |
+| set 0, b0 | `FrameGlobals` UBO | view/proj (+inverses, unjittered prev), camera pos, screen size, time, ambient, light counts, 8 user `globalParams` vec4s, builtin texture indices, camera jitter |
+| set 0, b1 | `LightBuffer` SSBO | directional lights (with cascade matrices/splits), point lights, shadow view matrices, light clusters |
 | set 0, b2 | `MaterialBuffer` SSBO | `MaterialData[]`: 12 × vec4 params + 16 uint texture indices = 256 B each |
 | set 0, b3 | `sampler2DArrayShadow` | directional shadow cascades (all lights × cascades as layers) |
 | set 0, b4 | `samplerCubeArrayShadow` | point light shadow cubes |
@@ -134,6 +134,25 @@ Every pipeline uses **one global pipeline layout**:
 | set 1, b0 | `image2D storageImages[]` | bindless storage images (compute) |
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
+
+**Clustered point lights.** The camera frustum is split into 16 × 9 screen
+tiles × 24 logarithmic depth slices. Every frame the renderer bins the point
+lights (≤ 256, already frustum culled and sorted on the CPU) into the clusters
+their bounding boxes touch: `LightBuffer::clusters` holds each cluster's
+range in `clusterLights` (8-bit light indices). `veEvaluateLighting` (and any
+shader using `veLightList(P)`) only visits the lights of the point's cluster;
+off screen, or if the list overflows (`clusterParams.z == 0`), it falls back
+to every light. Only the used part of the buffer is uploaded.
+
+**Temporal AA** (`RendererSettings::temporalAA`, off by default; Savanna turns
+it on). The projection is jittered by an 8-position Halton (2, 3) sequence
+(`frame.jitter`); `TemporalAAPass` (first PostProcess pass) reprojects last
+frame's result with the camera motion from depth (closest of 3×3, unjittered
+`prevViewProj`), samples it with Catmull-Rom, clips it to the current 3×3
+YCoCg variance box and blends it in with weight `feedback` (0.9), on
+tonemapped values. There are no per-object motion vectors, so moving objects
+rely on the clipping (slight softening, no trails). `prevViewProj` is the
+unjittered matrix for every temporal effect.
 
 Set 0 has one copy per frame in flight. Set 1 is a single update-after-bind
 bindless set. Because every shader shares the layout, descriptor sets are bound
@@ -374,6 +393,14 @@ helpers (the instancing helpers are vertex-only).
   under a per-frame budget, cached LRU, and drawn through pooled
   MeshRenderers on one hidden child, so culling, picking and every shadow pass
   just work (`terrain_shadow.vert` morphs too).
+- **Ground materials.** Biomes (and rock) may have a `TerrainMaterial`
+  (albedo / normal / roughness / AO, size, tint). Each node picks the three
+  splat layers that weigh most in it: their indices go in `color.a`, their
+  weights in `uv` and `tangent.w` (the parent normal is stored as x/z). A
+  small float texture holds each layer's texture indices and scale;
+  `terrain.frag` blends the layers by weight and texture height, samples rock
+  triplanar, and blends a rotated, larger second copy with distance against
+  tiling. Leftover weight shows the biome vertex colour.
 - **Physics.** 64-cell heightfield tiles exist around the camera, every
   `CharacterController` and every dynamic `Rigidbody` (`colliderDistance`,
   25 % hysteresis). The render mesh, `height()` and the grass all split cells

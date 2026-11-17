@@ -288,8 +288,11 @@ million grass blades), scaling up on discrete GPUs.
 - [x] Savanna is 4 km wide: savannah around the camp, a desert with dunes and
   quiver trees to the east, a jungle with hills, jungle trees, palms and
   undergrowth to the west; the autotest walks into both
-- [~] Splat materials: ground colour is still biome vertex colours + a detail
-  texture; per-biome textures (sand ripples, leaf litter) are next
+- [x] Splat materials: optional per-biome `material` (albedo, normal,
+  roughness, AO, size, tint) and a triplanar `rockMaterial`; three layers per
+  vertex with height-based blending; distance anti-tiling (rotated 3.7×
+  second copy + macro noise); untextured biomes keep their vertex colours.
+  Savanna: soil, sand ripples, leaf litter, rock
 - **Result** (lavapipe, Release): 4 km world, 2049² samples, ~62k foliage
   instances preloaded in ~1.2 s; main thread ~1.8 ms per frame, as on the
   640 m map (it was 21 ms before foliage stopped re-walking every cell)
@@ -387,9 +390,10 @@ No feature or quality setting was removed; shader changes give the same image
 
 Ordered roughly by how much they'll bite while building a game.
 
-1. **No temporal accumulation for clouds/fog.** They use per-pixel jitter plus
-   a blur and look slightly soft. TAA or temporal reprojection would allow fewer
-   steps and sharper results.
+1. **No per-object motion vectors.** TAA and the temporal accumulators
+   reproject with camera motion only; moving objects (characters, wind-blown
+   foliage) rely on neighbourhood clipping and get slightly softer. Clouds and
+   fog still blur their own dither instead of reprojecting it.
 2. **Material params are positional** (slot indices, no reflection). Each
    shader documents its layout in a comment. A SPIR-V reflection layer could
    add named parameters.
@@ -411,8 +415,12 @@ Ordered roughly by how much they'll bite while building a game.
 - [ ] GPU skinning (compute pre-pass writing skinned vertices, or vertex shader)
 
 ### F3 — World & performance
-- [ ] Clustered/tiled light culling for many point lights
-- [ ] Temporal AA (+ temporal reprojection for fog/clouds)
+- [x] Clustered point lights: 16×9×24 clusters binned on the CPU each frame
+  (lights are already culled there), `veLightList()` for custom shaders, full
+  loop as a fallback
+- [x] Temporal AA (`RendererSettings::temporalAA`): Halton jitter, camera
+  reprojection from depth, Catmull-Rom history, YCoCg variance clipping
+- [ ] Temporal reprojection for fog/clouds (fewer steps)
 - [ ] Multithreaded scene gathering / command recording
 
 ### F4 — Building & gameplay systems

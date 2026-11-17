@@ -251,6 +251,18 @@ MeshData TerrainLod::build(const Job& job, float& minY, float& maxY) const
     MeshData md;
     md.vertices.reserve(size_t(V) * V + size_t(4 * V));
     std::vector<float> w(d.biomeNames.size());
+
+    // Splat layers: the textured biomes, then rock. Each vertex keeps its
+    // weight for (at most) three of them, the same three across the node;
+    // whatever weight is left over shows the vertex colour.
+    const TerrainLook& look = job.look;
+    const size_t nb = d.biomeNames.size(), layers = nb + 1;
+    std::vector<uint8_t> textured(layers);
+    for (size_t k = 0; k < nb; ++k) textured[k] = d.biomeTextured(int(k));
+    textured[nb] = look.rockMaterial.textured();
+    const bool splat = std::find(textured.begin(), textured.end(), 1) != textured.end();
+    std::vector<float> layerWeights(splat ? size_t(V) * V * layers : 0);
+    std::vector<double> layerTotals(layers, 0.0);
     minY = 1e30f;
     maxY = -1e30f;
     for (int b = 0; b <= N; ++b) {
@@ -293,13 +305,42 @@ MeshData TerrainLod::build(const Job& job, float& minY, float& maxY) const
             }
             pn = glm::normalize(pn);
 
+            float rock = 0.0f, mud = 0.0f;
             Vertex v;
             v.position = {p.x, y, p.y};
             v.normal = normalAt(a, b, 1);
-            v.uv = p;
-            v.tangent = glm::vec4(py, pn);
-            v.color = glm::vec4(d.groundColor(m_look, p, y, fine, w.data()), 1.0f);
+            v.uv = glm::vec2(0.0f);
+            // Parent normal as x/z (terrain normals always point up): .w is a splat weight.
+            v.tangent = glm::vec4(py, pn.x, pn.z, 0.0f);
+            v.color = glm::vec4(d.groundColor(look, p, y, fine, w.data(), &rock, &mud), 16777215.0f); // no splat layers
             md.vertices.push_back(v);
+            if (splat) {
+                float* lw = &layerWeights[(size_t(b) * V + size_t(a)) * layers];
+                for (size_t k = 0; k < nb; ++k) lw[k] = textured[k] ? w[k] * (1.0f - mud) * (1.0f - rock) : 0.0f;
+                lw[nb] = textured[nb] ? rock : 0.0f;
+                for (size_t k = 0; k < layers; ++k) layerTotals[k] += lw[k];
+            }
+        }
+    }
+    if (splat) {
+        // The node's three heaviest layers; indices packed into colour.a
+        // (8 bits each, 255 = unused), weights into uv.x, uv.y, tangent.w.
+        std::vector<size_t> order(layers);
+        for (size_t k = 0; k < layers; ++k) order[k] = k;
+        std::sort(order.begin(), order.end(), [&](size_t x, size_t y) { return layerTotals[x] > layerTotals[y]; });
+        int channel[3] = {-1, -1, -1};
+        float packed = 0.0f;
+        for (int c = 0; c < 3; ++c) {
+            const bool used = c < int(layers) && layerTotals[order[size_t(c)]] > 0.0 && order[size_t(c)] < 255;
+            if (used) channel[c] = int(order[size_t(c)]);
+            packed += float(used ? order[size_t(c)] : 255) * float(1 << (8 * c));
+        }
+        for (size_t vi = 0; vi < md.vertices.size(); ++vi) {
+            const float* lw = &layerWeights[vi * layers];
+            Vertex& v = md.vertices[vi];
+            v.color.a = packed;
+            v.uv = {channel[0] >= 0 ? lw[channel[0]] : 0.0f, channel[1] >= 0 ? lw[channel[1]] : 0.0f};
+            v.tangent.w = channel[2] >= 0 ? lw[channel[2]] : 0.0f;
         }
     }
     // Cells: split along the (i, j) -> (i + 1, j + 1) diagonal (as TerrainData::height and Jolt).

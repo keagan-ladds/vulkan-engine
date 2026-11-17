@@ -224,6 +224,79 @@ void TransparentPass::execute(RenderContext& ctx)
 }
 
 // -----------------------------------------------------------------------------
+// TemporalAAPass
+// -----------------------------------------------------------------------------
+
+namespace {
+struct TaaPush { // taa.frag
+    uint32_t current;
+    uint32_t history;
+    uint32_t depth;
+    uint32_t historyValid;
+    float feedback;
+};
+} // namespace
+
+TemporalAAPass::~TemporalAAPass()
+{
+    renderer().destroyPipeline(m_pipeline);
+}
+
+void TemporalAAPass::setup(RenderGraph& g)
+{
+    for (int i = 0; i < 2; ++i)
+        m_history[i] = g.createTexture("TAAHistory" + std::to_string(i), {.format = Renderer::kSceneColorFormat});
+    m_pipeline = renderer().createFullscreenPipeline({.fragment = "taa.frag", .colorFormats = {Renderer::kSceneColorFormat}});
+}
+
+void TemporalAAPass::declare(PassBuilder& b)
+{
+    m_active = renderer().settings().temporalAA;
+    if (!m_active) return;
+    Renderer& r = renderer();
+    const uint32_t w = m_frame & 1u;
+    b.use(r.sceneDepth(), Access::Sampled);
+    b.use(r.sceneColor(), Access::Sampled); // then the copy target
+    b.use(m_history[w], Access::ColorAttachment);
+    b.use(m_history[w ^ 1u], Access::Sampled);
+}
+
+void TemporalAAPass::execute(RenderContext& ctx)
+{
+    if (!m_active) {
+        m_frame = 0; // history is stale when turned back on
+        return;
+    }
+    Renderer& r = renderer();
+    RenderGraph& g = graph();
+    const uint32_t w = m_frame & 1u;
+    const Image& color = g.get(r.sceneColor()).image;
+    const bool valid = m_frame > 0 && color.extent.width == m_extent.width && color.extent.height == m_extent.height;
+    m_extent = color.extent;
+
+    // 1. Resolve into this frame's history.
+    ctx.fullscreen({{m_history[w]}}, m_pipeline,
+                   TaaPush{g.sampled(r.sceneColor()), g.sampled(m_history[w ^ 1u]), g.sampled(r.sceneDepth()), valid ? 1u : 0u,
+                           feedback});
+    // 2. Copy it back over the scene colour for the following passes.
+    g.transition(ctx.cmd, m_history[w], Access::TransferSrc);
+    g.transition(ctx.cmd, r.sceneColor(), Access::TransferDst);
+    VkImageCopy region{};
+    region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    region.extent = color.extent;
+    vkCmdCopyImage(ctx.cmd, g.get(m_history[w]).image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, color.handle,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    ++m_frame;
+}
+
+void TemporalAAPass::onGui()
+{
+    ImGui::Checkbox("Enabled (jitters the camera)", &renderer().settings().temporalAA);
+    ImGui::SliderFloat("Feedback", &feedback, 0.5f, 0.98f);
+}
+
+// -----------------------------------------------------------------------------
 // CompositePass
 // -----------------------------------------------------------------------------
 

@@ -38,9 +38,27 @@ class MeshRenderer;
 class Scene;
 class Shader;
 class TerrainLod;
+class Texture;
+
+// A tiling ground material (splat layer). Every texture is optional: without
+// an albedo the layer keeps the biome's vertex colour but can still add normal,
+// roughness and AO detail. Normal maps use the OpenGL convention (green = up).
+// The albedo's alpha, if any, is a height used to sharpen the borders between
+// layers (sand fills the gaps between stones...). Normal, roughness and AO are
+// packed into one texture when the terrain loads them.
+struct TerrainMaterial {
+    std::string albedo, normal, roughness, ao; // asset paths
+    float size = 4.0f;            // metres per texture repeat
+    glm::vec3 tint{1.0f};         // albedo multiplier
+    float normalStrength = 1.0f;
+    float roughnessValue = 0.9f;  // without a roughness map
+    bool textured() const { return !albedo.empty() || !normal.empty() || !roughness.empty() || !ao.empty(); }
+};
 
 struct TerrainBiome {
     std::string name = "Biome";
+    // Optional textured ground (otherwise the colours below, with detail noise).
+    TerrainMaterial material;
     // Ground colour: color mixed towards color2 by noise, plus an optional patch colour.
     glm::vec3 color{0.5f, 0.5f, 0.3f};
     glm::vec3 color2{0.5f, 0.5f, 0.3f};
@@ -111,6 +129,9 @@ struct TerrainLook {
     float steepStart = 0.3f, steepEnd = 0.5f; // slope (1 - n.y) where rock takes over
     float borderRockStart = 230.0f, borderRockEnd = 300.0f, borderRock = 0.6f;
     float brightnessVariation = 0.2f;
+    // Optional texture for rock (steep slopes, border mountains), projected
+    // from three sides so cliffs don't stretch it.
+    TerrainMaterial rockMaterial;
 };
 
 // An immutable snapshot of a terrain: its generator inputs plus a cache of
@@ -150,8 +171,11 @@ public:
     // and the biome weights for a point of that height and slope (1 - normal.y).
     float generateHeight(glm::vec2 p) const;
     void generateBiomes(glm::vec2 p, float height, float slope, float* weights) const; // biomeNames.size() weights
-    // Vertex colour of the ground (biome colours, mud, rock) for these weights.
-    glm::vec3 groundColor(const TerrainLook& look, glm::vec2 p, float height, glm::vec3 normal, const float* weights) const;
+    // Vertex colour of the ground (biome colours, mud, rock) for these weights,
+    // and how much of it is rock and mud.
+    glm::vec3 groundColor(const TerrainLook& look, glm::vec2 p, float height, glm::vec3 normal, const float* weights,
+                          float* rock = nullptr, float* mud = nullptr) const;
+    bool biomeTextured(int biome) const { return m_biomes[size_t(biome)].material.textured(); }
     glm::vec3 centre() const { return m_centre; }
 
     size_t cachedTiles() const;
@@ -227,6 +251,8 @@ public:
     // Biomes as JSON (reflection / scene files).
     Json biomesJson() const;
     void setBiomesJson(const Json& j);
+    static Json materialJson(const TerrainMaterial& m);
+    static TerrainMaterial materialFromJson(const Json& j);
 
     // Streaming state (F1 overlay / tests).
     uint32_t drawnNodes() const;
@@ -245,6 +271,9 @@ private:
     std::unique_ptr<TerrainLod> m_lod;
     std::shared_ptr<Shader> m_shader;
     std::vector<std::shared_ptr<Material>> m_levelMaterials;
+    std::shared_ptr<Texture> m_layerTable;                                     // splat layer parameters
+    std::vector<float> m_layerTableData;
+    std::unordered_map<std::string, std::shared_ptr<Texture>> m_layerTextures; // albedo / packed normal-roughness-AO
     GameObject* m_nodeObject = nullptr;           // child holding one MeshRenderer per drawn node
     std::vector<MeshRenderer*> m_nodeRenderers;
     std::unordered_map<int64_t, Component*> m_colliderTiles; // tile key -> Rigidbody (heightfield)

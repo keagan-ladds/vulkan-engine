@@ -103,6 +103,34 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
   stamp forcing it. Biome 0 is the default (fills the rest).
 - Steep slopes show a "rock" colour regardless of biome; near the water line
   the ground goes to mud.
+- **Ground materials (splat layers).** A biome can have a tiling `material`
+  instead of (or on top of) its colours, and the terrain an optional
+  `rockMaterial` for steep slopes and the border mountains. Every map is
+  optional:
+
+  ```json
+  "material": {"albedo": "textures/ground/sand_albedo.png",
+               "normal": "textures/ground/sand_normal.png",
+               "roughness": "textures/ground/sand_roughness.png",
+               "ao": "textures/ground/sand_ao.png",
+               "size": 4.0, "tint": [1, 1, 1], "normalStrength": 1.0, "roughnessValue": 0.9}
+  ```
+
+  `size` is metres per repeat. Normal maps use the OpenGL convention (green =
+  up). Without an albedo the layer keeps the biome colour but still adds the
+  normal / roughness / AO detail. The albedo's alpha, if present, is a height:
+  where layers meet, the higher texels win (stones poke through sand) instead
+  of a soft cross-fade. Normal, roughness and AO are packed into one texture
+  on load, so a layer costs two texture fetches.
+- Each terrain vertex blends up to three layers (the three that weigh most in
+  its LOD node); whatever weight is left (untextured biomes, mud) shows the
+  vertex colour. Rock is projected from three sides, so cliffs don't stretch.
+- Distance tiling: beyond ~6 repeats a second copy of each texture, rotated
+  and 3.7× larger, is blended in so the repeats stop lining up, and a large
+  scale noise (`detailTexture` at `detailScales.y`) varies the brightness.
+- Savanna: soil (savannah, camp), sand (desert), leaf litter (jungle) and rock
+  (rocky, cliffs); the swamp keeps its colours. The textures come from
+  `tools/generate_assets.py`.
 - `Terrain::biomeWeights(x, z)` gives the per-biome weights to anyone
   (foliage, grass, gameplay).
 

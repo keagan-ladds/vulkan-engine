@@ -17,6 +17,8 @@
 
 #include <ve/editor/Editor.hpp>
 #include <ve/world/Terrain.hpp>
+
+#include <random>
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SceneSerializer.hpp>
 #include <ve/ve.hpp>
@@ -174,6 +176,26 @@ void buildWorld(ve::Engine& engine)
     }
     if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
     if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser
+    r.settings().temporalAA = true;
+    // SAVANNA_LIGHTS=<n>[,0]: n small coloured point lights scattered around the camp
+    // (clustered lighting test; ",0" turns the clusters off for comparison).
+    if (const char* l = std::getenv("SAVANNA_LIGHTS")) {
+        int count = 0, clustered = 1;
+        std::sscanf(l, "%d,%d", &count, &clustered);
+        r.settings().clusteredLights = clustered != 0;
+        std::mt19937 rng(7);
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        for (int i = 0; i < count; ++i) {
+            const float x = (u(rng) - 0.5f) * 120.0f, z = (u(rng) - 0.5f) * 120.0f;
+            auto& o = scene.spawn("TestLight");
+            o.transform().setLocalPosition({x, (terrainPtr ? terrainPtr->height(x, z) : 0.0f) + 1.0f, z});
+            auto& pl = o.addComponent<ve::PointLight>();
+            pl.color = glm::vec3(u(rng), u(rng), u(rng)) * 0.8f + 0.2f;
+            pl.intensity = 6.0f;
+            pl.range = 6.0f + u(rng) * 6.0f;
+        }
+    }
+    if (const char* a = std::getenv("SAVANNA_TAA")) r.settings().temporalAA = a[0] == '1'; // SAVANNA_TAA=0 turns it off
     if (std::getenv("SAVANNA_AUTOTEST")) scene.spawn<AutoTest>(terrain);
     // SAVANNA_PHOTO=<samples>[,<resolution 0..4>[,<dof aperture>]]: take a photo-mode shot of the start view and quit.
     if (const char* p = std::getenv("SAVANNA_PHOTO")) {

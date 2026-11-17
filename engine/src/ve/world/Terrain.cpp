@@ -124,7 +124,8 @@ void TerrainData::generateBiomes(glm::vec2 p, float h, float slope, float* w) co
     w[0] = remaining;
 }
 
-glm::vec3 TerrainData::groundColor(const TerrainLook& look, glm::vec2 p, float h, glm::vec3 n, const float* weights) const
+glm::vec3 TerrainData::groundColor(const TerrainLook& look, glm::vec2 p, float h, glm::vec3 n, const float* weights,
+                                   float* rockOut, float* mudOut) const
 {
     glm::vec3 c(0.0f);
     for (size_t b = 0; b < m_biomes.size(); ++b) {
@@ -142,10 +143,14 @@ glm::vec3 TerrainData::groundColor(const TerrainLook& look, glm::vec2 p, float h
     }
     if (m_biomes.empty()) c = glm::vec3(0.5f);
     c *= 1.0f - look.brightnessVariation * 0.5f + look.brightnessVariation * noise::fbm(p * 0.15f, 2, 51);
-    c = glm::mix(c, look.mudColor, smooth(look.waterLevel + 1.0f, look.waterLevel - 0.2f, h));
+    const float mud = smooth(look.waterLevel + 1.0f, look.waterLevel - 0.2f, h);
+    c = glm::mix(c, look.mudColor, mud);
     const float steep = smooth(look.steepStart, look.steepEnd, 1.0f - n.y);
     const float edge = smooth(look.borderRockStart, look.borderRockEnd, std::max(std::abs(p.x - m_centre.x), std::abs(p.y - m_centre.z)));
-    return glm::mix(c, look.rockColor, std::max(steep, edge * look.borderRock));
+    const float rock = std::max(steep, edge * look.borderRock);
+    if (rockOut) *rockOut = rock;
+    if (mudOut) *mudOut = mud;
+    return glm::mix(c, look.rockColor, rock);
 }
 
 std::shared_ptr<const TerrainData::Tile> TerrainData::generateTile(int tx, int tz) const
@@ -457,6 +462,41 @@ uint32_t Terrain::drawnNodes() const
     return m_lod ? m_lod->stats().drawn : 0;
 }
 
+namespace {
+
+// Normal x/y, roughness and AO in one linear RGBA texture (two fetches per
+// layer instead of four). Maps of different sizes are resampled to the largest.
+std::shared_ptr<Texture> packSurfaceMap(Renderer& r, const AssetManager& assets, const TerrainMaterial& m)
+{
+    ImagePixels maps[3];
+    const std::string* paths[3] = {&m.normal, &m.roughness, &m.ao};
+    int w = 1, h = 1;
+    for (int k = 0; k < 3; ++k) {
+        if (paths[k]->empty()) continue;
+        maps[k] = loadImagePixels(assets.resolve(*paths[k]));
+        w = std::max(w, maps[k].width);
+        h = std::max(h, maps[k].height);
+    }
+    std::vector<uint8_t> px(size_t(w) * h * 4);
+    const uint8_t defaults[4] = {128, 128, uint8_t(std::clamp(m.roughnessValue, 0.0f, 1.0f) * 255.0f + 0.5f), 255};
+    auto at = [&](const ImagePixels& img, int x, int y, int c) {
+        return img.rgba[(size_t(y * img.height / h) * img.width + size_t(x * img.width / w)) * 4 + c];
+    };
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            uint8_t* o = &px[(size_t(y) * w + x) * 4];
+            o[0] = maps[0].width ? at(maps[0], x, y, 0) : defaults[0];
+            o[1] = maps[0].width ? at(maps[0], x, y, 1) : defaults[1];
+            o[2] = maps[1].width ? at(maps[1], x, y, 0) : defaults[2];
+            o[3] = maps[2].width ? at(maps[2], x, y, 0) : defaults[3];
+        }
+    }
+    return Texture::create2D(r, uint32_t(w), uint32_t(h), VK_FORMAT_R8G8B8A8_UNORM, px.data(), px.size(), true,
+                             SamplerType::LinearRepeat, "TerrainSurface:" + m.normal);
+}
+
+} // namespace
+
 void Terrain::updateMaterials()
 {
     Renderer& r = renderer();
@@ -476,14 +516,60 @@ void Terrain::updateMaterials()
             log::warn("Terrain: {}", e.what());
         }
     }
+    // Splat layers (biomes, then rock): a row of parameters each in a small
+    // float texture. Textures are loaded once and kept while in use.
+    std::vector<const TerrainMaterial*> layers;
+    for (const auto& b : biomes) layers.push_back(&b.material);
+    layers.push_back(&rockMaterial);
+    std::unordered_map<std::string, std::shared_ptr<Texture>> keep;
+    auto layerTexture = [&](const std::string& key, auto make) -> float {
+        auto it = keep.find(key);
+        if (it == keep.end()) {
+            auto old = m_layerTextures.find(key);
+            std::shared_ptr<Texture> tex;
+            try {
+                tex = old != m_layerTextures.end() ? old->second : make();
+            } catch (const std::exception& e) {
+                log::warn("Terrain: {}", e.what());
+            }
+            it = keep.emplace(key, tex).first;
+        }
+        return it->second ? float(it->second->index()) : -1.0f;
+    };
+    std::vector<float> table;
+    bool anyTextured = false;
+    for (const TerrainMaterial* lm : layers) {
+        float albedo = -1.0f, surface = -1.0f;
+        if (lm->textured()) {
+            anyTextured = true;
+            if (!lm->albedo.empty())
+                albedo = layerTexture("albedo:" + lm->albedo, [&] { return assets().loadTexture(lm->albedo, true); });
+            if (!lm->normal.empty() || !lm->roughness.empty() || !lm->ao.empty())
+                surface = layerTexture("surface:" + lm->normal + "|" + lm->roughness + "|" + lm->ao + "|" + std::to_string(lm->roughnessValue),
+                                       [&] { return packSurfaceMap(r, assets(), *lm); });
+        }
+        table.insert(table.end(), {albedo, surface, 1.0f / std::max(lm->size, 0.01f), lm->normalStrength,
+                                   lm->tint.x, lm->tint.y, lm->tint.z, lm->roughnessValue});
+    }
+    m_layerTextures = std::move(keep);
+    if (!anyTextured) {
+        m_layerTable.reset();
+        m_layerTableData.clear();
+    } else if (table != m_layerTableData) {
+        m_layerTable = Texture::create2D(r, 2, uint32_t(layers.size()), VK_FORMAT_R32G32B32A32_SFLOAT, table.data(),
+                                         table.size() * sizeof(float), false, SamplerType::NearestClamp, "TerrainLayers");
+        m_layerTableData = std::move(table);
+    }
+
     m_levelMaterials.resize(size_t(m_lod->levels()));
     for (int level = 0; level < m_lod->levels(); ++level) {
         auto& m = m_levelMaterials[size_t(level)];
         if (!m) m = r.createMaterial(m_shader);
         m->setTexture(0, detail);
+        m->setTexture(1, m_layerTable);
         m->setVector(0, {detailScales, 0.0f, 0.0f});
         m->setVector(1, {rockColor, float(wetnessSlot)});
-        m->setVector(2, {waterLevel, 0.0f, 0.0f, 0.0f});
+        m->setVector(2, {waterLevel, float(biomes.size()), 0.0f, 0.0f});
         const glm::vec2 morph = m_lod->morphRange(level);
         m->setVector(3, {morph, 0.0f, 0.0f});
     }
@@ -601,8 +687,37 @@ Json Terrain::biomesJson() const
                      {"patchCoverage", b.patchCoverage}, {"patchStrength", b.patchStrength},
                      {"minHeight", b.minHeight}, {"maxHeight", b.maxHeight}, {"maxSlope", b.maxSlope},
                      {"coverage", b.coverage}, {"coverageFrequency", b.coverageFrequency}, {"coverageSeed", b.coverageSeed}});
+        if (b.material.textured()) a.back()["material"] = materialJson(b.material);
     }
     return a;
+}
+
+Json Terrain::materialJson(const TerrainMaterial& m)
+{
+    Json j = Json::object();
+    if (!m.textured()) return j;
+    for (auto [key, path] : {std::pair{"albedo", &m.albedo}, {"normal", &m.normal}, {"roughness", &m.roughness}, {"ao", &m.ao}})
+        if (!path->empty()) j[key] = *path;
+    j["size"] = m.size;
+    j["tint"] = Json{m.tint.x, m.tint.y, m.tint.z};
+    j["normalStrength"] = m.normalStrength;
+    j["roughnessValue"] = m.roughnessValue;
+    return j;
+}
+
+TerrainMaterial Terrain::materialFromJson(const Json& j)
+{
+    TerrainMaterial m;
+    if (!j.is_object()) return m;
+    m.albedo = j.value("albedo", m.albedo);
+    m.normal = j.value("normal", m.normal);
+    m.roughness = j.value("roughness", m.roughness);
+    m.ao = j.value("ao", m.ao);
+    m.size = j.value("size", m.size);
+    m.tint = vec3From(j.value("tint", Json()), m.tint);
+    m.normalStrength = j.value("normalStrength", m.normalStrength);
+    m.roughnessValue = j.value("roughnessValue", m.roughnessValue);
+    return m;
 }
 
 void Terrain::setBiomesJson(const Json& j)
@@ -627,6 +742,7 @@ void Terrain::setBiomesJson(const Json& j)
         b.coverage = e.value("coverage", b.coverage);
         b.coverageFrequency = e.value("coverageFrequency", b.coverageFrequency);
         b.coverageSeed = e.value("coverageSeed", b.coverageSeed);
+        b.material = materialFromJson(e.value("material", Json()));
         biomes.push_back(b);
     }
     if (biomes.empty()) biomes.push_back(TerrainBiome{});
@@ -667,12 +783,17 @@ void registerTerrainTypes(TypeRegistry& r)
         t.field("borderRockEnd", &Terrain::borderRockEnd);
         t.field("borderRock", &Terrain::borderRock).range(0.0f, 1.0f).speed(0.01f);
         t.field("brightnessVariation", &Terrain::brightnessVariation).range(0.0f, 1.0f).speed(0.01f);
+        t.property("rockMaterial", FieldKind::Json, [](const Terrain& x) { return Terrain::materialJson(x.rockMaterial); },
+                   [](Terrain& x, const Json& j) { x.rockMaterial = Terrain::materialFromJson(j); })
+            .tooltip("optional rock texture (projected from three sides): {albedo, normal, roughness, ao, size, tint, "
+                     "normalStrength, roughnessValue}");
         t.field("detailTexture", &Terrain::detailTexture).assets(".png .jpg .jpeg .tga");
         t.field("detailScales", &Terrain::detailScales);
         t.field("wetnessSlot", &Terrain::wetnessSlot).range(-1.0f, 7.0f);
         t.property("biomes", FieldKind::Json, [](const Terrain& x) { return x.biomesJson(); },
                    [](Terrain& x, const Json& j) { x.setBiomesJson(j); })
-            .tooltip("[{name, color, color2, patchColor, patchFrequency, minHeight, maxHeight, maxSlope, coverage, ...}]; "
+            .tooltip("[{name, color, color2, patchColor, patchFrequency, minHeight, maxHeight, maxSlope, coverage, ..., "
+                     "material: {albedo, normal, roughness, ao, size, tint, normalStrength, roughnessValue}}]; "
                      "biome 0 fills the rest, later biomes paint over earlier ones");
     });
     r.add<TerrainStamp>("TerrainStamp", [](TypeBuilder<TerrainStamp>& t) {

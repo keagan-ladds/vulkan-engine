@@ -127,6 +127,17 @@ std::shared_ptr<Texture> loadTextureFile(Renderer& renderer, const std::filesyst
     return tex;
 }
 
+ImagePixels loadImagePixels(const std::filesystem::path& file)
+{
+    const std::string path = file.string();
+    int w = 0, h = 0, channels = 0;
+    stbi_uc* px = stbi_load(path.c_str(), &w, &h, &channels, 4);
+    if (!px) throw std::runtime_error("Failed to load " + path + ": " + stbi_failure_reason());
+    ImagePixels img{w, h, std::vector<uint8_t>(px, px + size_t(w) * h * 4)};
+    stbi_image_free(px);
+    return img;
+}
+
 std::shared_ptr<Texture> loadTextureMemory(Renderer& renderer, const void* data, size_t size, bool srgb,
                                            bool mipmaps, SamplerType sampler, const std::string& name)
 {

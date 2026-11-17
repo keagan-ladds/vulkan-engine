@@ -233,6 +233,41 @@ vec3 veAmbient(VeSurface s, vec3 V)
     return (diffuse + specular) * s.ao;
 }
 
+// The point lights that can reach a point (its light cluster), for shaders
+// with their own lighting loop:
+//   VeLightList list = veLightList(P, viewDepth);
+//   for (uint k = 0u; k < list.count; ++k) {
+//       VePointLight L = lights.point[veLightAt(list, k)];
+//       ...
+//   }
+// Off screen, or if the clusters overflowed, the list is every point light.
+struct VeLightList {
+    uint first, count;
+    bool clustered;
+};
+
+VeLightList veLightList(vec3 P, float viewDepth)
+{
+    VeLightList list = VeLightList(0u, frame.lightCounts.y, false);
+    if (lights.clusterParams.z == 0.0 || frame.lightCounts.y == 0u) return list;
+    vec4 clip = frame.viewProj * vec4(P, 1.0);
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (clip.w <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) return list;
+    ivec3 c = ivec3(int(uv.x * VE_CLUSTER_X), int(uv.y * VE_CLUSTER_Y),
+                    clamp(int(floor(log(max(viewDepth, 1e-3)) * lights.clusterParams.x + lights.clusterParams.y)), 0, VE_CLUSTER_Z - 1));
+    uint v = lights.clusters[(c.z * VE_CLUSTER_Y + c.y) * VE_CLUSTER_X + c.x];
+    return VeLightList(v >> 9, v & 0x1FFu, true);
+}
+
+VeLightList veLightList(vec3 P) { return veLightList(P, dot(P - frame.cameraPosition.xyz, frame.cameraForward.xyz)); }
+
+uint veLightAt(VeLightList list, uint k)
+{
+    if (!list.clustered) return k;
+    uint i = list.first + k;
+    return (lights.clusterLights[i >> 2] >> (8u * (i & 3u))) & 0xFFu;
+}
+
 // `sun0Shadow` returns the shadow of directional light 0 at the surface if it
 // was computed (the light faces the surface), or -1, so shaders that add their
 // own sun terms (grass translucency) don't sample the shadow map twice.
@@ -251,7 +286,11 @@ vec3 veEvaluateLighting(VeSurface s, out float sun0Shadow)
         if (i == 0u) sun0Shadow = shadow;
         color += veBRDF(s, V, l, L.color.rgb * shadow);
     }
-    for (uint i = 0; i < frame.lightCounts.y; ++i) {
+    // Point lights: only those listed in this point's cluster (all of them
+    // if the clusters overflowed or the point is off screen).
+    VeLightList list = veLightList(s.position, viewDepth);
+    for (uint k = 0; k < list.count; ++k) {
+        uint i = veLightAt(list, k);
         VePointLight L = lights.point[i];
         vec3 toLight = L.positionRange.xyz - s.position;
         float dist = length(toLight);

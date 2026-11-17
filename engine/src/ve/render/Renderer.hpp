@@ -83,6 +83,14 @@ struct RendererSettings {
     uint32_t shadowLodBias = 1;    // shadows use this many LODs coarser than the camera
     bool lodCrossfade = true;      // dithered transitions instead of popping
     float lodFadeBand = 0.15f;     // transition width, fraction of the LOD threshold
+    // Point lights are binned into screen/depth clusters so each pixel only
+    // evaluates the lights that reach it (off = every pixel loops over all).
+    bool clusteredLights = true;
+    // --- Anti-aliasing ---
+    // Temporal AA: the camera jitters by a sub-pixel offset every frame and
+    // TemporalAAPass blends each frame into a reprojected history. Smooths
+    // edges, foliage cutouts and dithering; moving objects can smear slightly.
+    bool temporalAA = false;
     uint32_t maxInstances = 262144;               // total across all groups (64 B each)
     uint32_t maxVisibleInstancesPerView = 1u << 20; // sum over batches of group capacity (4 B each, per cull view)
 };
@@ -284,6 +292,7 @@ private:
     void gatherScene(Scene& scene);
     void setupCamera(Scene& scene);
     void gatherLights(Scene& scene);
+    void buildLightClusters(uint32_t pointLights);
     void buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uint32_t shadowSlot, GpuDirectionalLight& gpu);
     void fillGlobals(const Time& time);
     VkPipeline buildFullscreenPipeline(const FullscreenPipelineDesc& desc);
@@ -353,7 +362,8 @@ private:
     std::vector<uint32_t> m_freeMaterials;
     uint32_t m_materialHighWater = 0;
 
-    std::unique_ptr<LightBuffer> m_lights; // ~30 KB, heap allocated
+    std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
+    uint32_t m_clusterWords = 0;          // used words of LightBuffer::clusterLights
     FrameData m_frame;
     glm::mat4 m_prevViewProj{1.0f};
     float m_gpuFrameMs = 0.0f;

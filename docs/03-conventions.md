@@ -93,6 +93,10 @@ go.addComponent<Spin>().speed = 3.0f;
    **Opaque shaders also write the thin G-buffer** (used by SSGI/SSR):
    `layout(location = 1) out vec4 outGBuffer;` … `outGBuffer = veGBuffer(N, roughness);`.
    If you leave it out, the shader still works, but SSGI/SSR see garbage for those pixels.
+   Shaders with their own lighting loop should only visit the point lights of
+   the pixel's cluster: `VeLightList list = veLightList(P);` then
+   `lights.point[veLightAt(list, k)]` for `k < list.count` (see the template's
+   `mygame_toon.frag`).
 2. Document the parameter layout at the top of the shader.
 3. In C++:
    ```cpp
