@@ -199,6 +199,51 @@ Put files under `<game>/assets/` (copied next to the exe on build), then
 `assets().loadTexture("textures/x.png", srgb)`, `loadModel("models/x.gltf")`
 followed by `scene.instantiate(*model)`, or `loadAudio("audio/x.wav")`.
 
+### Interaction ("press E to ...")
+
+```cpp
+// The thing (a component; subclass it or set the callbacks):
+auto& use = chest.addComponent<ve::Interactable>();
+use.prompt = "Open chest";                       // or use.promptFn = [&] { return ...; } ("" = can't now)
+use.onUse = [&](ve::GameObject& user) { chest.open(); };
+use.focusOffset = {0, 0.5f, 0};                  // aim point for objects without a collider
+
+// The player: finds the focus each frame (main camera view) and uses it on the action.
+auto& who = player.addComponent<ve::Interactor>();
+who.action = "Use";                              // an Input action (in.bindAction("Use", Key::E))
+// HUD: if (auto p = who.prompt(); !p.empty()) draw("[E] " + p);
+```
+
+Focus is what the eye ray hits (an Interactable on that object or a
+parent), else the best Interactable in a `coneDegrees` view cone within
+reach that nothing blocks. The engine never draws prompts: the game decides
+how (Savanna's HUD shows "[E] <prompt>").
+
+### Save games
+
+```cpp
+// Anything with state worth keeping: implement ve::Saveable (GameObject or Component).
+class Chest : public ve::GameObject, public ve::Saveable {
+    void saveState(ve::Json& out) const override { out["open"] = m_open; }
+    void loadState(const ve::Json& in) override { m_open = in.value("open", false); }
+};
+
+ve::save::saveGame(scene, "slot1", {{"gold", gold}});          // + the game's own data
+// Loading: rebuild the level first (pickups collected after the save come
+// back), then apply. Savanna does it behind the loading screen (World.hpp):
+engine.beginLoading(makeLoadingScene());
+engine.addLoadStep("Leaving", [&] { engine.scene().clear(); });
+engine.addLoadStep("Loading", [&] { buildLevel(engine); });
+engine.addLoadStep("Restoring", [&, save] { ve::save::apply(engine.scene(), save); /* + game data */ });
+```
+
+A save records moved physics objects of the level, level objects that are
+gone, and every Saveable's state, keyed by persistent id (level objects) or
+name (code-spawned ones, so give those unique names). The engine's Foliage
+(chopped / picked instances), Terrain (edits) and DayNightCycle (time) are
+Saveable. Slots: `ve::save::folder()` (per-user data folder, or
+`EngineConfig::saveFolder`, or `VE_SAVE_DIR`), written atomically.
+
 ### Loading screens
 
 ```cpp

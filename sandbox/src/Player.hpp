@@ -13,6 +13,7 @@
 
 #include <ve/physics/Physics.hpp>
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/SaveGame.hpp>
 
 #include <memory>
 #include <vector>
@@ -29,9 +30,12 @@ class Terrain;
 namespace savanna {
 
 
-class Player : public ve::GameObject {
+class Player : public ve::GameObject, public ve::Saveable {
 public:
     Player();
+    // Save games: where the player stands and looks.
+    void saveState(ve::Json& out) const override;
+    void loadState(const ve::Json& in) override;
 
     void start() override;
     void update(float dt) override;
@@ -48,7 +52,6 @@ public:
     glm::vec3 lookDirection() const;
     bool flying() const { return m_fly; }
     bool grounded() const;
-    bool usePressed() const { return m_usePressed; }
 
     float walkSpeed = 4.5f;
     float sprintSpeed = 9.0f;
@@ -65,7 +68,6 @@ private:
     float m_yaw = 0.0f, m_pitch = 0.0f;
     bool m_jumpRequested = false;
     bool m_fly = false;
-    bool m_usePressed = false;
 
     std::shared_ptr<ve::Mesh> m_rockMesh;
     std::shared_ptr<ve::Material> m_rockMaterial;

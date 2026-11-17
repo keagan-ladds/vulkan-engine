@@ -449,6 +449,31 @@ void Foliage::rebuild()
         }
     }
     m_built = true;
+    if (m_hasPendingOverrides) {
+        sys.setOverrides(m_pendingOverrides);
+        m_hasPendingOverrides = false;
+    }
+}
+
+void Foliage::saveState(Json& out) const
+{
+    Json list = Json::array();
+    const auto overrides = m_system ? m_system->overrides() : m_pendingOverrides;
+    for (const auto& [id, state] : overrides) list.push_back({id, state});
+    out["overrides"] = std::move(list);
+}
+
+void Foliage::loadState(const Json& in)
+{
+    std::vector<std::pair<uint64_t, uint32_t>> overrides;
+    for (const Json& e : in.value("overrides", Json::array()))
+        if (e.is_array() && e.size() == 2) overrides.push_back({e[0].get<uint64_t>(), e[1].get<uint32_t>()});
+    if (m_system) {
+        m_system->setOverrides(overrides);
+    } else {
+        m_pendingOverrides = std::move(overrides); // applied when the system is built
+        m_hasPendingOverrides = true;
+    }
 }
 
 FoliageWorld Foliage::makeWorld(const std::shared_ptr<const TerrainData>& td) const

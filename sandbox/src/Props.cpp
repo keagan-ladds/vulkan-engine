@@ -9,9 +9,12 @@
 #include <ve/world/Terrain.hpp>
 #include "Vegetation.hpp"
 #include "Villager.hpp"
+#include "World.hpp"
 
 #include <ve/anim/Animation.hpp>
 #include <ve/assets/AssetManager.hpp>
+#include <ve/scene/SaveGame.hpp>
+#include <ve/gameplay/Interaction.hpp>
 #include <ve/audio/Ambience.hpp>
 #include <ve/audio/Audio.hpp>
 #include <ve/audio/Music.hpp>
@@ -295,6 +298,11 @@ void Sunstone::start()
     m_player = dynamic_cast<Player*>(scene().find("Player"));
 
     m_base = transform().position();
+    // No collider: the player's Interactor finds it in its view cone.
+    auto& use = addComponent<ve::Interactable>();
+    use.prompt = "Pick up sunstone";
+    use.focusOffset = {0.0f, 0.6f, 0.0f};
+    use.onUse = [this](ve::GameObject&) { collect(); };
     m_visual = &scene().spawn("SunstoneVisual");
     m_visual->setParent(this, false);
     m_visual->addComponent<ve::MeshRenderer>(mesh, material);
@@ -311,16 +319,6 @@ void Sunstone::update(float dt)
     m_visual->transform().setLocalPosition({0.0f, 0.6f + 0.15f * std::sin(m_t * 2.0f), 0.0f});
     m_visual->transform().setLocalRotation(glm::angleAxis(m_t * 1.2f, glm::normalize(glm::vec3(0.3f, 1.0f, 0.1f))));
 
-    // Pick up when close, roughly looked at, and "Use" pressed.
-    if (!m_player) return;
-    const glm::vec3 toStone = m_visual->transform().position() - m_player->eyePosition();
-    const float dist = glm::length(toStone);
-    if (dist < 3.0f && glm::dot(toStone / dist, m_player->lookDirection()) > 0.6f) {
-        GameState& gs = gameState();
-        gs.message = "[E] Pick up sunstone";
-        gs.messageTimer = 0.1f;
-        if (m_player->usePressed()) collect();
-    }
 }
 
 void Sunstone::collect()
@@ -694,15 +692,24 @@ void AutoTest::update(float dt)
         ++m_step;
     } else if (m_step == 7 && m_t > 1.0f) {
         shot("1-acacia");
+        // Step up to the trunk and look at it: the player's Interactor should focus it.
+        if (const auto info = scene().findFirst<ve::Foliage>()->system()->instance(m_tree))
+            static_cast<Player*>(scene().find("Player"))->setPose(groundAt(glm::vec2(info->position.x + 1.3f, info->position.z)), 90.0f, -10.0f);
         m_t = 0.0f;
         ++m_step;
     } else if (m_step == 8 && m_t > 0.3f) {
         ve::FoliageSystem* foliage = scene().findFirst<ve::Foliage>()->system();
         auto* tree = dynamic_cast<ChoppableTree*>(foliage->promoted(m_tree));
         log(std::string("acacia promoted to a ChoppableTree: ") + (tree ? "yes" : "NO"));
-        int felled = 0;
-        for (int i = 0; tree && i < ChoppableTree::kChops; ++i) felled += tree->chop() ? 1 : 0;
-        log("chopped " + std::to_string(ChoppableTree::kChops) + " times: felled " + std::to_string(felled) + ", state '" +
+        // Through the engine's interaction system, like pressing E.
+        auto* who = scene().find("Player")->getComponent<ve::Interactor>();
+        const ve::Interactable* focus = who ? who->focus() : nullptr;
+        log("interactor focus: " + std::string(focus && &focus->gameObject() == tree ? "the acacia" : focus ? focus->gameObject().name() : "nothing") +
+            ", prompt '" + (who ? who->prompt() : std::string()) + "'");
+        int uses = 0;
+        for (int i = 0; who && i < ChoppableTree::kChops; ++i) uses += who->interact() ? 1 : 0;
+        const bool felled = foliage->state(m_tree) != 0;
+        log("chopped " + std::to_string(uses) + " times: felled " + std::to_string(felled ? 1 : 0) + ", state '" +
             stateLabel(*foliage, m_tree) + "', wood " + std::to_string(gameState().wood));
         static_cast<Player*>(scene().find("Player"))->teleport(groundAt({1200.0f, -300.0f}), 0.0f); // far away: the cell unloads
         m_t = 0.0f;
@@ -780,8 +787,56 @@ void AutoTest::update(float dt)
         }
         log("villagers " + std::to_string(i) + ": " + line + "; skinned this frame " + std::to_string(renderer().skinning().skinnedThisFrame()));
         if (m_step == 15) shot("5-villagers");
-        if (m_step == 16) engine().quit();
+        if (m_step == 16) {
+            // Interaction without a collider: face a sunstone 2 m away (the Interactor's view cone).
+            auto stones = scene().findAllWithTag("collectible");
+            if (!stones.empty()) {
+                const glm::vec3 s = stones.front()->transform().position();
+                auto* player = static_cast<Player*>(scene().find("Player"));
+                player->setPose(groundAt(glm::vec2(s.x + 2.0f, s.z)), 90.0f, -12.0f);
+            }
+        }
         m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 17 && m_t > 0.5f) {
+        auto* who = scene().find("Player")->getComponent<ve::Interactor>();
+        const int before = gameState().collected;
+        const std::string prompt = who ? who->prompt() : std::string();
+        const bool used = who && who->interact();
+        log("sunstone via the interactor: prompt '" + prompt + "', used " + (used ? "yes" : "no") + ", collected " +
+            std::to_string(before) + " -> " + std::to_string(gameState().collected));
+        // Save games: save now, change things, load, and check they're back.
+        const GameState& gs = gameState();
+        s_expect = {gs.collected, gs.wood, gs.berries, Sunstone::remaining(scene()), scene().find("Player")->transform().position(), m_tree.packed()};
+        log(std::string("saved: ") + (saveProgress(scene(), "autotest") ? "yes" : "NO") + " (collected " + std::to_string(gs.collected) +
+            ", wood " + std::to_string(gs.wood) + ", " + std::to_string(s_expect.stones) + " stones left)");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 18 && m_t > 0.5f) {
+        auto stones = scene().findAllWithTag("collectible");
+        if (!stones.empty()) static_cast<Sunstone*>(stones.front())->collect();
+        gameState().wood += 5;
+        static_cast<Player*>(scene().find("Player"))->teleport(groundAt({1200.0f, -300.0f}), 0.0f);
+        log("after the save: collected " + std::to_string(gameState().collected) + ", wood " + std::to_string(gameState().wood) +
+            ", player moved 1.2 km");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 19 && m_t > 0.5f) {
+        s_resume = 20; // the reloaded level's AutoTest carries on
+        log(std::string("loading the save (level rebuilt behind the loading screen): ") + (loadProgress("autotest") ? "started" : "NO SAVE"));
+        ++m_step;
+    } else if (m_step == 20 && m_t > 3.0f) {
+        const GameState& gs = gameState();
+        const glm::vec3 p = scene().find("Player")->transform().position();
+        auto* foliage = scene().findFirst<ve::Foliage>();
+        const ve::FoliageInstanceId tree = ve::FoliageInstanceId::unpack(s_expect.tree);
+        const std::string treeState = foliage && foliage->system() ? stateLabel(*foliage->system(), tree) : "?";
+        log("after loading: collected " + std::to_string(gs.collected) + " (saved " + std::to_string(s_expect.collected) + "), wood " +
+            std::to_string(gs.wood) + " (" + std::to_string(s_expect.wood) + "), stones left " + std::to_string(Sunstone::remaining(scene())) +
+            " (" + std::to_string(s_expect.stones) + "), player " + std::to_string(glm::distance(p, s_expect.player)) +
+            " m from the saved spot, chopped acacia '" + treeState + "'");
+        ve::save::remove("autotest");
+        engine().quit();
         ++m_step;
     }
 }
@@ -809,6 +864,35 @@ void Hud::findEnvironment()
     find(m_dayNight, m_dayNightId);
 }
 
+bool saveProgress(ve::Scene& scene, const std::string& slot)
+{
+    const GameState& gs = gameState();
+    const bool ok = ve::save::saveGame(scene, slot, {{"collected", gs.collected}, {"wood", gs.wood}, {"berries", gs.berries}});
+    gameState().message = ok ? "Game saved" : "Saving failed";
+    gameState().messageTimer = 2.0f;
+    return ok;
+}
+
+void applyGameData(const ve::Json& game)
+{
+    GameState& gs = gameState();
+    gs.collected = game.value("collected", 0);
+    gs.wood = game.value("wood", 0);
+    gs.berries = game.value("berries", 0);
+    gs.message = "Game loaded";
+    gs.messageTimer = 2.0f;
+}
+
+bool loadProgress(const std::string& slot)
+{
+    const bool ok = reloadWithSave(ve::Engine::get(), slot);
+    if (!ok) {
+        gameState().message = "No saved game";
+        gameState().messageTimer = 2.0f;
+    }
+    return ok;
+}
+
 void Hud::update(float dt)
 {
     gameState().total = gameState().collected + Sunstone::remaining(scene()); // stones can be added in the editor
@@ -817,6 +901,8 @@ void Hud::update(float dt)
     findEnvironment();
     if (input().keyPressed(ve::Key::R) && m_weather) m_weather->next(12.0f);
     if (input().keyPressed(ve::Key::H)) m_showHelp = !m_showHelp;
+    if (input().keyPressed(ve::Key::F5)) saveProgress(scene(), "quick");
+    if (input().keyPressed(ve::Key::F9)) loadProgress("quick");
     // A stand-in for a fight until there are enemies: game code pushes a mood
     // when combat starts and pops it when it ends; the music returns to
     // whatever was playing (camp or explore).
@@ -871,17 +957,21 @@ void Hud::onGui()
         }
     }
 
-    // Centre message (pickup prompt etc).
-    if (gs.messageTimer > 0.0f && !gs.message.empty()) {
-        const ImVec2 ms = ImGui::CalcTextSize(gs.message.c_str());
+    // Centre message: the interaction prompt (what the player looks at), or the last event.
+    std::string centre = gs.messageTimer > 0.0f ? gs.message : std::string();
+    if (const auto* who = m_player.getComponent<ve::Interactor>(); who && centre.empty())
+        if (const std::string p = who->prompt(); !p.empty()) centre = "[E] " + p;
+    if (!centre.empty()) {
+        const std::string& message = centre;
+        const ImVec2 ms = ImGui::CalcTextSize(message.c_str());
         const ImVec2 mp(c.x - ms.x * 0.5f, c.y + 40.0f);
         dl->AddRectFilled({mp.x - 8, mp.y - 4}, {mp.x + ms.x + 8, mp.y + ms.y + 4}, IM_COL32(20, 14, 8, 150), 5.0f);
-        dl->AddText(mp, IM_COL32(255, 220, 150, 255), gs.message.c_str());
+        dl->AddText(mp, IM_COL32(255, 220, 150, 255), message.c_str());
     }
 
     if (m_showHelp) {
         const char* help = "WASD move  Shift sprint  Space jump  F fly  E pick up  Q/RMB throw\n"
-                           "T/G time +/-  R weather  M combat music  Tab mouse  F1 debug  F12 photo mode  H hide help";
+                           "T/G time +/-  R weather  M combat music  Tab mouse  F5/F9 save/load  F1 debug  F12 photo mode  H hide help";
         const ImVec2 hs = ImGui::CalcTextSize(help);
         const ImVec2 hp(16.0f, io.DisplaySize.y - hs.y - 16.0f);
         dl->AddRectFilled({hp.x - 8, hp.y - 6}, {hp.x + hs.x + 8, hp.y + hs.y + 6}, IM_COL32(20, 14, 8, 120), 6.0f);

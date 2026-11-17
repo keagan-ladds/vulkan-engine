@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <functional>
 #include <random>
 
 namespace ve {
@@ -234,6 +235,13 @@ std::vector<GameObject*> SceneSerializer::loadJson(Scene& scene, const Json& jso
 {
     std::vector<GameObject*> roots;
     for (const Json& oj : json.value("objects", Json::array())) roots.push_back(createObject(scene, oj));
+    // Remember the level's objects (save games record which ones are gone).
+    std::function<void(GameObject&)> mark = [&](GameObject& o) {
+        if (o.persistent) scene.addLevelObject(o.id());
+        for (Transform* c : o.transform().children()) mark(c->gameObject());
+    };
+    for (GameObject* r : roots)
+        if (r) mark(*r);
     return roots;
 }
 

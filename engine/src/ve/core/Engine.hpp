@@ -54,6 +54,8 @@ struct EngineConfig {
     // <exe>/assets and <exe>/shaders are always searched.
     std::vector<std::filesystem::path> assetPaths;
     std::vector<std::filesystem::path> shaderPaths;
+    // Save games (ve::save): empty = the platform's per-user data folder ("<title>/saves").
+    std::filesystem::path saveFolder;
 };
 
 class Engine {

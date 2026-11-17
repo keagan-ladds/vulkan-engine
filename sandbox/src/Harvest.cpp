@@ -3,6 +3,7 @@
 #include "Player.hpp"
 #include "Props.hpp"
 
+#include <ve/gameplay/Interaction.hpp>
 #include <ve/physics/Physics.hpp>
 #include <ve/scene/Reflection.hpp>
 #include <ve/scene/Scene.hpp>
@@ -15,27 +16,20 @@ VE_REGISTER_TYPE(ChoppableTree, "ChoppableTree") { t.category("Savanna"); }
 VE_REGISTER_TYPE(BerryBush, "BerryBush") { t.category("Savanna"); }
 
 // -----------------------------------------------------------------------------
-// Interactable
+// Harvestable
 // -----------------------------------------------------------------------------
 
-ve::FoliageLink* Interactable::link() const
+ve::FoliageLink* Harvestable::link() const
 {
     return getComponent<ve::FoliageLink>();
 }
 
-void Interactable::update(float)
+void Harvestable::start()
 {
-    auto* player = dynamic_cast<Player*>(scene().find("Player"));
-    if (!player) return;
-    // Looked at within reach: the ray from the eye hits this object's collider.
-    const auto hit = physics().raycast(player->eyePosition(), player->lookDirection(), 3.0f);
-    if (!hit || hit->gameObject != this) return;
-    const std::string text = prompt();
-    if (text.empty()) return;
-    GameState& gs = gameState();
-    gs.message = text;
-    gs.messageTimer = 0.1f;
-    if (player->usePressed()) use();
+    // The engine finds it (raycast from the player's eye) and fires Use.
+    auto& i = addComponent<ve::Interactable>();
+    i.promptFn = [this] { return prompt(); };
+    i.onUse = [this](ve::GameObject&) { use(); };
 }
 
 // -----------------------------------------------------------------------------
@@ -46,7 +40,7 @@ std::string ChoppableTree::prompt() const
 {
     const ve::FoliageLink* l = link();
     if (!l || l->info.state != 0) return {}; // already a stump
-    return "[E] Chop tree (" + std::to_string(chops) + "/" + std::to_string(kChops) + ")";
+    return "Chop tree (" + std::to_string(chops) + "/" + std::to_string(kChops) + ")";
 }
 
 bool ChoppableTree::chop()
@@ -71,7 +65,7 @@ bool ChoppableTree::chop()
 std::string BerryBush::prompt() const
 {
     const ve::FoliageLink* l = link();
-    return l && l->info.state == 0 ? "[E] Pick berries" : std::string();
+    return l && l->info.state == 0 ? "Pick berries" : std::string();
 }
 
 bool BerryBush::pick()
@@ -94,6 +88,20 @@ bool BerryBush::pick()
 Regrowth* Regrowth::find(ve::Scene& scene)
 {
     return scene.findFirst<Regrowth>();
+}
+
+void Regrowth::saveState(ve::Json& out) const
+{
+    ve::Json due = ve::Json::array();
+    for (const auto& [id, t] : m_due) due.push_back({id, t - m_time}); // seconds left
+    out["due"] = std::move(due);
+}
+
+void Regrowth::loadState(const ve::Json& in)
+{
+    m_due.clear();
+    for (const ve::Json& e : in.value("due", ve::Json::array()))
+        if (e.is_array() && e.size() == 2) m_due[e[0].get<uint64_t>()] = m_time + e[1].get<float>();
 }
 
 void Regrowth::schedule(uint64_t instanceId, float seconds)

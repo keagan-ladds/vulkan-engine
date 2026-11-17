@@ -81,6 +81,11 @@ public:
     // Highest-priority active Camera (see Camera::priority).
     Camera* mainCamera() const;
 
+    // Persistent objects created from a level / scene file (save games record
+    // which of them are gone); SceneSerializer::loadJson adds them.
+    const std::vector<uint64_t>& levelObjects() const { return m_levelObjects; }
+    void addLevelObject(uint64_t id) { m_levelObjects.push_back(id); }
+
     // --- Engine internal -----------------------------------------------------------
     void startPending();
     void fixedUpdate(float dt);
@@ -97,6 +102,7 @@ public:
     static void callComponents(GameObject& o, uint8_t bit, Hook&& hook);
 
 private:
+    std::vector<uint64_t> m_levelObjects;
     friend class GameObject;
     // Components registered under one exact type.
     struct Bucket {

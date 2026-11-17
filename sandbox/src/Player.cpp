@@ -1,5 +1,6 @@
 #include "Player.hpp"
 
+#include <ve/gameplay/Interaction.hpp>
 #include <ve/world/Grass.hpp>
 #include <ve/world/Terrain.hpp>
 
@@ -36,6 +37,7 @@ Player::Player() : GameObject("Player")
     m_controller->maxSlopeDegrees = 48.0f;
     m_controller->stepHeight = 0.45f;
     addComponent<ve::GrassBender>().radius = 0.7f; // walking through grass parts it
+    addComponent<ve::Interactor>().action = "Use";   // looks for ve::Interactables (trees, bushes, sunstones)
 }
 
 void Player::start()
@@ -64,6 +66,20 @@ void Player::teleport(const glm::vec3& feet, float yaw)
     m_yaw = yaw;
     transform().setPosition(feet);
     m_controller->teleport(feet);
+}
+
+void Player::saveState(ve::Json& out) const
+{
+    const glm::vec3 p = transform().position();
+    out = {{"position", {p.x, p.y, p.z}}, {"yaw", m_yaw}, {"pitch", m_pitch}, {"flying", m_fly}};
+}
+
+void Player::loadState(const ve::Json& in)
+{
+    const ve::Json& p = in.value("position", ve::Json::array());
+    if (p.is_array() && p.size() == 3) teleport({p[0].get<float>(), p[1].get<float>(), p[2].get<float>()}, in.value("yaw", m_yaw));
+    m_pitch = in.value("pitch", m_pitch);
+    m_fly = in.value("flying", m_fly);
 }
 
 void Player::setPose(const glm::vec3& feet, float yawDegrees, float pitchDegrees)
@@ -136,7 +152,7 @@ void Player::update(float)
         m_fly = !m_fly;
         if (!m_fly) m_controller->teleport(transform().position()); // land where we are
     }
-    m_usePressed = in.actionPressed("Use");
+
     if (in.actionPressed("Throw")) throwRock();
 
     if (m_fly) {

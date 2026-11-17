@@ -21,6 +21,7 @@
 
 #include "ve/scene/GameObject.hpp"
 #include "ve/scene/Reflection.hpp"
+#include "ve/scene/SaveGame.hpp"
 
 #include <glm/glm.hpp>
 
@@ -248,8 +249,14 @@ private:
 
 // Shape fields (seed, size, cellSize, noise, border...) come from TerrainShape,
 // colours (rock, mud, waterLevel...) from TerrainLook.
-class Terrain : public GameObject, public TerrainShape, public TerrainLook {
+class Terrain : public GameObject, public TerrainShape, public TerrainLook, public Saveable {
 public:
+    // Save games: runtime edits (brushes applied by the game).
+    void saveState(Json& out) const override { out["edits"] = editsJson(); }
+    void loadState(const Json& in) override
+    {
+        if (in.contains("edits")) setEditsJson(in["edits"]);
+    }
     Terrain();
     ~Terrain() override;
     void start() override;

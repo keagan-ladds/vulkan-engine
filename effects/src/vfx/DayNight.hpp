@@ -9,6 +9,7 @@
 // =============================================================================
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/SaveGame.hpp>
 
 namespace ve {
 class DirectionalLight;
@@ -18,9 +19,11 @@ namespace vfx {
 
 class Weather;
 
-class DayNightCycle : public ve::GameObject {
+class DayNightCycle : public ve::GameObject, public ve::Saveable {
 public:
     DayNightCycle();
+    void saveState(ve::Json& out) const override { out["timeOfDay"] = timeOfDay; }
+    void loadState(const ve::Json& in) override { timeOfDay = in.value("timeOfDay", timeOfDay); }
 
     void start() override;
     void update(float dt) override;

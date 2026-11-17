@@ -1,6 +1,7 @@
 #include "ve/scene/Reflection.hpp"
 
 #include "ve/anim/Animation.hpp"
+#include "ve/gameplay/Interaction.hpp"
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Ambience.hpp"
@@ -118,6 +119,19 @@ void registerBuiltinTypes()
         t.field("hiddenNodes", &ModelInstance::hiddenNodes).tooltip("Comma-separated node names to leave out, e.g. Door");
         t.field("animation", &ModelInstance::animation).tooltip("Animated models: the clip to loop (empty = the first)");
         t.onChanged([](ModelInstance& m) { m.rebuild(); });
+    });
+    r.add<Interactable>("Interactable", [](TypeBuilder<Interactable>& t) {
+        t.category("Gameplay");
+        t.field("prompt", &Interactable::prompt).tooltip("shown while looked at (what using does is set from code: onUse)");
+        t.field("reach", &Interactable::reach).range(0.0f, 50.0f).speed(0.05f);
+        t.field("focusOffset", &Interactable::focusOffset).tooltip("local point aimed at when it has no collider");
+    });
+    r.add<Interactor>("Interactor", [](TypeBuilder<Interactor>& t) {
+        t.category("Gameplay");
+        t.field("action", &Interactor::action).tooltip("Input action that uses the focus");
+        t.field("maxReach", &Interactor::maxReach).range(0.0f, 50.0f);
+        t.field("coneDegrees", &Interactor::coneDegrees).range(0.0f, 90.0f);
+        t.field("useMainCamera", &Interactor::useMainCamera);
     });
     r.add<Animator>("Animator", [](TypeBuilder<Animator>& t) {
         t.category("Animation");

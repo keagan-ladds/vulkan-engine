@@ -10,6 +10,7 @@
 
 #include "EditorTest.hpp"
 #include "LoadingScreen.hpp"
+#include "World.hpp"
 #include "Player.hpp"
 #include "Harvest.hpp"
 #include "Props.hpp"
@@ -21,6 +22,7 @@
 
 #include <random>
 #include <ve/scene/MeshComponents.hpp>
+#include <ve/scene/SaveGame.hpp>
 #include <ve/scene/SceneSerializer.hpp>
 #include <ve/ve.hpp>
 #include <vfx/Atmosphere.hpp>
@@ -215,7 +217,7 @@ void buildEffects(ve::Engine& engine)
     grading.enabled = std::getenv("SAVANNA_GRADE") && std::string(std::getenv("SAVANNA_GRADE")) == "1";
 }
 
-void buildWorld(ve::Engine& engine)
+void buildLevel(ve::Engine& engine)
 {
     ve::Renderer& r = engine.renderer();
     ve::Scene& scene = engine.scene();
@@ -324,6 +326,31 @@ void buildWorld(ve::Engine& engine)
 
 } // namespace
 
+namespace savanna {
+
+void buildWorld(ve::Engine& engine)
+{
+    buildLevel(engine);
+}
+
+bool reloadWithSave(ve::Engine& engine, const std::string& slot)
+{
+    auto save = ve::save::read(slot);
+    if (!save) return false;
+    // Behind the loading screen: a fresh level (whatever changed since the
+    // save, e.g. collected pickups, comes back), then the save on top.
+    engine.beginLoading(makeLoadingScene(), 0.3f);
+    engine.addLoadStep("Leaving", [&engine] { engine.scene().clear(); });
+    engine.addLoadStep("Loading the savanna", [&engine] { buildLevel(engine); });
+    engine.addLoadStep("Restoring your game", [&engine, save = std::move(*save)] {
+        ve::save::apply(engine.scene(), save);
+        applyGameData(save.value("game", ve::Json::object()));
+    });
+    return true;
+}
+
+} // namespace savanna
+
 int main()
 {
     try {
@@ -345,7 +372,7 @@ int main()
         // world is ready; building it runs as load steps between its frames.
         engine.beginLoading(savanna::makeLoadingScene(), 0.5f);
         engine.addLoadStep("Preparing the sky", [&] { buildEffects(engine); });
-        engine.addLoadStep("Loading the savanna", [&] { buildWorld(engine); });
+        engine.addLoadStep("Loading the savanna", [&] { buildLevel(engine); });
         engine.addLoadStep("Waking up the camp", [&] {
             // SAVANNA_EDITOR=1: start in the editor (same as pressing F2).
             if (std::getenv("SAVANNA_EDITOR") && engine.editor()) engine.editor()->setMode(ve::Editor::Mode::Edit);

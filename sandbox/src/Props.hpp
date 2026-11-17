@@ -6,6 +6,7 @@
 // =============================================================================
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/Reflection.hpp>
 #include <ve/world/Foliage.hpp>
 
 #include <memory>
@@ -39,6 +40,14 @@ struct GameState {
     std::string message;
 };
 GameState& gameState();
+
+// Save games (F5 / F9): the engine captures the level's changes and every
+// ve::Saveable (player, regrowth, foliage, terrain, time of day); the
+// counters above go in the save's "game" section.
+bool saveProgress(ve::Scene& scene, const std::string& slot);
+// Loads by rebuilding the level behind the loading screen (World.hpp), then applying the save.
+bool loadProgress(const std::string& slot);
+void applyGameData(const ve::Json& game); // the counters, from a save's "game" section
 
 // The shared vertex-coloured prop material (set once the prop library exists;
 // a plain one is created on first use otherwise, e.g. in another game).
@@ -112,10 +121,21 @@ public:
 // Scripted smoke test (SAVANNA_AUTOTEST=1): picks up a sunstone, cycles the
 // weather, then quits, logging what happened. Exercises gameplay code paths
 // (deferred destroy, one-shot audio, weather transitions) without input.
+// What the autotest saved (checked after the reload).
+struct AutoTestSaveExpect {
+    int collected = 0, wood = 0, berries = 0, stones = 0;
+    glm::vec3 player{0.0f};
+    uint64_t tree = 0;
+};
+
 class AutoTest : public ve::GameObject {
 public:
-    explicit AutoTest(const ve::Terrain& terrain) : GameObject("AutoTest"), m_terrain(&terrain) {}
+    explicit AutoTest(const ve::Terrain& terrain) : GameObject("AutoTest"), m_terrain(&terrain), m_step(s_resume) { s_resume = 0; }
     void update(float dt) override;
+
+    // Loading a save rebuilds the level (and this test object): the new one resumes here.
+    static inline int s_resume = 0;
+    static inline AutoTestSaveExpect s_expect;
 
 private:
     glm::vec3 groundAt(glm::vec2 p) const;
@@ -129,7 +149,7 @@ private:
     glm::vec3 m_triggerCenter{0.0f}, m_triggerFeet{0.0f};
     ve::GameObject* m_destroyProbe = nullptr;
     float m_t = 0.0f;
-    int m_step = 0;
+    int m_step;
 };
 
 class Hud : public ve::GameObject {

@@ -211,6 +211,7 @@ void Scene::flushDestroyed()
 
 void Scene::clear()
 {
+    m_levelObjects.clear();
     // onDestroy() hooks may spawn or destroy more objects: repeat until empty.
     for (int pass = 0; pass < 8 && (!m_objects.empty() || !m_pending.empty()); ++pass) {
         for (auto& o : m_objects) o->m_destroyed = true;

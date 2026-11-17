@@ -29,6 +29,7 @@
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Instancing.hpp"
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/SaveGame.hpp"
 #include "ve/world/Foliage.hpp"
 
 #include <glm/glm.hpp>
@@ -133,9 +134,12 @@ private:
     std::vector<std::pair<std::string, std::shared_ptr<const FoliageMeshes>>> m_stateMeshes;
 };
 
-class Foliage : public GameObject {
+class Foliage : public GameObject, public Saveable {
 public:
     Foliage();
+    // Save games: every instance whose state changed (chopped trees, picked bushes).
+    void saveState(Json& out) const override;
+    void loadState(const Json& in) override;
     void start() override;
     void update(float dt) override;
 
@@ -163,6 +167,8 @@ private:
     static std::function<float(const FoliageSample&)> makeDensity(const std::shared_ptr<const TerrainData>& td, const LayerDensity& d);
 
     FoliageSystem* m_system = nullptr;
+    std::vector<std::pair<uint64_t, uint32_t>> m_pendingOverrides; // loaded before the system existed
+    bool m_hasPendingOverrides = false;
     std::vector<std::string> m_layerNames;
     std::vector<LayerDensity> m_densities; // per system layer
     std::string m_state;

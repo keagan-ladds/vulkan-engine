@@ -550,6 +550,25 @@ stores nothing per blade.
   height. Vertex y is the sway weight and uv goes to `grass_card.frag`, which
   alpha-tests `cardTexture`.
 
+## 5.10 Gameplay helpers (`ve/gameplay`, `ve/scene/SaveGame`)
+
+- **Save games.** `ve::Saveable` (`saveState` / `loadState`) on any object or
+  component; `save::capture(scene)` = level objects moved by physics +
+  level objects destroyed (the scene loader remembers the level's ids,
+  `Scene::levelObjects`) + every Saveable's state keyed by persistent id or
+  object name (+ component type); `save::apply` destroys, moves, then calls
+  `loadState`. Slots are JSON files (tmp + rename). The game decides when
+  to reload the level before applying (Savanna: behind the loading screen).
+
+- **Interaction.** `Interactable` (component: prompt / `promptFn`, `onUse`,
+  `onFocus`, reach, focus offset; or override `currentPrompt` / `use` /
+  `focusChanged`) and `Interactor` (component on whoever interacts: each
+  frame the focus = the eye ray's hit object or a parent with an
+  Interactable, else the best Interactable in a view cone with a clear line
+  of sight; `interact()` on its Input action; `prompt()` for the game's
+  HUD). Mechanism only: Savanna decides what chopping, picking and
+  collecting do and how prompts look.
+
 ## 6. Physics
 
 Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
