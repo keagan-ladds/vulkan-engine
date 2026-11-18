@@ -117,6 +117,7 @@ public:
     Collision collision = Collision::Auto; // Auto = library / *_COL nodes / none
     glm::vec3 colliderSize{0.3f, 3.0f, 0.3f}; // capsule/cylinder: radius, height; sphere: radius; box: size
     int colliderUserValue = 0;
+    std::string colliderSurface; // physics surface of the colliders (footsteps, impacts)
 
     // ---- Where ----
     std::string biomes;          // "Savannah:1, Swamp:0.2" (empty = everywhere)

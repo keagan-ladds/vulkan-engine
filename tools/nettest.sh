@@ -6,7 +6,7 @@
 # Exit 0 when both processes finish their scripts with no "NO" / TIMEOUT.
 set -u
 BIN=${1:?bin dir}; OUT=${2:?output dir}
-mkdir -p "$OUT"
+mkdir -p "$OUT" && OUT=$(cd "$OUT" && pwd) # (absolute: we cd into the bin dir)
 PORT=${NETTEST_PORT:-17777}
 X=(); command -v xvfb-run >/dev/null && X=(xvfb-run -a -s "-screen 0 1280x720x24")
 cd "$BIN"

@@ -508,7 +508,7 @@ void FoliageSystem::createBody(Cell& cell, size_t i)
     if (colliders.empty()) return;
     const Collider& c = colliders[colliders.size() == 1 ? 0 : inst.variant % colliders.size()];
     slot.body = physics().createStaticBody(c, inst.position, inst.rotation, glm::vec3(inst.scale),
-                                           m_layers[cell.layer].desc.colliderUserValue);
+                                           m_layers[cell.layer].desc.colliderUserValue, m_layers[cell.layer].desc.colliderSurface);
     slot.hasBody = true;
     ++cell.bodies;
 }

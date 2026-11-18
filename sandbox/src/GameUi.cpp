@@ -104,4 +104,27 @@ ProgressBar& bar(Element& parent, glm::vec4 from, glm::vec4 to, std::function<fl
     return p;
 }
 
+TextInput& textField(Element& parent, const std::string& name, const std::string& placeholder, float fontSize)
+{
+    auto& f = parent.add<TextInput>(name);
+    f.placeholder = placeholder;
+    f.font = font::body;
+    f.fontSize = fontSize;
+    f.background = ve::ui::rgba(0x0b0806d0);
+    f.border = ve::ui::withAlpha(color::goldDark, 0.7f);
+    f.focusBorder = color::gold;
+    f.textColor = color::text;
+    f.placeholderColor = ve::ui::withAlpha(color::dim, 0.7f);
+    f.caretColor = color::gold;
+    return f;
+}
+
+ScrollView& list(Element& parent, const std::string& name)
+{
+    auto& v = parent.add<ScrollView>(name);
+    v.barThumb = ve::ui::withAlpha(color::gold, 0.55f);
+    v.barTrack = ve::ui::rgba(0xffffff14);
+    return v;
+}
+
 } // namespace savanna::gui

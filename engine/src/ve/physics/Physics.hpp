@@ -35,6 +35,8 @@
 #include "ve/scene/GameObject.hpp"
 
 #include <glm/glm.hpp>
+#include <initializer_list>
+#include <string>
 #include <glm/gtc/quaternion.hpp>
 
 #include <cstdint>
@@ -98,6 +100,8 @@ struct RaycastHit {
     Rigidbody* body = nullptr;             // null for characters and createStaticBody() bodies
     GameObject* gameObject = nullptr;      // null for createStaticBody() bodies
     uint32_t userValue = 0;                // the value given to createStaticBody()
+    int layer = 0;                         // its collision layer (PhysicsWorld::addLayer)
+    std::string surface;                   // its physics material's surface ("" = none set)
 };
 
 // What a query can hit.
@@ -106,6 +110,7 @@ struct QueryFilter {
     bool dynamics = true;      // dynamic and kinematic bodies
     bool characters = false;   // CharacterController capsules
     bool triggers = false;     // Rigidbody::isTrigger volumes
+    uint32_t layers = 0xFFFFFFFFu; // collision layers it can hit (bit per layer, PhysicsWorld::layerMask)
     const Rigidbody* ignore = nullptr;
     const CharacterController* ignoreCharacter = nullptr;
 };
@@ -118,6 +123,8 @@ struct Collision {
     glm::vec3 point{0.0f};           // world-space contact point
     glm::vec3 normal{0.0f, 1.0f, 0.0f}; // pointing from `other` towards this object
     float impactSpeed = 0.0f;        // closing speed along the normal when the contact began (m/s)
+    int otherLayer = 0;              // the other's collision layer
+    std::string otherSurface;        // the other's surface ("" = none set): impact sounds, effects
 };
 
 class PhysicsWorld {
@@ -162,10 +169,31 @@ public:
     // back in RaycastHit::userValue (e.g. a prop type or instance id).
     uint32_t createStaticBody(const Collider& collider, const glm::vec3& position,
                               const glm::quat& rotation = glm::quat(1, 0, 0, 0), const glm::vec3& scale = glm::vec3(1.0f),
-                              uint32_t userValue = 0);
+                              uint32_t userValue = 0, const std::string& surface = {}, int layer = 0);
+
+    // --- Collision layers -----------------------------------------------------------
+    // Up to 32 named layers; "Default" (0) always exists and everything is in
+    // it unless told otherwise. Every pair collides until setCollision(a, b,
+    // false). Bodies pick theirs by name (Rigidbody::layer,
+    // CharacterController::layer); queries by mask (QueryFilter::layers).
+    //   int debris = physics().addLayer("Debris");
+    //   physics().setCollision(debris, physics().layer("Characters"), false);
+    int addLayer(const std::string& name);           // its index (the existing one if the name is taken; -1 when full)
+    int layer(const std::string& name) const;        // -1 if there's no such layer
+    const std::string& layerName(int index) const;
+    int layerCount() const;
+    void setCollision(int a, int b, bool collide);   // both ways; affects new contacts
+    bool collides(int a, int b) const;
+    uint32_t layerMask(std::initializer_list<const char*> names) const; // for QueryFilter::layers
+    static constexpr int kMaxLayers = 32;
     void destroyStaticBody(uint32_t bodyId);
 
     uint32_t bodyCount() const;
+    // Wireframes of the bodies within `radius` (ve::debug lines): static grey,
+    // dynamic orange (darker asleep), kinematic blue, triggers green,
+    // characters yellow; terrain heightfields only when asked. Bodies around
+    // `eye` (the camera's own character) are left out.
+    void drawDebug(const glm::vec3& center, float radius, bool bodies, bool terrain, bool characters, const glm::vec3& eye) const;
     bool paused = false;
     float lastStepMs = 0.0f; // CPU time of the last step (shown in the F1 overlay)
 
@@ -206,6 +234,8 @@ public:
     float linearDamping = 0.05f;
     float angularDamping = 0.05f;
     bool continuousCollision = false; // for fast objects (projectiles): no tunnelling
+    std::string layer = "Default";    // collision layer (PhysicsWorld::addLayer; read when the body is created)
+    std::string surface;              // physics material's surface ("Wood", "Stone"...): in hits, contacts, footsteps
     // A trigger volume: no collision response, sends onTriggerEnter/Exit when
     // bodies or characters enter or leave it (pickups, damage zones, doors).
     // Use a convex shape (box, sphere, capsule, hull); Static triggers still
@@ -262,6 +292,8 @@ public:
     float mass = 70.0f;
     float pushStrength = 120.0f;   // max force (N) used to push dynamic bodies
     bool interpolate = true;
+    std::string layer = "Default"; // collision layer of the capsule (what it bumps into, what hits it)
+    std::string surface;           // what others hit (e.g. "Flesh")
 
     // Moves the character for one fixed step. `horizontalVelocity` is the
     // desired walking velocity (m/s, world XZ); gravity is applied for you.
@@ -272,6 +304,11 @@ public:
     bool onSteepGround() const;
     glm::vec3 velocity() const;
     glm::vec3 groundNormal() const;
+    // The surface of what it stands on ("" = nothing / none set): footsteps.
+    // groundObject: that body's GameObject (null for terrain-less static bodies).
+    std::string groundSurface() const;
+    GameObject* groundObject() const;
+    uint32_t groundUserValue() const; // createStaticBody()'s userValue of the ground (foliage, rocks)
     // Moves the character instantly (also use this every frame to drag it
     // along while the player is flying/noclipping).
     void teleport(const glm::vec3& feet);

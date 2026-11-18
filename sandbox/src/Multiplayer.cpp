@@ -121,6 +121,8 @@ Multiplayer::Multiplayer() : GameObject("Multiplayer")
     // (Hooked up now, not in start(): messages that waited for the loading
     // screen are handled at the top of the next frame, before start() runs.)
     net::Network& n = net();
+    n.config.game = "savanna"; // (menus host / join too, not just SAVANNA_NET)
+    n.config.version = 1;
     // Host: what joining players get (the save capture minus our own player:
     // they keep theirs), and an avatar for each.
     n.worldSnapshot = [this](net::PeerId) {

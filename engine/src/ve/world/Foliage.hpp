@@ -149,6 +149,7 @@ struct FoliageLayer : FoliageRules {
     std::vector<std::vector<InstanceLod>> variants; // one LOD chain per mesh variant (picked at random)
     std::vector<Collider> colliders;                // none / one shared / one per variant
     uint32_t colliderUserValue = 0;                 // RaycastHit::userValue of this layer's colliders
+    std::string colliderSurface;                    // their physics surface ("Wood", "Stone": footsteps, impacts)
 
     // ---- More "where" ----
     // Biome rules: return the chance (0..1) of keeping a candidate.

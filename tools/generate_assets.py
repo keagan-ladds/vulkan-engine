@@ -316,6 +316,39 @@ def audio():
     write_wav("pickup.wav", s)
 
 
+def footsteps():
+    """Footsteps per surface (3 variations each): grass, dirt / sand, wood, stone."""
+    def step(kind, seed):
+        rnd = random.Random(seed)
+        n = int(RATE * 0.22)
+        s, lp, lp2 = [], 0.0, 0.0
+        for i in range(n):
+            t = i / RATE
+            w = rnd.uniform(-1, 1)
+            if kind == "grass":    # soft rustle: low-passed noise, slow attack
+                lp += (w - lp) * 0.25
+                env = min(1.0, t / 0.015) * math.exp(-t * 22)
+                v = lp * env * 0.9 + rnd.uniform(-1, 1) * 0.05 * env
+            elif kind == "dirt":   # crunchy grit: bright noise, quick decay
+                lp += (w - lp) * 0.55
+                env = min(1.0, t / 0.004) * math.exp(-t * 30)
+                v = (w - lp) * env * 0.8
+            elif kind == "wood":   # hollow thump + a little knock
+                env = math.exp(-t * 28)
+                v = 0.7 * env * math.sin(2 * math.pi * (115 + rnd.uniform(-8, 8)) * t) \
+                    + 0.25 * math.exp(-t * 90) * math.sin(2 * math.pi * 620 * t) + 0.08 * w * math.exp(-t * 60)
+            else:                  # stone: short hard click with grit
+                lp += (w - lp) * 0.7
+                env = math.exp(-t * 60)
+                v = 0.6 * (w - lp) * env + 0.35 * math.exp(-t * 120) * math.sin(2 * math.pi * 1900 * t)
+            s.append(v)
+        peak = max(abs(x) for x in s) or 1.0
+        return [x / peak * 0.8 for x in s]
+    for kind, base in (("grass", 11), ("dirt", 23), ("wood", 37), ("stone", 51)):
+        for v in range(3):
+            write_wav(f"footstep_{kind}_{v}.wav", step(kind, base + v))
+
+
 def lut_neutral(size=32):
     """Identity colour-grading LUT strip (size slices of size x size) for
     vfx::ColorGradingPass. Grade a screenshot in a photo editor, apply the
@@ -486,7 +519,7 @@ def terrain_textures(size=512):
 
 # --------------------------------------------------------------------------- skinned villager
 def villager():
-    """A low-poly villager with a 13-joint skeleton (facing +Z, glTF convention).
+    """A low-poly villager with a 17-joint skeleton (facing +Z, glTF convention).
     Limbs are tapered tubes whose rings blend between neighbouring joints, so
     elbows and knees bend smoothly (exercises real skinning, not rigid parts)."""
     # name, parent, rest position (model space; no rest rotations)
@@ -504,6 +537,11 @@ def villager():
         ("LowerLeg.L", 9, (0.10, 0.50, 0.0)),
         ("UpperLeg.R", 1, (-0.10, 0.92, 0.0)),
         ("LowerLeg.R", 11, (-0.10, 0.50, 0.0)),
+        # End joints (appended: earlier indices stay): IK targets, held items.
+        ("Foot.L", 10, (0.10, 0.08, 0.0)),
+        ("Foot.R", 12, (-0.10, 0.08, 0.0)),
+        ("Hand.L", 6, (0.24, 0.93, 0.0)),
+        ("Hand.R", 8, (-0.24, 0.93, 0.0)),
     ]
     J = {name: i for i, (name, _, _) in enumerate(joints)}
     parts = {}  # material -> (pos, nrm, uv, idx, joints, weights)
@@ -586,10 +624,10 @@ def villager():
         sx = 1 if side == "L" else -1
         tube("shirt", P["UpperArm." + side], P["LowerArm." + side], 0.055, 0.05, J["UpperArm." + side], J["LowerArm." + side])
         tube("skin", P["LowerArm." + side], (sx * 0.24, 0.95, 0.0), 0.045, 0.035, J["LowerArm." + side], None)
-        box("skin", (sx * 0.245, 0.9, 0.0), (0.025, 0.05, 0.035), J["LowerArm." + side])
+        box("skin", (sx * 0.245, 0.9, 0.0), (0.025, 0.05, 0.035), J["Hand." + side])
         tube("trousers", P["UpperLeg." + side], P["LowerLeg." + side], 0.075, 0.06, J["UpperLeg." + side], J["LowerLeg." + side])
         tube("trousers", P["LowerLeg." + side], (sx * 0.1, 0.08, 0.0), 0.06, 0.045, J["LowerLeg." + side], None)
-        box("shoes", (sx * 0.1, 0.04, 0.04), (0.05, 0.04, 0.11), J["LowerLeg." + side])
+        box("shoes", (sx * 0.1, 0.04, 0.04), (0.05, 0.04, 0.11), J["Foot." + side])
 
     g = GltfBuilder()
 
@@ -681,6 +719,11 @@ def villager():
         "LowerArm.L": ("rotation", lambda t: (X, -0.15)),
         "LowerArm.R": ("rotation", lambda t: (X, -0.15)),
     })
+    # Upper body only (an animation layer masked to the right arm plays it over Idle / Walk).
+    wave_clip = clip("Wave", 1.2, 12, {
+        "UpperArm.R": ("rotation", lambda t: (Z, -2.55)),
+        "LowerArm.R": ("rotation", lambda t: (Z, -0.35 + 0.45 * sin(t))),
+    })
 
     gltf = {
         "asset": {"version": "2.0", "generator": "vulkan-engine tools/generate_assets.py"},
@@ -689,7 +732,7 @@ def villager():
         "nodes": nodes,
         "meshes": [{"name": "Villager", "primitives": prims}],
         "skins": [skin],
-        "animations": [idle, walk],
+        "animations": [idle, walk, wave_clip],
         "materials": [{"name": m, "pbrMetallicRoughness": {"baseColorFactor": list(c) + [1.0], "metallicFactor": 0.0,
                                                           "roughnessFactor": 0.85}} for m, c in materials.items()],
         "buffers": [{"uri": "villager.bin", "byteLength": len(g.bin)}],
@@ -710,4 +753,5 @@ if __name__ == "__main__":
     reed_screen()
     rondavel()
     audio()
+    footsteps()
     print("Assets written to", os.path.normpath(ROOT))

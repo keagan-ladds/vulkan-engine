@@ -8,6 +8,8 @@
 #include <ve/world/Grass.hpp>
 #include <ve/world/Terrain.hpp>
 
+#include <ve/assets/AssetManager.hpp>
+#include <ve/audio/Audio.hpp>
 #include <ve/core/Engine.hpp>
 #include <ve/core/Input.hpp>
 #include <ve/core/Time.hpp>
@@ -15,6 +17,7 @@
 #include <ve/scene/Scene.hpp>
 
 #include <algorithm>
+#include <random>
 
 namespace savanna {
 
@@ -151,6 +154,8 @@ void Player::throwRock()
     rock.transform().setLocalScale(0.22f);
     rock.addComponent<ve::MeshRenderer>(m_rockMesh, m_rockMaterial);
     auto& body = rock.addComponent<ve::Rigidbody>(m_rockCollider, ve::BodyType::Dynamic);
+    body.layer = "Debris";  // (Savanna's collision layer for loose things: the Use ray looks past them)
+    body.surface = "Stone";
     body.mass = 3.0f;
     body.restitution = 0.25f;
     body.friction = 0.8f;
@@ -259,9 +264,49 @@ void Player::fixedUpdate(float)
         if (m_fallSpeed > 11.0f) damage((m_fallSpeed - 11.0f) * 9.0f, "a bad fall");
         m_fallSpeed = 0.0f;
     }
+    if (grounded && !m_wasGrounded) footstep(); // landing
     m_wasGrounded = grounded;
     // The controller applies gravity, collides, climbs steps and pushes crates.
     m_controller->move(m_walkVelocity, time().fixedDeltaTime);
+    // Footsteps every stride, by surface.
+    const float v = glm::length(glm::vec2(m_walkVelocity.x, m_walkVelocity.z));
+    if (grounded && v > 0.6f) {
+        m_stride += v * dt;
+        if (m_stride > (m_sprinting ? 2.3f : 1.5f)) {
+            m_stride = 0.0f;
+            footstep();
+        }
+    }
+}
+
+void Player::footstep()
+{
+    // The physics surface underfoot -> a sound. Terrain has no single surface:
+    // its biome decides (sand / bare ground in the desert and camp, grass elsewhere).
+    m_stepSurface = m_controller->groundSurface();
+    const glm::vec3 feet = transform().position();
+    std::string sound = "grass";
+    if (m_stepSurface == "Wood" || m_stepSurface == "Thatch") sound = "wood";
+    else if (m_stepSurface == "Stone" || m_stepSurface == "Metal") sound = "stone";
+    else if (m_stepSurface == "Mud") sound = "dirt";
+    else if (m_stepSurface == "Terrain")
+        if (const ve::Terrain* t = ve::Terrain::find(scene())) {
+            if (t->biomeWeight("Desert", feet.x, feet.z) > 0.5f || t->biomeWeight("Camp", feet.x, feet.z) > 0.5f) sound = "dirt";
+            else if (t->biomeWeight("Rocky", feet.x, feet.z) > 0.5f) sound = "stone";
+        }
+    m_stepSound = sound;
+    static std::mt19937 rng(5);
+    const int variant = int(rng() % 3);
+    try {
+        auto clip = assets().loadAudio("audio/footstep_" + sound + "_" + std::to_string(variant) + ".wav");
+        ve::OneShotSettings s;
+        s.volume = m_sprinting ? 0.45f : 0.3f;
+        s.pitch = std::uniform_real_distribution<float>(0.9f, 1.1f)(rng);
+        s.position = feet;
+        s.maxDistance = 25.0f;
+        audio().playOneShot(*clip, s);
+    } catch (const std::exception&) {
+    }
 }
 
 } // namespace savanna

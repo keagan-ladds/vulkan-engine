@@ -72,15 +72,21 @@ void Painter::gradient(const Rect& r, glm::vec4 top, glm::vec4 bottom, float rou
         list->AddRectFilledMultiColor({a.x, a.y}, {b.x, b.y}, pack(top), pack(top), pack(bottom), pack(bottom));
         return;
     }
-    // Rounded: approximate with horizontal bands (the corners keep their rounding).
-    constexpr int kBands = 8;
-    for (int i = 0; i < kBands; ++i) {
-        const float t0 = float(i) / kBands, t1 = float(i + 1) / kBands;
-        ImDrawFlags flags = ImDrawFlags_RoundCornersNone;
-        if (i == 0) flags = ImDrawFlags_RoundCornersTop;
-        if (i == kBands - 1) flags = ImDrawFlags_RoundCornersBottom;
-        list->AddRectFilled({a.x, a.y + (b.y - a.y) * t0}, {b.x, a.y + (b.y - a.y) * t1 + (i < kBands - 1 ? 1.0f : 0.0f)},
-                            pack(glm::mix(top, bottom, (t0 + t1) * 0.5f)), rounding * scale, flags);
+    // Rounded: one rounded rect, its vertices recoloured along the gradient
+    // (the anti-aliased edge keeps its fade: alpha relative to the fill's).
+    const ImU32 fill = pack(top);
+    const float fillAlpha = float((fill >> IM_COL32_A_SHIFT) & 0xFF);
+    if (fillAlpha <= 0.0f && pack(bottom) == fill) return;
+    const int first = list->VtxBuffer.Size;
+    list->AddRectFilled({a.x, a.y}, {b.x, b.y}, fill | (fillAlpha <= 0.0f ? IM_COL32_A_MASK : 0u), rounding * scale);
+    const float baseAlpha = fillAlpha > 0.0f ? fillAlpha : 255.0f;
+    const float h = std::max(b.y - a.y, 1e-3f);
+    for (int i = first; i < list->VtxBuffer.Size; ++i) {
+        ImDrawVert& v = list->VtxBuffer[i];
+        const float edge = float((v.col >> IM_COL32_A_SHIFT) & 0xFF) / baseAlpha; // 1 inside, -> 0 on the AA fringe
+        const ImU32 c = pack(glm::mix(top, bottom, std::clamp((v.pos.y - a.y) / h, 0.0f, 1.0f)));
+        const auto alpha = ImU32(std::lround(float((c >> IM_COL32_A_SHIFT) & 0xFF) * std::clamp(edge, 0.0f, 1.0f)));
+        v.col = (c & ~IM_COL32_A_MASK) | (alpha << IM_COL32_A_SHIFT);
     }
 }
 
@@ -104,6 +110,17 @@ void Painter::image(const std::shared_ptr<Texture>& texture, const Rect& r, glm:
     if (!id) return;
     const glm::vec2 a = toPixels(r.min), b = toPixels(r.max);
     list->AddImageRounded(ImTextureID(id), {a.x, a.y}, {b.x, b.y}, {uv0.x, uv0.y}, {uv1.x, uv1.y}, pack(tint), rounding * scale);
+}
+
+void Painter::pushClip(const Rect& r)
+{
+    const glm::vec2 a = toPixels(r.min), b = toPixels(r.max);
+    list->PushClipRect({a.x, a.y}, {b.x, b.y}, true);
+}
+
+void Painter::popClip()
+{
+    list->PopClipRect();
 }
 
 glm::vec2 Painter::measure(const std::string& text, const std::string& font, float size, float wrapWidth) const
@@ -347,6 +364,19 @@ void Slider::drawSelf(Painter& p)
     if (focused()) p.circle({xv, y}, knobR * 0.95f, focusColor, false, 2.0f);
 }
 
+float Stack::contentLength() const
+{
+    const int axis = vertical ? 1 : 0;
+    float total = 0.0f;
+    int count = 0;
+    for (const auto& c : children())
+        if (c->visible) {
+            total += c->extent[axis];
+            ++count;
+        }
+    return total + spacing * float(std::max(count - 1, 0)) + (vertical ? padding.y + padding.w : padding.x + padding.z);
+}
+
 void Stack::layout()
 {
     const int axis = vertical ? 1 : 0, crossAxis = 1 - axis;
@@ -400,6 +430,195 @@ glm::vec2 Grid::contentSize(int count) const
 }
 
 // -----------------------------------------------------------------------------
+// TextInput
+// -----------------------------------------------------------------------------
+
+namespace {
+bool continuation(char c) { return (static_cast<unsigned char>(c) & 0xC0) == 0x80; }
+size_t prevBoundary(const std::string& s, size_t i)
+{
+    if (i == 0) return 0;
+    --i;
+    while (i > 0 && continuation(s[i])) --i;
+    return i;
+}
+size_t nextBoundary(const std::string& s, size_t i)
+{
+    if (i >= s.size()) return s.size();
+    ++i;
+    while (i < s.size() && continuation(s[i])) ++i;
+    return i;
+}
+char32_t decode(const std::string& s, size_t& i) // UTF-8 -> code point, advances i
+{
+    const auto b = static_cast<unsigned char>(s[i]);
+    int n = b < 0x80 ? 0 : b < 0xE0 ? 1 : b < 0xF0 ? 2 : 3;
+    char32_t c = n == 0 ? b : n == 1 ? (b & 0x1F) : n == 2 ? (b & 0x0F) : (b & 0x07);
+    ++i;
+    for (; n > 0 && i < s.size(); --n, ++i) c = (c << 6) | (static_cast<unsigned char>(s[i]) & 0x3F);
+    return c;
+}
+} // namespace
+
+void TextInput::setText(std::string t)
+{
+    text = std::move(t);
+    if (text.size() > maxLength) text.resize(prevBoundary(text, maxLength + 1));
+    m_cursor = std::string::npos;
+}
+
+void TextInput::edit(const Input& in, float dt)
+{
+    size_t cur = std::min(m_cursor, text.size());
+    const std::string before = text;
+    // Typed characters (filtered), at the caret.
+    const std::string& typed = in.textTyped();
+    for (size_t i = 0; i < typed.size();) {
+        const size_t start = i;
+        const char32_t c = decode(typed, i);
+        if (c < 0x20 || c == 0x7F) continue;
+        if (accept && !accept(c)) continue;
+        const std::string piece = typed.substr(start, i - start);
+        if (text.size() + piece.size() > maxLength) break;
+        text.insert(cur, piece);
+        cur += piece.size();
+    }
+    if (in.keyTyped(Key::Backspace) && cur > 0) {
+        const size_t p = prevBoundary(text, cur);
+        text.erase(p, cur - p);
+        cur = p;
+    }
+    if (in.keyTyped(Key::Delete) && cur < text.size()) text.erase(cur, nextBoundary(text, cur) - cur);
+    if (in.keyTyped(Key::Left)) cur = prevBoundary(text, cur);
+    if (in.keyTyped(Key::Right)) cur = nextBoundary(text, cur);
+    if (in.keyTyped(Key::Home)) cur = 0;
+    if (in.keyTyped(Key::End)) cur = text.size();
+    m_cursor = cur;
+    m_blink = (text != before || in.keyTyped(Key::Left) || in.keyTyped(Key::Right)) ? 0.0f : m_blink + dt;
+    if (text != before && onChanged) onChanged(text);
+    if (in.keyPressed(Key::Enter) && onSubmit) onSubmit(text);
+}
+
+void TextInput::onPointer(glm::vec2 p)
+{
+    // The caret goes to the nearest character boundary under the pointer.
+    Painter measure;
+    measure.scale = m_lastScale;
+    const float x = p.x - (m_rect.min.x + paddingX) + m_scroll;
+    size_t best = 0;
+    float bestD = std::abs(x);
+    for (size_t i = nextBoundary(text, 0); i <= text.size(); i = nextBoundary(text, i)) {
+        const float w = measure.measure(text.substr(0, i), font, fontSize).x;
+        if (std::abs(w - x) < bestD) {
+            bestD = std::abs(w - x);
+            best = i;
+        }
+        if (i == text.size()) break;
+    }
+    m_cursor = best;
+    m_blink = 0.0f;
+}
+
+void TextInput::drawSelf(Painter& p)
+{
+    m_lastScale = p.scale;
+    const bool editing = focused() && System::get().editing() == this;
+    p.rect(m_rect, background, rounding);
+    p.border(m_rect, focused() ? focusBorder : border, focused() ? 2.0f : 1.0f, rounding);
+    const Rect inner{m_rect.min + glm::vec2(paddingX, 0.0f), m_rect.max - glm::vec2(paddingX, 0.0f)};
+    const size_t cur = std::min(m_cursor, text.size());
+    // Keep the caret in view.
+    const float caretX = p.measure(text.substr(0, cur), font, fontSize).x;
+    const float width = inner.size().x;
+    if (caretX - m_scroll > width - 2.0f) m_scroll = caretX - width + 2.0f;
+    if (caretX - m_scroll < 0.0f) m_scroll = caretX;
+    if (!editing) m_scroll = 0.0f;
+    p.pushClip(inner);
+    Rect textRect = inner;
+    textRect.min.x -= m_scroll;
+    textRect.max.x = std::max(textRect.max.x, textRect.min.x + caretX + 4.0f) + 4000.0f; // (never wraps or clips by alignment)
+    if (text.empty() && !editing) p.text(textRect, placeholder, font, fontSize, placeholderColor, Align::Start, Align::Center);
+    else p.text(textRect, text, font, fontSize, textColor, Align::Start, Align::Center);
+    if (editing && std::fmod(m_blink, 1.0f) < 0.6f) {
+        const float x = inner.min.x + caretX - m_scroll;
+        const float h = fontSize * 0.62f;
+        const float cy = m_rect.center().y;
+        p.rect({{x, cy - h}, {x + 2.0f, cy + h}}, caretColor);
+    }
+    p.popClip();
+}
+
+// -----------------------------------------------------------------------------
+// ScrollView
+// -----------------------------------------------------------------------------
+
+ScrollView::ScrollView(std::string name) : Element(std::move(name))
+{
+    m_content = &add<Stack>("content");
+    m_content->spacing = 6.0f;
+    blocksPointer = true;
+}
+
+void ScrollView::layout()
+{
+    if (!pressed()) m_drag = false;
+    m_contentHeight = m_content->contentLength();
+    scroll = std::clamp(scroll, 0.0f, maxScroll());
+    const float bar = overflows() ? barWidth + 6.0f : 0.0f;
+    const float h = std::max(m_rect.size().y, m_contentHeight);
+    m_content->place({{m_rect.min.x, m_rect.min.y - scroll}, {m_rect.max.x - bar, m_rect.min.y - scroll + h}});
+    for (auto& c : children())
+        if (c.get() != m_content) c->arrange(m_rect); // anything else on the view itself (overlays)
+}
+
+void ScrollView::draw(Painter& p)
+{
+    if (!visible) return;
+    const float saved = p.opacity;
+    p.opacity *= opacity;
+    if (p.opacity > 0.001f) {
+        drawSelf(p);
+        p.pushClip(m_rect);
+        for (auto& c : children()) c->draw(p);
+        p.popClip();
+        if (overflows()) {
+            const float viewH = m_rect.size().y;
+            const Rect track{{m_rect.max.x - barWidth, m_rect.min.y}, m_rect.max};
+            p.rect(track, barTrack, barWidth * 0.5f);
+            const float thumbH = std::max(24.0f, viewH * viewH / m_contentHeight);
+            const float y = m_rect.min.y + (maxScroll() > 0.0f ? scroll / maxScroll() : 0.0f) * (viewH - thumbH);
+            p.rect({{track.min.x, y}, {track.max.x, y + thumbH}}, m_drag && m_dragBar ? withAlpha(barThumb, 0.6f) : barThumb, barWidth * 0.5f);
+        }
+    }
+    p.opacity = saved;
+}
+
+void ScrollView::onPointer(glm::vec2 p)
+{
+    if (!overflows()) return;
+    if (!m_drag) {
+        m_drag = true;
+        m_dragBar = p.x > m_rect.max.x - barWidth - 8.0f;
+        m_grabY = p.y;
+        m_grabScroll = scroll;
+    }
+    const float dy = p.y - m_grabY;
+    const float viewH = m_rect.size().y;
+    // The bar moves the thumb (content height / view height faster); the background drags the content.
+    scroll = std::clamp(m_dragBar ? m_grabScroll + dy * m_contentHeight / std::max(viewH, 1.0f) : m_grabScroll - dy, 0.0f, maxScroll());
+}
+
+void ScrollView::scrollTo(const Element& e)
+{
+    const float top = e.rect().min.y - m_content->rect().min.y;
+    const float bottom = e.rect().max.y - m_content->rect().min.y;
+    const float viewH = m_rect.size().y;
+    if (top < scroll) scroll = top;
+    else if (bottom > scroll + viewH) scroll = bottom - viewH;
+    scroll = std::clamp(scroll, 0.0f, maxScroll());
+}
+
+// -----------------------------------------------------------------------------
 // Canvas
 // -----------------------------------------------------------------------------
 
@@ -436,8 +655,10 @@ Element* Canvas::hit(glm::vec2 point)
 {
     std::function<Element*(Element&)> rec = [&](Element& e) -> Element* {
         if (!e.visible) return nullptr;
-        for (auto it = e.m_children.rbegin(); it != e.m_children.rend(); ++it) // last drawn is on top
-            if (Element* h = rec(**it)) return h;
+        const bool inside = e.m_rect.contains(point);
+        if (!e.clipsChildren() || inside)
+            for (auto it = e.m_children.rbegin(); it != e.m_children.rend(); ++it) // last drawn is on top
+                if (Element* h = rec(**it)) return h;
         if (&e != m_root.get() && e.m_rect.contains(point) && (e.interactive() || e.blocksPointer)) return &e;
         return nullptr;
     };
@@ -476,6 +697,10 @@ void System::forget(const Element* e)
     if (m_hover == e) m_hover = nullptr;
     for (Canvas* c : m_canvases)
         if (c->m_focus == e) c->m_focus = nullptr;
+    if (m_editing == e) {
+        m_editing = nullptr;
+        m_editingCanvas = nullptr;
+    }
 }
 
 bool System::shownNow(const Canvas& c, Engine& engine) const
@@ -599,6 +824,8 @@ void System::route(Engine& engine)
     }
     m_hoverTime += dt;
 
+    // A click anywhere else ends text editing (a click on another field moves it there).
+    if (pointer && in.mousePressed(MouseButton::Left) && m_editing && hover != m_editing && m_editingCanvas) m_editingCanvas->focus(nullptr);
     if (pointer && in.mousePressed(MouseButton::Left) && hover && hover->enabled) {
         m_down = hover;
         m_downCanvas = hoverCanvas;
@@ -625,6 +852,33 @@ void System::route(Engine& engine)
         }
     }
 
+    // --- Wheel: the scroll view under the pointer ---
+    if (pointer && in.wheel() != 0.0f)
+        for (Element* e = hover; e; e = e->m_parent)
+            if (auto* sv = dynamic_cast<ScrollView*>(e); sv && sv->overflows()) {
+                sv->scrollBy(-in.wheel() * sv->wheelStep);
+                break;
+            }
+
+    // --- Text editing: the focused text field of the topmost canvas that has one ---
+    m_editing = nullptr;
+    m_editingCanvas = nullptr;
+    for (Canvas* c : shown)
+        if (c->m_focus && c->m_focus->wantsText() && c->m_focus->visible && c->m_focus->enabled) {
+            m_editing = static_cast<TextInput*>(c->m_focus);
+            m_editingCanvas = c;
+            break;
+        }
+    const bool typing = m_editing != nullptr;
+    if (typing) {
+        m_editing->edit(in, dt);
+        if (in.keyPressed(Key::Escape)) { // stop editing (not "back")
+            m_editingCanvas->focus(nullptr);
+            m_editing = nullptr;
+        }
+    }
+    in.setTextInput(m_editing != nullptr);
+
     // --- Focus (keyboard / gamepad) on the top modal canvas ---
     if (modal) {
         auto key = [&](Key k) { return in.keyPressed(k); };
@@ -632,8 +886,8 @@ void System::route(Engine& engine)
         glm::vec2 dir(0.0f);
         if (key(Key::Up) || pad(GamepadButton::DPadUp)) dir = {0, -1};
         if (key(Key::Down) || pad(GamepadButton::DPadDown)) dir = {0, 1};
-        if (key(Key::Left) || pad(GamepadButton::DPadLeft)) dir = {-1, 0};
-        if (key(Key::Right) || pad(GamepadButton::DPadRight)) dir = {1, 0};
+        if ((key(Key::Left) && !typing) || pad(GamepadButton::DPadLeft)) dir = {-1, 0}; // (typing: the caret moves)
+        if ((key(Key::Right) && !typing) || pad(GamepadButton::DPadRight)) dir = {1, 0};
         // The stick, with repeat.
         const glm::vec2 stick(in.gamepadAxis(GamepadAxis::LeftX), in.gamepadAxis(GamepadAxis::LeftY));
         m_navRepeat -= dt;
@@ -674,20 +928,29 @@ void System::route(Engine& engine)
                     }
                 }
             }
-            if (best) modal->focus(best);
-        }
-        if (modal->m_focus && (key(Key::Enter) || key(Key::Space) || pad(GamepadButton::A))) modal->m_focus->click();
-        if (modal->onBack && (key(Key::Escape) || pad(GamepadButton::B))) modal->onBack();
-        for (const Canvas::Shortcut& sc : std::vector<Canvas::Shortcut>(modal->shortcuts)) // (an action may change the list)
-            if (sc.action && ((sc.key != Key::Unknown && key(sc.key)) || (sc.pad != GamepadButton::Count && pad(sc.pad)))) {
-                sc.action();
-                break;
+            if (best) {
+                modal->focus(best);
+                for (Element* e = best->m_parent; e; e = e->m_parent) // inside a scroll view: show it
+                    if (auto* sv = dynamic_cast<ScrollView*>(e)) sv->scrollTo(*best);
             }
+        }
+        // While typing, keys are text: no clicks on Space, no Escape = back, no letter shortcuts.
+        if (!typing) {
+            if (modal->m_focus && (key(Key::Enter) || key(Key::Space) || pad(GamepadButton::A))) modal->m_focus->click();
+            if (modal->onBack && (key(Key::Escape) || pad(GamepadButton::B))) modal->onBack();
+            for (const Canvas::Shortcut& sc : std::vector<Canvas::Shortcut>(modal->shortcuts)) // (an action may change the list)
+                if (sc.action && ((sc.key != Key::Unknown && key(sc.key)) || (sc.pad != GamepadButton::Count && pad(sc.pad)))) {
+                    sc.action();
+                    break;
+                }
+        } else if (pad(GamepadButton::B)) {
+            modal->focus(nullptr); // (pad: leave the field)
+        }
     }
 
     m_block = modal != nullptr;
     m_wantsMouse = overUi || m_down != nullptr;
-    in.setUiCapture(imguiKeyboard || m_block, imguiMouse || m_wantsMouse || m_block, m_block);
+    in.setUiCapture(imguiKeyboard || m_block || typing, imguiMouse || m_wantsMouse || m_block, m_block);
 }
 
 void System::draw(Engine& engine)

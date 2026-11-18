@@ -641,7 +641,8 @@
                 "biomeThreshold": 0.65,
                 "minHeight": 0.6,
                 "maxSlope": 0.34,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -692,7 +693,8 @@
                 "shadowDistance": 300,
                 "states": "Stump = acacia stump",
                 "promoteDistance": 8,
-                "promoteType": "ChoppableTree"
+                "promoteType": "ChoppableTree",
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -736,7 +738,8 @@
                 "viewDistance": 3000,
                 "maxInstances": 2000,
                 "seed": 1003,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -781,7 +784,8 @@
                 "viewDistance": 3000,
                 "maxInstances": 500,
                 "seed": 1004,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Stone"
               }
             }
           ]
@@ -826,7 +830,8 @@
                 "shadowDistance": 50,
                 "colliderDistance": 40,
                 "seed": 1005,
-                "biomes": "*:1, Jungle:-0.7"
+                "biomes": "*:1, Jungle:-0.7",
+                "colliderSurface": "Stone"
               }
             }
           ]
@@ -968,7 +973,8 @@
                 "viewDistance": 2500,
                 "maxInstances": 30000,
                 "seed": 1101,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -1015,7 +1021,8 @@
                 "viewDistance": 2500,
                 "maxInstances": 12000,
                 "seed": 1102,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -1108,7 +1115,8 @@
                 "viewDistance": 2500,
                 "maxInstances": 3000,
                 "seed": 1104,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]

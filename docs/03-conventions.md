@@ -392,6 +392,44 @@ if (placePressed && preview.valid()) ve::prefab::instantiate(scene(), piecePath,
 - Roofs: eaves (low edge) on wall tops; a roof whose slope cuts through a
   side wall is (correctly) blocked.
 
+### Seeing what's going on: debug drawing
+
+```cpp
+if (ve::debug::enabled("AI targets")) {          // a channel: F1 > Debug draw (off until ticked)
+    ve::debug::path(corners, ve::debug::kMagenta);
+    ve::debug::text(head, "Hunting", ve::debug::kYellow);
+}
+ve::debug::sphere(hit.point, 0.2f, ve::debug::kRed, {.duration = 3.0f}); // stays 3 s
+```
+
+- Draw every frame (duration 0) for live state; give one-off events
+  (an impact, a spawn) a duration.
+- Put game drawing behind a channel so it costs nothing until switched on.
+- Turn on "Physics colliders" / "Navmesh" / "Nav agents" in F1 before
+  guessing why something collides or won't walk there (`SAVANNA_DRAW=...`
+  in screenshots).
+
+### Collision layers and surfaces
+
+- Name layers by what things *are* ("Debris", "Projectile", "Enemy"), add
+  them once at startup, then write the rules as pairs that don't collide
+  (`setCollision(debris, characters, false)`). Use masks for queries that
+  should look past something (Savanna: the Use ray ignores "Debris").
+- Give everything you can stand on or hit a surface: footsteps, impact
+  sounds and particles key off `groundSurface()` / `RaycastHit::surface` /
+  `Collision::otherSurface`. Terrain says "Terrain": ask the terrain's
+  biome at the point for grass / sand / mud.
+
+### Animation on top of clips
+
+- Upper-body actions (wave, swing, carry) on a masked layer
+  (`addLayer("Arms", "Spine")`), faded with `setLayerWeight`; the legs keep
+  walking underneath.
+- Timing from the clip, not from timers: `addEvent("Walk", 0.25f, "step")`.
+- `FootIK` on anything that walks on uneven ground; `TwoBoneIK` for hands
+  that must reach something (a door handle, a ladder rung). Models need end
+  joints (Foot / Hand) for the IK to aim with.
+
 ### Multiplayer-ready gameplay
 
 Write gameplay as if a host were always there (offline *is* a host with
@@ -454,6 +492,9 @@ b.onClick = [this] { resume(); };
   build menus and menus are modal (gameplay goes quiet, the cursor shows,
   arrows / pad navigate). Toggle keys that should also *close* a modal
   screen go in its `shortcuts` (the modal canvas swallows the action).
+- Text: `ui::TextInput` (focus it to type; `accept` to filter, `onSubmit` for
+  Enter); long lists: put rows in a `ui::ScrollView`'s `content()` rather
+  than a bare Stack, so they scroll and follow keyboard focus.
 - Give elements names ("slot3", "piece:Mud brick wall"): tests find them
   with `root().find(name)` and `click()` them like a player would.
 - Live values: `Label::bind` / `ProgressBar::bind` instead of updating

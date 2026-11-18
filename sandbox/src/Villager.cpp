@@ -1,5 +1,9 @@
 #include "Villager.hpp"
 
+#include <ve/debug/Debug.hpp>
+#include <ve/world/Terrain.hpp>
+#include <ve/audio/Audio.hpp>
+
 #include "Props.hpp"
 
 #include <ve/anim/Animation.hpp>
@@ -68,6 +72,20 @@ void Villager::start()
         // The model faces +Z; the agent turns our -Z (engine forward) along the way.
         m_body->transform().setLocalRotation(glm::angleAxis(3.14159265f, glm::vec3(0, 1, 0)));
         m_animator = m_body->getComponent<ve::Animator>();
+        if (m_animator) {
+            // The right arm on its own layer: wave over whatever the body does.
+            m_waveLayer = m_animator->addLayer("Wave", "UpperArm.R");
+            m_animator->setLayerWeight(m_waveLayer, 0.0f, 0.0f);
+            // Footsteps: the Walk clip's foot contacts (its legs swing on a 1 s cycle).
+            m_animator->addEvent("Walk", 0.25f, "step");
+            m_animator->addEvent("Walk", 0.75f, "step");
+            m_animator->onEvent = [this](const std::string& e, const std::string&) {
+                if (e == "step") footstep();
+            };
+        }
+        // Feet on the ground on slopes and steps (two-bone IK per leg, hips lowered).
+        auto& feet = m_body->addComponent<ve::FootIK>();
+        feet.layers = ~(1u << std::max(0, physics().layer("Debris"))); // (not on loose rocks)
     } catch (const std::exception& e) {
         ve::log::warn("Villager: {}", e.what());
     }
@@ -94,10 +112,43 @@ void Villager::pickWanderTarget()
 
 void Villager::follow(ve::GameObject& who)
 {
+    wave(1.6f); // "sure, let's go"
     m_leader = who.id();
     m_timer = followTime;
     m_repath = 0.0f;
     setMode(Mode::Follow);
+}
+
+void Villager::wave(float seconds)
+{
+    if (!m_animator || m_waveLayer < 0) return;
+    m_animator->play(m_waveLayer, "Wave", 0.0f);
+    m_animator->setLayerWeight(m_waveLayer, 1.0f, 0.35f);
+    m_waveTimer = seconds;
+}
+
+void Villager::footstep()
+{
+    ++m_steps;
+    // What's underfoot (terrain: its biome), quieter than the player's own steps.
+    const glm::vec3 p = transform().position();
+    std::string sound = "grass";
+    if (auto hit = physics().raycast(p + glm::vec3(0, 0.5f, 0), {0, -1, 0}, 1.5f)) {
+        if (hit->surface == "Wood" || hit->surface == "Thatch") sound = "wood";
+        else if (hit->surface == "Stone") sound = "stone";
+        else if (hit->surface == "Mud") sound = "dirt";
+        else if (const ve::Terrain* t = ve::Terrain::find(scene()); t && t->biomeWeight("Camp", p.x, p.z) > 0.5f) sound = "dirt";
+    }
+    try {
+        auto clip = assets().loadAudio("audio/footstep_" + sound + "_" + std::to_string(m_steps % 3) + ".wav");
+        ve::OneShotSettings s;
+        s.volume = 0.22f;
+        s.pitch = 0.95f + 0.1f * float(m_steps % 5) / 4.0f;
+        s.position = p;
+        s.maxDistance = 18.0f;
+        audio().playOneShot(*clip, s);
+    } catch (const std::exception&) {
+    }
 }
 
 void Villager::goHome()
@@ -109,6 +160,17 @@ void Villager::goHome()
 
 void Villager::update(float dt)
 {
+    // The wave fades out when it's done; a player walking up gets one too.
+    if (m_waveTimer > 0.0f && (m_waveTimer -= dt) <= 0.0f && m_animator) m_animator->setLayerWeight(m_waveLayer, 0.0f, 0.4f);
+    if (ve::GameObject* player = scene().find("Player")) {
+        const float d = glm::distance(player->transform().position(), transform().position());
+        if (d < 4.0f && !m_greeted && m_mode != Mode::Follow) {
+            m_greeted = true;
+            wave();
+        } else if (d > 8.0f) {
+            m_greeted = false;
+        }
+    }
     switch (m_mode) {
     case Mode::Idle:
         if ((m_timer -= dt) <= 0.0f) {
@@ -151,6 +213,12 @@ void Villager::update(float dt)
         m_animator->speed = walking ? std::clamp(v / std::max(speed, 0.1f), 0.6f, 2.2f) : 1.0f;
     }
     m_walking = walking;
+
+    // F1 > Debug draw > "Villagers": what each one is doing (a game channel next to the engine's).
+    if (ve::debug::enabled("Villagers")) {
+        static const char* kModes[] = {"Idle", "Wander", "Follow", "Return"};
+        ve::debug::text(transform().position() + glm::vec3(0, 2.2f, 0), std::string(name()) + ": " + kModes[int(m_mode)], ve::debug::kYellow);
+    }
 }
 
 } // namespace savanna

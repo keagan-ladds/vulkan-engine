@@ -9,6 +9,7 @@
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Texture.hpp"
 #include "ve/render/passes/BuiltinPasses.hpp"
+#include "ve/render/passes/DebugLinePass.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
 
@@ -373,6 +374,7 @@ void Renderer::createDefaultPasses()
     m_graph->addPass<VelocityPass>();
     m_taaPass = &m_graph->addPass<TemporalAAPass>();
     m_graph->addPass<CompositePass>();
+    m_graph->addPass<DebugLinePass>(); // ve::debug lines over the finished image
 }
 
 void Renderer::applySettings()

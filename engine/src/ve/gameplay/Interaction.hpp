@@ -59,6 +59,7 @@ public:
     std::string action = "Use";   // Input action that uses the focus ("" = call interact() yourself)
     float maxReach = 3.0f;        // never further than this (each Interactable has its own reach too)
     float coneDegrees = 25.0f;    // fallback focus for objects without colliders
+    uint32_t layers = 0xFFFFFFFFu; // collision layers the eye ray sees (PhysicsWorld::layerMask): e.g. not loose debris
     bool useMainCamera = true;    // the eye is the main camera; otherwise call setView() every frame
 
     void update(float dt) override;

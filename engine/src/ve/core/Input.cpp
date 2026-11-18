@@ -23,6 +23,10 @@ void Input::beginFrame()
     m_prevPadAxes = m_padAxes;
     m_mouseDelta = glm::vec2(0.0f);
     m_wheel = 0.0f;
+    m_text = std::move(m_injectedText);
+    m_typed = std::move(m_injectedKeys);
+    m_injectedText.clear();
+    m_injectedKeys.clear();
 }
 
 void Input::processEvent(const SDL_Event& e)
@@ -33,6 +37,7 @@ void Input::processEvent(const SDL_Event& e)
         const auto sc = static_cast<size_t>(e.key.keysym.scancode);
         if (sc < kKeyCount) {
             m_keys[sc] = (e.type == SDL_KEYDOWN);
+            if (e.type == SDL_KEYDOWN) m_typed.push_back(uint16_t(sc));
             if (e.type == SDL_KEYDOWN && !e.key.repeat && !m_rebind.empty()) finishRebind(Key(sc), MouseButton(0), GamepadButton::Count);
         }
         break;
@@ -48,6 +53,9 @@ void Input::processEvent(const SDL_Event& e)
         // Accumulate: several motion events can arrive in one frame.
         m_mouseDelta += glm::vec2(static_cast<float>(e.motion.xrel), static_cast<float>(e.motion.yrel));
         m_mousePos = glm::vec2(static_cast<float>(e.motion.x), static_cast<float>(e.motion.y));
+        break;
+    case SDL_TEXTINPUT:
+        m_text += e.text.text;
         break;
     case SDL_MOUSEWHEEL:
         m_wheel += e.wheel.preciseY;
@@ -146,6 +154,19 @@ glm::vec2 Input::mouseDelta() const
 glm::vec2 Input::mousePosition() const
 {
     return m_mousePos;
+}
+
+bool Input::keyTyped(Key key) const
+{
+    return std::find(m_typed.begin(), m_typed.end(), uint16_t(key)) != m_typed.end();
+}
+
+void Input::setTextInput(bool on)
+{
+    if (on == m_textInput) return;
+    m_textInput = on;
+    if (on) SDL_StartTextInput();
+    else SDL_StopTextInput();
 }
 
 float Input::wheel() const

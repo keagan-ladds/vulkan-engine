@@ -24,8 +24,10 @@ void Interactor::setView(const glm::vec3& eye, const glm::vec3& direction)
 Interactable* Interactor::findFocus() const
 {
     Scene& s = gameObject().scene();
+    QueryFilter filter;
+    filter.layers = layers;
     // 1. Whatever the ray hits: an Interactable on that object or a parent.
-    if (auto hit = physics().raycast(m_eye, m_dir, maxReach)) {
+    if (auto hit = physics().raycast(m_eye, m_dir, maxReach, filter)) {
         for (GameObject* o = hit->gameObject; o; o = o->transform().parent() ? &o->transform().parent()->gameObject() : nullptr) {
             if (auto* i = o->getComponent<Interactable>(); i && i->isActive() && hit->distance <= i->reach) return i;
         }
@@ -41,7 +43,7 @@ Interactable* Interactor::findFocus() const
         if (d < 1e-4f || d > std::min(i.reach, maxReach)) return;
         const float c = glm::dot(to / d, m_dir);
         if (c <= bestCos) return;
-        if (auto block = physics().raycast(m_eye, to / d, d - 0.05f); block && block->gameObject != &i.gameObject()) return;
+        if (auto block = physics().raycast(m_eye, to / d, d - 0.05f, filter); block && block->gameObject != &i.gameObject()) return;
         best = &i;
         bestCos = c;
     });

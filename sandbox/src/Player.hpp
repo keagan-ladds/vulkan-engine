@@ -80,6 +80,14 @@ private:
     float m_sinceStamina = 10.0f;  // seconds since stamina was used
     float m_sinceHurt = 10.0f;
     float m_fallSpeed = 0.0f;      // fastest downward speed while airborne
+    float m_stride = 0.0f;         // metres walked since the last footstep
+    std::string m_stepSound;       // the last footstep's sound ("grass", "wood"...)
+    std::string m_stepSurface;     // ... and the physics surface it came from
+    void footstep();               // by what we stand on (CharacterController::groundSurface)
+public:
+    const std::string& lastFootstep() const { return m_stepSound; }
+    const std::string& lastFootstepSurface() const { return m_stepSurface; }
+private:
     bool m_wasGrounded = true;
     bool m_sprinting = false;
 

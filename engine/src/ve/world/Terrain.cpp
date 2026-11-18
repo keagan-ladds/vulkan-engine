@@ -969,6 +969,7 @@ void Terrain::updateColliders(bool force, const glm::vec4* area)
                 const glm::vec2 lo = d->samplePosition(tx * cells, tz * cells);
                 auto& rb = addComponent<Rigidbody>(Collider::heightfield(rel, uint32_t(n), d->cellSize, {lo.x - centre.x, 0.0f, lo.y - centre.z}),
                                                    BodyType::Static);
+                rb.surface = "Terrain"; // (games look up the biome at the point for grass / sand / mud)
                 m_colliderTiles[key] = &rb;
             }
         }

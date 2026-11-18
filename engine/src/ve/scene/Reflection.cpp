@@ -205,6 +205,27 @@ void registerBuiltinTypes()
         t.field("speed", &Animator::speed).range(0.0f, 10.0f).speed(0.01f);
         t.field("playOnStart", &Animator::playOnStart);
     });
+    r.add<FootIK>("FootIK", [](TypeBuilder<FootIK>& t) {
+        t.category("Animation");
+        t.field("hipsJoint", &FootIK::hipsJoint);
+        t.field("leftUpper", &FootIK::leftUpper);
+        t.field("leftMiddle", &FootIK::leftMiddle);
+        t.field("leftFoot", &FootIK::leftFoot);
+        t.field("rightUpper", &FootIK::rightUpper);
+        t.field("rightMiddle", &FootIK::rightMiddle);
+        t.field("rightFoot", &FootIK::rightFoot);
+        t.field("maxStep", &FootIK::maxStep).range(0.0f, 2.0f).speed(0.01f);
+        t.field("weight", &FootIK::weight).range(0.0f, 1.0f).speed(0.01f);
+    });
+    r.add<TwoBoneIK>("TwoBoneIK", [](TypeBuilder<TwoBoneIK>& t) {
+        t.category("Animation");
+        t.field("upperJoint", &TwoBoneIK::upperJoint);
+        t.field("middleJoint", &TwoBoneIK::middleJoint);
+        t.field("endJoint", &TwoBoneIK::endJoint);
+        t.field("target", &TwoBoneIK::target);
+        t.field("pole", &TwoBoneIK::pole);
+        t.field("weight", &TwoBoneIK::weight).range(0.0f, 1.0f).speed(0.01f);
+    });
     r.add<PrimitiveRenderer>("PrimitiveRenderer", [](TypeBuilder<PrimitiveRenderer>& t) {
         t.category("Rendering");
         t.enumField("shape", &PrimitiveRenderer::shape, {"Cube", "Sphere", "Cylinder", "Plane"});
@@ -231,6 +252,8 @@ void registerBuiltinTypes()
         t.field("angularDamping", &Rigidbody::angularDamping).range(0.0f, 10.0f).speed(0.01f);
         t.field("continuousCollision", &Rigidbody::continuousCollision);
         t.field("isTrigger", &Rigidbody::isTrigger).tooltip("Trigger volume: no collision, sends onTriggerEnter/Exit");
+        t.field("layer", &Rigidbody::layer).tooltip("collision layer name (PhysicsWorld::addLayer); Default if empty");
+        t.field("surface", &Rigidbody::surface).tooltip("physics material surface: Wood, Stone... (hits, contacts, footsteps)");
         t.onChanged([](Rigidbody& rb) { rb.rebuild(); });
     });
 

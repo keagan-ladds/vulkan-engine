@@ -52,6 +52,7 @@ enum class Key : uint16_t {
     Num1 = 30, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9, Num0,
     Enter = 40, Escape = 41, Backspace = 42, Tab = 43, Space = 44, Minus = 45, Equals = 46,
     F1 = 58, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    Home = 74, PageUp = 75, Delete = 76, End = 77, PageDown = 78,
     Right = 79, Left = 80, Down = 81, Up = 82,
     LCtrl = 224, LShift = 225, LAlt = 226, RCtrl = 228, RShift = 229, RAlt = 230,
 };
@@ -90,6 +91,15 @@ public:
     glm::vec2 mouseDelta() const;    // pixels moved this frame
     glm::vec2 mousePosition() const; // window pixels
     float wheel() const;             // scroll this frame (+ = away from user)
+
+    // --- Text (UI text fields; not affected by UI capture) ---------------------------------
+    const std::string& textTyped() const { return m_text; } // UTF-8 typed this frame (layout + IME aware)
+    bool keyTyped(Key key) const;    // pressed or auto-repeated this frame (editing keys: Backspace, arrows...)
+    void setTextInput(bool on);      // the OS text input (IME, on-screen keyboards) while a text field is edited
+    bool textInputActive() const { return m_textInput; }
+    // Tests: typed next frame (as if from the keyboard).
+    void injectText(const std::string& utf8) { m_injectedText += utf8; }
+    void injectKeyTyped(Key key) { m_injectedKeys.push_back(uint16_t(key)); }
 
     // Captured = cursor hidden and locked, unlimited relative motion (FPS camera).
     void setMouseCaptured(bool captured);
@@ -153,6 +163,11 @@ private:
     void finishRebind(Key key, MouseButton button, GamepadButton pad);
 
     std::array<bool, kKeyCount> m_keys{};
+    std::string m_text;               // typed this frame
+    std::vector<uint16_t> m_typed;    // key-down events this frame, repeats included
+    std::string m_injectedText;
+    std::vector<uint16_t> m_injectedKeys;
+    bool m_textInput = false;
     std::array<bool, kKeyCount> m_prevKeys{};
     std::array<bool, 8> m_buttons{};
     std::array<bool, 8> m_prevButtons{};

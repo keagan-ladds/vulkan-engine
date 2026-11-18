@@ -10,6 +10,7 @@
 
 #include <ve/audio/Audio.hpp>
 #include <ve/core/Engine.hpp>
+#include <ve/net/Network.hpp>
 #include <ve/core/Input.hpp>
 #include <ve/core/Log.hpp>
 #include <ve/core/Time.hpp>
@@ -142,15 +143,20 @@ void MainMenu::showPanel(const std::string& name)
     if (m_pause) m_pause->visible = m_screen == Screen::Paused && name.empty();
     for (const auto& c : m_panels->root().children())
         if (c->name.rfind("panel:", 0) == 0) c->visible = c->name == "panel:" + name;
-    if (name == "load" || name == "controls") { // their contents change: rebuild
+    if (name == "load" || name == "controls" || name == "save") { // their contents change: rebuild
         if (ui::Element* p = m_panels->root().find("panel:" + name))
             if (ui::Element* content = p->find("content")) {
                 content->clear();
                 if (name == "load") buildLoad(*content);
+                else if (name == "save") buildSave(*content);
                 else buildControls(*content);
             }
     }
     m_panels->focus(nullptr);
+    // Typing straight away: the save name.
+    if (name == "save")
+        if (ui::Element* p = m_panels->root().find("panel:save"))
+            if (ui::Element* field = p->find("name")) m_panels->focus(field);
 }
 
 void MainMenu::update(float dt)
@@ -177,6 +183,17 @@ void MainMenu::update(float dt)
             if (m_leaving <= 0.0f) enterPlaying();
         }
         return;
+    }
+    // Joining from a menu: in once the host has sent its world.
+    if (m_joining) {
+        const ve::net::Status st = net().status();
+        if (st == ve::net::Status::Connected) {
+            m_joining = false;
+            s_played = true;
+            enterPlaying();
+        } else if (st == ve::net::Status::Failed || st == ve::net::Status::Offline) {
+            m_joining = false;
+        }
     }
     if (m_screen == Screen::Playing) {
         // Escape (unless building: it stops building) / pad Start: pause.
@@ -224,6 +241,7 @@ void MainMenu::buildTitle()
     gui::menuButton(list, "Continue", [this] { continueGame(); });
     gui::menuButton(list, "New game", [this] { newGame(); });
     gui::menuButton(list, "Load game", [this] { showPanel("load"); });
+    gui::menuButton(list, "Multiplayer", [this] { showPanel("multiplayer"); });
     gui::menuButton(list, "Settings", [this] { showPanel("settings"); });
     gui::menuButton(list, "Controls", [this] { showPanel("controls"); });
     gui::menuButton(list, "Quit", [this] { engine().quit(); });
@@ -253,7 +271,7 @@ void MainMenu::buildPause()
     title.anchor({0.5f, 0.0f}).pivot({0.5f, 0.0f}).at({0.0f, 190.0f}).size({600.0f, 80.0f});
     title.alignX = ui::Align::Center;
     auto& list = root.add<ui::Stack>("menu");
-    list.anchor({0.5f, 0.0f}).pivot({0.5f, 0.0f}).at({0.0f, 300.0f}).size({360.0f, 520.0f});
+    list.anchor({0.5f, 0.0f}).pivot({0.5f, 0.0f}).at({0.0f, 290.0f}).size({360.0f, 580.0f});
     list.spacing = 2.0f;
     auto centred = [](ui::Button& b) -> ui::Button& {
         b.label().alignX = ui::Align::Center;
@@ -261,11 +279,9 @@ void MainMenu::buildPause()
         return b;
     };
     centred(gui::menuButton(list, "Resume", [this] { resume(); }, 32.0f));
-    centred(gui::menuButton(list, "Save game", [this] {
-        saveProgress(scene(), "quick");
-        resume();
-    }, 32.0f));
+    centred(gui::menuButton(list, "Save game", [this] { showPanel("save"); }, 32.0f));
     centred(gui::menuButton(list, "Load game", [this] { showPanel("load"); }, 32.0f));
+    centred(gui::menuButton(list, "Multiplayer", [this] { showPanel("multiplayer"); }, 32.0f));
     centred(gui::menuButton(list, "Settings", [this] { showPanel("settings"); }, 32.0f));
     centred(gui::menuButton(list, "Controls", [this] { showPanel("controls"); }, 32.0f));
     centred(gui::menuButton(list, "Main menu", [this] { toTitle(); }, 32.0f));
@@ -296,15 +312,18 @@ void MainMenu::buildPanels()
         return content;
     };
     panel("load", "Load game", {760.0f, 620.0f});
+    panel("save", "Save game", {760.0f, 660.0f});
     ui::Element& settings = panel("settings", "Settings", {760.0f, 580.0f});
     buildSettings(settings);
-    panel("controls", "Controls", {900.0f, 760.0f});
+    panel("controls", "Controls", {900.0f, 720.0f});
+    buildMultiplayer(panel("multiplayer", "Multiplayer", {760.0f, 560.0f}));
 }
 
 void MainMenu::buildLoad(ui::Element& content)
 {
-    auto& list = content.add<ui::Stack>("slots");
-    list.fill();
+    auto& view = gui::list(content, "slots");
+    view.fill();
+    ui::Stack& list = view.content();
     list.spacing = 10.0f;
     const auto slots = ve::save::slots();
     if (slots.empty()) {
@@ -378,8 +397,9 @@ void MainMenu::buildSettings(ui::Element& content)
 void MainMenu::buildControls(ui::Element& content)
 {
     // Every action the game binds, with its keys / buttons; Rebind takes the next one pressed.
-    auto& grid = content.add<ui::Stack>("actions");
-    grid.fill();
+    auto& view = gui::list(content, "actions");
+    view.fill();
+    ui::Stack& grid = view.content();
     grid.spacing = 6.0f;
     ve::Input& in = input();
     for (const std::string& action : in.actions()) {
@@ -401,6 +421,126 @@ void MainMenu::buildControls(ui::Element& content)
         auto& rebind = gui::boxButton(row, "Rebind", [this, action] { input().startRebind(action); }, 18.0f);
         rebind.anchor({1.0f, 0.5f}).pivot({1.0f, 0.5f}).at({-8.0f, 0.0f}).size({120.0f, 36.0f});
     }
+}
+
+void MainMenu::buildSave(ui::Element& content)
+{
+    // A name (typed), and the saves there are (click one to overwrite it).
+    auto& field = gui::textField(content, "name", "Name of the save", 24.0f);
+    field.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({0.0f, 0.0f}).size({150.0f, 54.0f});
+    field.maxLength = 40;
+    field.setText(m_lastSave.empty() ? "quick" : m_lastSave);
+    field.accept = [](char32_t c) { return c != '/' && c != '\\' && c != ':' && c != '*' && c != '?' && c != '"' && c != '<' && c != '>' && c != '|'; };
+    field.onSubmit = [this](const std::string& name) { saveAs(name); };
+    auto& save = gui::boxButton(content, "Save", [this, &field] { saveAs(field.text); }, 22.0f);
+    save.name = "save";
+    save.anchor({1.0f, 0.0f}).pivot({1.0f, 0.0f}).size({136.0f, 54.0f});
+    auto& heading = gui::label(content, "Saved games", gui::font::bold, 20.0f, gui::color::dim);
+    heading.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({0.0f, 74.0f}).size({0.0f, 30.0f});
+    auto& view = gui::list(content, "slots");
+    view.anchors({0.0f, 0.0f}, {1.0f, 1.0f}).at({0.0f, 112.0f}).size({0.0f, 0.0f});
+    view.content().spacing = 8.0f;
+    for (const ve::save::SlotInfo& s : ve::save::slots()) {
+        const std::string slot = s.name;
+        auto& b = gui::boxButton(view.content(), slot, [this, slot] {
+            if (ui::Element* p = m_panels->root().find("panel:save"))
+                if (auto* f = dynamic_cast<ui::TextInput*>(p->find("name"))) {
+                    f->setText(slot);
+                    m_panels->focus(f);
+                }
+        }, 20.0f);
+        b.size({10.0f, 48.0f});
+        b.label().alignX = ui::Align::Start;
+        b.label().position = {18.0f, 0.0f};
+    }
+}
+
+void MainMenu::saveAs(const std::string& raw)
+{
+    std::string name = raw;
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    while (!name.empty() && name.front() == ' ') name.erase(name.begin());
+    if (name.empty()) name = "quick";
+    const bool ok = saveProgress(scene(), name);
+    m_lastSave = name;
+    GameState& gs = gameState();
+    gs.message = ok ? "Saved \"" + name + "\"" : "Couldn't save \"" + name + "\"";
+    gs.messageTimer = 2.5f;
+    showPanel("");
+    if (m_screen == Screen::Paused) resume();
+}
+
+void MainMenu::buildMultiplayer(ui::Element& content)
+{
+    // Host a game for friends, or join one by address (ve::net; Multiplayer.hpp).
+    auto row = [&](const char* label, float y) -> ui::Element& {
+        auto& r = content.add<ui::Element>(label);
+        r.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({0.0f, y}).size({0.0f, 54.0f});
+        auto& l = gui::label(r, label, gui::font::body, 22.0f, gui::color::text);
+        l.anchor({0.0f, 0.5f}).pivot({0.0f, 0.5f}).size({200.0f, 40.0f});
+        return r;
+    };
+    auto field = [&](ui::Element& r, const char* name, const std::string& value, const char* hint) -> ui::TextInput& {
+        auto& f = gui::textField(r, name, hint);
+        f.anchors({0.0f, 0.0f}, {1.0f, 1.0f}).at({210.0f, 0.0f}).size({0.0f, 0.0f});
+        f.setText(value);
+        f.onChanged = [this, name](const std::string& t) {
+            if (std::string(name) == "name") m_settings.playerName = t;
+            else if (std::string(name) == "address") m_settings.address = t;
+            else m_settings.port = t.empty() ? 7777 : std::clamp(std::atoi(t.c_str()), 1, 65535);
+            saveSettings();
+        };
+        return f;
+    };
+    field(row("Your name", 0.0f), "name", m_settings.playerName, "Player").maxLength = 24;
+    field(row("Host address", 70.0f), "address", m_settings.address, "192.168.1.20");
+    auto& port = field(row("Port", 140.0f), "port", std::to_string(m_settings.port), "7777");
+    port.accept = [](char32_t c) { return c >= '0' && c <= '9'; };
+    port.maxLength = 5;
+
+    auto& buttons = content.add<ui::Stack>("buttons");
+    buttons.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({0.0f, 230.0f}).size({0.0f, 56.0f});
+    buttons.vertical = false;
+    buttons.crossFill = true;
+    buttons.spacing = 14.0f;
+    auto host = [this] {
+        ve::net::Network& n = net();
+        n.playerName = m_settings.playerName.empty() ? "Host" : m_settings.playerName;
+        if (!n.host(uint16_t(m_settings.port))) return;
+        GameState& gs = gameState();
+        gs.message = "Hosting on port " + std::to_string(m_settings.port);
+        gs.messageTimer = 3.0f;
+        if (m_screen == Screen::Title) newGame();
+        else resume();
+    };
+    auto join = [this] {
+        ve::net::Network& n = net();
+        n.playerName = m_settings.playerName.empty() ? "Player" : m_settings.playerName;
+        m_joining = n.join(m_settings.address, uint16_t(m_settings.port));
+    };
+    gui::boxButton(buttons, "Host game", host, 22.0f).size({200.0f, 56.0f});
+    gui::boxButton(buttons, "Join game", join, 22.0f).size({200.0f, 56.0f});
+    gui::boxButton(buttons, "Leave", [this] {
+        net().leave();
+        m_joining = false;
+    }, 22.0f).size({160.0f, 56.0f});
+
+    auto& status = gui::label(content, "", gui::font::body, 21.0f, gui::color::dim);
+    status.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({0.0f, 310.0f}).size({0.0f, 80.0f});
+    status.wrap = true;
+    status.alignY = ui::Align::Start;
+    status.bind = [this] {
+        const ve::net::Network& n = net();
+        switch (n.status()) {
+        case ve::net::Status::Hosting: return "Hosting: " + std::to_string(n.peers().size()) + " player(s) in the game.";
+        case ve::net::Status::Connecting: return std::string("Connecting...");
+        case ve::net::Status::Joining: return std::string("Connected, joining...");
+        case ve::net::Status::Connected: return "In " + (n.peers().empty() ? std::string("the") : n.peers()[0].name + "'s") + " game (" +
+                                                std::to_string(n.peers().size()) + " players).";
+        case ve::net::Status::Failed: return n.lastError();
+        default: return std::string("Not connected. Players on your network join with your address and the port.");
+        }
+    };
 }
 
 // -----------------------------------------------------------------------------
@@ -427,7 +567,8 @@ void MainMenu::applySettings()
 void MainMenu::saveSettings() const
 {
     const ve::Json j{{"master", m_settings.master}, {"music", m_settings.music}, {"effects", m_settings.effects}, {"ambience", m_settings.ambience},
-                     {"mouse", m_settings.mouse}, {"fov", m_settings.fov}, {"taa", m_settings.taa}, {"help", m_settings.help}};
+                     {"mouse", m_settings.mouse},   {"fov", m_settings.fov},     {"taa", m_settings.taa},         {"help", m_settings.help},
+                     {"playerName", m_settings.playerName}, {"address", m_settings.address}, {"port", m_settings.port}};
     std::error_code ec;
     std::filesystem::create_directories(ve::save::folder(), ec);
     std::ofstream(ve::save::folder() / "settings.json") << j.dump(2) << '\n';
@@ -448,6 +589,9 @@ void MainMenu::loadSettings()
         m_settings.fov = j.value("fov", m_settings.fov);
         m_settings.taa = j.value("taa", m_settings.taa);
         m_settings.help = j.value("help", m_settings.help);
+        m_settings.playerName = j.value("playerName", m_settings.playerName);
+        m_settings.address = j.value("address", m_settings.address);
+        m_settings.port = j.value("port", m_settings.port);
     } catch (const std::exception& e) {
         ve::log::warn("Settings: {}", e.what());
     }

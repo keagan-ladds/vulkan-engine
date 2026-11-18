@@ -430,6 +430,24 @@ helpers (the instancing helpers are vertex-only).
   channels a clip doesn't animate) are blended (translation / scale
   weighted, rotations normalised-weighted in one hemisphere) and written to
   the node objects' local transforms. `play(name, fade, loop, speed)`.
+- **Layers.** Layer 0 is the whole body; `addLayer(name, maskJoint, blend)`
+  adds one over part of the skeleton (a joint and everything below it) that
+  plays its own clips: Override replaces the pose under it, Additive adds the
+  clip's difference from the rest pose. Each layer has a weight that fades
+  (`setLayerWeight(layer, w, fade)`): e.g. wave / swing an axe with the arms
+  while the legs walk.
+- **Events.** `addEvent(clip, time, name)` + `onEvent(event, clip)`: fired when
+  the current clip of a layer passes the time (loops included), not while it
+  fades out. Footsteps, hit frames, sounds.
+- **IK.** `TwoBoneIK` (upper / middle / end joint names, world `target`,
+  `pole` in model space, `weight`) runs after the animation: the middle
+  joint goes where the triangle's sides put it in the target / pole plane,
+  then the upper bone turns onto it and the lower onto the target (exact;
+  the end joint keeps its animated orientation). Joints no clip animates are
+  reset to rest first so IK doesn't accumulate. `FootIK` puts two of them on
+  the legs: raycasts under each animated foot, lifts / drops the foot onto
+  the ground (relative to the model's ground plane, so walking keeps its
+  lift), lowers the hips for the lower foot, smoothed.
 - **GPU skinning.** `SkinningSystem` keeps four shared storage buffers (set
   0, bindings 10–13): rest vertices and weights (once per source, refcounted),
   this frame's joint matrices (per frame slot) and the skinned output, which
@@ -443,7 +461,7 @@ helpers (the instancing helpers are vertex-only).
   Limits: `RendererSettings::maxSkinnedVertices` (262 144),
   `maxSkinJoints` per frame (8 192).
 - Not yet: motion vectors from skinning (moving bones of a standing
-  character), additive layers / masks, root motion, IK.
+  character), root motion, look-at / aim IK, full-body IK.
 
 ### 5.8 GPU layer (gfx)
 
@@ -644,6 +662,21 @@ Backed by **Recast & Detour** (linked `PRIVATE`, only included by
   reachable spots and follows the player when asked ("walk with me").
 - `showDebug` draws the navmesh's polygons near the camera.
 
+## 5.11b Debug drawing (`ve/debug/Debug.hpp`)
+
+`ve::debug::line / ray / arrow / path / cross / axes / box / aabb / circle /
+sphere / capsule / cylinder / text` from anywhere (game code, components,
+engine systems), sRGB colours, `{duration, thickness, depthTest}`. Lines are
+collected per frame (or kept for `duration` seconds) and drawn by
+`DebugLinePass` on the finished image (Overlay stage: after tonemapping and
+TAA, under the UI, not in photos): one instance per segment expanded to a
+screen-space quad (any thickness, clipped at the near plane), depth-tested
+against SceneDepth with the hidden parts drawn at 25 %. Labels go to ImGui's
+background list. Channels (`enabled("Name")` registers one, off;
+`setChannel`) are switched in F1 > Debug draw; engine channels draw physics
+bodies, terrain colliders, characters, the navmesh and nav agents (path
+corners, destination, velocity).
+
 ## 5.12 Networking (`ve/net`)
 
 Host-authoritative co-op (decision D19). `engine.net()` (or `net()` in any
@@ -699,11 +732,30 @@ Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
   and has an inner body so thrown objects hit it. Its position is the feet.
   Call `move(horizontalVelocity, dt)` from `fixedUpdate()`; gravity and
   `jump(speed)` are handled for you.
-- **Layers:** `NonMoving` (static), `Moving` (kinematic + dynamic), `Character`.
-  Static vs static never collide, and characters are only hit by moving bodies.
-  Raycasts ignore characters unless asked.
+- **Kinds:** `NonMoving` (static), `Moving` (kinematic + dynamic), `Character`,
+  `Sensor`. Static vs static never collide, and characters are only hit by
+  moving bodies. Raycasts ignore characters unless asked.
+- **Collision layers (the game's):** up to 32 named layers
+  (`physics().addLayer("Debris")`, "Default" = 0 always exists) and a
+  symmetric matrix (`setCollision(a, b, false)`). Bodies name theirs
+  (`Rigidbody::layer`, `CharacterController::layer`, `createStaticBody(...,
+  layer)`); a Jolt object layer is the kind in its low 2 bits and the game
+  layer above, and the pair filter checks both. Queries take a mask
+  (`QueryFilter::layers`, `layerMask({"Debris"})`); characters walk into what
+  their layer collides with.
+- **Physics materials:** friction / restitution per body, plus a `surface`
+  name ("Wood", "Stone"...): `Rigidbody::surface`, `FoliageType::colliderSurface`,
+  `createStaticBody(..., surface)`; terrain tiles are "Terrain" (games look
+  up the biome). Hits (`RaycastHit::surface / layer`), contacts
+  (`Collision::otherSurface / otherLayer`) and characters
+  (`CharacterController::groundSurface / groundObject`) report it: footsteps,
+  impact sounds and effects.
 - **Queries:** `physics().raycast(origin, dir, maxDist, ignoreBody, hitCharacters)` →
-  point, normal, distance, `Rigidbody*`, `GameObject*` (via body user data).
+  point, normal, distance, `Rigidbody*`, `GameObject*` (via body user data),
+  layer, surface; casts and overlaps take a `QueryFilter`.
+- **Debug drawing:** `drawDebug(center, radius, ...)` draws body wireframes as
+  `ve::debug` lines (F1 > Debug draw > "Physics colliders" / "Physics terrain" /
+  "Character controllers").
 - `scene.instantiate(model, parent, /*staticColliders*/ true)` gives every glTF
   mesh node a static triangle-mesh collider. `Model` keeps CPU `meshData` for this.
 - Threads: Jolt's job system with up to 4 workers. Per-step CPU time is shown in the F1 overlay.
@@ -791,6 +843,16 @@ look (colours, fonts, layouts) and what screens exist are the game's.
 - Fonts: `ui::loadFont(name, ttf, sizes)` bakes sizes into the atlas (any
   time: applied before the next frame); text picks the nearest baked size
   and scales.
+- Text fields: `ui::TextInput` (click or focus it and type: text from the
+  OS via `Input::textTyped()`, so keyboard layouts and IMEs work; caret,
+  Backspace / Delete / arrows / Home / End with key repeat, `accept` filter,
+  `onChanged`, `onSubmit` on Enter, Escape stops editing). While a field is
+  edited the keyboard belongs to it: gameplay keys, the canvas's shortcuts,
+  Space-to-click and Escape-to-back are off. Tests: `Input::injectText` /
+  `injectKeyTyped`.
+- Lists: `ui::ScrollView` clips its `content()` (a vertical Stack), scrolls
+  with the wheel, its bar or by dragging, and follows keyboard / pad focus
+  (`scrollTo`). Hit-testing skips what's clipped (`Element::clipsChildren`).
 - Icons: `ui::bakeIcon(renderer, meshData, size, view)` renders a mesh
   offscreen (orthographic, three-quarter view, simple lighting) into a
   texture for inventory / build menu slots. Textures kept outside the
@@ -911,6 +973,7 @@ Optional add-ons built only on public engine APIs:
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Building.*` | Building kit on the engine's prefabs + placement: `BuildPiece` (14 kinds x materials, doors / windows as fittings snapping into wall openings, `DoorHinge` (Use, saved), mesh / colliders / snap points / placement boxes from code; the kit is `assets/prefabs/building/*.prefab` + `building/catalogue.json`), `Builder` (build mode B: ghost, snap, fit, place, remove, navmesh rebuild) |
 | `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, HUD (ve::ui canvas: health / stamina, hotbar, clock, prompts), `AutoTest` |
+| `Villager.*` | Navmesh agents with animation: Idle / Walk crossfades, a "Wave" layer on the right arm (greeting the player), footstep events of the Walk clip (sounds by surface), FootIK on slopes, a "Villagers" debug-draw channel |
 | `Multiplayer.*` | On `ve/net`: host / join from `SAVANNA_NET`, player avatars (NetworkObject + NetworkTransform + replicated name), the host's world snapshot without its own player, clock / weather sync, `NetTest` (two-process test, `tools/nettest.sh`); building requests live in `Building.cpp` |
 | `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop) |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
@@ -918,7 +981,8 @@ Optional add-ons built only on public engine APIs:
 
 Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..4`,
 `SAVANNA_DEBUG=1` (F1 overlay on), `SAVANNA_MENU=1` (the title screen even with other hooks; it shows on a plain game launch only),
-`SAVANNA_NET=host[:port]` / `SAVANNA_NET=join:<address>[:port]` + `SAVANNA_NAME=<name>` (multiplayer), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
+`SAVANNA_NET=host[:port]` / `SAVANNA_NET=join:<address>[:port]` + `SAVANNA_NAME=<name>` (multiplayer),
+`SAVANNA_DRAW=colliders,terrain,characters,navmesh,agents,villagers,shapes` (debug-draw channels), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
 camera), `SAVANNA_AUTOTEST=1` / `SAVANNA_EDITORTEST=1` (scripted smoke tests
 that exit), `SAVANNA_SCENE=file.json` (another scene), and
 `VE_VALIDATION=0/1`. Any engine game: `VE_HEADLESS=1` (no window shown,

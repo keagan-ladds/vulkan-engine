@@ -14,6 +14,7 @@
 
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/debug/Debug.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/scene/Scene.hpp"
 
@@ -26,6 +27,7 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseQuery.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -69,12 +71,25 @@ glm::quat toG(JPH::QuatArg q) { return glm::quat(q.GetW(), q.GetX(), q.GetY(), q
 // Object layers say what collides with what; broad-phase layers group bodies
 // into separate acceleration trees (static bodies rarely change, so they get
 // their own tree that's cheap to keep optimised).
+// A Jolt object layer = a kind (low 2 bits: how the engine treats it) + the
+// game's collision layer (PhysicsWorld::addLayer, the bits above).
 namespace Layers {
 constexpr JPH::ObjectLayer NonMoving = 0; // static bodies
 constexpr JPH::ObjectLayer Moving = 1;    // dynamic + kinematic bodies
 constexpr JPH::ObjectLayer Character = 2; // the capsule that lets bodies hit characters
 constexpr JPH::ObjectLayer Sensor = 3;    // trigger volumes (Rigidbody::isTrigger)
 } // namespace Layers
+JPH::ObjectLayer kindOf(JPH::ObjectLayer l) { return JPH::ObjectLayer(l & 3u); }
+int gameLayerOf(JPH::ObjectLayer l) { return int(l >> 2); }
+JPH::ObjectLayer makeLayer(JPH::ObjectLayer kind, int gameLayer) { return JPH::ObjectLayer(kind | (uint32_t(gameLayer & 31) << 2)); }
+
+// The game's layers: names and who collides with whom (a bit per layer).
+struct LayerTable {
+    std::vector<std::string> names{"Default"};
+    uint32_t collide[32];
+    LayerTable() { std::fill(std::begin(collide), std::end(collide), 0xFFFFFFFFu); }
+    bool pair(int a, int b) const { return (collide[a & 31] >> (b & 31)) & 1u; }
+};
 namespace BPLayers {
 constexpr JPH::BroadPhaseLayer NonMoving(0);
 constexpr JPH::BroadPhaseLayer Moving(1);
@@ -86,7 +101,7 @@ public:
     uint32_t GetNumBroadPhaseLayers() const override { return BPLayers::Count; }
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override
     {
-        return layer == Layers::NonMoving ? BPLayers::NonMoving : BPLayers::Moving;
+        return kindOf(layer) == Layers::NonMoving ? BPLayers::NonMoving : BPLayers::Moving;
     }
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
     const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override
@@ -101,20 +116,23 @@ public:
     bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer bp) const override
     {
         // Static things, characters and triggers only need to test against moving things.
-        if (layer == Layers::Moving) return true;
+        if (kindOf(layer) == Layers::Moving) return true;
         return bp == BPLayers::Moving;
     }
 };
 
 class ObjectPairFilter final : public JPH::ObjectLayerPairFilter {
 public:
-    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override
+    bool ShouldCollide(JPH::ObjectLayer la, JPH::ObjectLayer lb) const override
     {
+        if (table && !table->pair(gameLayerOf(la), gameLayerOf(lb))) return false; // the game's matrix
+        const JPH::ObjectLayer a = kindOf(la), b = kindOf(lb);
         if (a == Layers::NonMoving) return b == Layers::Moving;
         if (a == Layers::Moving) return true;
         if (a == Layers::Character) return b == Layers::Moving || b == Layers::Sensor; // hit by bodies, enters triggers
         return b == Layers::Moving || b == Layers::Character;                         // triggers
     }
+    const LayerTable* table = nullptr;
 };
 
 // Query filter by layer (QueryFilter's statics / dynamics / characters / triggers).
@@ -123,7 +141,8 @@ public:
     explicit QueryLayerFilter(const QueryFilter& f) : m_f(f) {}
     bool ShouldCollide(JPH::ObjectLayer layer) const override
     {
-        switch (layer) {
+        if (!((m_f.layers >> gameLayerOf(layer)) & 1u)) return false;
+        switch (kindOf(layer)) {
         case Layers::NonMoving: return m_f.statics;
         case Layers::Moving: return m_f.dynamics;
         case Layers::Character: return m_f.characters;
@@ -222,6 +241,18 @@ struct PhysicsWorld::Impl {
     ObjectPairFilter objectPairs;
     std::unique_ptr<JPH::PhysicsSystem> system;
     uint32_t addedSinceOptimize = 0;
+    LayerTable layers;
+    // Surfaces: names interned; bodies without a component to hold one (createStaticBody) by id.
+    std::vector<std::string> surfaceNames{""};
+    std::unordered_map<uint32_t, uint16_t> staticSurfaces;
+    uint16_t surfaceId(const std::string& name)
+    {
+        if (name.empty()) return 0;
+        for (size_t i = 1; i < surfaceNames.size(); ++i)
+            if (surfaceNames[i] == name) return uint16_t(i);
+        surfaceNames.push_back(name);
+        return uint16_t(surfaceNames.size() - 1);
+    }
 
     // Contact pairs (body level; Jolt reports sub-shape pairs, so count them).
     ContactQueue contacts;
@@ -281,6 +312,20 @@ BodyOwner ownerOf(JPH::uint64 ud)
     return o;
 }
 
+std::string surfaceOf(const JPH::Body& body)
+{
+    const JPH::uint64 ud = body.GetUserData();
+    switch (ud & 3u) {
+    case 1: {
+        auto& impl = Engine::get().physics().impl();
+        auto it = impl.staticSurfaces.find(body.GetID().GetIndexAndSequenceNumber());
+        return it != impl.staticSurfaces.end() ? impl.surfaceNames[it->second] : std::string();
+    }
+    case 2: return reinterpret_cast<CharacterController*>(ud & ~JPH::uint64(3))->surface;
+    default: return ud ? reinterpret_cast<Rigidbody*>(ud)->surface : std::string();
+    }
+}
+
 // Filters a query's bodies: the ignored body / character.
 class QueryBodyFilter final : public JPH::BodyFilter {
 public:
@@ -321,6 +366,7 @@ void PhysicsWorld::init()
     const int threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 1, 4);
     m_impl->jobs = std::make_unique<JPH::JobSystemThreadPool>(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, threads);
 
+    m_impl->objectPairs.table = &m_impl->layers;
     m_impl->system = std::make_unique<JPH::PhysicsSystem>();
     m_impl->system->Init(/*maxBodies*/ 65536, /*bodyMutexes (0 = default)*/ 0, /*maxBodyPairs*/ 65536,
                          /*maxContactConstraints*/ 16384, m_impl->broadPhaseLayers, m_impl->objectVsBroadPhase,
@@ -477,12 +523,20 @@ void PhysicsWorld::Impl::dispatchContacts()
 
     // Resolve owners now (main thread, outside the update); removed bodies resolve to nothing.
     const JPH::BodyLockInterfaceNoLock& locks = system->GetBodyLockInterfaceNoLock();
-    auto owner = [&](JPH::BodyID id) {
+    struct Side {
+        BodyOwner owner;
+        int layer = 0;
+        std::string surface;
+    };
+    auto side = [&](JPH::BodyID id) {
         JPH::BodyLockRead lock(locks, id);
-        return lock.Succeeded() ? ownerOf(lock.GetBody().GetUserData()) : BodyOwner{};
+        if (!lock.Succeeded()) return Side{};
+        const JPH::Body& body = lock.GetBody();
+        return Side{ownerOf(body.GetUserData()), gameLayerOf(body.GetObjectLayer()), surfaceOf(body)};
     };
     for (const Out& o : out) {
-        const BodyOwner a = owner(o.a), b = owner(o.b);
+        const Side sa = side(o.a), sb = side(o.b);
+        const BodyOwner &a = sa.owner, &b = sb.owner;
         if (!a.gameObject && !b.gameObject) continue;
         if (o.sensor) {
             if (o.phase == Phase::Stay) continue;
@@ -493,8 +547,8 @@ void PhysicsWorld::Impl::dispatchContacts()
         void (Behaviour::*hook)(const Collision&) = &Behaviour::onCollisionExit;
         if (o.phase == Phase::Enter) hook = &Behaviour::onCollisionEnter;
         else if (o.phase == Phase::Stay) hook = &Behaviour::onCollisionStay;
-        Collision ca{b.gameObject, b.body, b.userValue, o.point, -o.normal, o.speed}; // seen from a
-        Collision cb{a.gameObject, a.body, a.userValue, o.point, o.normal, o.speed};  // seen from b
+        Collision ca{b.gameObject, b.body, b.userValue, o.point, -o.normal, o.speed, sb.layer, sb.surface}; // seen from a
+        Collision cb{a.gameObject, a.body, a.userValue, o.point, o.normal, o.speed, sa.layer, sa.surface};  // seen from b
         sendCollision(a.gameObject, hook, ca);
         sendCollision(b.gameObject, hook, cb);
     }
@@ -547,6 +601,8 @@ void fillHit(const JPH::PhysicsSystem& system, JPH::BodyID id, const JPH::SubSha
     hit.body = o.body;
     hit.gameObject = o.gameObject;
     hit.userValue = o.userValue;
+    hit.layer = gameLayerOf(body.GetObjectLayer());
+    hit.surface = surfaceOf(body);
 }
 
 } // namespace
@@ -807,17 +863,89 @@ std::vector<glm::vec3> Collider::triangles(const glm::mat4& transform) const
 }
 
 uint32_t PhysicsWorld::createStaticBody(const Collider& collider, const glm::vec3& position, const glm::quat& rotation,
-                                       const glm::vec3& scale, uint32_t userValue)
+                                       const glm::vec3& scale, uint32_t userValue, const std::string& surface, int layer)
 {
     if (!collider.valid()) return Rigidbody::kInvalidBody;
     JPH::BodyCreationSettings s(scaledShape(collider, scale), toJ(position), toJ(rotation), JPH::EMotionType::Static,
-                                Layers::NonMoving);
+                                makeLayer(Layers::NonMoving, std::clamp(layer, 0, kMaxLayers - 1)));
     s.mUserData = staticUserData(userValue);
     const JPH::BodyID id = m_impl->system->GetBodyInterface().CreateAndAddBody(s, JPH::EActivation::DontActivate);
     if (id.IsInvalid()) return Rigidbody::kInvalidBody;
     ++m_impl->addedSinceOptimize;
+    if (!surface.empty()) m_impl->staticSurfaces[id.GetIndexAndSequenceNumber()] = m_impl->surfaceId(surface);
     return id.GetIndexAndSequenceNumber();
 }
+
+// --- Collision layers ---------------------------------------------------------------
+
+int PhysicsWorld::addLayer(const std::string& name)
+{
+    auto& names = m_impl->layers.names;
+    for (size_t i = 0; i < names.size(); ++i)
+        if (names[i] == name) return int(i);
+    if (names.size() >= size_t(kMaxLayers)) {
+        log::error("Physics: no room for collision layer '{}' (max {})", name, kMaxLayers);
+        return -1;
+    }
+    names.push_back(name);
+    return int(names.size() - 1);
+}
+
+int PhysicsWorld::layer(const std::string& name) const
+{
+    const auto& names = m_impl->layers.names;
+    for (size_t i = 0; i < names.size(); ++i)
+        if (names[i] == name) return int(i);
+    return -1;
+}
+
+const std::string& PhysicsWorld::layerName(int index) const
+{
+    static const std::string none;
+    const auto& names = m_impl->layers.names;
+    return index >= 0 && size_t(index) < names.size() ? names[size_t(index)] : none;
+}
+
+int PhysicsWorld::layerCount() const
+{
+    return int(m_impl->layers.names.size());
+}
+
+void PhysicsWorld::setCollision(int a, int b, bool collide)
+{
+    if (a < 0 || b < 0 || a >= kMaxLayers || b >= kMaxLayers) return;
+    uint32_t* m = m_impl->layers.collide;
+    if (collide) {
+        m[a] |= 1u << b;
+        m[b] |= 1u << a;
+    } else {
+        m[a] &= ~(1u << b);
+        m[b] &= ~(1u << a);
+    }
+}
+
+bool PhysicsWorld::collides(int a, int b) const
+{
+    return a >= 0 && b >= 0 && a < kMaxLayers && b < kMaxLayers && m_impl->layers.pair(a, b);
+}
+
+uint32_t PhysicsWorld::layerMask(std::initializer_list<const char*> names) const
+{
+    uint32_t mask = 0;
+    for (const char* n : names)
+        if (const int l = layer(n); l >= 0) mask |= 1u << l;
+    return mask;
+}
+
+namespace {
+int resolveLayer(const std::string& name, const std::string& who)
+{
+    if (name.empty() || name == "Default") return 0;
+    const int l = Engine::get().physics().layer(name);
+    if (l < 0) log::warn("Physics: '{}' asks for collision layer '{}', which wasn't added (PhysicsWorld::addLayer)", who, name);
+    return std::max(l, 0);
+}
+} // namespace
 
 void PhysicsWorld::destroyStaticBody(uint32_t bodyId)
 {
@@ -825,6 +953,7 @@ void PhysicsWorld::destroyStaticBody(uint32_t bodyId)
     JPH::BodyInterface& bi = m_impl->system->GetBodyInterface();
     bi.RemoveBody(JPH::BodyID(bodyId));
     bi.DestroyBody(JPH::BodyID(bodyId));
+    m_impl->staticSurfaces.erase(bodyId);
 }
 
 // =============================================================================
@@ -890,9 +1019,10 @@ void Rigidbody::start()
         log::warn("Rigidbody on '{}': mesh/heightfield triggers only detect awake dynamic bodies; use a convex shape",
                   gameObject().name());
     JPH::BodyCreationSettings s(shape, toJ(pos), toJ(rot), motion,
-                                isTrigger                    ? Layers::Sensor
-                                : type == BodyType::Static ? Layers::NonMoving
-                                                           : Layers::Moving);
+                                makeLayer(isTrigger                    ? Layers::Sensor
+                                          : type == BodyType::Static ? Layers::NonMoving
+                                                                     : Layers::Moving,
+                                          resolveLayer(layer, gameObject().name())));
     if (isTrigger) {
         s.mIsSensor = true;
         s.mCollideKinematicVsNonDynamic = true;
@@ -1010,6 +1140,7 @@ bool Rigidbody::isAwake() const
 struct CharacterController::Impl {
     JPH::Ref<JPH::CharacterVirtualSettings> settings;
     JPH::Ref<JPH::CharacterVirtual> character;
+    int layer = 0; // collision layer
 };
 
 CharacterController::CharacterController() = default;
@@ -1057,7 +1188,8 @@ void CharacterController::start()
     s.mMaxStrength = pushStrength;
     // An inner rigid body so dynamic objects (thrown rocks...) can hit the character.
     s.mInnerBodyShape = capsule;
-    s.mInnerBodyLayer = Layers::Character;
+    m_impl->layer = resolveLayer(layer, gameObject().name());
+    s.mInnerBodyLayer = makeLayer(Layers::Character, m_impl->layer);
 
     const glm::vec3 feet = transform().position();
     // The inner body carries the same user data, so contacts and queries find us.
@@ -1095,9 +1227,9 @@ void CharacterController::move(const glm::vec3& horizontalVelocity, float dt)
     update.mStickToFloorStepDown = JPH::Vec3(0.0f, -std::max(stepHeight, 0.3f), 0.0f);
     update.mWalkStairsStepUp = JPH::Vec3(0.0f, stepHeight, 0.0f);
     JPH::IgnoreSingleBodyFilter ignoreSelf(c.GetInnerBodyID());
-    c.ExtendedUpdate(dt, world.system->GetGravity(), update,
-                     world.system->GetDefaultBroadPhaseLayerFilter(Layers::Moving),
-                     world.system->GetDefaultLayerFilter(Layers::Moving), ignoreSelf, {}, *world.temp);
+    const JPH::ObjectLayer as = makeLayer(Layers::Moving, m_impl->layer); // walks into what its layer collides with
+    c.ExtendedUpdate(dt, world.system->GetGravity(), update, world.system->GetDefaultBroadPhaseLayerFilter(as),
+                     world.system->GetDefaultLayerFilter(as), ignoreSelf, {}, *world.temp);
 
     m_prevPos = m_currPos;
     m_currPos = toG(c.GetPosition());
@@ -1128,6 +1260,34 @@ glm::vec3 CharacterController::groundNormal() const
     return m_impl ? toG(m_impl->character->GetGroundNormal()) : glm::vec3(0, 1, 0);
 }
 
+namespace {
+template <class F>
+auto withGround(const CharacterController::Impl* impl, F&& f) -> decltype(f(std::declval<const JPH::Body&>()))
+{
+    if (!impl || !physicsAlive() || impl->character->GetGroundState() == JPH::CharacterVirtual::EGroundState::InAir) return {};
+    const JPH::BodyID id = impl->character->GetGroundBodyID();
+    if (id.IsInvalid()) return {};
+    JPH::BodyLockRead lock(Engine::get().physics().impl().system->GetBodyLockInterface(), id);
+    if (!lock.Succeeded()) return {};
+    return f(lock.GetBody());
+}
+} // namespace
+
+std::string CharacterController::groundSurface() const
+{
+    return withGround(m_impl.get(), [](const JPH::Body& b) { return surfaceOf(b); });
+}
+
+GameObject* CharacterController::groundObject() const
+{
+    return withGround(m_impl.get(), [](const JPH::Body& b) { return ownerOf(b.GetUserData()).gameObject; });
+}
+
+uint32_t CharacterController::groundUserValue() const
+{
+    return withGround(m_impl.get(), [](const JPH::Body& b) { return ownerOf(b.GetUserData()).userValue; });
+}
+
 void CharacterController::teleport(const glm::vec3& feet)
 {
     transform().setPosition(feet);
@@ -1135,6 +1295,90 @@ void CharacterController::teleport(const glm::vec3& feet)
     if (m_impl) {
         m_impl->character->SetPosition(toJ(feet));
         m_impl->character->SetLinearVelocity(JPH::Vec3::sZero());
+    }
+}
+
+} // namespace ve
+
+// -----------------------------------------------------------------------------
+// Debug drawing
+// -----------------------------------------------------------------------------
+
+namespace ve {
+
+namespace {
+// Triangles of a shape in its centre-of-mass space, kept while the shape lives.
+struct ShapeTriangles {
+    JPH::RefConst<JPH::Shape> keep;
+    std::vector<glm::vec3> tris;
+};
+const std::vector<glm::vec3>& shapeTriangles(const JPH::Shape* shape)
+{
+    static std::unordered_map<const JPH::Shape*, ShapeTriangles> cache;
+    if (auto it = cache.find(shape); it != cache.end()) return it->second.tris;
+    if (cache.size() > 4096) cache.clear();
+    ShapeTriangles& st = cache[shape];
+    st.keep = shape;
+    JPH::AllHitCollisionCollector<JPH::TransformedShapeCollector> leaves;
+    shape->CollectTransformedShapes(JPH::AABox::sBiggest(), JPH::Vec3::sZero(), JPH::Quat::sIdentity(), JPH::Vec3::sReplicate(1.0f),
+                                    JPH::SubShapeIDCreator(), leaves, {});
+    constexpr int kBatch = JPH::Shape::cGetTrianglesMinTrianglesRequested * 4;
+    JPH::Float3 verts[kBatch * 3];
+    for (const JPH::TransformedShape& ts : leaves.mHits) {
+        JPH::Shape::GetTrianglesContext ctx;
+        ts.GetTrianglesStart(ctx, JPH::AABox::sBiggest(), JPH::RVec3::sZero());
+        for (;;) {
+            const int n = ts.GetTrianglesNext(ctx, kBatch, verts);
+            if (n <= 0) break;
+            for (int i = 0; i < n * 3; ++i) st.tris.emplace_back(verts[i].x, verts[i].y, verts[i].z);
+        }
+    }
+    return st.tris;
+}
+} // namespace
+
+void PhysicsWorld::drawDebug(const glm::vec3& center, float radius, bool showBodies, bool showTerrain, bool showCharacters, const glm::vec3& eye) const
+{
+    if (!m_impl->system) return;
+    const JPH::AABox box(toJ(center) - JPH::Vec3::sReplicate(radius), toJ(center) + JPH::Vec3::sReplicate(radius));
+    JPH::AllHitCollisionCollector<JPH::CollideShapeBodyCollector> found;
+    m_impl->system->GetBroadPhaseQuery().CollideAABox(box, found);
+    const JPH::BodyLockInterfaceLocking& locks = m_impl->system->GetBodyLockInterface();
+    const float r2 = radius * radius;
+    debug::Style style;
+    style.thickness = 1.5f;
+    for (const JPH::BodyID id : found.mHits) {
+        JPH::BodyLockRead lock(locks, id);
+        if (!lock.Succeeded()) continue;
+        const JPH::Body& body = lock.GetBody();
+        const JPH::Shape* shape = body.GetShape();
+        const bool heightfield = shape->GetSubType() == JPH::EShapeSubType::HeightField;
+        const bool character = (body.GetUserData() & 3u) == 2u;
+        if (heightfield ? !showTerrain : character ? !showCharacters : !showBodies) continue;
+        // Not the one we're inside (the camera's own character): its lines would cover the screen.
+        if (!heightfield && body.GetWorldSpaceBounds().Contains(toJ(eye))) continue;
+        glm::vec4 color = debug::kGrey;
+        if (character) color = debug::kYellow;
+        else if (body.IsSensor()) color = debug::kGreen;
+        else if (body.IsKinematic()) color = debug::kBlue;
+        else if (body.IsDynamic()) color = body.IsActive() ? debug::kOrange : glm::vec4(0.6f, 0.4f, 0.15f, 1.0f);
+        if (heightfield) color = glm::vec4(0.55f, 0.75f, 0.45f, 0.6f);
+        const JPH::RMat44 m = body.GetCenterOfMassTransform();
+        const auto& tris = shapeTriangles(shape);
+        for (size_t i = 0; i + 2 < tris.size(); i += 3) {
+            glm::vec3 p[3];
+            for (int k = 0; k < 3; ++k) {
+                const JPH::RVec3 w = m * JPH::Vec3(tris[i + k].x, tris[i + k].y, tris[i + k].z);
+                p[k] = glm::vec3(float(w.GetX()), float(w.GetY()), float(w.GetZ()));
+            }
+            if (heightfield) { // big: only near the centre
+                const glm::vec3 c = (p[0] + p[1] + p[2]) / 3.0f - center;
+                if (glm::dot(c, c) > r2) continue;
+            }
+            debug::line(p[0], p[1], color, style);
+            debug::line(p[1], p[2], color, style);
+            debug::line(p[2], p[0], color, style);
+        }
     }
 }
 

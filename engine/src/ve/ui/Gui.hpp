@@ -41,6 +41,7 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <string>
@@ -50,6 +51,7 @@ struct ImDrawList;
 struct ImFont;
 
 namespace ve {
+class Input;
 
 class Engine;
 class Texture;
@@ -92,6 +94,10 @@ public:
     // Any shape: polygon in canvas units.
     void polygon(const std::vector<glm::vec2>& points, glm::vec4 color);
     void circle(glm::vec2 center, float radius, glm::vec4 color, bool filled = true, float thickness = 1.0f);
+
+    // Draw only inside r (nested clips intersect).
+    void pushClip(const Rect& r);
+    void popClip();
 
     float scale = 1.0f;     // canvas units -> pixels
     float opacity = 1.0f;   // multiplied into every colour
@@ -166,6 +172,8 @@ public:
     void click();                                // as if clicked (tests, scripts)
 
     virtual bool focusable() const { return false; }
+    virtual bool clipsChildren() const { return false; } // children outside the rect are hidden (scroll views)
+    virtual bool wantsText() const { return false; }     // takes typed text while focused (text fields)
     virtual bool interactive() const { return onClick || draggable || onDrop || !tooltip.empty(); }
     // While pressed: the pointer, in canvas units (sliders follow it).
     virtual void onPointer(glm::vec2) {}
@@ -297,6 +305,7 @@ public:
     Align cross = Align::Start;
     Align main = Align::Start; // where the children sit along the axis if there's room
     void layout() override;
+    float contentLength() const; // the visible children's extents + spacing + padding along the axis
 };
 
 // Fixed-size cells, left to right, top to bottom.
@@ -309,6 +318,71 @@ public:
     glm::vec4 padding{0.0f};
     void layout() override;
     glm::vec2 contentSize(int count) const; // the size `count` cells take
+};
+
+// A one-line text field. Click it (or move the focus to it) and type; Enter
+// submits, Escape stops editing. Typed text comes from the OS (keyboard
+// layouts, IME); while a field is edited, gameplay gets no keys.
+class TextInput : public Element {
+public:
+    using Element::Element;
+    std::string text;
+    std::string placeholder;          // shown (dimmed) while empty
+    size_t maxLength = 64;            // bytes
+    std::string font = "default";
+    float fontSize = 22.0f;
+    glm::vec4 background{0.0f, 0.0f, 0.0f, 0.45f}, border{1.0f, 1.0f, 1.0f, 0.25f}, focusBorder{1.0f, 0.8f, 0.4f, 1.0f};
+    glm::vec4 textColor{1.0f}, placeholderColor{1.0f, 1.0f, 1.0f, 0.4f}, caretColor{1.0f, 0.85f, 0.5f, 1.0f};
+    float rounding = 4.0f;
+    float paddingX = 10.0f;
+    std::function<void(const std::string&)> onChanged;
+    std::function<void(const std::string&)> onSubmit; // Enter
+    std::function<bool(char32_t)> accept;             // which characters may be typed (null = any printable)
+
+    bool focusable() const override { return enabled && visible; }
+    bool interactive() const override { return true; }
+    bool wantsText() const override { return true; }
+    void onPointer(glm::vec2 p) override; // places the caret
+    void drawSelf(Painter& p) override;
+    void setText(std::string t);
+    size_t cursor() const { return m_cursor; }
+    // System, while it's being edited: typed text and the editing keys.
+    void edit(const Input& in, float dt);
+
+private:
+    size_t m_cursor = std::string::npos; // byte offset (npos = the end)
+    float m_scroll = 0.0f;               // horizontal, when the text is wider than the field
+    float m_blink = 0.0f;
+    float m_lastScale = 1.0f;
+};
+
+// A scrolling list: add items to content() (a vertical Stack); wheel, drag
+// the bar or the background, and keyboard / pad focus scrolls to the focused item.
+class ScrollView : public Element {
+public:
+    explicit ScrollView(std::string name = {});
+    Stack& content() { return *m_content; }
+    float scroll = 0.0f;              // canvas units from the top
+    float wheelStep = 70.0f;
+    float barWidth = 8.0f;
+    glm::vec4 barTrack{1.0f, 1.0f, 1.0f, 0.08f}, barThumb{1.0f, 1.0f, 1.0f, 0.35f};
+
+    bool clipsChildren() const override { return true; }
+    bool interactive() const override { return overflows(); }
+    void onPointer(glm::vec2 p) override;
+    void layout() override;
+    void draw(Painter& p) override;
+    bool overflows() const { return m_contentHeight > m_rect.size().y + 0.5f; }
+    float maxScroll() const { return std::max(0.0f, m_contentHeight - m_rect.size().y); }
+    float contentHeight() const { return m_contentHeight; }
+    void scrollBy(float amount) { scroll = std::clamp(scroll + amount, 0.0f, maxScroll()); }
+    void scrollTo(const Element& e); // the least scrolling that shows e (an element in the content)
+
+private:
+    Stack* m_content = nullptr;
+    float m_contentHeight = 0.0f;
+    bool m_drag = false, m_dragBar = false;
+    float m_grabY = 0.0f, m_grabScroll = 0.0f;
 };
 
 // ---- Canvas ----------------------------------------------------------------------------
@@ -397,6 +471,10 @@ private:
     float m_hoverTime = 0.0f;
     float m_navRepeat = 0.0f;
     glm::vec2 m_pointer{0.0f};
+    TextInput* m_editing = nullptr; // the text field being typed into
+    Canvas* m_editingCanvas = nullptr;
+public:
+    TextInput* editing() const { return m_editing; }
 };
 
 } // namespace ui

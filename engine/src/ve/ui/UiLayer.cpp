@@ -1,4 +1,6 @@
 #include "ve/ui/UiLayer.hpp"
+
+#include "ve/debug/Debug.hpp"
 #include "ve/ui/Gui.hpp"
 
 #include "ve/core/Profiler.hpp"
@@ -201,6 +203,15 @@ void UiLayer::drawDebugOverlay()
         }
     }
 
+    if (ImGui::CollapsingHeader("Debug draw")) {
+        // ve::debug channels: engine ones (colliders, navmesh, agents) and any the game asked about.
+        for (const auto& [name, on] : debug::channels()) {
+            bool v = on;
+            if (ImGui::Checkbox(name.c_str(), &v)) debug::setChannel(name, v);
+        }
+        ImGui::TextDisabled("%zu lines this frame", debug::lineCount());
+        if (ImGui::Button("Clear lasting lines")) debug::clear();
+    }
     if (ImGui::CollapsingHeader("Audio")) {
         if (m_engine->audio().available()) m_engine->audio().onGui();
         else ImGui::TextDisabled("No audio device");

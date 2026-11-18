@@ -21,6 +21,7 @@
 #include "SavannaLayout.hpp"
 #include "Vegetation.hpp"
 
+#include <ve/debug/Debug.hpp>
 #include <ve/editor/Editor.hpp>
 #include <ve/world/Terrain.hpp>
 
@@ -117,6 +118,32 @@ private:
 };
 
 // Test hook: a striped box sliding left/right in front of the camera (TAA motion vectors).
+// SAVANNA_DRAW=shapes: one of each ve::debug shape in a row by the camp (screenshots).
+class DebugShapes : public ve::GameObject {
+public:
+    DebugShapes() : GameObject("Debug shapes") {}
+    void update(float) override
+    {
+        namespace dbg = ve::debug;
+        const ve::Terrain* t = ve::Terrain::find(scene());
+        auto at = [&](float x) {
+            const glm::vec2 p = savanna::layout::kCamp + glm::vec2(14.0f + x * 2.2f, 9.0f);
+            return glm::vec3(p.x, (t ? t->height(p.x, p.y) : 3.0f) + 1.0f, p.y);
+        };
+        const glm::quat turn = glm::angleAxis(0.5f, glm::vec3(0, 1, 0));
+        dbg::box(at(0), glm::vec3(0.5f), turn, dbg::kOrange);
+        dbg::sphere(at(1), 0.6f, dbg::kCyan);
+        dbg::capsule(at(2) - glm::vec3(0, 0.5f, 0), at(2) + glm::vec3(0, 0.5f, 0), 0.35f, dbg::kYellow);
+        dbg::cylinder(at(3) - glm::vec3(0, 0.7f, 0), at(3) + glm::vec3(0, 0.7f, 0), 0.45f, dbg::kGreen);
+        dbg::arrow(at(4) - glm::vec3(0, 0.7f, 0), at(4) + glm::vec3(0.4f, 0.8f, 0), dbg::kRed, {.thickness = 3.0f});
+        dbg::axes(at(5), turn, 0.8f);
+        dbg::circle(at(6), {0, 1, 0}, 0.6f, dbg::kMagenta);
+        dbg::cross(at(7), 0.8f, dbg::kWhite, {.depthTest = false});
+        dbg::text(at(0) + glm::vec3(0, 1.0f, 0), "box", dbg::kWhite);
+        dbg::text(at(7) + glm::vec3(0, 1.0f, 0), "on top", dbg::kWhite);
+    }
+};
+
 class Mover : public ve::GameObject {
 public:
     void update(float dt) override
@@ -242,8 +269,13 @@ void buildLevel(ve::Engine& engine)
     if (!terrainPtr) terrainPtr = &scene.spawn<ve::Terrain>(); // a scene without terrain: default one
     ve::Terrain& terrain = *terrainPtr;
 
+    // --- Collision layers: loose debris (thrown rocks) doesn't block the Use ray --------------
+    ve::PhysicsWorld& physics = engine.physics();
+    const int debris = physics.addLayer("Debris");
+
     // --- Player: spawns at the PlayerStart marker ------------------------------------------
     auto& player = scene.spawn<Player>();
+    if (auto* use = player.getComponent<ve::Interactor>()) use->layers = ~(1u << debris);
     loadControls(); // the player's saved bindings (F10) over its defaults
     if (auto rocks = ve::MeshLibrary::get(r, "rock")) // throwable stones look like the scattered rocks
         player.setThrowable(rocks->variants[0][0].mesh, propMaterial(), rocks->colliders[0]);
@@ -281,6 +313,18 @@ void buildLevel(ve::Engine& engine)
         weather->setWeather(static_cast<vfx::Weather::Type>(std::atoi(w) % int(vfx::Weather::Type::Count)), 0.01f);
     }
     if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
+    // SAVANNA_DRAW=colliders,terrain,characters,navmesh,agents,villagers,shapes: debug-draw channels (F1 > Debug draw).
+    if (const char* d = std::getenv("SAVANNA_DRAW")) {
+        const std::string on = d;
+        auto has = [&](const char* w) { return on.find(w) != std::string::npos; };
+        if (has("colliders")) ve::debug::setChannel("Physics colliders", true);
+        if (has("terrain")) ve::debug::setChannel("Physics terrain", true);
+        if (has("characters")) ve::debug::setChannel("Character controllers", true);
+        if (has("navmesh")) ve::debug::setChannel("Navmesh", true);
+        if (has("agents")) ve::debug::setChannel("Nav agents", true);
+        if (has("villagers")) ve::debug::setChannel("Villagers", true);
+        if (has("shapes")) scene.spawn<DebugShapes>();
+    }
     if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser
     r.settings().temporalAA = true;
     if (const char* o = std::getenv("SAVANNA_OCCLUSION")) r.settings().occlusionCulling = o[0] == '1'; // occlusion culling on/off

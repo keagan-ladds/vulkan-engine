@@ -3,6 +3,7 @@
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Profiler.hpp"
+#include "ve/debug/Debug.hpp"
 #include "ve/editor/Gizmo.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Renderer.hpp"
@@ -591,6 +592,50 @@ void NavMeshSurface::drawDebug(DebugDraw& dd, const glm::vec3& eye, float maxDis
             }
         }
     }
+}
+
+void NavMeshSurface::drawDebugLines(const glm::vec3& eye, float maxDistance) const
+{
+    if (!m_nav) return;
+    const dtNavMesh* nav = m_nav;
+    const glm::vec3 lift(0.0f, 0.08f, 0.0f);
+    debug::Style inner, edge;
+    inner.thickness = 1.0f;
+    edge.thickness = 2.0f;
+    for (int i = 0; i < nav->getMaxTiles(); ++i) {
+        const dtMeshTile* tile = nav->getTile(i);
+        if (!tile || !tile->header) continue;
+        const glm::vec3 lo = vec(tile->header->bmin), hi = vec(tile->header->bmax);
+        if (glm::distance(glm::clamp(eye, lo, hi), eye) > maxDistance) continue;
+        for (int p = 0; p < tile->header->polyCount; ++p) {
+            const dtPoly& poly = tile->polys[p];
+            if (poly.getType() != DT_POLYTYPE_GROUND) continue;
+            if (glm::distance(vec(&tile->verts[poly.verts[0] * 3]), eye) > maxDistance) continue;
+            for (int j = 0; j < poly.vertCount; ++j) {
+                const glm::vec3 a = vec(&tile->verts[poly.verts[j] * 3]) + lift;
+                const glm::vec3 b = vec(&tile->verts[poly.verts[(j + 1) % poly.vertCount] * 3]) + lift;
+                const bool wall = poly.neis[j] == 0; // boundary: a wall or the mesh's edge
+                debug::line(a, b, wall ? glm::vec4(0.15f, 0.85f, 1.0f, 0.9f) : glm::vec4(0.15f, 0.6f, 1.0f, 0.35f), wall ? edge : inner);
+            }
+        }
+    }
+}
+
+void NavAgent::drawDebug() const
+{
+    const glm::vec3 p = transform().position();
+    const glm::vec3 up(0.0f, 0.05f, 0.0f);
+    debug::circle(p + up, {0, 1, 0}, radius, onNavMesh() ? debug::kCyan : debug::kRed);
+    if (glm::length(m_velocity) > 0.05f) debug::arrow(p + glm::vec3(0, 0.5f, 0), p + glm::vec3(0, 0.5f, 0) + m_velocity * 0.5f, debug::kYellow);
+    if (!m_hasTarget) return;
+    // The path the crowd steers along: the next corners, then the destination.
+    std::vector<glm::vec3> pts{p + up};
+    if (const NavMeshSurface* s = surface(); s && s->crowd() && m_index >= 0)
+        if (const dtCrowdAgent* ag = s->crowd()->getAgent(m_index); ag && ag->active)
+            for (int i = 0; i < ag->ncorners; ++i) pts.push_back(vec(&ag->cornerVerts[i * 3]) + up);
+    if (glm::distance(pts.back(), m_target + up) > 0.05f) pts.push_back(m_target + up);
+    debug::path(pts, debug::kMagenta);
+    debug::cross(m_target + glm::vec3(0, 0.3f, 0), 0.5f, debug::kMagenta);
 }
 
 void NavMeshSurface::onDestroy()

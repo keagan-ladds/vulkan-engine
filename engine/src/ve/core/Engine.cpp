@@ -1,5 +1,6 @@
 #include "ve/core/Engine.hpp"
 #include "ve/net/Network.hpp"
+#include "ve/debug/Debug.hpp"
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
@@ -420,10 +421,12 @@ void Engine::tickFrame()
         VE_PROFILE("Network");
         m_net->flush(); // what we own moved / changed this frame
     }
+    debug::drawEngineChannels(); // colliders, navmesh, agents (when their F1 channels are on)
     if (editorLoading && pollLoadTasks()) endLoading(); // (no minimum time: there's no screen to read)
     {
         VE_PROFILE("GUI");
         m_scene->onGui();
+        debug::drawLabels();            // ve::debug::text, under everything else
         ui::System::get().draw(*this); // game UI canvases (under the tools' ImGui windows)
         if (m_editor) m_editor->onGui();
         m_ui->drawDebugOverlay();
@@ -441,6 +444,7 @@ void Engine::tickFrame()
         VE_PROFILE("Render");
         m_renderer->render(*m_scene, m_time);
     }
+    debug::endFrame(m_time.realTime); // one-frame lines are drawn: drop them
     m_ui->endFrameIfNotRendered();
     m_scene->flushDestroyed();
 }

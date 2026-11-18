@@ -1171,10 +1171,204 @@ void AutoTest::update(float dt)
         shot("7-building");
         if (m_t > 2.0f) {
             m_t = 0.0f;
-            ++m_step;
+            m_step = 70; // physics layers / surfaces, then the UI
         }
+    } else if (m_step >= 70) {
+        physicsSteps(log);
     } else if (m_step >= 47) {
         uiSteps(log);
+    }
+}
+
+namespace {
+// Physics test helpers: what a body touched, and a character that just stands.
+class ContactRecorder : public ve::Component {
+public:
+    std::string surface;
+    int layer = -1;
+    void onCollisionEnter(const ve::Collision& c) override
+    {
+        if (surface.empty()) {
+            surface = c.otherSurface;
+            layer = c.otherLayer;
+        }
+    }
+};
+class StandStill : public ve::Component {
+public:
+    void fixedUpdate(float dt) override
+    {
+        if (auto* c = gameObject().getComponent<ve::CharacterController>()) c->move(glm::vec3(0.0f), dt);
+    }
+};
+} // namespace
+
+// Collision layers and physics surfaces (engine), then on to the UI steps.
+void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
+{
+    ve::PhysicsWorld& ph = physics();
+    const glm::vec2 spot = layout::kCamp + glm::vec2(-14.0f, 16.0f);
+    const glm::vec3 ground = groundAt(spot);
+    const float platformY = ground.y + 4.0f;
+    switch (m_step) {
+    case 70: {
+        const int platformLayer = ph.addLayer("TestPlatform"), ghostLayer = ph.addLayer("TestGhost");
+        ph.setCollision(platformLayer, ghostLayer, false);
+        auto& platform = scene().spawn("Test platform");
+        platform.transform().setPosition({spot.x, platformY, spot.y});
+        auto& pb = platform.addComponent<ve::Rigidbody>(ve::Collider::box({1.5f, 0.15f, 1.5f}), ve::BodyType::Static);
+        pb.layer = "TestPlatform";
+        pb.surface = "Stone";
+        auto box = [&](const char* name, const char* layer, float dx) -> ve::GameObject& {
+            auto& b = scene().spawn(name);
+            b.transform().setPosition({spot.x + dx, platformY + 1.5f, spot.y});
+            b.addComponent<ve::Rigidbody>(ve::Collider::box(glm::vec3(0.2f)), ve::BodyType::Dynamic).layer = layer;
+            b.addComponent<ContactRecorder>();
+            return b;
+        };
+        m_physGhost = box("Ghost box", "TestGhost", -0.6f).id();
+        m_physSolid = box("Solid box", "Default", 0.6f).id();
+        m_physPlatform = platform.id();
+        log("layers: " + std::to_string(ph.layerCount()) + " (Default, Debris, TestPlatform, TestGhost), TestPlatform x TestGhost collide: " +
+            (ph.collides(platformLayer, ghostLayer) ? "YES (wrong)" : "no"));
+        m_stepFrame = m_frames;
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 71: {
+        if (m_t < 2.5f) break;
+        ve::GameObject* ghost = scene().findById(m_physGhost);
+        ve::GameObject* solid = scene().findById(m_physSolid);
+        if (!ghost || !solid) break;
+        const float gy = ghost->transform().position().y, sy = solid->transform().position().y;
+        const auto* rec = solid->getComponent<ContactRecorder>();
+        log("layers: the TestGhost box fell through the platform: " + std::string(gy < platformY - 1.0f ? "yes" : "NO") +
+            ", the Default box rests on it: " + (sy > platformY ? "yes" : "NO") + " (contact surface '" + (rec ? rec->surface : "?") +
+            "', layer " + ph.layerName(rec ? rec->layer : -1) + ")");
+        // Queries: all layers -> the platform; without TestPlatform -> the ground under it.
+        const glm::vec3 from{spot.x + 1.2f, platformY + 3.0f, spot.y};
+        const auto all = ph.raycast(from, {0, -1, 0}, 20.0f, ve::QueryFilter{});
+        ve::QueryFilter noPlatform;
+        noPlatform.layers = ~ph.layerMask({"TestPlatform"});
+        const auto masked = ph.raycast(from, {0, -1, 0}, 20.0f, noPlatform);
+        log("queries: unmasked ray hits the platform: " + std::string(all && all->gameObject && all->gameObject->id() == m_physPlatform ? "yes" : "NO") +
+            " (surface '" + (all ? all->surface : "") + "', layer " + (all ? ph.layerName(all->layer) : "") +
+            "), masked ray reaches the ground: " + (masked && masked->point.y < platformY - 1.0f ? "yes" : "NO") + " (surface '" +
+            (masked ? masked->surface : "") + "')");
+        for (uint64_t id : {m_physGhost, m_physSolid, m_physPlatform})
+            if (ve::GameObject* o = scene().findById(id)) o->destroy();
+        // A character standing on a stone foundation, then on the ground.
+        const BuildPiece* stone = nullptr;
+        for (const auto& o : scene().objects())
+            if (auto* p = dynamic_cast<BuildPiece*>(o.get()); p && !p->isDestroyed() && p->kind == BuildPiece::Kind::Foundation &&
+                                                            p->material == BuildPiece::Material::Stone && !ve::PlacementGhost::is(*p))
+                stone = p;
+        auto& probe = scene().spawn("Ground probe");
+        probe.transform().setPosition(stone ? stone->transform().position() + glm::vec3(0.0f, BuildPiece::kFoundation + 0.05f, 0.0f)
+                                            : ground + glm::vec3(0, 0.05f, 0));
+        probe.addComponent<ve::CharacterController>();
+        probe.addComponent<StandStill>();
+        m_physProbe = probe.id();
+        m_physOnStone = stone != nullptr;
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 72:
+    case 73: {
+        if (m_t < 1.0f) break;
+        ve::GameObject* probe = scene().findById(m_physProbe);
+        auto* cc = probe ? probe->getComponent<ve::CharacterController>() : nullptr;
+        if (!cc) break;
+        if (m_step == 72) {
+            log("surfaces: a character on " + std::string(m_physOnStone ? "a stone foundation" : "(no stone foundation found)") +
+                " stands on '" + cc->groundSurface() + "'");
+            const glm::vec3 g = groundAt(spot + glm::vec2(3.0f, 0.0f));
+            cc->teleport(g + glm::vec3(0, 0.05f, 0));
+            m_t = 0.0f;
+            ++m_step;
+        } else {
+            log("surfaces: ... and on the terrain '" + cc->groundSurface() + "'");
+            probe->destroy();
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            m_step = 74; // animation layers / events / IK
+        }
+        break;
+    }
+    case 74: { // a villager: wave (layer), walk (footstep events), a hand reaching (IK)
+        Villager* v = scene().findFirst<Villager>();
+        if (!v || !v->animator() || !v->body()) {
+            log("anim: no villager");
+            m_step = 47;
+            break;
+        }
+        m_animVillager = v->id();
+        m_animSteps = v->steps();
+        v->wave(3.0f);
+        // Walk somewhere 6 m away (footstep events while walking).
+        if (auto* nav = ve::NavMeshSurface::find(scene()))
+            if (auto p = nav->randomPointNear(v->transform().position() + glm::vec3(6.0f, 0.0f, 0.0f), 2.0f)) v->agent().setDestination(*p);
+        // The left hand reaches for a point in front of the shoulder (two-bone IK).
+        auto& ik = v->body()->addComponent<ve::TwoBoneIK>("UpperArm.L", "LowerArm.L", "Hand.L");
+        ik.pole = {0.0f, 0.0f, -1.0f}; // elbow back
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 75: {
+        auto* v = dynamic_cast<Villager*>(scene().findById(m_animVillager));
+        ve::TwoBoneIK* ik = nullptr; // ours (the villager's FootIK has two more)
+        if (v && v->body())
+            for (const auto& c : v->body()->components())
+                if (auto* k = dynamic_cast<ve::TwoBoneIK*>(c.get()); k && k->upperJoint == "UpperArm.L") ik = k;
+        if (!v || !ik) {
+            m_step = 47;
+            break;
+        }
+        // Keep the target in front of the shoulder (the villager moves).
+        ve::GameObject* shoulder = nullptr;
+        std::function<ve::GameObject*(ve::GameObject&, const char*)> below = [&](ve::GameObject& o, const char* n) -> ve::GameObject* {
+            if (o.name() == n) return &o;
+            for (ve::Transform* c : o.transform().children())
+                if (ve::GameObject* f = below(c->gameObject(), n)) return f;
+            return nullptr;
+        };
+        shoulder = below(*v->body(), "UpperArm.L");
+        if (shoulder) ik->target = shoulder->transform().position() + v->transform().rotation() * glm::vec3(0.1f, 0.05f, -0.35f);
+        if (m_t > 3.0f) { // look at it (the next frame's screenshot)
+            const glm::vec3 p = v->transform().position();
+            const glm::vec3 eye = p + v->transform().rotation() * glm::vec3(1.2f, 0.0f, 3.2f);
+            const glm::vec3 d = p - eye;
+            static_cast<Player*>(scene().find("Player"))->setPose(eye, glm::degrees(std::atan2(-d.x, -d.z)), -8.0f);
+        }
+        if (m_t < 4.0f) break;
+        ve::Animator* a = v->animator();
+        const int layer = a->layerIndex("Wave");
+        ve::GameObject* hand = below(*v->body(), "Hand.R");
+        ve::GameObject* head = below(*v->body(), "Head");
+        ve::GameObject* handL = below(*v->body(), "Hand.L");
+        log("anim: layers " + std::to_string(a->layerCount()) + ", Wave layer weight " + std::to_string(a->layerWeight(layer)) + " playing '" +
+            a->current(layer) + "', base layer '" + a->current() + "', right hand above the head: " +
+            (hand && head && hand->transform().position().y > head->transform().position().y ? "yes" : "NO"));
+        log("anim: footstep events while walking: " + std::to_string(v->steps() - m_animSteps) + (v->steps() > m_animSteps ? "" : " (NO)"));
+        ik->solve(); // (measured right after solving: the next frame's animation resets the arm first)
+        const float miss = handL ? glm::distance(handL->transform().position(), ik->target) : 99.0f;
+        log("anim: two-bone IK hand to target: " + std::to_string(miss) + " m off" + (miss < 0.02f ? "" : " (NO)"));
+        if (auto* feet = v->body()->getComponent<ve::FootIK>()) {
+            const glm::vec3 l = feet->footTarget(0), r = feet->footTarget(1);
+            log("anim: foot IK targets " + std::to_string(l.y - groundAt({l.x, l.z}).y) + " / " + std::to_string(r.y - groundAt({r.x, r.z}).y) +
+                " m above the ground, hips offset " + std::to_string(feet->hipsOffset()) + " m");
+        }
+        shot("8a-villager");
+        v->body()->removeComponent(ik);
+        m_t = 0.0f;
+        m_stepFrame = m_frames;
+        m_step = 47; // the UI steps
+        break;
+    }
+    default: break;
     }
 }
 
@@ -1260,11 +1454,68 @@ void AutoTest::uiSteps(const std::function<void(const std::string&)>& log)
         if (frames < 20) break;
         shot("11-settings");
         if (frames < 24 || !menu) break;
+        // Lists, text fields: a long Load list (scrolls), typing a save name, the multiplayer panel.
+        {
+            const ve::Json world = ve::save::capture(scene());
+            for (int i = 1; i <= 14; ++i) ve::save::write("ui-test-" + std::string(i < 10 ? "0" : "") + std::to_string(i), world);
+        }
+        menu->showPanel("load");
+        m_step = 60;
+        m_stepFrame = m_frames;
+        break;
+    case 60: {
+        if (frames < 20) break;
+        auto* view = dynamic_cast<ve::ui::ScrollView*>(menu->panels().root().find("slots"));
+        if (view && !view->content().children().empty()) view->scrollTo(*view->content().children().back()); // (as keyboard focus would)
+        if (frames < 24) break;
+        if (frames == 24)
+            log(std::string("ui: the load list scrolls: ") + (view && view->overflows() ? "yes" : "NO") + " (" +
+            std::to_string(view ? view->content().children().size() : 0) + " saves, scrolled to " + std::to_string(view ? view->scroll : 0.0f) +
+                " of " + std::to_string(view ? view->maxScroll() : 0.0f) + ")");
+        shot("11a-load-list");
+        if (frames < 28) break;
+        menu->showPanel("save"); // (focuses the name field)
+        next();
+        m_step = 61;
+        break;
+    }
+    case 61: {
+        auto* field = dynamic_cast<ve::ui::TextInput*>(menu->panels().root().find("name"));
+        if (frames == 2 && field) { // type over the suggested name, with a typo fixed
+            field->setText("");
+            input().injectText("camp-12");
+            input().injectKeyTyped(ve::Key::Backspace);
+        }
+        if (frames < 20) break;
+        shot("11b-save");
+        if (frames < 24 || !field) break;
+        if (frames != 24) break;
+        log("ui: typed into the save name: '" + field->text + "' " + (field->text == "camp-1" ? "(right)" : "(NO)") +
+            ", being edited: " + (ve::ui::System::get().editing() == field ? "yes" : "NO") + ", gameplay keys blocked: " +
+            (input().keyDown(ve::Key::W) || ve::ui::System::get().editing() ? "yes" : "NO"));
+        if (ve::ui::Element* save = menu->panels().root().find("save")) save->click();
+        log(std::string("ui: saved as 'camp-1': ") + (ve::save::read("camp-1") ? "yes" : "NO") + ", back in the game: " +
+            (menu->screen() == MainMenu::Screen::Playing ? "yes" : "NO"));
+        for (int i = 1; i <= 14; ++i) ve::save::remove("ui-test-" + std::string(i < 10 ? "0" : "") + std::to_string(i));
+        ve::save::remove("camp-1");
+        menu->pause();
+        menu->showPanel("multiplayer");
+        m_step = 62;
+        m_stepFrame = m_frames;
+        break;
+    }
+    case 62: {
+        if (frames < 20) break;
+        shot("11c-multiplayer");
+        if (frames < 24) break;
         menu->showPanel("");
         menu->toTitle(); // Main menu
         log(std::string("ui: back on the title: ") + (menu->screen() == MainMenu::Screen::Title && time().timeScale == 1.0f ? "yes" : "NO"));
-        next();
+        m_step = 54;
+        m_stepFrame = m_frames;
+        m_t = 0.0f;
         break;
+    }
     case 54:
         if (frames < 90) break; // (the camera and the light settle)
         shot("12-title");

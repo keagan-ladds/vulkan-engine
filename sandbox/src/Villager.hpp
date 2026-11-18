@@ -46,6 +46,9 @@ public:
     ve::NavAgent& agent() const { return *m_agent; }
     void follow(ve::GameObject& who); // starts following (as if the player asked)
     void goHome();
+    void wave(float seconds = 2.4f);  // raises the right arm (an animation layer over Idle / Walk)
+    int steps() const { return m_steps; } // footsteps so far (Walk clip events)
+    ve::GameObject* body() const { return m_body; }
 
 private:
     void setMode(Mode m);
@@ -61,6 +64,11 @@ private:
     uint64_t m_leader = 0;   // who we follow (object id)
     bool m_walking = false;
     std::mt19937 m_rng;
+    int m_waveLayer = -1;
+    float m_waveTimer = 0.0f;
+    bool m_greeted = false; // waved at the player who came close (again once they've left)
+    int m_steps = 0;
+    void footstep();
 };
 
 } // namespace savanna

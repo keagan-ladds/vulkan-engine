@@ -170,12 +170,9 @@ the start (see conventions, "Multiplayer-ready gameplay"). Also see
   `overlapSphere/Box`, `overlap`, with a `QueryFilter` (statics, dynamics,
   characters, triggers, ignore). Per-game layer masks come with the
   configurable collision layers below.
-- [ ] **Collider debug drawing**: implement Jolt's `DebugRenderer` on top of a
-  new engine line/wireframe renderer (also useful for AI paths, nav, bounds).
-  F1 toggle.
-- [ ] **User-configurable collision layers/masks**: currently fixed at
-  static / moving / character. Games need e.g. projectiles, triggers,
-  enemies, debris and "ignore player".
+- [x] **Collider debug drawing**: body wireframes (from the shapes' triangles,
+  cached per shape) as `ve::debug` lines, F1 > Debug draw.
+- [x] **User-configurable collision layers/masks** (F7).
 - [ ] **Joints / constraints**: hinge (doors, gates), fixed (breakable
   building pieces), distance/rope, plus a constraint component API.
 - [ ] **Vehicles**: the concept art has trucks. Wrap Jolt's
@@ -191,8 +188,8 @@ the start (see conventions, "Multiplayer-ready gameplay"). Also see
   damage hooks (landing velocity).
 - [ ] **Interpolation of kinematic bodies** (they currently follow their
   Transform, which is already smooth; only matters if driven by physics velocity).
-- [ ] **Physics materials**: per-shape friction/restitution + surface type
-  (footstep sounds, impact particles).
+- [x] **Physics materials**: per-body friction / restitution + surface names
+  (F7); per-triangle materials (one mesh, several surfaces) later.
 - [ ] **Determinism / save-state** (later): body state serialisation for save games.
 - [~] Known issue: Jolt quantises heightfield heights to 8 bits per block (a
   few cm on steep slopes). The triangulation now matches the render mesh.
@@ -464,7 +461,8 @@ and ask the host for everything else (decision D19).
 - [ ] Villagers / animals: simulated on the host, NetworkTransform + animation state for clients
 - [ ] Inventories per player (the host keeps each player's; saved per player id)
 - [ ] Save games in a hosted world: the host saves, players keep their characters (a character file per player)
-- [ ] Menu: Host game / Join game (address field: needs a text input element), player name, connection status / errors in the HUD, player list (Tab)
+- [x] Menu: Host game / Join game (name, address, port fields), connection status in the panel
+- [ ] Connection errors / players joining in the HUD, player list (Tab), joining from a played title world (reload first)
 - [ ] The host validates requests (piece fits, reach, materials)
 
 **N3 — Quality**
@@ -473,6 +471,14 @@ and ask the host for everything else (decision D19).
 - [ ] Client-side prediction for actions with latency (placing, hitting), lag compensation for combat
 - [ ] Dedicated server build (headless, no window / GPU), NAT punch-through or relay, Steam / platform sessions
 - [ ] Network conditions simulator (latency / loss) for tests
+
+### F7 — Engine follow-ups (debugging, physics, animation, UI)
+- [x] Debug drawing (`ve/debug`): lines / shapes / labels from anywhere, depth-tested over the final image with faint hidden parts, durations, channels in F1 (physics colliders, terrain, characters, navmesh, nav agents; games add their own). Savanna: "Villagers" channel, `SAVANNA_DRAW`
+- [x] Collision layers: 32 named layers + collision matrix, per-body layer (Rigidbody, CharacterController, static bodies), query masks. Savanna: thrown rocks are "Debris", the Use ray looks past them; the autotest checks a box falling through a platform it doesn't collide with, and masked rays
+- [x] Physics materials: per-body `surface` names in hits, contacts and the character's ground (`groundSurface`); foliage types and terrain set theirs. Savanna: footsteps by surface (grass / dirt / wood / stone, generated sounds), building pieces by material
+- [x] Animation layers (joint masks, override / additive, fading weights), clip events, two-bone IK and foot IK. Savanna: villagers wave on an arm layer, step sounds from Walk events, feet on slopes; the model has foot / hand joints and a Wave clip
+- [x] UI text input (`ui::TextInput`: OS text, caret, editing keys with repeat, filters, submit) and scrolling lists (`ui::ScrollView`: clip, wheel, bar, drag, focus follow). Savanna: Save as (name + list), Load and Controls lists scroll, Multiplayer panel (name, address, port, Host / Join / Leave)
+- [ ] Later: root motion, look-at / aim IK, motion vectors from skinning; text selection / clipboard, multi-line text, on-screen keyboard for pads; ragdolls, joints, buoyancy (Phase 11 list)
 
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)

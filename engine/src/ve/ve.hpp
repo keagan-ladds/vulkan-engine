@@ -27,6 +27,7 @@
 #include "ve/scene/Scene.hpp"
 #include "ve/ui/UiLayer.hpp"
 #include "ve/net/Network.hpp"
+#include "ve/debug/Debug.hpp"
 #include "ve/world/Foliage.hpp"
 #include "ve/anim/Animation.hpp"
 #include "ve/gameplay/Interaction.hpp"

@@ -411,14 +411,18 @@ void BuildPiece::start()
     addBoxes(b, glm::vec3(0.0f));
     if (leafObject) addBoxes(leaf, leafObject->transform().localPosition());
     if (ghost) return; // a preview: no physics
+    // Physics surface by material (footsteps, impacts). Doors / windows are timber.
+    const char* surface = isFitting() || material == Material::Timber ? "Wood" : material == Material::Stone ? "Stone" : "Mud";
+    if (kind == Kind::RoofMetal) surface = "Metal";
+    if (kind == Kind::RoofThatch) surface = "Thatch";
     for (const auto& c : b.colliders) {
         auto& col = scene().spawn(name()); // (shown when aimed at)
         col.setParent(this, false);
-        col.addComponent<ve::Rigidbody>(ve::Collider::box(c.half).offset(c.center, c.rot), ve::BodyType::Static);
+        col.addComponent<ve::Rigidbody>(ve::Collider::box(c.half).offset(c.center, c.rot), ve::BodyType::Static).surface = surface;
     }
     if (leafObject)
         for (const auto& c : leaf.colliders) // kinematic: it follows the swinging leaf
-            leafObject->addComponent<ve::Rigidbody>(ve::Collider::box(c.half).offset(c.center, c.rot), ve::BodyType::Kinematic);
+            leafObject->addComponent<ve::Rigidbody>(ve::Collider::box(c.half).offset(c.center, c.rot), ve::BodyType::Kinematic).surface = "Wood";
 }
 
 // -----------------------------------------------------------------------------

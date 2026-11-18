@@ -436,6 +436,7 @@ void Foliage::rebuild()
         l.variants = meshes->variants;
         l.colliders = meshes->colliders;
         l.colliderUserValue = meshes->colliderUserValue;
+        l.colliderSurface = t->colliderSurface;
         for (const auto& [stateName, sm] : t->stateMeshes()) l.states.push_back({stateName, sm->variants, sm->colliders});
         l.promoteDistance = t->promoteDistance;
         if (!t->promoteType.empty()) {
@@ -786,6 +787,7 @@ void registerVegetationTypes(TypeRegistry& r)
                     {"Auto", "None", "Capsule", "Cylinder", "Sphere", "Box", "Convex hull"});
         t.field("colliderSize", &FoliageType::colliderSize).tooltip("capsule/cylinder: radius, height; sphere: radius; box: size");
         t.field("colliderUserValue", &FoliageType::colliderUserValue);
+        t.field("colliderSurface", &FoliageType::colliderSurface).tooltip("physics surface: Wood, Stone... (footsteps, impacts)");
         t.field("biomes", &FoliageType::biomes).tooltip("density per terrain biome: 'Savannah:1, Swamp:-1' (empty = everywhere)");
         t.field("biomeThreshold", &FoliageType::biomeThreshold).range(0.0f, 1.0f).speed(0.01f)
             .tooltip("0 = biome density is a probability; >0 = all or nothing at this density");

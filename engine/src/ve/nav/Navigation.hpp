@@ -121,6 +121,7 @@ public:
     void onDestroy() override;
     void inspectorGui();   // stats + rebuild button (F1 overlay, editor)
     void drawDebug(DebugDraw& dd, const glm::vec3& eye, float maxDistance) const;
+    void drawDebugLines(const glm::vec3& eye, float maxDistance) const; // ve::debug ("Navmesh" channel)
 
     // Engine internal (NavAgent).
     dtCrowd* crowd() const { return m_crowd; }
@@ -211,6 +212,7 @@ public:
     glm::vec3 destination() const { return m_target; }
     glm::vec3 velocity() const { return m_velocity; }
     float remainingDistance() const;      // along the path corners
+    void drawDebug() const;               // path corners, destination, velocity (ve::debug, "Nav agents")
 
     void start() override;
     void lateUpdate(float dt) override;

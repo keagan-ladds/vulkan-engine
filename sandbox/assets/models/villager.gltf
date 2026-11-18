@@ -97,6 +97,9 @@
     0.020000000000000018,
     -0.27,
     0.0
+   ],
+   "children": [
+    17
    ]
   },
   {
@@ -116,6 +119,9 @@
     -0.020000000000000018,
     -0.27,
     0.0
+   ],
+   "children": [
+    18
    ]
   },
   {
@@ -135,6 +141,9 @@
     0.0,
     -0.42000000000000004,
     0.0
+   ],
+   "children": [
+    15
    ]
   },
   {
@@ -153,6 +162,41 @@
    "translation": [
     0.0,
     -0.42000000000000004,
+    0.0
+   ],
+   "children": [
+    16
+   ]
+  },
+  {
+   "name": "Foot.L",
+   "translation": [
+    0.0,
+    -0.42,
+    0.0
+   ]
+  },
+  {
+   "name": "Foot.R",
+   "translation": [
+    0.0,
+    -0.42,
+    0.0
+   ]
+  },
+  {
+   "name": "Hand.L",
+   "translation": [
+    0.009999999999999981,
+    -0.2499999999999999,
+    0.0
+   ]
+  },
+  {
+   "name": "Hand.R",
+   "translation": [
+    -0.009999999999999981,
+    -0.2499999999999999,
     0.0
    ]
   }
@@ -236,7 +280,11 @@
     11,
     12,
     13,
-    14
+    14,
+    15,
+    16,
+    17,
+    18
    ],
    "inverseBindMatrices": 30
   }
@@ -459,6 +507,37 @@
      }
     }
    ]
+  },
+  {
+   "name": "Wave",
+   "samplers": [
+    {
+     "input": 50,
+     "output": 51,
+     "interpolation": "LINEAR"
+    },
+    {
+     "input": 50,
+     "output": 52,
+     "interpolation": "LINEAR"
+    }
+   ],
+   "channels": [
+    {
+     "sampler": 0,
+     "target": {
+      "node": 9,
+      "path": "rotation"
+     }
+    },
+    {
+     "sampler": 1,
+     "target": {
+      "node": 10,
+      "path": "rotation"
+     }
+    }
+   ]
   }
  ],
  "materials": [
@@ -531,7 +610,7 @@
  "buffers": [
   {
    "uri": "villager.bin",
-   "byteLength": 76176
+   "byteLength": 76900
   }
  ],
  "bufferViews": [
@@ -718,101 +797,116 @@
   {
    "buffer": 0,
    "byteOffset": 71168,
-   "byteLength": 832
+   "byteLength": 1088
   },
   {
    "buffer": 0,
-   "byteOffset": 72000,
+   "byteOffset": 72256,
    "byteLength": 68
   },
   {
    "buffer": 0,
-   "byteOffset": 72068,
+   "byteOffset": 72324,
    "byteLength": 204
   },
   {
    "buffer": 0,
-   "byteOffset": 72272,
+   "byteOffset": 72528,
    "byteLength": 272
   },
   {
    "buffer": 0,
-   "byteOffset": 72544,
+   "byteOffset": 72800,
    "byteLength": 272
   },
   {
    "buffer": 0,
-   "byteOffset": 72816,
+   "byteOffset": 73072,
    "byteLength": 272
   },
   {
    "buffer": 0,
-   "byteOffset": 73088,
+   "byteOffset": 73344,
    "byteLength": 272
   },
   {
    "buffer": 0,
-   "byteOffset": 73360,
+   "byteOffset": 73616,
    "byteLength": 272
   },
   {
    "buffer": 0,
-   "byteOffset": 73632,
+   "byteOffset": 73888,
    "byteLength": 272
   },
   {
    "buffer": 0,
-   "byteOffset": 73904,
+   "byteOffset": 74160,
    "byteLength": 272
   },
   {
    "buffer": 0,
-   "byteOffset": 74176,
+   "byteOffset": 74432,
    "byteLength": 272
   },
   {
    "buffer": 0,
-   "byteOffset": 74448,
+   "byteOffset": 74704,
    "byteLength": 272
   },
   {
    "buffer": 0,
-   "byteOffset": 74720,
+   "byteOffset": 74976,
    "byteLength": 52
   },
   {
    "buffer": 0,
-   "byteOffset": 74772,
+   "byteOffset": 75028,
    "byteLength": 156
   },
   {
    "buffer": 0,
-   "byteOffset": 74928,
+   "byteOffset": 75184,
    "byteLength": 208
   },
   {
    "buffer": 0,
-   "byteOffset": 75136,
+   "byteOffset": 75392,
    "byteLength": 208
   },
   {
    "buffer": 0,
-   "byteOffset": 75344,
+   "byteOffset": 75600,
    "byteLength": 208
   },
   {
    "buffer": 0,
-   "byteOffset": 75552,
+   "byteOffset": 75808,
    "byteLength": 208
   },
   {
    "buffer": 0,
-   "byteOffset": 75760,
+   "byteOffset": 76016,
    "byteLength": 208
   },
   {
    "buffer": 0,
-   "byteOffset": 75968,
+   "byteOffset": 76224,
+   "byteLength": 208
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 76432,
+   "byteLength": 52
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 76484,
+   "byteLength": 208
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 76692,
    "byteLength": 208
   }
  ],
@@ -1100,7 +1194,7 @@
   {
    "bufferView": 30,
    "componentType": 5126,
-   "count": 13,
+   "count": 17,
    "type": "MAT4"
   },
   {
@@ -1225,6 +1319,30 @@
   },
   {
    "bufferView": 49,
+   "componentType": 5126,
+   "count": 13,
+   "type": "VEC4"
+  },
+  {
+   "bufferView": 50,
+   "componentType": 5126,
+   "count": 13,
+   "type": "SCALAR",
+   "min": [
+    0.0
+   ],
+   "max": [
+    1.2
+   ]
+  },
+  {
+   "bufferView": 51,
+   "componentType": 5126,
+   "count": 13,
+   "type": "VEC4"
+  },
+  {
+   "bufferView": 52,
    "componentType": 5126,
    "count": 13,
    "type": "VEC4"

@@ -34,7 +34,8 @@ public:
     void pause();
     void resume();
     void toTitle();
-    void showPanel(const std::string& name); // "load", "settings", "controls"; "" = close
+    void showPanel(const std::string& name); // "load", "save", "settings", "controls", "multiplayer"; "" = close
+    const std::string& panel() const { return m_panel; }
     ve::ui::Canvas& title() { return *m_title; }
     ve::ui::Canvas& pauseMenu() { return *m_pause; }
     ve::ui::Canvas& panels() { return *m_panels; }
@@ -49,6 +50,9 @@ private:
     void buildLoad(ve::ui::Element& content);
     void buildSettings(ve::ui::Element& content);
     void buildControls(ve::ui::Element& content);
+    void buildSave(ve::ui::Element& content);
+    void buildMultiplayer(ve::ui::Element& content);
+    void saveAs(const std::string& name);
     void enterPlaying();
     void applySettings();
     void saveSettings() const;
@@ -64,12 +68,16 @@ private:
     float m_t = 0.0f;
     float m_leaving = -1.0f; // fading the title out (seconds left)
     bool m_newGameReload = false;
+    bool m_joining = false; // waiting for the host to let us in
+    std::string m_lastSave;
 
     struct Settings {
         float master = 0.9f, music = 0.7f, effects = 0.9f, ambience = 0.8f;
         float mouse = 0.4f; // 0..1 -> sensitivity
         float fov = 0.25f;  // 0..1 -> 55..95 degrees (65)
         bool taa = true, help = true;
+        std::string playerName = "Player", address = "127.0.0.1";
+        int port = 7777;
     } m_settings;
 };
 

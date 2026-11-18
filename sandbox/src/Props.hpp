@@ -159,6 +159,11 @@ public:
     std::vector<uint64_t> m_built;
     bool m_buildShot = false;
     void uiSteps(const std::function<void(const std::string&)>& log);
+    void physicsSteps(const std::function<void(const std::string&)>& log);
+    uint64_t m_physGhost = 0, m_physSolid = 0, m_physPlatform = 0, m_physProbe = 0;
+    bool m_physOnStone = false;
+    uint64_t m_animVillager = 0;
+    int m_animSteps = 0;
 
 private:
     glm::vec3 groundAt(glm::vec2 p) const;

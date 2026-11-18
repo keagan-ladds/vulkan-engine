@@ -45,5 +45,9 @@ ve::ui::Button& boxButton(ve::ui::Element& parent, const std::string& text, std:
 // A labelled bar (health, stamina).
 ve::ui::ProgressBar& bar(ve::ui::Element& parent, glm::vec4 from, glm::vec4 to, std::function<float()> value);
 ve::ui::Label& label(ve::ui::Element& parent, const std::string& text, const char* font, float size, glm::vec4 color = color::text);
+// A text field in the game's style.
+ve::ui::TextInput& textField(ve::ui::Element& parent, const std::string& name, const std::string& placeholder, float fontSize = 22.0f);
+// A scrolling list in the game's style (add rows to ->content()).
+ve::ui::ScrollView& list(ve::ui::Element& parent, const std::string& name);
 
 } // namespace savanna::gui
