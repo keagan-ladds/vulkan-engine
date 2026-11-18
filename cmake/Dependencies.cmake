@@ -5,7 +5,8 @@
 #   Vulkan headers + loader + glslc, SDL2, glm
 #
 # Fetched automatically at configure time (pinned versions):
-#   Vulkan Memory Allocator, Dear ImGui, cgltf, stb, miniaudio, nlohmann/json
+#   Vulkan Memory Allocator, Dear ImGui, cgltf, stb, miniaudio, nlohmann/json,
+#   Jolt, meshoptimizer, Recast/Detour, ENet
 #
 # The fetched libraries are header-only or loose source files, so we compile
 # them ourselves into one static library `ve_thirdparty` with warnings off.
@@ -110,6 +111,25 @@ foreach(t Recast Detour DetourCrowd)
         target_compile_options(${t} PRIVATE -w)
     endif()
 endforeach()
+
+# ENet: reliable / unreliable UDP channels for ve/net (MIT). Fetched with git
+# like Recast (archive downloads are blocked in some sandboxes).
+FetchContent_Declare(enet
+    GIT_REPOSITORY https://github.com/lsalzman/enet.git
+    GIT_TAG v1.3.18
+    GIT_SHALLOW TRUE
+    SYSTEM)
+FetchContent_MakeAvailable(enet)
+if(MSVC)
+    target_compile_options(enet PRIVATE /w)
+else()
+    target_compile_options(enet PRIVATE -w)
+    set_target_properties(enet PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+target_include_directories(enet SYSTEM INTERFACE ${enet_SOURCE_DIR}/include)
+if(WIN32)
+    target_link_libraries(enet PUBLIC ws2_32 winmm)
+endif()
 
 add_library(ve_thirdparty STATIC
     ${CMAKE_CURRENT_LIST_DIR}/thirdparty/thirdparty_impl.cpp

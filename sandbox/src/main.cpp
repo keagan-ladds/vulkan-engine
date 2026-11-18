@@ -16,6 +16,7 @@
 #include "Harvest.hpp"
 #include "Inventory.hpp"
 #include "MainMenu.hpp"
+#include "Multiplayer.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
 #include "Vegetation.hpp"
@@ -260,6 +261,8 @@ void buildLevel(ve::Engine& engine)
     scene.spawn<Builder>(); // B: build mode (Building.hpp)
     scene.spawn<Hud>(player);
     scene.spawn<InventoryScreen>(); // Tab / I (Inventory.hpp)
+    scene.spawn<Multiplayer>();     // avatars, the host's world for joiners (Multiplayer.hpp)
+    if (const char* nt = std::getenv("SAVANNA_NETTEST")) scene.spawn<NetTest>(std::string(nt) == "host");
     scene.spawn<Regrowth>(); // berry bushes grow back (Harvest.hpp)
     auto& photoMode = scene.spawn<vfx::PhotoMode>(); // F12: free camera, DOF, max-quality screenshots
 
@@ -332,7 +335,8 @@ void buildLevel(ve::Engine& engine)
     // when the game is played (not tests / tools), and only before the first
     // game of the run; SAVANNA_MENU=1 forces it (screenshots).
     const bool tools = std::getenv("SAVANNA_AUTOTEST") || std::getenv("SAVANNA_EDITOR") || std::getenv("SAVANNA_EDITORTEST") ||
-                       std::getenv("SAVANNA_PHOTO") || std::getenv("VE_BENCH") || std::getenv("SAVANNA_POSE");
+                       std::getenv("SAVANNA_PHOTO") || std::getenv("VE_BENCH") || std::getenv("SAVANNA_POSE") ||
+                       std::getenv("SAVANNA_NET");
     const bool forced = std::getenv("SAVANNA_MENU") && std::string(std::getenv("SAVANNA_MENU")) == "1";
     scene.spawn<MainMenu>(forced || (!tools && !MainMenu::s_played));
     if (const char* f = std::getenv("SAVANNA_POSE")) {
@@ -404,6 +408,9 @@ int main()
         // before loading, so the editor shows the progress instead of the
         // game's loading screen (the switch happens once the level is built).
         if (std::getenv("SAVANNA_EDITOR") && engine.editor()) engine.editor()->setMode(ve::Editor::Mode::Edit);
+        // SAVANNA_NET=host / join:<address>: a multiplayer session (Multiplayer.hpp).
+        // Started before loading: a joining client's world waits for the load.
+        savanna::Multiplayer::startFromEnvironment(engine);
         engine.beginLoading(savanna::makeLoadingScene(), 0.5f);
         engine.addLoadStep("Preparing the sky", [&] { buildEffects(engine); });
         engine.addLoadStep("Loading the savanna", [&] { buildLevel(engine); });

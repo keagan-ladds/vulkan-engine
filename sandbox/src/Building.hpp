@@ -115,6 +115,10 @@ private:
     void loadCatalogue();
     void updatePreview();
     void rebuildNavigation(const glm::vec3& at);
+    void registerRequests();                   // the host's side of building (ve::net)
+    int removeNow(ve::GameObject* piece);      // (host)
+    ve::GameObject* m_placed = nullptr;        // what the last request placed (host)
+    int m_removed = 0;
     ve::GameObject* aimedPiece() const;
 
     std::vector<Entry> m_catalogue;

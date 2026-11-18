@@ -1,4 +1,5 @@
 #include "ve/core/Engine.hpp"
+#include "ve/net/Network.hpp"
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
@@ -76,6 +77,7 @@ Renderer& EngineAccess::renderer() { return Engine::get().renderer(); }
 AssetManager& EngineAccess::assets() { return Engine::get().assets(); }
 AudioSystem& EngineAccess::audio() { return Engine::get().audio(); }
 PhysicsWorld& EngineAccess::physics() { return Engine::get().physics(); }
+net::Network& EngineAccess::net() { return Engine::get().net(); }
 
 Engine::Engine(const EngineConfig& config) : m_config(config)
 {
@@ -110,6 +112,7 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_audio = std::make_unique<AudioSystem>();
     if (config.enableAudio) m_audio->init();
     m_physics = std::make_unique<PhysicsWorld>();
+    m_net = std::make_unique<net::Network>(*this);
     m_physics->init();
     m_assets = std::make_unique<AssetManager>();
     m_assets->init(*m_renderer, assetDirs);
@@ -179,6 +182,7 @@ Engine::~Engine()
     if (m_ui) m_ui->shutdown(); // no-op if run() already did it
     m_ui.reset();
     m_audio.reset();
+    m_net.reset();     // (after the scene: components ask it whether they're online)
     m_physics.reset(); // after the scene: Rigidbodies remove themselves from the world
     m_renderer.reset();
     m_window.reset();
@@ -362,6 +366,7 @@ void Engine::tickLoading()
 
 void Engine::tickFrame()
 {
+    m_net->poll(); // (also while loading: keeps the connection alive; messages wait for the load)
     // Loading while the editor is open: no game loading screen. The editor
     // stays usable and shows progress while the world fills in around it.
     const bool editorLoading = loadingInEditor();
@@ -410,6 +415,10 @@ void Engine::tickFrame()
     {
         VE_PROFILE("Late update");
         m_scene->lateUpdate(m_time.deltaTime, paused);
+    }
+    {
+        VE_PROFILE("Network");
+        m_net->flush(); // what we own moved / changed this frame
     }
     if (editorLoading && pollLoadTasks()) endLoading(); // (no minimum time: there's no screen to read)
     {

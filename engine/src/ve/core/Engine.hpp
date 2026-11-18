@@ -35,6 +35,9 @@ class AudioSystem;
 class UiLayer;
 class Editor;
 class PhysicsWorld;
+namespace net {
+class Network;
+}
 
 struct EngineConfig {
     std::string title = "vulkan-engine";
@@ -83,6 +86,7 @@ public:
     Scene& scene() { return *m_scene; }
     AssetManager& assets() { return *m_assets; }
     AudioSystem& audio() { return *m_audio; }
+    net::Network& net() { return *m_net; } // multiplayer (offline until host / join)
     PhysicsWorld& physics() { return *m_physics; }
     UiLayer& ui() { return *m_ui; }
     Editor* editor() { return m_editor.get(); } // null if EngineConfig::enableEditor is false
@@ -142,6 +146,7 @@ private:
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<AudioSystem> m_audio;
     std::unique_ptr<PhysicsWorld> m_physics;
+    std::unique_ptr<net::Network> m_net;
     std::unique_ptr<AssetManager> m_assets;
     std::unique_ptr<UiLayer> m_ui;
     std::unique_ptr<Editor> m_editor;

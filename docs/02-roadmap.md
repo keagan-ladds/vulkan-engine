@@ -7,19 +7,23 @@ verification workflow.
 
 Legend: `[x]` done · `[ ]` todo · `[~]` partially done (see note)
 
-## Status snapshot (2026-11-17)
+## Status snapshot (2026-11-18)
 
 Phases 0–13 are done, as are F2 (animation), most of F3, F5 tooling and the
 engine side of F4 (interaction, save games, loading screens, gamepad,
-profiler, navmesh + agents, prefabs, snap / placement), plus the Savanna
-building kit.
+profiler, navmesh + agents, prefabs, snap / placement, game UI), plus the
+Savanna building kit, menus and inventory. Multiplayer (F6) has its
+foundation: host-authoritative sessions, object replication and requests;
+Savanna players see each other and build together.
 
 - Zero Vulkan validation messages through the autotest (which also covers
   save / load, navigation and building) and the editor test.
 - Savanna starts in ~0.9 s in Release, behind a loading screen.
 
-Next up: game-side F4 (animal AI, crafting, building follow-ups,
-combat). Also see
+Next up: F6 N2 (gameplay through the host: interactions, pickups,
+villagers, doors) alongside game-side F4 (animal AI, crafting, building
+follow-ups, combat). New gameplay should be written host-authoritative from
+the start (see conventions, "Multiplayer-ready gameplay"). Also see
 [Known issues](#known-issues--tech-debt).
 
 ---
@@ -437,6 +441,38 @@ Engine provides mechanisms, the game (Savanna here) the rules and content.
 - [x] Doors / windows as fittings: snap into wall openings and turn to match (`SnapPoint::alignRotation`), host-aware fit test, removed with their wall; Savanna: plank door (hinged leaf, Use opens, state saved) and shuttered window
 - [ ] Building follow-ups (game): costs / crafting, structural stability (support graph), damage / repair, more pieces (gables, verandas, multi-storey), material variants on the same piece (reference's "same structure, different materials")
 - [ ] Combat (game: hitboxes, damage, stamina), boss encounters
+
+### F6 — Multiplayer (co-op, host-authoritative)
+Started early on purpose: retrofitting networking means rewriting every
+system that changes the world, so new gameplay is written against the
+authority API from now on (offline = a host with nobody connected). Model:
+one player hosts (listen server, Valheim-style); clients own their character
+and ask the host for everything else (decision D19).
+
+**N1 — Foundation ✅**
+- [x] Transport (engine, `ve/net/Transport`): ENet 1.3.18, reliable + unreliable channels, timeouts that survive loading screens
+- [x] Byte streams (`ve/net/Stream`): values, varints, strings, CBOR JSON, 7-byte rotations; bounds-checked reads
+- [x] `Network` (engine.net()): host / join / leave, handshake (game id + protocol version, refusals), peer list with round trips, `isServer()` / `isClient()`; poll at frame start, flush at frame end; messages arriving while loading wait for the load
+- [x] Requests: named messages (`on`, `toServer`, `toClients`); on the host / offline `toServer` runs locally, so one code path serves all three modes
+- [x] Objects: `NetworkObject` (identity = GameObject id, owner), `NetworkTransform` (owner sends 20 Hz unreliable, others interpolate 100 ms behind, teleports snap), `NetReplicated` (custom state, sent reliably when marked dirty), `spawn` / `despawn` of prefabs on every machine, ownership changes, the owner leaving despawns (or hands back) its objects
+- [x] Late join: the world snapshot is a save-game capture (moved / removed level objects, spawned pieces, every Saveable incl. foliage, terrain edits, time of day), then the spawns saves don't cover, owners and state
+- [x] Savanna: `SAVANNA_NET=host` / `join:<address>`, player avatars (villager model, walk / idle from speed, replicated name), building through the host (`build.place` / `build.remove`, navmesh rebuilt everywhere), host clock and weather sent to clients
+- [x] Test: `tools/nettest.sh` runs a host and a client process headless over localhost: snapshot (piece placed before joining), live spawns, interpolated avatar movement, a client build request, the client leaving (its avatar despawned)
+
+**N2 — Gameplay through the host**
+- [ ] Interactions as requests: chopping / picking (foliage overrides replicated), sunstones, doors (`DoorHinge` as NetReplicated), throwing rocks (host-simulated physics)
+- [ ] Villagers / animals: simulated on the host, NetworkTransform + animation state for clients
+- [ ] Inventories per player (the host keeps each player's; saved per player id)
+- [ ] Save games in a hosted world: the host saves, players keep their characters (a character file per player)
+- [ ] Menu: Host game / Join game (address field: needs a text input element), player name, connection status / errors in the HUD, player list (Tab)
+- [ ] The host validates requests (piece fits, reach, materials)
+
+**N3 — Quality**
+- [ ] Interest management: only send what's near each player (big worlds), per-object send priority
+- [ ] Delta-compressed snapshots instead of whole transforms; bandwidth stats in F1
+- [ ] Client-side prediction for actions with latency (placing, hitting), lag compensation for combat
+- [ ] Dedicated server build (headless, no window / GPU), NAT punch-through or relay, Steam / platform sessions
+- [ ] Network conditions simulator (latency / loss) for tests
 
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)

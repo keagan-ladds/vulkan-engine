@@ -392,6 +392,45 @@ if (placePressed && preview.valid()) ve::prefab::instantiate(scene(), piecePath,
 - Roofs: eaves (low edge) on wall tops; a roof whose slope cuts through a
   side wall is (correctly) blocked.
 
+### Multiplayer-ready gameplay
+
+Write gameplay as if a host were always there (offline *is* a host with
+nobody connected), and multiplayer mostly works:
+
+```cpp
+// Anything that changes the shared world: ask the authority.
+void Chest::onUse() {
+    ve::net::Writer w; w.write(id());
+    net().toServer("chest.open", w);          // offline / host: runs right now
+}
+// Registered once (constructor / start), runs on the host only:
+net().on("chest.open", [this](ve::net::PeerId from, ve::net::Reader& r) {
+    auto id = r.read<uint64_t>();  if (r.failed()) return;   // check what clients send
+    ... validate (reach, permission) ...
+    m_open = true;  netObject->markDirty();    // replicate (NetReplicated)
+});
+```
+
+- **Who changes what:** the host changes the world; a player's machine
+  changes only what it owns (its character). Clients never call
+  `spawn` / `despawn` / `destroy()` on shared objects: they ask.
+- **New things in the world:** `net().spawn(prefab, ...)` instead of
+  `prefab::instantiate`; removing: `net().despawn(obj)` instead of
+  `destroy()`. Both work offline.
+- **State others must see:** `NetReplicated` + `markDirty()` (a door's open
+  flag, an avatar's name); moving things: `NetworkTransform`. Ordinary
+  per-machine visuals (particles, sounds, UI) stay local; trigger them from
+  the replicated state or a `toClients` event.
+- **Player-specific vs world:** the world snapshot is a save capture, so
+  per-player things (the local Player, inventory) must be left out of it
+  (Savanna's `worldSnapshot` drops the "name:Player" state).
+- **Handlers:** register in the constructor of an object that exists before
+  messages can arrive (messages waiting for a loading screen are handled at
+  the top of the next frame, before `start()`); `off()` them in
+  `onDestroy()`.
+- Test with `tools/nettest.sh build-release/bin <out>` (host + client
+  processes on one machine).
+
 ### Game UI: HUD, menus, inventories
 
 Engine elements, game look. Keep a small theme of the game's own (Savanna:

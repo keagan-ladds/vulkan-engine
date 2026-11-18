@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "object": {
+    "type": "PlayerAvatar",
+    "name": "Player avatar",
+    "active": true,
+    "position": [0, 0, 0],
+    "rotation": [0, 0, 0, 1],
+    "scale": [1, 1, 1],
+    "fields": {
+      "playerName": ""
+    },
+    "components": [
+      {"type": "NetworkObject", "enabled": true, "fields": {"despawnWithOwner": true}},
+      {"type": "NetworkTransform", "enabled": true, "fields": {"sendRate": 20, "interpolationDelay": 0.1, "teleportDistance": 15}}
+    ]
+  }
+}

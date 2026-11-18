@@ -50,6 +50,9 @@ class Renderer;
 class AssetManager;
 class AudioSystem;
 class PhysicsWorld;
+namespace net {
+class Network;
+}
 struct Time;
 
 // Shortcuts to engine systems, available in both GameObject and Component.
@@ -62,6 +65,7 @@ public:
     static AssetManager& assets();
     static AudioSystem& audio();
     static PhysicsWorld& physics();
+    static net::Network& net();
 };
 
 // The lifecycle and physics hooks GameObject and Component share. Override

@@ -1,4 +1,5 @@
 #include "ve/scene/Reflection.hpp"
+#include "ve/net/Network.hpp"
 
 #include "ve/anim/Animation.hpp"
 #include "ve/gameplay/Interaction.hpp"
@@ -93,6 +94,16 @@ void registerBuiltinTypes()
     registerVegetationTypes(r);
 
     r.add<GameObject>("GameObject", [](TypeBuilder<GameObject>& t) { t.category("General"); });
+    r.add<net::NetworkObject>("NetworkObject", [](TypeBuilder<net::NetworkObject>& t) {
+        t.category("Network");
+        t.field("despawnWithOwner", &net::NetworkObject::despawnWithOwner).tooltip("the owner left: the host removes it (else the host takes it over)");
+    });
+    r.add<net::NetworkTransform>("NetworkTransform", [](TypeBuilder<net::NetworkTransform>& t) {
+        t.category("Network");
+        t.field("sendRate", &net::NetworkTransform::sendRate).range(1.0f, 60.0f);
+        t.field("interpolationDelay", &net::NetworkTransform::interpolationDelay).range(0.0f, 0.5f).speed(0.005f);
+        t.field("teleportDistance", &net::NetworkTransform::teleportDistance).range(0.5f, 100.0f);
+    });
 
     r.add<Camera>("Camera", [](TypeBuilder<Camera>& t) {
         t.category("Rendering");

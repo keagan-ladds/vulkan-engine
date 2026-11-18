@@ -1,5 +1,7 @@
 #include "Building.hpp"
 
+#include <ve/net/Network.hpp>
+
 #include "GameUi.hpp"
 #include "Props.hpp"
 
@@ -463,6 +465,7 @@ Builder::Builder() : GameObject("Builder")
 void Builder::start()
 {
     loadCatalogue();
+    registerRequests();
     buildStatus();
     // The cards' pictures: during the loading screen if there is one.
     if (engine().loading()) {
@@ -613,12 +616,65 @@ void Builder::updatePreview()
 ve::GameObject* Builder::place()
 {
     if (!m_active || !m_preview.visible() || !m_preview.valid()) return nullptr;
-    ve::GameObject* piece = ve::prefab::instantiate(scene(), m_catalogue[size_t(m_index)].prefab, m_pos, m_rot);
-    if (piece) rebuildNavigation(m_pos);
-    return piece;
+    // Building changes the shared world: the host does it (offline that's us,
+    // right now). A client asks and the piece arrives like any other spawn.
+    ve::net::Writer w;
+    w.writeString(m_catalogue[size_t(m_index)].prefab);
+    w.write(m_pos);
+    w.writeRotation(m_rot);
+    m_placed = nullptr;
+    net().toServer("build.place", w);
+    return m_placed;
+}
+
+void Builder::registerRequests()
+{
+    ve::net::Network& n = net();
+    // Host: a player (or we) placed a piece.
+    n.on("build.place", [this](ve::net::PeerId from, ve::net::Reader& r) {
+        const std::string prefab = r.readString();
+        const auto pos = r.read<glm::vec3>();
+        const glm::quat rot = r.readRotation();
+        if (r.failed()) return;
+        const bool known = std::any_of(m_catalogue.begin(), m_catalogue.end(), [&](const Entry& e) { return e.prefab == prefab; });
+        if (!known) {
+            ve::log::warn("Build: player {} asked for an unknown piece '{}'", from, prefab);
+            return;
+        }
+        // (A real game re-checks the fit and the player's materials / reach here.)
+        m_placed = net().spawn(prefab, pos, rot);
+        if (m_placed) {
+            rebuildNavigation(pos);
+            ve::net::Writer at;
+            at.write(pos);
+            net().toClients("build.changed", at);
+        }
+    });
+    // Host: remove a piece (and its fittings).
+    n.on("build.remove", [this](ve::net::PeerId, ve::net::Reader& r) {
+        const auto id = r.read<uint64_t>();
+        if (r.failed()) return;
+        m_removed = removeNow(scene().findById(id));
+    });
+    // Clients: pieces came or went near here (the navmesh follows).
+    n.on("build.changed", [this](ve::net::PeerId, ve::net::Reader& r) {
+        const auto at = r.read<glm::vec3>();
+        if (!r.failed()) rebuildNavigation(at);
+    });
 }
 
 int Builder::remove(ve::GameObject* object)
+{
+    BuildPiece* piece = BuildPiece::of(object);
+    if (!piece || !piece->getComponent<ve::PrefabInstance>()) return 0; // only built pieces
+    ve::net::Writer w;
+    w.write(piece->id());
+    m_removed = 0;
+    net().toServer("build.remove", w);
+    return net().isClient() ? 1 : m_removed; // (a client: asked; it goes when the host says)
+}
+
+int Builder::removeNow(ve::GameObject* object)
 {
     BuildPiece* piece = BuildPiece::of(object);
     if (!piece || !piece->getComponent<ve::PrefabInstance>()) return 0; // only built pieces
@@ -639,8 +695,11 @@ int Builder::remove(ve::GameObject* object)
         });
     }
     const glm::vec3 at = piece->transform().position();
-    for (BuildPiece* p : gone) p->destroy();
+    for (BuildPiece* p : gone) net().despawn(*p); // here and for everyone
     rebuildNavigation(at);
+    ve::net::Writer w;
+    w.write(at);
+    net().toClients("build.changed", w);
     return int(gone.size());
 }
 
@@ -653,6 +712,7 @@ void Builder::rebuildNavigation(const glm::vec3& at)
 void Builder::onDestroy()
 {
     m_preview.hide();
+    for (const char* name : {"build.place", "build.remove", "build.changed"}) net().off(name);
 }
 
 // -----------------------------------------------------------------------------

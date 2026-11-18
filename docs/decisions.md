@@ -146,3 +146,26 @@ grass, audio, gameplay) sees exactly the generated samples. Coarse nodes
 evaluate the generator directly, so far terrain never forces full-resolution
 tiles into memory.
 
+
+### D19. Multiplayer: host-authoritative co-op, started early
+**Chosen:** one player hosts (a listen server); the host owns the world and
+clients own only what they control (their character, via
+`NetworkTransform`). Everything else is a request to the host (`toServer`),
+which applies it and replicates the result (`spawn` / `despawn` / state).
+Offline play is a host with nobody connected, so the same code runs in all
+modes. Late joiners get a save-game capture as the world snapshot. Transport:
+ENet (reliable + unreliable channels over UDP).
+**Alternatives:** lockstep (needs a deterministic simulation: physics and
+floating point make that impractical); rollback / prediction everywhere (far
+more complex, mostly needed for competitive action); client-authoritative
+world (simple, but conflicting edits and trivial cheating); a library like
+GameNetworkingSockets or yojimbo (heavier, more dependencies; the transport
+is hidden behind `ve::net::Transport`, so it can be swapped later).
+**Why:** it matches a Valheim-like co-op survival game (few players, friends,
+building and gathering where a little latency on actions is fine), it needs
+no determinism, and the save system already describes "the world" so joining
+mid-game comes almost for free. Started before the gameplay is finished
+because single-player-only systems (direct world changes) are what make
+networking expensive to add later.
+**Cost:** clients feel the round trip on actions until prediction is added
+(N3); the host's machine and connection carry the session.

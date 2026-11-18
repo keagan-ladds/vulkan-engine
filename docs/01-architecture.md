@@ -644,6 +644,37 @@ Backed by **Recast & Detour** (linked `PRIVATE`, only included by
   reachable spots and follows the player when asked ("walk with me").
 - `showDebug` draws the navmesh's polygons near the camera.
 
+## 5.12 Networking (`ve/net`)
+
+Host-authoritative co-op (decision D19). `engine.net()` (or `net()` in any
+GameObject / Component) is the session: offline by default, `host(port)` or
+`join(address, port)`.
+
+- **Frame:** `Network::poll()` at the start of the frame (also during loading,
+  to keep connections alive; messages wait until the load is done), then the
+  usual update / late update, then `Network::flush()` sends what this
+  machine owns that moved (NetworkTransform) or changed (dirty
+  NetReplicated).
+- **Authority:** `isServer()` is true offline and on the host. Clients
+  change the world only by asking: `toServer("name", payload)` runs the
+  handler on the host (immediately, locally, when offline or hosting). The
+  host applies it and replicates the result: `spawn(prefab, pos, rot,
+  owner)` / `despawn(obj)` on every machine, `toClients(...)` for events.
+- **Objects:** `NetworkObject` = identity (the GameObject id: level objects
+  match because everyone loads the same level, spawned ones are created with
+  the host's id) + owner (a peer, the host by default). `NetworkTransform`:
+  the owner sends, others interpolate. `NetReplicated`: netWrite / netRead
+  of custom state, sent when `markDirty()` is called; the host relays
+  client-owned state to the others after checking the sender owns it.
+- **Joining:** hello (game id + protocol version) -> welcome with the world
+  snapshot (`worldSnapshot` hook; default `save::capture`), then spawns not
+  in saves, owners, state and transforms. The client applies the snapshot
+  in `onJoined` (default `save::apply`), possibly after rebuilding the level
+  (messages wait while loading).
+- **Messages:** one byte type + payload (`ve/net/Stream.hpp`); spawns, state,
+  requests reliable and ordered; transforms unreliable. The transport
+  (`ve/net/Transport.hpp`, ENet) is internal to the engine.
+
 ## 6. Physics
 
 Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
@@ -880,12 +911,14 @@ Optional add-ons built only on public engine APIs:
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Building.*` | Building kit on the engine's prefabs + placement: `BuildPiece` (14 kinds x materials, doors / windows as fittings snapping into wall openings, `DoorHinge` (Use, saved), mesh / colliders / snap points / placement boxes from code; the kit is `assets/prefabs/building/*.prefab` + `building/catalogue.json`), `Builder` (build mode B: ghost, snap, fit, place, remove, navmesh rebuild) |
 | `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, HUD (ve::ui canvas: health / stamina, hotbar, clock, prompts), `AutoTest` |
+| `Multiplayer.*` | On `ve/net`: host / join from `SAVANNA_NET`, player avatars (NetworkObject + NetworkTransform + replicated name), the host's world snapshot without its own player, clock / weather sync, `NetTest` (two-process test, `tools/nettest.sh`); building requests live in `Building.cpp` |
 | `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop) |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 
 Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..4`,
-`SAVANNA_DEBUG=1` (F1 overlay on), `SAVANNA_MENU=1` (the title screen even with other hooks; it shows on a plain game launch only), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
+`SAVANNA_DEBUG=1` (F1 overlay on), `SAVANNA_MENU=1` (the title screen even with other hooks; it shows on a plain game launch only),
+`SAVANNA_NET=host[:port]` / `SAVANNA_NET=join:<address>[:port]` + `SAVANNA_NAME=<name>` (multiplayer), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
 camera), `SAVANNA_AUTOTEST=1` / `SAVANNA_EDITORTEST=1` (scripted smoke tests
 that exit), `SAVANNA_SCENE=file.json` (another scene), and
 `VE_VALIDATION=0/1`. Any engine game: `VE_HEADLESS=1` (no window shown,
