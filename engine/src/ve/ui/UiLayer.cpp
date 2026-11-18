@@ -180,6 +180,7 @@ void UiLayer::drawDebugOverlay()
     if (ImGui::CollapsingHeader("Settings")) {
         RendererSettings& s = r.settings();
         if (ImGui::Checkbox("VSync", &s.vsync)) r.applySettings();
+        ImGui::Checkbox("Translucency (backlit leaves)", &s.translucency);
         ImGui::SliderFloat("Time scale", &m_engine->time().timeScale, 0.0f, 4.0f);
         Environment& env = r.environment();
         ImGui::ColorEdit3("Ambient sky", &env.ambientSky.x);

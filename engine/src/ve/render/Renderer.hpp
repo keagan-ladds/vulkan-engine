@@ -102,6 +102,7 @@ struct RendererSettings {
     // TemporalAAPass blends each frame into a reprojected history. Smooths
     // edges, foliage cutouts and dithering; moving objects can smear slightly.
     bool temporalAA = false;
+    bool translucency = true; // materials' light transmission (backlit leaves); off = skip it everywhere
     uint32_t maxInstances = 262144;               // total across all groups (64 B each)
     uint32_t maxVisibleInstancesPerView = 1u << 20; // sum over batches of group capacity (4 B each, per cull view)
     // --- GPU skinning (SkinnedMeshRenderer) ---

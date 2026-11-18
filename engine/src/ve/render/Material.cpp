@@ -1,5 +1,7 @@
 #include "ve/render/Material.hpp"
 
+#include <algorithm>
+
 #include "ve/gfx/Device.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/render/Texture.hpp"
@@ -116,6 +118,7 @@ StandardMaterial::StandardMaterial(Renderer& renderer, Mode mode)
     setVector(1, glm::vec4(0.8f, 0.0f, 1.0f, mode == Mode::Cutout ? 0.5f : 0.0f));
     setVector(2, glm::vec4(0.0f));
     setVector(3, glm::vec4(1.0f, 1.0f, 1.0f, 0.0f));
+    setVector(4, glm::vec4(1.0f));
 }
 
 StandardMaterial& StandardMaterial::setRoughness(float r)
@@ -162,6 +165,15 @@ StandardMaterial& StandardMaterial::setUvScale(const glm::vec2& scale)
     v.x = scale.x;
     v.y = scale.y;
     setVector(3, v);
+    return *this;
+}
+
+StandardMaterial& StandardMaterial::setTranslucency(float strength, const glm::vec3& tint)
+{
+    glm::vec4 v = vector(3);
+    v.w = std::max(strength, 0.0f);
+    setVector(3, v);
+    setVector(4, glm::vec4(tint, 1.0f));
     return *this;
 }
 

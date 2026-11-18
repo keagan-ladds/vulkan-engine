@@ -391,6 +391,7 @@ void MainMenu::buildSettings(ui::Element& content)
         };
     };
     toggle("Temporal anti-aliasing", &m_settings.taa);
+    toggle("Backlit leaves", &m_settings.backlit);
     toggle("Controls help", &m_settings.help);
 }
 
@@ -557,6 +558,10 @@ void MainMenu::applySettings()
     a.setBusVolume("Ambient", m_settings.ambience);
     a.setBusVolume("Weather", m_settings.ambience);
     if (!std::getenv("SAVANNA_TAA")) renderer().settings().temporalAA = m_settings.taa; // (tests choose)
+    if (const char* backlit = std::getenv("SAVANNA_BACKLIT")) // tests: 0 / 1
+        renderer().settings().translucency = backlit[0] != '0';
+    else
+        renderer().settings().translucency = m_settings.backlit;
     if (auto* player = dynamic_cast<Player*>(scene().find("Player"))) {
         player->mouseSensitivity = glm::mix(0.0008f, 0.0043f, m_settings.mouse);
         if (ve::Camera* cam = player->camera()) cam->fovDegrees = glm::mix(55.0f, 95.0f, m_settings.fov);
@@ -568,6 +573,7 @@ void MainMenu::saveSettings() const
 {
     const ve::Json j{{"master", m_settings.master}, {"music", m_settings.music}, {"effects", m_settings.effects}, {"ambience", m_settings.ambience},
                      {"mouse", m_settings.mouse},   {"fov", m_settings.fov},     {"taa", m_settings.taa},         {"help", m_settings.help},
+                     {"backlit", m_settings.backlit},
                      {"playerName", m_settings.playerName}, {"address", m_settings.address}, {"port", m_settings.port}};
     std::error_code ec;
     std::filesystem::create_directories(ve::save::folder(), ec);
@@ -589,6 +595,7 @@ void MainMenu::loadSettings()
         m_settings.fov = j.value("fov", m_settings.fov);
         m_settings.taa = j.value("taa", m_settings.taa);
         m_settings.help = j.value("help", m_settings.help);
+        m_settings.backlit = j.value("backlit", m_settings.backlit);
         m_settings.playerName = j.value("playerName", m_settings.playerName);
         m_settings.address = j.value("address", m_settings.address);
         m_settings.port = j.value("port", m_settings.port);

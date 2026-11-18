@@ -13,6 +13,8 @@
 #include "ve/render/Skinning.hpp"
 #include "ve/assets/Model.hpp"
 #include "ve/core/Log.hpp"
+
+#include <nlohmann/json.hpp>
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/render/Texture.hpp"
@@ -111,6 +113,19 @@ std::shared_ptr<Material> convertMaterial(GltfContext& ctx, const cgltf_material
     const float emissiveStrength = m->has_emissive_strength ? m->emissive_strength.emissive_strength : 1.0f;
     mat->setEmissive({m->emissive_factor[0], m->emissive_factor[1], m->emissive_factor[2]}, emissiveStrength);
     if (auto t = loadImage(ctx, m->emissive_texture, true)) mat->setEmissiveTexture(t);
+    // KHR_materials_diffuse_transmission (cgltf keeps unknown extensions as JSON): translucency.
+    for (size_t i = 0; i < m->extensions_count; ++i) {
+        const cgltf_extension& e = m->extensions[i];
+        if (!e.name || !e.data || std::string(e.name) != "KHR_materials_diffuse_transmission") continue;
+        try {
+            const auto j = nlohmann::json::parse(e.data);
+            glm::vec3 tint(1.0f);
+            if (auto c = j.find("diffuseTransmissionColorFactor"); c != j.end() && c->is_array() && c->size() == 3)
+                tint = {(*c)[0].get<float>(), (*c)[1].get<float>(), (*c)[2].get<float>()};
+            mat->setTranslucency(j.value("diffuseTransmissionFactor", 0.0f), tint);
+        } catch (const std::exception&) {
+        }
+    }
     return mat;
 }
 

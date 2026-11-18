@@ -91,8 +91,37 @@ def mix(a, b, t):
 
 
 # -----------------------------------------------------------------------------
-# Leaf shapes (drawn into a supersampled RGBA canvas)
+# Leaf shapes (drawn into a supersampled RGBA canvas + a height / part map)
 # -----------------------------------------------------------------------------
+
+# Height / part values in the second canvas: leaves vary 110..170 (so
+# overlapping leaves keep an edge), ribs ~205, twigs ~232, thorns 250. The
+# atlas turns it into a normal map (domed leaves, raised ribs and twigs) and
+# a roughness map (by part).
+H_RIB, H_TWIG, H_THORN = 205, 232, 250
+
+
+class Dual:
+    """Draws colour (RGBA) and height / part (L) at once."""
+
+    def __init__(self, img, rnd=None):
+        self.img = img
+        self.d = ImageDraw.Draw(img)
+        self.h = Image.new("L", img.size, 0)
+        self.hd = ImageDraw.Draw(self.h)
+        self.rnd = rnd or random.Random(0)
+
+    def polygon(self, pts, fill, height=None):
+        self.d.polygon(pts, fill=fill)
+        self.hd.polygon(pts, fill=height if height is not None else self.rnd.randint(110, 170))
+
+    def line(self, pts, fill, width=1, height=H_TWIG):
+        self.d.line(pts, fill=fill, width=width)
+        self.hd.line(pts, fill=height, width=width)
+
+    def finish(self, w, h):
+        return self.img.resize((w, h), Image.LANCZOS), self.h.resize((w, h), Image.LANCZOS)
+
 
 def ellipse_leaf(draw, x, y, length, width, angle, color, rnd, midrib=None):
     """An ovate leaf as a polygon from its base at (x, y) along `angle`."""
@@ -107,7 +136,7 @@ def ellipse_leaf(draw, x, y, length, width, angle, color, rnd, midrib=None):
     poly = [(x + px * ca - py * sa, y + px * sa + py * ca) for px, py in pts]
     draw.polygon(poly, fill=color + (255,))
     if midrib and width > 2.5 * SS:
-        draw.line([(x, y), (x + length * 0.9 * ca, y + length * 0.9 * sa)], fill=midrib + (255,), width=max(1, int(width * 0.12)))
+        draw.line([(x, y), (x + length * 0.9 * ca, y + length * 0.9 * sa)], fill=midrib + (255,), width=max(1, int(width * 0.12)), height=H_RIB)
 
 
 def bipinnate_leaf(draw, x, y, angle, length, rnd, base, light, shade):
@@ -133,7 +162,8 @@ def bipinnate_leaf(draw, x, y, angle, length, rnd, base, light, shade):
 
 
 def thin_twig(draw, x, y, angle, length, width, color):
-    draw.line([(x, y), (x + length * math.cos(angle), y + length * math.sin(angle))], fill=color + (255,), width=max(1, int(width)))
+    part = H_THORN if sum(color) > 600 else H_TWIG
+    draw.line([(x, y), (x + length * math.cos(angle), y + length * math.sin(angle))], fill=color + (255,), width=max(1, int(width)), height=part)
 
 
 # -----------------------------------------------------------------------------
@@ -146,7 +176,7 @@ def card_acacia(w, h, seed, base=(70, 90, 38), light=(124, 140, 60)):
     bipinnate leaves at every node (Vachellia tortilis), filling a fan with gaps."""
     rnd = random.Random(seed)
     img = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
+    d = Dual(img, random.Random(seed + 999))
     cx, cy = w * SS * 0.5, h * SS * 0.97
     twig = (78, 62, 48)
     nodes = []
@@ -180,14 +210,14 @@ def card_acacia(w, h, seed, base=(70, 90, 38), light=(124, 140, 60)):
     for (x, y, a, depth) in rnd.sample(nodes, min(len(nodes), 10)):
         for side in (-1, 1):
             thin_twig(d, x, y, a + side * 1.2, SS * rnd.uniform(5, 9), SS * 0.8, (226, 222, 206))
-    return img.resize((w, h), Image.LANCZOS)
+    return d.finish(w, h)
 
 
 def card_broadleaf(w, h, seed, base=(46, 92, 38), light=(96, 150, 60), size=(26, 46), count=(34, 50)):
     """A cluster of ovate leaves with midribs (jungle canopy, shrubs)."""
     rnd = random.Random(seed)
     img = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
+    d = Dual(img, random.Random(seed + 999))
     cx, cy = w * SS * 0.5, h * SS * 0.96
     twig = (70, 56, 40)
     stems = []
@@ -212,14 +242,14 @@ def card_broadleaf(w, h, seed, base=(46, 92, 38), light=(96, 150, 60), size=(26,
         col = jitter(mix(base, light, rnd.random() * 0.7 * t + 0.1), rnd, 10)
         L = SS * rnd.uniform(*size) * (w / 256.0)
         ellipse_leaf(d, x, y, L, L * rnd.uniform(0.32, 0.42), a, col, rnd, midrib=mix(col, (200, 210, 150), 0.35))
-    return img.resize((w, h), Image.LANCZOS)
+    return d.finish(w, h)
 
 
 def card_palmate(w, h, seed, base=(70, 104, 46), light=(120, 150, 70)):
     """Baobab-like digitate leaves: 5-7 leaflets from one point, a few per card."""
     rnd = random.Random(seed)
     img = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
+    d = Dual(img, random.Random(seed + 999))
     cx, cy = w * SS * 0.5, h * SS * 0.96
     for _ in range(rnd.randint(15, 20)):
         a = -math.pi / 2 + rnd.uniform(-0.9, 0.9)
@@ -231,14 +261,14 @@ def card_palmate(w, h, seed, base=(70, 104, 46), light=(120, 150, 70)):
         for k in range(n):
             la = a + (k - (n - 1) / 2) * 0.42
             ellipse_leaf(d, hx, hy, SS * rnd.uniform(24, 34) * (w / 256.0), SS * rnd.uniform(6.5, 8.5) * (w / 256.0), la, jitter(col, rnd, 8), rnd, midrib=mix(col, (190, 200, 150), 0.3))
-    return img.resize((w, h), Image.LANCZOS)
+    return d.finish(w, h)
 
 
 def card_frond(w, h, seed, base=(58, 104, 40), light=(110, 150, 62), droop=0.0, leaflet=(70, 12), pinnae=34):
     """A pinnate frond (palm leaf / fern), rachis along the card's height, base at the bottom."""
     rnd = random.Random(seed)
     img = Image.new("RGBA", (w * SS, h * SS), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
+    d = Dual(img, random.Random(seed + 999))
     x0, y0 = w * SS * 0.5, h * SS * 0.99
     length = h * SS * 0.95
     pts = []
@@ -257,7 +287,7 @@ def card_frond(w, h, seed, base=(58, 104, 40), light=(110, 150, 62), droop=0.0, 
             col = jitter(mix(base, light, rnd.random() * 0.6), rnd, 10)
             L = SS * leaflet[0] * size * (w / 256.0) * rnd.uniform(0.85, 1.1)
             ellipse_leaf(d, px, py, L, SS * leaflet[1] * size * (w / 256.0) * 0.5 + SS, la, col, rnd)
-    return img.resize((w, h), Image.LANCZOS)
+    return d.finish(w, h)
 
 
 # The atlases: (file, cell size, grid, [(painter, seed, kwargs)...]); the
@@ -275,14 +305,55 @@ ATLASES = {
 }
 
 
+# Leaf surfaces: (roughness of the leaves, dome blur radius in pixels, normal strength).
+# Waxy jungle and palm leaves are glossy; acacia leaflets and fever-tree
+# foliage are matte; ribs and twigs are rougher than the blades.
+LEAF_SURFACE = {
+    "acacia_leaves": (0.82, 1.5, 3.0),
+    "fever_leaves": (0.76, 1.5, 3.0),
+    "baobab_leaves": (0.62, 4.0, 4.0),
+    "bush_leaves": (0.7, 2.5, 3.5),
+    "jungle_leaves": (0.38, 5.0, 4.5),
+    "palm_frond": (0.45, 3.0, 4.0),
+    "fern_frond": (0.55, 3.0, 4.0),
+}
+
+
+def leaf_maps(height, alpha, roughness, dome, strength):
+    """Normal (RGB) and metallic-roughness (glTF: G = roughness, B = metallic) from the part / height map."""
+    hm = np.asarray(height).astype(np.float32) / 255.0
+    sharp = hm.copy()
+    blurred = np.asarray(height.filter(ImageFilter.GaussianBlur(dome))).astype(np.float32) / 255.0
+    h = blurred * 0.7 + sharp * 0.3  # domed leaves, crisp ribs and twigs
+    gy, gx = np.gradient(h)
+    n = np.stack([-gx * strength * 10.0, gy * strength * 10.0, np.ones_like(h)], axis=-1)  # (+Y up in the texture, glTF)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    nrm = Image.fromarray(((n * 0.5 + 0.5) * 255).astype(np.uint8), "RGB")
+    v = np.asarray(height).astype(np.int32)
+    rough = np.full(hm.shape, roughness, np.float32)
+    rough = np.where(v >= H_RIB - 8, roughness + 0.12, rough)    # ribs
+    rough = np.where(v >= H_TWIG - 8, 0.88, rough)               # twigs
+    rough = np.where(v >= H_THORN - 3, 0.55, rough)              # thorns (smooth, pale)
+    rough += (spectral_noise(hm.shape[0], 1.6, 7)[: hm.shape[0], : hm.shape[1]] - 0.5) * 0.12
+    rough = np.clip(rough, 0.05, 1.0)
+    mr = np.stack([np.full(hm.shape, 255, np.uint8), (rough * 255).astype(np.uint8), np.zeros(hm.shape, np.uint8)], axis=-1)
+    return nrm, Image.fromarray(mr, "RGB")
+
+
 def build_atlas(name, out_dir):
     cell, grid, cards = ATLASES[name]
     atlas = Image.new("RGBA", (cell * grid, cell * grid), (0, 0, 0, 0))
+    height = Image.new("L", (cell * grid, cell * grid), 0)
     for i, (painter, seed, kw) in enumerate(cards):
-        img = painter(cell, cell, seed, **kw)
+        img, h = painter(cell, cell, seed, **kw)
         atlas.paste(img, ((i % grid) * cell, (i // grid) * cell))
+        height.paste(h, ((i % grid) * cell, (i // grid) * cell))
     atlas = bleed(atlas)
     atlas.save(os.path.join(out_dir, name + ".png"))
+    rough, dome, strength = LEAF_SURFACE[name]
+    nrm, mr = leaf_maps(height, atlas.getchannel("A"), rough, dome, strength)
+    nrm.save(os.path.join(out_dir, name + "_normal.png"))
+    mr.save(os.path.join(out_dir, name + "_mr.png"))
     return atlas
 
 
@@ -328,6 +399,14 @@ def bark(name, out_dir, size=512, seed=1, kind="fissured"):
         strength = 6.0
     Image.fromarray(np.clip(col, 0, 255).astype(np.uint8), "RGB").save(os.path.join(out_dir, name + "_albedo.png"))
     normal_map(h, strength).save(os.path.join(out_dir, name + "_normal.png"))
+    # Roughness: fissures / folds (low) rougher than the worn ridges; smooth barks (fever, baobab) lower overall.
+    base, spread = {"fissured": (0.9, 0.1), "fever": (0.6, 0.12), "baobab": (0.68, 0.1), "palm": (0.84, 0.1)}.get(kind, (0.82, 0.1))
+    hn = (h - h.min()) / max(float(h.max() - h.min()), 1e-6)
+    rough = np.clip(base + (0.5 - hn) * spread * 2 + (spectral_noise(size, 1.4, seed + 9) - 0.5) * 0.1, 0.05, 1.0)
+    if kind == "jungle":
+        rough = np.clip(rough + m[..., 0] * 0.12, 0.05, 1.0)  # lichen is rough
+    mr = np.stack([np.full(h.shape, 255, np.uint8), (rough * 255).astype(np.uint8), np.zeros(h.shape, np.uint8)], axis=-1)
+    Image.fromarray(mr, "RGB").save(os.path.join(out_dir, name + "_mr.png"))
 
 
 BARKS = {"acacia_bark": "fissured", "fever_bark": "fever", "baobab_bark": "baobab", "palm_bark": "palm", "jungle_bark": "jungle"}

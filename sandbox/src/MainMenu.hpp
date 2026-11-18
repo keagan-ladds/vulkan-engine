@@ -76,6 +76,7 @@ private:
         float mouse = 0.4f; // 0..1 -> sensitivity
         float fov = 0.25f;  // 0..1 -> 55..95 degrees (65)
         bool taa = true, help = true;
+        bool backlit = true; // leaves lit through from behind (standard material translucency)
         std::string playerName = "Player", address = "127.0.0.1";
         int port = 7777;
     } m_settings;

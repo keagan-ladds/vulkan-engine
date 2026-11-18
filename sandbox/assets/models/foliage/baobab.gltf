@@ -274,16 +274,19 @@
  ],
  "materials": [
   {
-   "name": "baobab_bark_bark",
+   "name": "baobab_bark",
    "pbrMetallicRoughness": {
     "baseColorTexture": {
      "index": 0
     },
+    "metallicRoughnessTexture": {
+     "index": 1
+    },
     "metallicFactor": 0.0,
-    "roughnessFactor": 0.92
+    "roughnessFactor": 1.0
    },
    "normalTexture": {
-    "index": 1,
+    "index": 2,
     "scale": 1.0
    }
   },
@@ -291,14 +294,31 @@
    "name": "baobab_leaves",
    "pbrMetallicRoughness": {
     "baseColorTexture": {
-     "index": 2
+     "index": 3
+    },
+    "metallicRoughnessTexture": {
+     "index": 4
     },
     "metallicFactor": 0.0,
-    "roughnessFactor": 0.78
+    "roughnessFactor": 1.0
+   },
+   "normalTexture": {
+    "index": 5,
+    "scale": 1.0
    },
    "alphaMode": "MASK",
    "alphaCutoff": 0.45,
-   "doubleSided": true
+   "doubleSided": true,
+   "extensions": {
+    "KHR_materials_diffuse_transmission": {
+     "diffuseTransmissionFactor": 0.6,
+     "diffuseTransmissionColorFactor": [
+      1.0,
+      1.0,
+      0.75
+     ]
+    }
+   }
   }
  ],
  "textures": [
@@ -313,6 +333,18 @@
   {
    "source": 2,
    "sampler": 0
+  },
+  {
+   "source": 3,
+   "sampler": 0
+  },
+  {
+   "source": 4,
+   "sampler": 0
+  },
+  {
+   "source": 5,
+   "sampler": 0
   }
  ],
  "images": [
@@ -320,10 +352,19 @@
    "uri": "../../textures/foliage/baobab_bark_albedo.png"
   },
   {
+   "uri": "../../textures/foliage/baobab_bark_mr.png"
+  },
+  {
    "uri": "../../textures/foliage/baobab_bark_normal.png"
   },
   {
    "uri": "../../textures/foliage/baobab_leaves.png"
+  },
+  {
+   "uri": "../../textures/foliage/baobab_leaves_mr.png"
+  },
+  {
+   "uri": "../../textures/foliage/baobab_leaves_normal.png"
   }
  ],
  "samplers": [
@@ -1323,5 +1364,8 @@
    "count": 3240,
    "type": "SCALAR"
   }
+ ],
+ "extensionsUsed": [
+  "KHR_materials_diffuse_transmission"
  ]
 }

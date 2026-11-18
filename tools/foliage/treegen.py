@@ -822,12 +822,27 @@ def generate(name, seed):
 # -----------------------------------------------------------------------------
 
 
+# Leaf translucency (KHR_materials_diffuse_transmission): how much light
+# passes through, and its tint (times the leaf colour). Thin leaves more,
+# small leathery acacia leaflets less.
+LEAF_TRANSLUCENCY = {
+    "acacia_leaves": (0.45, (1.0, 1.0, 0.7)),
+    "fever_leaves": (0.5, (1.0, 1.0, 0.7)),
+    "baobab_leaves": (0.6, (1.0, 1.0, 0.75)),
+    "bush_leaves": (0.45, (1.0, 1.0, 0.75)),
+    "jungle_leaves": (0.7, (1.0, 1.05, 0.7)),
+    "palm_frond": (0.6, (1.0, 1.0, 0.7)),
+    "fern_frond": (0.75, (1.0, 1.05, 0.7)),
+}
+
+
 class Gltf:
     def __init__(self):
         self.bin = bytearray()
         self.views, self.accessors, self.meshes, self.nodes = [], [], [], []
         self.materials, self.textures, self.images = [], [], []
         self.mat_index = {}
+        self.extensions = set()
 
     def _view(self, data, target):
         while len(self.bin) % 4:
@@ -868,13 +883,20 @@ class Gltf:
         if key in self.mat_index:
             return self.mat_index[key]
         if key == "bark":
-            m = {"name": name + "_bark", "pbrMetallicRoughness": {"baseColorTexture": {"index": self._texture(f"{tex_dir}/{name}_albedo.png")},
-                                                                   "metallicFactor": 0.0, "roughnessFactor": 0.92},
+            m = {"name": name, "pbrMetallicRoughness": {"baseColorTexture": {"index": self._texture(f"{tex_dir}/{name}_albedo.png")},
+                                                         "metallicRoughnessTexture": {"index": self._texture(f"{tex_dir}/{name}_mr.png")},
+                                                         "metallicFactor": 0.0, "roughnessFactor": 1.0},
                  "normalTexture": {"index": self._texture(f"{tex_dir}/{name}_normal.png"), "scale": 1.0}}
         else:
             m = {"name": name, "pbrMetallicRoughness": {"baseColorTexture": {"index": self._texture(f"{tex_dir}/{name}.png")},
-                                                         "metallicFactor": 0.0, "roughnessFactor": 0.78},
+                                                         "metallicRoughnessTexture": {"index": self._texture(f"{tex_dir}/{name}_mr.png")},
+                                                         "metallicFactor": 0.0, "roughnessFactor": 1.0},
+                 "normalTexture": {"index": self._texture(f"{tex_dir}/{name}_normal.png"), "scale": 1.0},
                  "alphaMode": "MASK", "alphaCutoff": 0.45, "doubleSided": True}
+            strength, tint = LEAF_TRANSLUCENCY.get(name, (0.5, (1.0, 1.0, 0.8)))
+            m["extensions"] = {"KHR_materials_diffuse_transmission": {"diffuseTransmissionFactor": strength,
+                                                                       "diffuseTransmissionColorFactor": list(tint)}}
+            self.extensions.add("KHR_materials_diffuse_transmission")
         self.materials.append(m)
         self.mat_index[key] = len(self.materials) - 1
         return self.mat_index[key]
@@ -909,6 +931,8 @@ class Gltf:
                "materials": self.materials, "textures": self.textures, "images": self.images,
                "samplers": [{"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}],
                "buffers": [{"uri": base + ".bin", "byteLength": len(self.bin)}], "bufferViews": self.views, "accessors": self.accessors}
+        if self.extensions:
+            doc["extensionsUsed"] = sorted(self.extensions)
         with open(os.path.join(os.path.dirname(path), base + ".bin"), "wb") as f:
             f.write(self.bin)
         with open(path, "w") as f:

@@ -18,8 +18,17 @@ the engine, and a stump model for the chopped state.
 ## Files
 
 - `textures.py` - leaf-card atlases (2x2 sprays per species, alpha with the
-  colour bled past the edges) and tileable bark (albedo + normal), drawn
-  procedurally with numpy / Pillow. Output: `sandbox/assets/textures/foliage/`.
+  colour bled past the edges) and tileable bark, drawn procedurally with
+  numpy / Pillow. Output: `sandbox/assets/textures/foliage/`:
+  - leaves: `<x>_leaves.png` (colour + alpha), `<x>_leaves_normal.png`,
+    `<x>_leaves_mr.png`. The painters draw a height / part map alongside the
+    colour (blade, midrib, twig, thorn), which becomes the normal map (raised
+    midribs and twigs, a little leaf-surface bumpiness) and the roughness
+    (`LEAF_SURFACE`: waxy jungle leaves ~0.4, dusty acacia leaflets ~0.8;
+    twigs and thorns rougher). glTF metallic-roughness layout: G = roughness,
+    B = metallic (0).
+  - bark: `<x>_bark_albedo.png`, `_normal.png`, `_mr.png` (roughness from the
+    fissure depth, lichen patches smoother / rougher per kind).
 - `treegen.py` - the generator (pure Python + numpy): skeletons, bark meshes,
   leaf cards, LODs, colliders, stumps, and a glTF writer. Runs anywhere.
 - `blender_foliage.py` - a Blender add-on (and headless batch mode) on the
@@ -41,8 +50,8 @@ In Blender (to look at, tweak or hand-edit trees):
 2. 3D view sidebar (N) > Foliage: pick a species, seeds (one variant per
    seed, e.g. `1, 2, 3`), Generate. You get `<Variant>_LOD0/1/2` objects
    (LOD1/2 hidden) and a wireframe `<Variant>_COL` per variant, with bark and
-   leaf materials (alpha clip, double-sided leaves, bark normal map, vertex
-   colours for ambient occlusion).
+   leaf materials (alpha clip, double-sided leaves, normal and roughness maps,
+   translucency, vertex colours for ambient occlusion).
 3. Edit freely: sculpt the trunk, move / delete cards, delete a variant.
    Keep the names (`_LOD<n>`, `_COL`); Blender's `.001` suffixes are fine.
 4. Export for the engine: writes `<species>.gltf` into the models folder,
@@ -71,7 +80,7 @@ Headless, e.g. in a build script:
    vertices along it (parallel-transported frames: no twisting), sides by
    radius, UVs at a constant texel density, a closed tip; trunk flare and
    buttress fins come from per-angle radius functions.
-4. **Leaves**: alpha-tested cards (sprays from the atlas, attachment point at
+4. **Leaves**: alpha-tested, double-sided, translucent cards (sprays from the atlas, attachment point at
    the bottom centre) along the last metre or so of every twig, oriented per
    species (nearly horizontal layers for acacias). Normals bend outwards
    from the crown centre for soft, volumetric shading; vertex colours darken
@@ -80,6 +89,19 @@ Headless, e.g. in a build script:
    ones), scaled up to keep the coverage. The engine adds an impostor.
 6. **Collision**: the trunk's convex hull (`_COL`). **Stump**: the trunk cut
    at 0.6 m with a pale cut face (the `Stump` foliage state).
+
+## Backlit leaves
+
+Leaf materials carry `KHR_materials_diffuse_transmission` (strength and tint
+per species in `treegen.LEAF_TRANSLUCENCY`: thin jungle leaves and fern fronds
+0.7-0.75, small acacia leaflets 0.45). The engine reads it into
+`StandardMaterial::setTranslucency`: sunlight on a leaf's back face shows on
+the front, tinted by the leaf colour, strongest looking towards the sun. It is
+optional twice over: leave the extension out (or set the factor to 0) for a
+material, or switch it off for the whole renderer (`renderer.settings()
+.translucency`, F1 > Settings; Savanna: Settings > "Backlit leaves", saved in
+`settings.json`, `SAVANNA_BACKLIT=0/1` for tests). In Blender the leaf
+materials mix in a Translucent BSDF; the export writes the extension.
 
 ## Tuning / adding a species
 

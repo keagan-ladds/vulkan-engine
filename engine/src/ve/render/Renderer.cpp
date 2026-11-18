@@ -1091,7 +1091,7 @@ void Renderer::fillGlobals(const Time& time)
     g.ambientSky = glm::vec4(m_environment.ambientSky * m_environment.ambientIntensity, 0.0f);
     g.ambientGround = glm::vec4(m_environment.ambientGround * m_environment.ambientIntensity,
                                 m_environment.groundSunFraction);
-    g.lightCounts.w = m_settings.debugCascades ? 1u : 0u;
+    g.lightCounts.w = (m_settings.debugCascades ? 1u : 0u) | (m_settings.translucency ? 0u : 2u); // bit 1: no translucency
     g.shadowParams = glm::vec4(m_settings.shadowNormalBias, m_settings.shadowPcfRadius,
                                float(m_settings.directionalShadowResolution), float(m_settings.pointShadowResolution));
     g.builtinTextures = glm::uvec4(m_graph->sampled(m_sceneDepth), m_graph->sampled(m_sceneColor),

@@ -484,6 +484,7 @@ and ask the host for everything else (decision D19).
 
 ### F8 — Realistic foliage (branch `claude/foliage-generator`)
 - [x] Foliage generator (`tools/foliage`, see its README): procedural leaf-card atlases and tileable bark (albedo + normal); trees grown by space colonisation inside species crown envelopes, pipe-model radii, bark ring meshes (flare, buttresses), crown-normal leaf cards with vertex-colour AO, 3 LODs (+ engine impostor), convex trunk colliders, stump models; glTF writer (no Blender needed), Blender add-on (generate editable objects, export) and headless batch, Cycles preview script
+- [x] Leaf normal + roughness maps (from a height / part map drawn with the colour: midribs, twigs, thorns) and bark roughness maps; backlit leaves: optional engine material translucency (`StandardMaterial::setTranslucency`, glTF `KHR_materials_diffuse_transmission`, renderer toggle), Savanna's "Backlit leaves" setting
 - [x] Species: umbrella thorn acacia, fever tree, baobab, savanna bush, jungle tree, palm, fern; Savanna's scene uses them (acacia stumps for chopping), spacing retuned for the bigger crowns
 - [ ] Wind sway for tree foliage (vertex colour / height weighted, like the grass), seasonal variants (bare / flowering), grass and reeds as models, quiver trees and desert shrubs, more variants per species
 

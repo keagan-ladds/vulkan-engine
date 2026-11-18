@@ -50,6 +50,29 @@ void main()
     s.ao = m.textures[4] != VE_INVALID ? veSample(m.textures[4], uv).r : 1.0;
     s.emissive = m.params[2].rgb * m.params[2].w * veSampleOr(m.textures[3], uv, vec4(1.0)).rgb;
 
-    outColor = vec4(veEvaluateLighting(s), base.a);
+    vec3 color = veEvaluateLighting(s);
+
+    // Translucency (thin leaves): directional light from behind the surface
+    // shines through it, tinted by the albedo. A soft wrap term for light
+    // anywhere behind, and forward scattering when looking towards the light.
+    float translucency = m.params[3].w;
+    if (translucency > 0.0 && (frame.lightCounts.w & 2u) == 0u) {
+        vec3 V = normalize(frame.cameraPosition.xyz - inWorldPos);
+        float viewDepth = dot(inWorldPos - frame.cameraPosition.xyz, frame.cameraForward.xyz);
+        vec3 tint = m.params[4].rgb * s.albedo * (1.0 - metallic);
+        for (uint i = 0; i < frame.lightCounts.x; ++i) {
+            VeDirectionalLight L = lights.directional[i];
+            vec3 l = -L.direction.xyz;
+            float back = dot(-N, l);
+            if (back <= 0.0) continue; // lit from the front: the regular lighting has it
+            float shadow = veDirectionalShadow(i, inWorldPos, -N, viewDepth); // (the lit side faces away)
+            // A crown shadows its own far side, but light still diffuses leaf to leaf through it:
+            // some of the soft back term survives the shadow, the bright forward lobe (looking
+            // towards the light) mostly doesn't.
+            float scatter = back * 0.7 * mix(0.3, 1.0, shadow) + pow(max(dot(-V, l), 0.0), 4.0) * 2.0 * mix(0.1, 1.0, shadow);
+            color += tint * L.color.rgb * scatter * translucency * (1.0 / 3.14159265);
+        }
+    }
+    outColor = vec4(color, base.a);
     outGBuffer = veGBuffer(s.normal, s.roughness);
 }

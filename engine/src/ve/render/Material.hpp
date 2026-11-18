@@ -123,7 +123,8 @@ protected:
 //   params[0] = base colour (rgba)
 //   params[1] = roughness, metallic, normal strength, alpha cutoff (0 = off)
 //   params[2] = emissive rgb, emissive intensity
-//   params[3] = uv scale xy, vertex colour weight (0..1), unused
+//   params[3] = uv scale xy, vertex colour weight (0..1), translucency (0 = off)
+//   params[4] = translucency tint (rgb)
 //   textures  = 0 albedo, 1 normal, 2 metallic-roughness (glTF: G=rough, B=metal),
 //               3 emissive, 4 occlusion (R)
 class StandardMaterial : public Material {
@@ -140,6 +141,10 @@ public:
     StandardMaterial& setEmissive(const glm::vec3& color, float intensity = 1.0f);
     StandardMaterial& setUvScale(const glm::vec2& scale);
     StandardMaterial& setVertexColorWeight(float w); // 1 = multiply albedo by vertex colour
+    // Thin, light-transmitting surfaces (leaves, cloth, paper): light from behind
+    // shines through, tinted by the albedo and `tint`. 0 = off (the default). glTF:
+    // KHR_materials_diffuse_transmission. RendererSettings::translucency switches it off everywhere.
+    StandardMaterial& setTranslucency(float strength, const glm::vec3& tint = glm::vec3(1.0f));
     StandardMaterial& setAlbedoTexture(std::shared_ptr<Texture> t) { setTexture(0, std::move(t)); return *this; }
     StandardMaterial& setNormalTexture(std::shared_ptr<Texture> t) { setTexture(1, std::move(t)); return *this; }
     StandardMaterial& setMetallicRoughnessTexture(std::shared_ptr<Texture> t) { setTexture(2, std::move(t)); return *this; }

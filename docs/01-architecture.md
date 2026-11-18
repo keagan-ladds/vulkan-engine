@@ -244,7 +244,13 @@ material slot) and a local AABB.
   feature.
 - `StandardMaterial` wraps the built-in PBR shader (`standard.vert/frag`):
   base colour, roughness, metallic, emissive, albedo/normal/MR/emissive textures,
-  alpha cutoff, and vertex-colour multiplication.
+  alpha cutoff, and vertex-colour multiplication. Optional translucency
+  (`setTranslucency(strength, tint)`, params[3].w / params[4]) lets thin
+  surfaces such as leaves glow when lit from behind: directional light on the
+  back face (wrapped, with a forward-scatter lobe towards the light, softened
+  by the shadow so a crown's far side still passes some light) tinted by the
+  albedo. `Renderer::Settings::translucency` turns it off globally (F1 >
+  Settings; `frame.lightCounts.w` bit 1).
 
 ### 5.4 Render graph
 
@@ -787,8 +793,9 @@ Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
   `Texture::create3D()` cover procedural data (e.g. cloud noise).
 - Models: glTF 2.0 (`.gltf`/`.glb`) via cgltf. Meshes and primitives become
   `Mesh` + submeshes. Materials become `StandardMaterial` (base colour /
-  normal / metallic-roughness / emissive textures and factors), and the node
-  hierarchy becomes `Model`.
+  normal / metallic-roughness / emissive textures and factors;
+  `KHR_materials_diffuse_transmission` becomes the material's translucency),
+  and the node hierarchy becomes `Model`.
   `scene.instantiate(model)` spawns a GameObject hierarchy with MeshRenderers.
 - Audio: `AudioClip` = path + decode mode, played through miniaudio's resource manager.
 

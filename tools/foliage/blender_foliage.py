@@ -108,6 +108,37 @@ def make_material(kind, texture, tex_dir):
     nt.links.new(tex.outputs["Color"], mul.inputs[1])
     nt.links.new(vcol.outputs["Color"], mul.inputs[2])
     nt.links.new(mul.outputs["Color"], bsdf.inputs["Base Color"])
+    # Roughness from the metallic-roughness map (glTF: G).
+    mr = nt.nodes.new("ShaderNodeTexImage")
+    mr.image = _image(os.path.join(tex_dir, texture + "_mr.png"))
+    mr.image.colorspace_settings.name = "Non-Color"
+    mr.location = (-900, -650)
+    sep = nt.nodes.new("ShaderNodeSeparateColor")
+    sep.location = (-600, -650)
+    nt.links.new(mr.outputs["Color"], sep.inputs["Color"])
+    nt.links.new(sep.outputs["Green"], bsdf.inputs["Roughness"])
+    if kind != "bark":
+        # Leaf normal map, and light shining through (a Translucent BSDF mixed in;
+        # exported as KHR_materials_diffuse_transmission by link_textures()).
+        nrm = nt.nodes.new("ShaderNodeTexImage")
+        nrm.image = _image(os.path.join(tex_dir, texture + "_normal.png"))
+        nrm.image.colorspace_settings.name = "Non-Color"
+        nrm.location = (-900, -350)
+        nmap = nt.nodes.new("ShaderNodeNormalMap")
+        nmap.location = (-600, -350)
+        nt.links.new(nrm.outputs["Color"], nmap.inputs["Color"])
+        nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
+        strength, tint = _treegen().LEAF_TRANSLUCENCY.get(texture, (0.5, (1.0, 1.0, 0.8)))
+        trans = nt.nodes.new("ShaderNodeBsdfTranslucent")
+        trans.location = (0, -300)
+        nt.links.new(mul.outputs["Color"], trans.inputs["Color"])
+        mixs = nt.nodes.new("ShaderNodeMixShader")
+        mixs.location = (300, 0)
+        mixs.inputs["Fac"].default_value = strength * 0.4
+        out = nt.nodes["Material Output"]
+        nt.links.new(bsdf.outputs["BSDF"], mixs.inputs[1])
+        nt.links.new(trans.outputs["BSDF"], mixs.inputs[2])
+        nt.links.new(mixs.outputs["Shader"], out.inputs["Surface"])
     return m
 
 
@@ -204,15 +235,26 @@ def link_textures(path, tex_rel="../../textures/foliage"):
         doc["textures"].append({"source": len(doc["images"]) - 1, "sampler": 0})
         return {"index": len(doc["textures"]) - 1}
 
+    used = set(doc.get("extensionsUsed", []))
     for m in doc.get("materials", []):
         pbr = m.setdefault("pbrMetallicRoughness", {})
+        name = m["name"].split(".")[0]
         if m.get("alphaMode") == "MASK":
-            pbr["baseColorTexture"] = tex(f"{tex_rel}/{m['name']}.png")
+            pbr["baseColorTexture"] = tex(f"{tex_rel}/{name}.png")
+            strength, tint = _treegen().LEAF_TRANSLUCENCY.get(name, (0.5, (1.0, 1.0, 0.8)))
+            m.setdefault("extensions", {})["KHR_materials_diffuse_transmission"] = {
+                "diffuseTransmissionFactor": strength, "diffuseTransmissionColorFactor": list(tint)}
+            used.add("KHR_materials_diffuse_transmission")
         else:
-            pbr["baseColorTexture"] = tex(f"{tex_rel}/{m['name']}_albedo.png")
-            m["normalTexture"] = tex(f"{tex_rel}/{m['name']}_normal.png")
+            pbr["baseColorTexture"] = tex(f"{tex_rel}/{name}_albedo.png")
             m.pop("doubleSided", None)
+        m["normalTexture"] = tex(f"{tex_rel}/{name}_normal.png")
+        pbr["metallicRoughnessTexture"] = tex(f"{tex_rel}/{name}_mr.png")
+        pbr["roughnessFactor"] = 1.0
+        pbr["metallicFactor"] = 0.0
         pbr.pop("baseColorFactor", None)
+    if used:
+        doc["extensionsUsed"] = sorted(used)
     with open(path, "w") as f:
         json.dump(doc, f, indent=1)
 

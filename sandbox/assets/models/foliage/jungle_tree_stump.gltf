@@ -163,16 +163,19 @@
  ],
  "materials": [
   {
-   "name": "jungle_bark_bark",
+   "name": "jungle_bark",
    "pbrMetallicRoughness": {
     "baseColorTexture": {
      "index": 0
     },
+    "metallicRoughnessTexture": {
+     "index": 1
+    },
     "metallicFactor": 0.0,
-    "roughnessFactor": 0.92
+    "roughnessFactor": 1.0
    },
    "normalTexture": {
-    "index": 1,
+    "index": 2,
     "scale": 1.0
    }
   }
@@ -185,11 +188,18 @@
   {
    "source": 1,
    "sampler": 0
+  },
+  {
+   "source": 2,
+   "sampler": 0
   }
  ],
  "images": [
   {
    "uri": "../../textures/foliage/jungle_bark_albedo.png"
+  },
+  {
+   "uri": "../../textures/foliage/jungle_bark_mr.png"
   },
   {
    "uri": "../../textures/foliage/jungle_bark_normal.png"
