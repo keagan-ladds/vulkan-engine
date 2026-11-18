@@ -413,7 +413,7 @@ Ordered roughly by how much they'll bite while building a game.
 - [x] Animation clips (T/R/S channels, step / linear / cubic spline), crossfade blending, `Animator` component; joints are GameObjects
 - [x] GPU skinning: `skin.comp` pre-pass into a shared output buffer drawn by the regular pipelines (`Mesh::createShared`)
 - [x] Savanna: two `Villager`s (generated rigged model, Idle + Walk) wander around the camp; autotest checks clips, joints and skinned bounds
-- Later: motion vectors from skinning, animation layers / masks, root motion, IK, animation events
+- Later: motion vectors from skinning, root motion, look-at / aim IK (layers, events and IK: F7)
 
 ### F3 — World & performance
 - [x] Clustered point lights: 16×9×24 clusters binned on the CPU each frame
