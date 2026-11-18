@@ -248,6 +248,65 @@ void buildEffects(ve::Engine& engine)
     grading.enabled = std::getenv("SAVANNA_GRADE") && std::string(std::getenv("SAVANNA_GRADE")) == "1";
 }
 
+// A lantern hanging on a short rope from a post by the fire (joints: thrown
+// rocks and players set it swinging).
+void spawnLantern(ve::Scene& scene, const ve::Terrain& terrain, glm::vec2 at)
+{
+    const float g = terrain.height(at.x, at.y);
+    auto& post = scene.spawn("Lantern post");
+    post.transform().setPosition({at.x, g + 1.1f, at.y});
+    auto& pr = post.addComponent<ve::PrimitiveRenderer>();
+    pr.size = {0.12f, 2.2f, 0.12f};
+    pr.color = {0.35f, 0.25f, 0.16f, 1.0f};
+    post.addComponent<ve::Rigidbody>(ve::Collider::box({0.06f, 1.1f, 0.06f}), ve::BodyType::Static).surface = "Wood";
+    auto& arm = scene.spawn("Lantern arm");
+    arm.transform().setPosition({at.x + 0.35f, g + 2.15f, at.y});
+    auto& ar = arm.addComponent<ve::PrimitiveRenderer>();
+    ar.size = {0.7f, 0.08f, 0.08f};
+    ar.color = pr.color;
+    const glm::vec3 hook{at.x + 0.66f, g + 2.1f, at.y};
+    ve::GameObject* prev = nullptr;
+    for (int i = 0; i < 2; ++i) { // two rope links, then the lantern
+        auto& link = scene.spawn("Lantern rope");
+        link.transform().setPosition(hook - glm::vec3(0.0f, 0.18f * float(i + 1), 0.0f));
+        auto& lr = link.addComponent<ve::PrimitiveRenderer>();
+        lr.shape = ve::PrimitiveRenderer::Shape::Cylinder;
+        lr.size = {0.02f, 0.18f, 0.02f};
+        lr.color = {0.55f, 0.45f, 0.3f, 1.0f};
+        lr.castShadows = false;
+        auto& rb = link.addComponent<ve::Rigidbody>(ve::Collider::sphere(0.03f), ve::BodyType::Dynamic);
+        rb.mass = 0.2f;
+        rb.linearDamping = 0.3f;
+        rb.layer = "Debris";
+        auto& rope = link.addComponent<ve::DistanceJoint>();
+        if (prev) rope.connect(prev);
+        else rope.connectedAnchor = hook;
+        rope.minDistance = 0.0f;
+        rope.maxDistance = 0.18f;
+        prev = &link;
+    }
+    auto& lantern = scene.spawn("Lantern");
+    lantern.transform().setPosition(hook - glm::vec3(0.0f, 0.5f, 0.0f));
+    auto& body = lantern.addComponent<ve::PrimitiveRenderer>();
+    body.size = {0.16f, 0.22f, 0.16f};
+    body.color = {1.0f, 0.75f, 0.35f, 1.0f};
+    body.castShadows = false;
+    auto& rb = lantern.addComponent<ve::Rigidbody>(ve::Collider::box({0.08f, 0.11f, 0.08f}), ve::BodyType::Dynamic);
+    rb.mass = 1.5f;
+    rb.angularDamping = 0.4f;
+    rb.surface = "Metal";
+    auto& rope = lantern.addComponent<ve::DistanceJoint>();
+    rope.connect(prev);
+    rope.anchor = {0.0f, 0.11f, 0.0f};
+    rope.minDistance = 0.0f;
+    rope.maxDistance = 0.18f;
+    auto& light = lantern.addComponent<ve::PointLight>();
+    light.color = {1.0f, 0.62f, 0.3f};
+    light.intensity = 6.0f;
+    light.range = 7.0f;
+    light.castShadows = false;
+}
+
 void buildLevel(ve::Engine& engine)
 {
     ve::Renderer& r = engine.renderer();
@@ -292,6 +351,7 @@ void buildLevel(ve::Engine& engine)
 
     scene.spawn<Builder>(); // B: build mode (Building.hpp)
     scene.spawn<Hud>(player);
+    spawnLantern(scene, terrain, layout::kCamp + glm::vec2(2.6f, -2.4f)); // (joints)
     scene.spawn<InventoryScreen>(); // Tab / I (Inventory.hpp)
     scene.spawn<Multiplayer>();     // avatars, the host's world for joiners (Multiplayer.hpp)
     if (const char* nt = std::getenv("SAVANNA_NETTEST")) scene.spawn<NetTest>(std::string(nt) == "host");

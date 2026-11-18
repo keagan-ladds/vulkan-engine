@@ -86,6 +86,14 @@ void Villager::start()
         // Feet on the ground on slopes and steps (two-bone IK per leg, hips lowered).
         auto& feet = m_body->addComponent<ve::FootIK>();
         feet.layers = ~(1u << std::max(0, physics().layer("Debris"))); // (not on loose rocks)
+        // Head and eyes follow the player nearby; the right arm points things out.
+        m_look = &m_body->addComponent<ve::LookAtIK>();
+        m_point = &m_body->addComponent<ve::AimIK>();
+        m_point->chain = {{"Chest", 0.15f}, {"UpperArm.R", 0.85f}};
+        m_point->effector = "UpperArm.R";
+        m_point->axis = {0.0f, -1.0f, 0.0f}; // the arm hangs down in the rest pose
+        m_point->maxAngle = 170.0f;
+        m_point->blendTime = 0.45f;
     } catch (const std::exception& e) {
         ve::log::warn("Villager: {}", e.what());
     }
@@ -127,6 +135,15 @@ void Villager::wave(float seconds)
     m_waveTimer = seconds;
 }
 
+void Villager::pointAt(const glm::vec3& at, float seconds)
+{
+    if (!m_point) return;
+    if (m_animator && m_waveLayer >= 0) m_animator->setLayerWeight(m_waveLayer, 0.0f, 0.2f); // (one arm, one job)
+    m_waveTimer = 0.0f;
+    m_point->setTarget(at);
+    m_pointTimer = seconds;
+}
+
 void Villager::footstep()
 {
     ++m_steps;
@@ -160,15 +177,38 @@ void Villager::goHome()
 
 void Villager::update(float dt)
 {
-    // The wave fades out when it's done; a player walking up gets one too.
-    if (m_waveTimer > 0.0f && (m_waveTimer -= dt) <= 0.0f && m_animator) m_animator->setLayerWeight(m_waveLayer, 0.0f, 0.4f);
+    // The wave fades out when it's done; a player walking up gets one too,
+    // then a hint: the arm points at the nearest sunstone.
+    if (m_waveTimer > 0.0f && (m_waveTimer -= dt) <= 0.0f && m_animator) {
+        m_animator->setLayerWeight(m_waveLayer, 0.0f, 0.4f);
+        if (m_hintAfterWave) {
+            m_hintAfterWave = false;
+            const glm::vec3 me = transform().position();
+            const ve::GameObject* best = nullptr;
+            float bestD = 60.0f;
+            for (const auto& o : scene().objects())
+                if (dynamic_cast<const Sunstone*>(o.get()) && !o->isDestroyed())
+                    if (const float d = glm::distance(o->transform().position(), me); d < bestD) {
+                        bestD = d;
+                        best = o.get();
+                    }
+            if (best) pointAt(best->transform().position());
+        }
+    }
+    if (m_pointTimer > 0.0f && (m_pointTimer -= dt) <= 0.0f && m_point) m_point->clearTarget();
     if (ve::GameObject* player = scene().find("Player")) {
+        const glm::vec3 eyes = player->transform().position() + glm::vec3(0.0f, 1.6f, 0.0f);
         const float d = glm::distance(player->transform().position(), transform().position());
         if (d < 4.0f && !m_greeted && m_mode != Mode::Follow) {
             m_greeted = true;
             wave();
+            m_hintAfterWave = true;
         } else if (d > 8.0f) {
             m_greeted = false;
+        }
+        if (m_look) { // watch the player who's close
+            if (d < 8.0f) m_look->setTarget(eyes);
+            else m_look->clearTarget();
         }
     }
     switch (m_mode) {

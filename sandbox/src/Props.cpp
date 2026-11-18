@@ -17,6 +17,8 @@
 
 #include <ve/anim/Animation.hpp>
 #include <ve/assets/AssetManager.hpp>
+#include <ve/scene/MeshComponents.hpp>
+#include <ve/debug/Debug.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/gameplay/Interaction.hpp>
 #include <ve/nav/Navigation.hpp>
@@ -1363,6 +1365,157 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
         }
         shot("8a-villager");
         v->body()->removeComponent(ik);
+        m_t = 0.0f;
+        m_stepFrame = m_frames;
+        m_step = 76; // joints
+        break;
+    }
+    case 76: { // a yard of joints: pendulum, motor wheel, slider, rope, a weld that breaks
+        const glm::vec2 yard = layout::kCamp + glm::vec2(-24.0f, 24.0f);
+        const float g = groundAt(yard).y;
+        auto body = [&](const char* name, glm::vec3 at, const ve::Collider& c, float mass, glm::vec4 color, glm::vec3 size,
+                        ve::PrimitiveRenderer::Shape shape = ve::PrimitiveRenderer::Shape::Cube) -> ve::GameObject& {
+            auto& o = scene().spawn(name);
+            o.transform().setPosition(at);
+            auto& pr = o.addComponent<ve::PrimitiveRenderer>();
+            pr.shape = shape;
+            pr.size = size;
+            pr.color = color;
+            auto& rb = o.addComponent<ve::Rigidbody>(c, ve::BodyType::Dynamic);
+            rb.mass = mass;
+            m_jointObjects.push_back(o.id());
+            return o;
+        };
+        // Pendulum: a weight 1.2 m under a hinge (Z axis), limited to +-60 degrees, pushed.
+        auto& bob = body("Pendulum", {yard.x, g + 2.0f, yard.y}, ve::Collider::box(glm::vec3(0.15f)), 4.0f, {0.9f, 0.5f, 0.2f, 1}, glm::vec3(0.3f));
+        auto& pend = bob.addComponent<ve::HingeJoint>();
+        pend.anchor = {0.0f, 1.2f, 0.0f};
+        pend.axis = {0.0f, 0.0f, 1.0f};
+        pend.useLimits = true;
+        pend.limitMin = -60.0f;
+        pend.limitMax = 60.0f;
+        bob.getComponent<ve::Rigidbody>()->setLinearVelocity({7.0f, 0.0f, 0.0f});
+        // A wheel (a bar) turned by a velocity motor at 180 deg/s.
+        auto& wheel = body("Motor wheel", {yard.x + 3.0f, g + 1.6f, yard.y}, ve::Collider::box({0.6f, 0.06f, 0.06f}), 3.0f, {0.3f, 0.6f, 1.0f, 1},
+                           {1.2f, 0.12f, 0.12f});
+        auto& motor = wheel.addComponent<ve::HingeJoint>();
+        motor.axis = {0.0f, 0.0f, 1.0f};
+        motor.motor = ve::Joint::Motor::Velocity;
+        motor.motorTarget = 180.0f;
+        // A slider driven to +1.5 m along X (limits +-2 m).
+        auto& sled = body("Slider", {yard.x + 6.0f, g + 1.0f, yard.y}, ve::Collider::box(glm::vec3(0.2f)), 5.0f, {0.4f, 0.9f, 0.4f, 1}, glm::vec3(0.4f));
+        auto& slide = sled.addComponent<ve::SliderJoint>();
+        slide.useLimits = true;
+        slide.limitMin = -2.0f;
+        slide.limitMax = 2.0f;
+        slide.motor = ve::Joint::Motor::Position;
+        slide.motorTarget = 1.5f;
+        slide.motorMaxForce = 2000.0f;
+        // A rope: four links of 0.5 m from a point in the air.
+        const glm::vec3 top{yard.x + 10.0f, g + 3.0f, yard.y};
+        ve::GameObject* prev = nullptr;
+        for (int i = 0; i < 4; ++i) {
+            auto& link = body("Rope link", top + glm::vec3(0.35f * float(i + 1), -0.35f * float(i + 1), 0.0f), ve::Collider::sphere(0.08f), 0.5f,
+                              {0.8f, 0.7f, 0.5f, 1}, glm::vec3(0.16f), ve::PrimitiveRenderer::Shape::Sphere);
+            auto& rope = link.addComponent<ve::DistanceJoint>();
+            if (prev) rope.connect(prev);
+            else rope.connectedAnchor = top; // (the world)
+            rope.minDistance = 0.0f;
+            rope.maxDistance = 0.5f;
+            prev = &link;
+        }
+        m_ropeEnd = prev->id();
+        m_ropeTop = top;
+        // A plank welded to the world, breaking under 1500 N; a 120 kg block lands on its end.
+        auto& plank = body("Plank", {yard.x + 14.0f, g + 1.0f, yard.y}, ve::Collider::box({0.8f, 0.05f, 0.2f}), 4.0f, {0.6f, 0.45f, 0.3f, 1},
+                           {1.6f, 0.1f, 0.4f});
+        auto& weld = plank.addComponent<ve::FixedJoint>();
+        weld.anchor = {-0.8f, 0.0f, 0.0f};
+        weld.breakForce = 1500.0f;
+        weld.breakTorque = 1500.0f;
+        weld.onBreak = [this](ve::Joint& j) { m_weldBroke = j.lastForce() > j.lastTorque() ? j.lastForce() : j.lastTorque(); };
+        body("Heavy block", {yard.x + 14.6f, g + 2.6f, yard.y}, ve::Collider::box(glm::vec3(0.25f)), 120.0f, {0.4f, 0.4f, 0.45f, 1}, glm::vec3(0.5f));
+        ve::debug::setChannel("Physics joints", true);
+        // Look at the yard.
+        static_cast<Player*>(scene().find("Player"))->setPose({yard.x + 7.0f, g + 0.5f, yard.y + 9.0f}, 0.0f, -8.0f);
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 77: {
+        if (m_t < 3.0f) break;
+        auto find = [&](const char* name) -> ve::GameObject* {
+            for (uint64_t id : m_jointObjects)
+                if (ve::GameObject* o = scene().findById(id); o && o->name() == name) return o;
+            return nullptr;
+        };
+        const auto* pend = find("Pendulum") ? find("Pendulum")->getComponent<ve::HingeJoint>() : nullptr;
+        const auto* wheel = find("Motor wheel") ? find("Motor wheel")->getComponent<ve::Rigidbody>() : nullptr;
+        const auto* slide = find("Slider") ? find("Slider")->getComponent<ve::SliderJoint>() : nullptr;
+        const auto* weld = find("Plank") ? find("Plank")->getComponent<ve::FixedJoint>() : nullptr;
+        const ve::GameObject* end = scene().findById(m_ropeEnd);
+        if (!m_jointsLogged) {
+        m_jointsLogged = true;
+        log("joints: pendulum " + std::string(pend && pend->attached() ? "attached" : "NOT attached") + ", angle " +
+            std::to_string(pend ? pend->angle() : 0.0f) + " deg (within +-60: " + (pend && std::abs(pend->angle()) <= 60.5f ? "yes" : "NO") + ")");
+        log("joints: motor wheel spins at " + std::to_string(wheel ? glm::degrees(glm::length(wheel->angularVelocity())) : 0.0f) +
+            " deg/s (asked 180)");
+        log("joints: slider at " + std::to_string(slide ? slide->position() : 0.0f) + " m (asked 1.5)");
+        const float ropeLen = end ? glm::distance(end->transform().position(), m_ropeTop) : 0.0f;
+        log("joints: rope end hangs " + std::to_string(ropeLen) + " m from its anchor (4 links of 0.5 m: " +
+            (ropeLen <= 2.05f && ropeLen > 1.6f ? "yes" : "NO") + ")");
+        log(std::string("joints: the weld broke under the block: ") + (weld && weld->broken() ? "yes" : "NO") + " (" +
+            std::to_string(m_weldBroke) + " at the break)");
+        }
+        shot("8b-joints");
+        if (m_t < 3.5f) break;
+        for (uint64_t id : m_jointObjects)
+            if (ve::GameObject* o = scene().findById(id)) o->destroy();
+        m_jointObjects.clear();
+        ve::debug::setChannel("Physics joints", false);
+        m_t = 0.0f;
+        m_stepFrame = m_frames;
+        m_step = 78; // look-at / aim IK
+        break;
+    }
+    case 78:
+    case 79: { // a villager looks at one point and points at another
+        auto* v = dynamic_cast<Villager*>(scene().findById(m_animVillager));
+        if (!v || !v->body() || !v->looker() || !v->pointer()) {
+            log("aim: no villager with IK");
+            m_step = 47;
+            break;
+        }
+        v->agent().stop();
+        const glm::quat facing = v->body()->transform().rotation(); // the model's +Z = its front
+        const glm::vec3 base = v->transform().position();
+        m_lookAt = base + glm::vec3(0.0f, 1.9f, 0.0f) + facing * glm::vec3(1.0f, 0.2f, 2.0f);
+        m_pointAt = base + glm::vec3(0.0f, 2.2f, 0.0f) + facing * glm::vec3(-2.5f, 0.0f, 1.0f);
+        if (m_step == 78) {
+            v->pointAt(m_pointAt, 10.0f);
+            // Look from in front of it.
+            const glm::vec3 eye = base + facing * glm::vec3(0.6f, 0.0f, 3.6f);
+            const glm::vec3 d = base - eye;
+            static_cast<Player*>(scene().find("Player"))->setPose(eye + glm::vec3(0.0f, -0.2f, 0.0f), glm::degrees(std::atan2(-d.x, -d.z)), -6.0f);
+            m_t = 0.0f;
+            ++m_step;
+            break;
+        }
+        v->looker()->setTarget(m_lookAt); // (every frame: the villager's own update aims it at the player otherwise)
+        v->pointer()->setTarget(m_pointAt);
+        if (m_t < 2.0f) break;
+        ve::debug::sphere(m_lookAt, 0.12f, ve::debug::kCyan);
+        ve::debug::sphere(m_pointAt, 0.15f, ve::debug::kYellow);
+        ve::debug::ray(v->looker()->aimOrigin(), v->looker()->aimDirection() * 2.0f, ve::debug::kCyan);
+        ve::debug::ray(v->pointer()->aimOrigin(), v->pointer()->aimDirection() * 2.5f, ve::debug::kYellow);
+        shot("8c-look-point");
+        if (m_t < 2.3f) break;
+        log("aim: look-at blend " + std::to_string(v->looker()->blend()) + ", " + std::to_string(v->looker()->lastError()) + " deg off its target" +
+            (v->looker()->lastError() < 2.0f ? "" : " (NO)"));
+        log("aim: pointing arm blend " + std::to_string(v->pointer()->blend()) + ", " + std::to_string(v->pointer()->lastError()) +
+            " deg off its target" + (v->pointer()->lastError() < 3.0f ? "" : " (NO)"));
+        v->looker()->clearTarget();
+        v->pointer()->clearTarget();
         m_t = 0.0f;
         m_stepFrame = m_frames;
         m_step = 47; // the UI steps

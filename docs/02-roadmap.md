@@ -173,8 +173,8 @@ the start (see conventions, "Multiplayer-ready gameplay"). Also see
 - [x] **Collider debug drawing**: body wireframes (from the shapes' triangles,
   cached per shape) as `ve::debug` lines, F1 > Debug draw.
 - [x] **User-configurable collision layers/masks** (F7).
-- [ ] **Joints / constraints**: hinge (doors, gates), fixed (breakable
-  building pieces), distance/rope, plus a constraint component API.
+- [x] **Joints / constraints** (F7): hinge, fixed, slider, distance
+  components; limits, motors, springs, breaking.
 - [ ] **Vehicles**: the concept art has trucks. Wrap Jolt's
   `VehicleConstraint` (wheeled vehicle, suspension, engine/transmission) as a component.
 - [ ] **Water/buoyancy**: Jolt `ApplyBuoyancyImpulse` for floating debris,
@@ -413,7 +413,7 @@ Ordered roughly by how much they'll bite while building a game.
 - [x] Animation clips (T/R/S channels, step / linear / cubic spline), crossfade blending, `Animator` component; joints are GameObjects
 - [x] GPU skinning: `skin.comp` pre-pass into a shared output buffer drawn by the regular pipelines (`Mesh::createShared`)
 - [x] Savanna: two `Villager`s (generated rigged model, Idle + Walk) wander around the camp; autotest checks clips, joints and skinned bounds
-- Later: motion vectors from skinning, root motion, look-at / aim IK (layers, events and IK: F7)
+- Later: motion vectors from skinning, root motion (layers, events, two-bone / foot / aim IK: F7)
 
 ### F3 — World & performance
 - [x] Clustered point lights: 16×9×24 clusters binned on the CPU each frame
@@ -478,7 +478,9 @@ and ask the host for everything else (decision D19).
 - [x] Physics materials: per-body `surface` names in hits, contacts and the character's ground (`groundSurface`); foliage types and terrain set theirs. Savanna: footsteps by surface (grass / dirt / wood / stone, generated sounds), building pieces by material
 - [x] Animation layers (joint masks, override / additive, fading weights), clip events, two-bone IK and foot IK. Savanna: villagers wave on an arm layer, step sounds from Walk events, feet on slopes; the model has foot / hand joints and a Wave clip
 - [x] UI text input (`ui::TextInput`: OS text, caret, editing keys with repeat, filters, submit) and scrolling lists (`ui::ScrollView`: clip, wheel, bar, drag, focus follow). Savanna: Save as (name + list), Load and Controls lists scroll, Multiplayer panel (name, address, port, Host / Join / Leave)
-- [ ] Later: root motion, look-at / aim IK, motion vectors from skinning; text selection / clipboard, multi-line text, on-screen keyboard for pads; ragdolls, joints, buoyancy (Phase 11 list)
+- [x] Joints: `FixedJoint`, `HingeJoint`, `SliderJoint`, `DistanceJoint` (limits, soft limits, velocity / position motors, friction, break force / torque + `onBreak`, broken state saved, safe body lifetime, debug drawing). Savanna: doors are dynamic leaves on motor-driven hinges (pushable), a rope lantern by the fire; the autotest's joint yard checks a limited pendulum, a 180 deg/s motor, a slider to 1.5 m, a 4-link rope and a weld breaking under a dropped block
+- [x] Look-at and aim IK (`AimIK`, `LookAtIK`): weighted chains, angle limits, blending. Savanna: villagers look at a nearby player and point at the nearest sunstone after greeting; the autotest checks both aims converge
+- [ ] Later: root motion, motion vectors from skinning; text selection / clipboard, multi-line text, on-screen keyboard for pads; ragdolls, buoyancy (Phase 11 list)
 
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)

@@ -19,6 +19,8 @@
 #include <string>
 
 namespace ve {
+class AimIK;
+class LookAtIK;
 class Animator;
 class NavAgent;
 } // namespace ve
@@ -47,6 +49,9 @@ public:
     void follow(ve::GameObject& who); // starts following (as if the player asked)
     void goHome();
     void wave(float seconds = 2.4f);  // raises the right arm (an animation layer over Idle / Walk)
+    void pointAt(const glm::vec3& at, float seconds = 3.0f); // the right arm points (aim IK)
+    ve::AimIK* pointer() const { return m_point; }
+    ve::LookAtIK* looker() const { return m_look; }
     int steps() const { return m_steps; } // footsteps so far (Walk clip events)
     ve::GameObject* body() const { return m_body; }
 
@@ -65,6 +70,10 @@ private:
     bool m_walking = false;
     std::mt19937 m_rng;
     int m_waveLayer = -1;
+    ve::AimIK* m_point = nullptr;
+    ve::LookAtIK* m_look = nullptr;
+    float m_pointTimer = 0.0f;
+    bool m_hintAfterWave = false; // point at a sunstone once the greeting wave is done
     float m_waveTimer = 0.0f;
     bool m_greeted = false; // waved at the player who came close (again once they've left)
     int m_steps = 0;

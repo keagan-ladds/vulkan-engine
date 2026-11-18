@@ -530,6 +530,106 @@ void FootIK::lateUpdate(float dt)
 }
 
 // -----------------------------------------------------------------------------
+// AimIK
+// -----------------------------------------------------------------------------
+
+bool AimIK::resolve()
+{
+    if (m_resolved) return !m_joints.empty();
+    m_resolved = true;
+    const Animator* anim = gameObject().getComponent<Animator>();
+    for (const Bone& b : chain) {
+        GameObject* j = findBelow(gameObject(), b.joint);
+        if (!j) {
+            log::warnOnce("AimIK on '" + gameObject().name() + "': no joint '" + b.joint + "'");
+            m_joints.clear();
+            return false;
+        }
+        m_joints.push_back(j->id());
+        m_rest.push_back(j->transform().localRotation());
+        m_reset.push_back(!anim || !anim->animates(*j));
+    }
+    GameObject* e = findBelow(gameObject(), effector.empty() && !chain.empty() ? chain.back().joint : effector);
+    if (!e) {
+        log::warnOnce("AimIK on '" + gameObject().name() + "': no effector '" + effector + "'");
+        m_joints.clear();
+        return false;
+    }
+    m_effector = e->id();
+    return !m_joints.empty();
+}
+
+void AimIK::lateUpdate(float dt)
+{
+    solve(dt);
+}
+
+void AimIK::solve(float dt)
+{
+    if (!resolve()) return;
+    Scene& scene = gameObject().scene();
+    // Joints no clip animates: from their rest pose (else last frame's turn would add up).
+    std::vector<GameObject*> joints;
+    for (size_t i = 0; i < m_joints.size(); ++i) {
+        GameObject* j = scene.findById(m_joints[i]);
+        if (!j) return;
+        if (m_reset[i]) j->transform().setLocalRotation(m_rest[i]);
+        joints.push_back(j);
+    }
+    GameObject* eff = scene.findById(m_effector);
+    if (!eff) return;
+    const float goal = m_hasTarget ? 1.0f : 0.0f;
+    const float step = blendTime > 0.0f ? dt / blendTime : 1.0f;
+    m_blend = m_blend < goal ? std::min(goal, m_blend + step) : std::max(goal, m_blend - step);
+    auto aim = [&](glm::vec3& origin, glm::vec3& dir) {
+        const Transform& t = eff->transform();
+        origin = glm::vec3(t.worldMatrix() * glm::vec4(offset, 1.0f));
+        dir = glm::normalize(t.rotation() * axis);
+    };
+    aim(m_origin, m_direction);
+    if (m_blend <= 0.0f) {
+        m_error = 0.0f;
+        return;
+    }
+    // Where to aim: at the target, but no further than maxAngle from the animated direction.
+    const glm::vec3 animated = m_direction;
+    auto goalDirection = [&](const glm::vec3& from) {
+        glm::vec3 want = m_target - from;
+        if (glm::length(want) < 1e-4f) return animated;
+        want = glm::normalize(want);
+        const float angle = std::acos(std::clamp(glm::dot(animated, want), -1.0f, 1.0f));
+        const float limit = glm::radians(maxAngle);
+        if (angle > limit && angle > 1e-4f) want = glm::normalize(glm::slerp(glm::quat(1, 0, 0, 0), glm::rotation(animated, want), limit / angle) * animated);
+        return want;
+    };
+    float total = 0.0f;
+    for (const Bone& b : chain) total += std::max(b.weight, 0.0f);
+    if (total <= 0.0f) return;
+    for (int it = 0; it < std::max(iterations, 1); ++it) {
+        float remaining = total;
+        for (size_t i = 0; i < joints.size(); ++i) {
+            const float w = std::max(chain[i].weight, 0.0f);
+            const float share = remaining > 1e-6f ? w / remaining : 1.0f; // the last bone finishes the turn
+            remaining -= w;
+            glm::vec3 origin, dir;
+            aim(origin, dir);
+            const glm::vec3 want = goalDirection(origin);
+            const float c = glm::dot(dir, want);
+            if (c > 0.999999f) continue;
+            const glm::quat turn = c < -0.999f ? glm::angleAxis(3.14159265f * share, glm::normalize(glm::cross(dir, glm::vec3(0, 1, 0)) + glm::vec3(1e-4f)))
+                                                : glm::slerp(glm::quat(1, 0, 0, 0), glm::rotation(dir, want), share);
+            // (Blending: the whole turn scaled by the blend on the first pass only.)
+            const glm::quat applied = it == 0 ? glm::slerp(glm::quat(1, 0, 0, 0), turn, m_blend) : (m_blend >= 1.0f ? turn : glm::quat(1, 0, 0, 0));
+            Transform& t = joints[i]->transform();
+            t.setRotation(glm::normalize(applied * t.rotation()));
+        }
+        if (m_blend < 1.0f) break; // (partial blends: one pass)
+    }
+    aim(m_origin, m_direction);
+    m_error = glm::degrees(std::acos(std::clamp(glm::dot(m_direction, goalDirection(m_origin)), -1.0f, 1.0f)));
+}
+
+// -----------------------------------------------------------------------------
 // SkinnedMeshRenderer
 // -----------------------------------------------------------------------------
 

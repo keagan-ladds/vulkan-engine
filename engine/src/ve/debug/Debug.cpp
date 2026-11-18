@@ -23,7 +23,7 @@ struct State {
     std::vector<double> labelExpiry;
     std::map<std::string, bool> channels{
         {"Physics colliders", false}, {"Physics terrain", false}, {"Character controllers", false},
-        {"Navmesh", false},           {"Nav agents", false},
+        {"Navmesh", false},           {"Nav agents", false},        {"Physics joints", false},
     };
 };
 State& state()
@@ -231,6 +231,7 @@ void drawEngineChannels()
     const glm::vec3 eye = e.renderer().frameData().camera.position;
     if (enabled("Physics colliders") || enabled("Physics terrain") || enabled("Character controllers"))
         e.physics().drawDebug(eye, 40.0f, enabled("Physics colliders"), enabled("Physics terrain"), enabled("Character controllers"), eye);
+    if (enabled("Physics joints")) scene.forEach<Joint>([](Joint& j) { j.drawDebug(); });
     if (enabled("Navmesh"))
         scene.forEach<NavMeshSurface>([&](NavMeshSurface& nav) { nav.drawDebugLines(eye, 50.0f); });
     if (enabled("Nav agents")) scene.forEach<NavAgent>([&](NavAgent& a) { a.drawDebug(); });

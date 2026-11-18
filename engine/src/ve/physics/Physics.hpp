@@ -33,6 +33,7 @@
 // =============================================================================
 
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/SaveGame.hpp"
 
 #include <glm/glm.hpp>
 #include <initializer_list>
@@ -40,6 +41,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -327,4 +329,99 @@ private:
     float m_jumpSpeed = 0.0f;
 };
 
+
+// Joints: a Rigidbody held to another one (connectedTo / connect()) or to the
+// world. Add one of the subclasses next to the Rigidbody; it's created once
+// both bodies exist (and again if they're rebuilt).
+//
+//   auto& hinge = door.addComponent<ve::HingeJoint>();       // swings on its post
+//   hinge.anchor = {-0.5f, 0, 0}; hinge.axis = {0, 1, 0};
+//   hinge.useLimits = true; hinge.limitMin = 0; hinge.limitMax = 100;   // degrees
+//   hinge.motor = ve::Joint::Motor::Position; hinge.motorTarget = 90;    // swings open
+//
+//   auto& weld = plank.addComponent<ve::FixedJoint>(); weld.connect(&post);
+//   weld.breakForce = 4000; weld.onBreak = [](ve::Joint&) { ... };       // snaps
+//
+// Hinge: angle in degrees around `axis`; Slider: position in metres along it;
+// Distance: a rope / spring between `anchor` and `connectedAnchor`; Fixed:
+// welded. The anchor is in this object's space, connectedAnchor in the other's
+// (the world's if none); axis in this object's space. Units: N, N m, degrees.
+class Joint : public Component, public Saveable {
+public:
+    enum class Type { Fixed, Hinge, Slider, Distance };
+    enum class Motor { Off, Velocity, Position };
+
+    ~Joint() override;
+    Type type() const { return m_type; }
+
+    std::string connectedTo;          // the other body's object name (scene files); empty = the world
+    void connect(GameObject* other);  // from code (null = the world)
+    glm::vec3 anchor{0.0f};
+    glm::vec3 connectedAnchor{0.0f};  // Distance (others use the anchor's world point)
+    glm::vec3 axis{0.0f, 1.0f, 0.0f}; // Hinge / Slider
+
+    bool useLimits = false;
+    float limitMin = -90.0f, limitMax = 90.0f; // Hinge: degrees; Slider: metres
+    float minDistance = -1.0f, maxDistance = -1.0f; // Distance: < 0 = the distance when created (min 0 = a rope)
+    float springFrequency = 0.0f;     // Hz: soft limits / a springy distance (0 = rigid)
+    float springDamping = 0.5f;
+    float friction = 0.0f;            // Hinge: N m, Slider: N (resists free movement)
+
+    Motor motor = Motor::Off;
+    float motorTarget = 0.0f;         // Velocity: deg/s or m/s; Position: degrees or metres
+    float motorMaxForce = 500.0f;     // N m (hinge) / N (slider)
+    float motorFrequency = 4.0f;      // Position motors: how stiffly they track (Hz)
+
+    float breakForce = 0.0f, breakTorque = 0.0f; // > 0: breaks above this (N, N m)
+    std::function<void(Joint&)> onBreak;
+
+    bool attached() const;            // the constraint exists
+    bool broken() const { return m_broken; }
+    void repair() { m_broken = false; } // (attaches again next step)
+    float angle() const;              // Hinge: degrees
+    float position() const;           // Slider: metres; Distance: current length
+    float lastForce() const { return m_force; }   // N, last step
+    float lastTorque() const { return m_torque; } // N m, last step
+
+    void fixedUpdate(float dt) override;
+    void onDestroy() override;
+    void saveState(Json& out) const override { out = {{"broken", m_broken}}; }
+    void loadState(const Json& in) override;
+
+    // Engine internal.
+    struct Impl;
+    void detach();                    // the joint breaks / goes
+    void detachIfUsing(uint32_t bodyId); // a body is going away
+    void afterStep(float dt);         // forces, breaking (PhysicsWorld::step)
+    void drawDebug() const;
+
+protected:
+    explicit Joint(Type t); // (out of line: Impl is complete only in Physics.cpp)
+
+private:
+    bool attach();
+    void applyMotor();
+    Type m_type;
+    uint64_t m_connectedId = 0;
+    bool m_broken = false;
+    float m_force = 0.0f, m_torque = 0.0f;
+    std::unique_ptr<Impl> m_impl;
+};
+
+class FixedJoint : public Joint {
+public:
+    FixedJoint() : Joint(Type::Fixed) {}
+};
+class HingeJoint : public Joint {
+public:
+    HingeJoint() : Joint(Type::Hinge) {}
+};
+class SliderJoint : public Joint {
+public:
+    SliderJoint() : Joint(Type::Slider) { axis = {1.0f, 0.0f, 0.0f}; limitMin = -1.0f; limitMax = 1.0f; }
+};
+class DistanceJoint : public Joint {
+public:
+    DistanceJoint() : Joint(Type::Distance) {}
+};
 } // namespace ve

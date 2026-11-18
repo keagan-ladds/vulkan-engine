@@ -460,8 +460,15 @@ helpers (the instancing helpers are vertex-only).
   motion-vector pipelines draw skinned meshes unchanged.
   Limits: `RendererSettings::maxSkinnedVertices` (262 144),
   `maxSkinJoints` per frame (8 192).
+- **Aim IK.** `AimIK` turns a chain of joints (root first, with weights) so
+  an axis of an effector joint points at a target: each joint takes its share
+  of the remaining turn (the last finishes it), the aim is limited to
+  `maxAngle` from the animated direction, a couple of iterations handle aims
+  that start off the joints (eyes, a muzzle), and it blends in / out over
+  `blendTime` when a target is set / cleared. `LookAtIK` is the preset for
+  heads (Spine 0.15, Chest 0.25, Head 0.6, the face's +Z from the eyes).
 - Not yet: motion vectors from skinning (moving bones of a standing
-  character), root motion, look-at / aim IK, full-body IK.
+  character), root motion, full-body IK.
 
 ### 5.8 GPU layer (gfx)
 
@@ -750,6 +757,17 @@ Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
   (`Collision::otherSurface / otherLayer`) and characters
   (`CharacterController::groundSurface / groundObject`) report it: footsteps,
   impact sounds and effects.
+- **Joints** (components next to a Rigidbody, on Jolt constraints): `FixedJoint`
+  (weld), `HingeJoint` (doors, wheels, pendulums: axis, limits in degrees,
+  friction), `SliderJoint` (axis, limits in metres), `DistanceJoint` (ropes /
+  springs between two anchors). The other body is `connect(object)` or
+  `connectedTo` (a name, for scene files); none = the world. Hinges and
+  sliders take a motor (Velocity or Position, max force, stiffness), limits
+  can be soft (spring frequency / damping). `breakForce` / `breakTorque`:
+  the solver's impulses each step / dt are compared and the joint comes off
+  (`onBreak`, `broken()` saved in games). A joint attaches once both bodies
+  exist and detaches before either is destroyed (a rebuilt body gets it back).
+  F1 > Debug draw > "Physics joints".
 - **Queries:** `physics().raycast(origin, dir, maxDist, ignoreBody, hitCharacters)` →
   point, normal, distance, `Rigidbody*`, `GameObject*` (via body user data),
   layer, surface; casts and overlaps take a `QueryFilter`.

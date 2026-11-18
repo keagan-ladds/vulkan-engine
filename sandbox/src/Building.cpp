@@ -411,6 +411,11 @@ void BuildPiece::start()
     addBoxes(b, glm::vec3(0.0f));
     if (leafObject) addBoxes(leaf, leafObject->transform().localPosition());
     if (ghost) return; // a preview: no physics
+    // Collision layers: door leaves swing through their own frames and walls
+    // (the hinge's limits keep them in place); everything else hits them.
+    ve::PhysicsWorld& ph = physics();
+    const int pieceLayer = ph.addLayer("Building"), leafLayer = ph.addLayer("DoorLeaf");
+    ph.setCollision(pieceLayer, leafLayer, false);
     // Physics surface by material (footsteps, impacts). Doors / windows are timber.
     const char* surface = isFitting() || material == Material::Timber ? "Wood" : material == Material::Stone ? "Stone" : "Mud";
     if (kind == Kind::RoofMetal) surface = "Metal";
@@ -418,11 +423,33 @@ void BuildPiece::start()
     for (const auto& c : b.colliders) {
         auto& col = scene().spawn(name()); // (shown when aimed at)
         col.setParent(this, false);
-        col.addComponent<ve::Rigidbody>(ve::Collider::box(c.half).offset(c.center, c.rot), ve::BodyType::Static).surface = surface;
+        auto& rb = col.addComponent<ve::Rigidbody>(ve::Collider::box(c.half).offset(c.center, c.rot), ve::BodyType::Static);
+        rb.surface = surface;
+        rb.layer = "Building";
     }
-    if (leafObject)
-        for (const auto& c : leaf.colliders) // kinematic: it follows the swinging leaf
-            leafObject->addComponent<ve::Rigidbody>(ve::Collider::box(c.half).offset(c.center, c.rot), ve::BodyType::Kinematic).surface = "Wood";
+    if (leafObject) {
+        // A real hinge: the leaf is a dynamic body on a HingeJoint whose position
+        // motor swings it (DoorHinge sets the target); players and rocks can push it.
+        glm::vec3 lo(1e9f), hi(-1e9f); // one box around the leaf's parts (planks, battens)
+        for (const auto& c : leaf.colliders) {
+            lo = glm::min(lo, c.center - c.half);
+            hi = glm::max(hi, c.center + c.half);
+        }
+        auto& body = leafObject->addComponent<ve::Rigidbody>(ve::Collider::box((hi - lo) * 0.5f).offset((lo + hi) * 0.5f), ve::BodyType::Dynamic);
+        body.surface = "Wood";
+        body.layer = "DoorLeaf";
+        body.mass = 18.0f;
+        body.angularDamping = 0.6f;
+        auto& hinge = leafObject->addComponent<ve::HingeJoint>(); // to the world (the wall doesn't move)
+        hinge.axis = {0.0f, 1.0f, 0.0f};
+        hinge.useLimits = true;
+        hinge.limitMin = -getComponent<DoorHinge>()->openAngle;
+        hinge.limitMax = 0.0f;
+        hinge.motor = ve::Joint::Motor::Position;
+        hinge.motorMaxForce = 240.0f;
+        hinge.motorFrequency = 2.5f;
+        hinge.friction = 2.0f;
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -431,6 +458,12 @@ void BuildPiece::start()
 
 void DoorHinge::update(float dt)
 {
+    // The physical leaf: its hinge motor swings it there.
+    if (ve::GameObject* leaf = m_leaf ? gameObject().scene().findById(m_leaf) : nullptr)
+        if (auto* joint = leaf->getComponent<ve::HingeJoint>()) {
+            joint->motorTarget = m_open ? -openAngle : 0.0f;
+            return;
+        }
     const float target = m_open ? 1.0f : 0.0f;
     if (m_t == target) return;
     m_t = m_t < target ? std::min(target, m_t + dt * speed) : std::max(target, m_t - dt * speed);

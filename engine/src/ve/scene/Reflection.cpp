@@ -84,6 +84,40 @@ std::vector<const TypeInfo*> TypeRegistry::all(bool components)
 // Engine types
 // -----------------------------------------------------------------------------
 
+namespace {
+template <class T>
+void jointFields(TypeBuilder<T>& t, bool axis, bool limits, bool motor, bool distance)
+{
+    t.category("Physics");
+    t.field("connectedTo", &Joint::connectedTo).tooltip("the other body's object name (empty = the world)");
+    t.field("anchor", &Joint::anchor).tooltip("the pivot, in this object's space");
+    if (axis) t.field("axis", &Joint::axis).tooltip("in this object's space");
+    if (limits) {
+        t.field("useLimits", &Joint::useLimits);
+        t.field("limitMin", &Joint::limitMin).tooltip("hinge: degrees, slider: metres (<= 0)");
+        t.field("limitMax", &Joint::limitMax).tooltip("hinge: degrees, slider: metres (>= 0)");
+        t.field("friction", &Joint::friction);
+    }
+    if (distance) {
+        t.field("connectedAnchor", &Joint::connectedAnchor).tooltip("in the other's space (world point if none)");
+        t.field("minDistance", &Joint::minDistance).tooltip("< 0: the distance when created (0 = a rope)");
+        t.field("maxDistance", &Joint::maxDistance).tooltip("< 0: the distance when created");
+    }
+    if (limits || distance) {
+        t.field("springFrequency", &Joint::springFrequency).range(0.0f, 30.0f).tooltip("Hz; 0 = rigid limits");
+        t.field("springDamping", &Joint::springDamping).range(0.0f, 2.0f);
+    }
+    if (motor) {
+        t.enumField("motor", &Joint::motor, {"Off", "Velocity", "Position"});
+        t.field("motorTarget", &Joint::motorTarget).tooltip("velocity: deg/s or m/s; position: degrees or metres");
+        t.field("motorMaxForce", &Joint::motorMaxForce);
+        t.field("motorFrequency", &Joint::motorFrequency).range(0.1f, 30.0f);
+    }
+    t.field("breakForce", &Joint::breakForce).tooltip("N; 0 = never breaks");
+    t.field("breakTorque", &Joint::breakTorque).tooltip("N m; 0 = never breaks");
+}
+} // namespace
+
 void registerBuiltinTypes()
 {
     static bool done = false;
@@ -205,6 +239,10 @@ void registerBuiltinTypes()
         t.field("speed", &Animator::speed).range(0.0f, 10.0f).speed(0.01f);
         t.field("playOnStart", &Animator::playOnStart);
     });
+    r.add<FixedJoint>("FixedJoint", [](TypeBuilder<FixedJoint>& t) { jointFields(t, false, false, false, false); });
+    r.add<HingeJoint>("HingeJoint", [](TypeBuilder<HingeJoint>& t) { jointFields(t, true, true, true, false); });
+    r.add<SliderJoint>("SliderJoint", [](TypeBuilder<SliderJoint>& t) { jointFields(t, true, true, true, false); });
+    r.add<DistanceJoint>("DistanceJoint", [](TypeBuilder<DistanceJoint>& t) { jointFields(t, false, false, false, true); });
     r.add<FootIK>("FootIK", [](TypeBuilder<FootIK>& t) {
         t.category("Animation");
         t.field("hipsJoint", &FootIK::hipsJoint);

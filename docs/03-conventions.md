@@ -420,12 +420,27 @@ ve::debug::sphere(hit.point, 0.2f, ve::debug::kRed, {.duration = 3.0f}); // stay
   `Collision::otherSurface`. Terrain says "Terrain": ask the terrain's
   biome at the point for grass / sand / mud.
 
+### Joints: hinged, welded, roped
+
+- Doors, gates, lids: a dynamic body on a `HingeJoint` with limits, opened by
+  a Position motor (set `motorTarget`), so players and debris can push them
+  (Savanna's doors).
+- Things that should snap (supports, planks, bridges): `FixedJoint` with a
+  `breakForce`, react in `onBreak`.
+- Ropes: a chain of light bodies on `DistanceJoint`s (`minDistance = 0`) -
+  a single long distance joint is a stick, not a rope.
+- Give jointed debris a layer the character ignores if it shouldn't trip
+  the player.
+
 ### Animation on top of clips
 
 - Upper-body actions (wave, swing, carry) on a masked layer
   (`addLayer("Arms", "Spine")`), faded with `setLayerWeight`; the legs keep
   walking underneath.
 - Timing from the clip, not from timers: `addEvent("Walk", 0.25f, "step")`.
+- `LookAtIK` for heads that follow something (a speaker, the player, a
+  threat), `AimIK` for arms / weapons / tools pointing at a target: set and
+  clear the target, the blend does the easing.
 - `FootIK` on anything that walks on uneven ground; `TwoBoneIK` for hands
   that must reach something (a door handle, a ladder rung). Models need end
   joints (Foot / Hand) for the IK to aim with.

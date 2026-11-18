@@ -163,6 +163,12 @@ public:
     uint64_t m_physGhost = 0, m_physSolid = 0, m_physPlatform = 0, m_physProbe = 0;
     bool m_physOnStone = false;
     uint64_t m_animVillager = 0;
+    std::vector<uint64_t> m_jointObjects;
+    uint64_t m_ropeEnd = 0;
+    glm::vec3 m_ropeTop{0.0f};
+    float m_weldBroke = 0.0f;
+    bool m_jointsLogged = false;
+    glm::vec3 m_lookAt{0.0f}, m_pointAt{0.0f};
     int m_animSteps = 0;
 
 private:

@@ -205,6 +205,66 @@ private:
     glm::vec3 m_targets[2]{};
 };
 
+// Aim IK (after the animation): turns a chain of joints so an axis of the
+// effector joint points at a target. The turn is spread over the chain by
+// weight (the last joint finishes it), limited to maxAngle away from where the
+// animation points, and blends in / out when a target is set / cleared.
+//   auto& point = body.addComponent<ve::AimIK>();
+//   point.chain = {{"Chest", 0.2f}, {"UpperArm.R", 0.8f}};
+//   point.effector = "UpperArm.R"; point.axis = {0, -1, 0};    // the arm hangs down in its rest pose
+//   point.setTarget(sunstone);  ...  point.clearTarget();
+class AimIK : public Component {
+public:
+    struct Bone {
+        std::string joint;
+        float weight = 1.0f;
+    };
+    std::vector<Bone> chain;            // root first
+    std::string effector;               // the joint whose axis aims (empty = the chain's last)
+    glm::vec3 axis{0.0f, 0.0f, 1.0f};   // in the effector's space
+    glm::vec3 offset{0.0f};             // where the aim starts, in the effector's space (eyes, muzzle)
+    float maxAngle = 80.0f;             // degrees away from the animated direction
+    float blendTime = 0.35f;            // seconds to blend in / out
+    int iterations = 2;                 // more converge better when the aim starts off the joints
+
+    void setTarget(const glm::vec3& world) { m_target = world; m_hasTarget = true; }
+    void clearTarget() { m_hasTarget = false; }
+    bool hasTarget() const { return m_hasTarget; }
+    float blend() const { return m_blend; }
+    float lastError() const { return m_error; } // degrees between the aim and the target after solving
+    glm::vec3 aimOrigin() const { return m_origin; }
+    glm::vec3 aimDirection() const { return m_direction; }
+
+    void lateUpdate(float dt) override;
+    void solve(float dt); // (lateUpdate does it)
+
+private:
+    bool resolve();
+    std::vector<uint64_t> m_joints;      // per chain bone
+    std::vector<glm::quat> m_rest;
+    std::vector<char> m_reset;           // not animated: back to rest first
+    uint64_t m_effector = 0;
+    glm::vec3 m_target{0.0f};
+    bool m_hasTarget = false;
+    float m_blend = 0.0f;
+    float m_error = 0.0f;
+    glm::vec3 m_origin{0.0f}, m_direction{0.0f, 0.0f, 1.0f};
+    bool m_resolved = false;
+};
+
+// Look-at: an AimIK on the spine, chest and head (most of the turn in the
+// head), aiming the face (+Z, glTF models' forward) from the eyes.
+class LookAtIK : public AimIK {
+public:
+    LookAtIK()
+    {
+        chain = {{"Spine", 0.15f}, {"Chest", 0.25f}, {"Head", 0.6f}};
+        effector = "Head";
+        offset = {0.0f, 0.12f, 0.1f};
+        maxAngle = 75.0f;
+    }
+};
+
 // A mesh deformed by joints (GPU skinned). Set up by Scene::instantiate for
 // glTF meshes with a skin.
 class SkinnedMeshRenderer : public MeshRenderer {
