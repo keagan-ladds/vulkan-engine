@@ -14,6 +14,8 @@
 #include "Building.hpp"
 #include "Player.hpp"
 #include "Harvest.hpp"
+#include "Inventory.hpp"
+#include "MainMenu.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
 #include "Vegetation.hpp"
@@ -257,6 +259,7 @@ void buildLevel(ve::Engine& engine)
 
     scene.spawn<Builder>(); // B: build mode (Building.hpp)
     scene.spawn<Hud>(player);
+    scene.spawn<InventoryScreen>(); // Tab / I (Inventory.hpp)
     scene.spawn<Regrowth>(); // berry bushes grow back (Harvest.hpp)
     auto& photoMode = scene.spawn<vfx::PhotoMode>(); // F12: free camera, DOF, max-quality screenshots
 
@@ -325,6 +328,13 @@ void buildLevel(ve::Engine& engine)
         std::sscanf(p, "%d,%d,%f", &samples, &res, &aperture);
         scene.spawn<PhotoShot>(photoMode, samples, res, aperture);
     }
+    // The title screen (MainMenu.hpp): a sunset over the savanna with the menu,
+    // when the game is played (not tests / tools), and only before the first
+    // game of the run; SAVANNA_MENU=1 forces it (screenshots).
+    const bool tools = std::getenv("SAVANNA_AUTOTEST") || std::getenv("SAVANNA_EDITOR") || std::getenv("SAVANNA_EDITORTEST") ||
+                       std::getenv("SAVANNA_PHOTO") || std::getenv("VE_BENCH") || std::getenv("SAVANNA_POSE");
+    const bool forced = std::getenv("SAVANNA_MENU") && std::string(std::getenv("SAVANNA_MENU")) == "1";
+    scene.spawn<MainMenu>(forced || (!tools && !MainMenu::s_played));
     if (const char* f = std::getenv("SAVANNA_POSE")) {
         float x, y, z, yaw, pitch;
         if (std::sscanf(f, "%f,%f,%f,%f,%f", &x, &y, &z, &yaw, &pitch) == 5) player.setPose({x, y, z}, yaw, pitch);
@@ -338,6 +348,19 @@ namespace savanna {
 void buildWorld(ve::Engine& engine)
 {
     buildLevel(engine);
+}
+
+void reloadFresh(ve::Engine& engine)
+{
+    engine.beginLoading(makeLoadingScene(), 0.3f);
+    engine.addLoadStep("Leaving", [&engine] { engine.scene().clear(); });
+    engine.addLoadStep("Loading the savanna", [&engine] {
+        GameState& gs = gameState();
+        gs.collected = 0;
+        gs.inventory.clear();
+        gs.message.clear();
+        buildLevel(engine);
+    });
 }
 
 bool reloadWithSave(ve::Engine& engine, const std::string& slot)

@@ -723,10 +723,48 @@ The listener follows the main camera.
 
 Dear ImGui with the SDL2 and Vulkan (dynamic rendering) backends. It is drawn
 by `UiPass` directly onto the backbuffer. Games draw HUD/menus in `onGui()`
-hooks. F1 toggles the engine debug overlay: FPS/frame time, draw counts,
+hooks (debug tools, the editor); game screens use the retained layer
+below. F1 toggles the engine debug overlay: FPS/frame time, draw counts,
 CPU zones (`VE_PROFILE` scopes from `ve/core/Profiler.hpp`, main thread,
 nested, averaged over ~1 s), renderer settings (shadows, exposure), and every
 render pass with an enable toggle, its GPU time and its own `onGui()` settings.
+
+### 9.1 Game UI (`ve/ui/Gui.hpp`)
+
+A small retained-mode layer for game screens (HUD, inventory, menus), drawn
+through ImGui's background draw list (so it shares fonts, textures and the
+`UiPass`) but not using ImGui widgets. The engine holds the mechanism; the
+look (colours, fonts, layouts) and what screens exist are the game's.
+
+- `ui::Canvas` (a Component): a tree of `ui::Element`s laid out on a
+  reference resolution (1920x1080, scaled by window height). `order` sorts
+  canvases; a `modal` canvas takes all input (the game stops seeing keys and
+  the mouse) and owns keyboard / pad focus. `onBack` (Escape / pad B),
+  `shortcuts` (key or pad button -> action), `fade`, `hideInEditor`.
+- Elements: anchors + pivot + position + size (stretched between two
+  anchors, the position / size are insets), `visible`, `enabled`,
+  `opacity`, `tooltip`, `onClick`, `onHover`, drag and drop (`draggable`,
+  `onDrop`, `dragVisual`). Widgets: `Panel` (fill / gradient / border /
+  image), `Label` (font + size, alignment, wrap, shadow, `bind` for live
+  text), `Image` (texture or a `custom` draw callback), `Button`,
+  `ProgressBar` (gradient fill, trail), `Slider`, `Stack` (vertical /
+  horizontal), `Grid`.
+- Input routing (`ui::System::route`, before gameplay each frame): hover,
+  press, click, drag, tooltips; focus navigation on the top modal canvas
+  with arrows / d-pad / left stick, Enter / Space / pad A to click. It sets
+  `Input::setUiCapture`, so gameplay's keys, mouse and pad go quiet under a
+  modal canvas.
+- `ui::Painter` draws in canvas units (rects, gradients, borders, lines,
+  polygons, circles, images, text); colours are authored in sRGB and
+  converted for the sRGB backbuffer.
+- Fonts: `ui::loadFont(name, ttf, sizes)` bakes sizes into the atlas (any
+  time: applied before the next frame); text picks the nearest baked size
+  and scales.
+- Icons: `ui::bakeIcon(renderer, meshData, size, view)` renders a mesh
+  offscreen (orthographic, three-quarter view, simple lighting) into a
+  texture for inventory / build menu slots. Textures kept outside the
+  scene (a static item table) must be dropped in `Engine::atShutdown`,
+  which runs before the renderer is destroyed.
 
 Input (`ve/core/Input.hpp`) maps keys, mouse buttons, gamepad buttons and
 triggers to named actions, and keys or stick axes to named axes; the first
@@ -841,12 +879,13 @@ Optional add-ons built only on public engine APIs:
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Building.*` | Building kit on the engine's prefabs + placement: `BuildPiece` (14 kinds x materials, doors / windows as fittings snapping into wall openings, `DoorHinge` (Use, saved), mesh / colliders / snap points / placement boxes from code; the kit is `assets/prefabs/building/*.prefab` + `building/catalogue.json`), `Builder` (build mode B: ghost, snap, fit, place, remove, navmesh rebuild) |
-| `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
+| `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, HUD (ve::ui canvas: health / stamina, hotbar, clock, prompts), `AutoTest` |
+| `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop) |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 
 Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..4`,
-`SAVANNA_DEBUG=1` (F1 overlay on), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
+`SAVANNA_DEBUG=1` (F1 overlay on), `SAVANNA_MENU=1` (the title screen even with other hooks; it shows on a plain game launch only), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
 camera), `SAVANNA_AUTOTEST=1` / `SAVANNA_EDITORTEST=1` (scripted smoke tests
 that exit), `SAVANNA_SCENE=file.json` (another scene), and
 `VE_VALIDATION=0/1`. Any engine game: `VE_HEADLESS=1` (no window shown,

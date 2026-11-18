@@ -49,7 +49,7 @@ bool ChoppableTree::chop()
     if (!l || l->info.state != 0) return false;
     if (++chops < kChops) return false;
     GameState& gs = gameState();
-    gs.wood += 4;
+    gs.inventory.add("wood", 4);
     gs.message = "Timber! +4 wood";
     gs.messageTimer = 2.0f;
     // A stump from now on: the foliage system keeps it so, and swaps this
@@ -73,7 +73,7 @@ bool BerryBush::pick()
     ve::FoliageLink* l = link();
     if (!l || l->info.state != 0) return false;
     GameState& gs = gameState();
-    gs.berries += 6;
+    gs.inventory.add("berries", 6);
     gs.message = "+6 berries";
     gs.messageTimer = 2.0f;
     if (Regrowth* r = Regrowth::find(scene())) r->schedule(l->info.id.packed(), r->regrowSeconds);

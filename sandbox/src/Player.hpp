@@ -53,6 +53,13 @@ public:
     bool flying() const { return m_fly; }
     bool grounded() const;
 
+    // Vitals (shown by the HUD). Sprinting and jumping use stamina; fire and
+    // long falls hurt; both come back over time. At 0 health: wake up at camp.
+    float health = 100.0f, maxHealth = 100.0f;
+    float stamina = 100.0f, maxStamina = 100.0f;
+    void damage(float amount, const std::string& cause);
+    bool exhausted() const { return m_exhausted; }
+
     float walkSpeed = 4.5f;
     float sprintSpeed = 9.0f;
     float flySpeed = 25.0f;
@@ -60,6 +67,7 @@ public:
     float throwSpeed = 16.0f;
     float eyeHeight = 1.7f;
     float mouseSensitivity = 0.0022f;
+    ve::Camera* camera() const;
 
 private:
     ve::CharacterController* m_controller = nullptr;
@@ -68,6 +76,12 @@ private:
     float m_yaw = 0.0f, m_pitch = 0.0f;
     bool m_jumpRequested = false;
     bool m_fly = false;
+    bool m_exhausted = false;      // stamina ran out: no sprinting until it recovers a bit
+    float m_sinceStamina = 10.0f;  // seconds since stamina was used
+    float m_sinceHurt = 10.0f;
+    float m_fallSpeed = 0.0f;      // fastest downward speed while airborne
+    bool m_wasGrounded = true;
+    bool m_sprinting = false;
 
     std::shared_ptr<ve::Mesh> m_rockMesh;
     std::shared_ptr<ve::Material> m_rockMaterial;

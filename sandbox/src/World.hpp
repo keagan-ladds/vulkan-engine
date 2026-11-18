@@ -14,6 +14,8 @@ namespace savanna {
 void buildWorld(ve::Engine& engine);
 // Reloads the level (clear + build, behind the loading screen) and applies
 // the save in `slot`; false if there is no such save.
+// Reloads the level as built (a new game).
+void reloadFresh(ve::Engine& engine);
 bool reloadWithSave(ve::Engine& engine, const std::string& slot);
 
 } // namespace savanna

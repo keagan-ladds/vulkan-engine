@@ -18,8 +18,8 @@ building kit.
   save / load, navigation and building) and the editor test.
 - Savanna starts in ~0.9 s in Release, behind a loading screen.
 
-Next up: game-side F4 (animal AI, inventory / crafting, building
-follow-ups, combat) and the retained-mode game UI. Also see
+Next up: game-side F4 (animal AI, crafting, building follow-ups,
+combat). Also see
 [Known issues](#known-issues--tech-debt).
 
 ---
@@ -430,7 +430,8 @@ Engine provides mechanisms, the game (Savanna here) the rules and content.
 - [x] Interaction (engine): `ve::Interactable` + `ve::Interactor` (eye ray, then view cone with line of sight; focus / prompt / use); Savanna's trees, berry bushes and sunstones use it, its HUD shows the prompt; the autotest chops and collects through it
 - [x] Navmesh (engine): `NavMeshSurface` (tiled Recast build from terrain + static colliders + foliage colliders on worker threads, loading task, rebuilds around chopped trees, optional streaming around the camera), queries (paths, nearest / random points, raycast), `NavAgent` (Detour crowd: path following + avoidance). Savanna: villagers idle / wander / follow the player when asked (game-side state machine)
 - [ ] Animal AI (herds grazing, fleeing the player) on the same agents, in the game
-- [ ] Inventory / crafting data model (game; data files)
+- [x] Inventory (game): item types with baked icons, 24-slot stacks (add / remove / move / merge), saved with the game; inventory screen (Tab / I, drag & drop, details)
+- [ ] Crafting (game; recipes as data files)
 - [x] Grid/snap building (engine: prefabs, `SnapPoint` + `findSnap`, grid helpers, `PlacementBox` + `fits`, `PlacementPreview` ghost, save games keep spawned prefab instances; editor snaps on drag. Savanna: 12-kind kit (foundation, floor, mud / plaster walls, door, window, post, beam, metal / thatch roofs, stairs, railing, fence) as prefabs, build mode B, navmesh rebuilds; autotest builds, saves, reloads)
 - [x] Foliage exclusions on building pieces: `FoliageExclusion` boxes (turn with the object), applied incrementally while playing (foliage re-places nearby cells keeping states, grass re-bakes in the background); Savanna's foundation and stairs prefabs carry one
 - [x] Doors / windows as fittings: snap into wall openings and turn to match (`SnapPoint::alignRotation`), host-aware fit test, removed with their wall; Savanna: plank door (hinged leaf, Use opens, state saved) and shuttered window
@@ -445,4 +446,4 @@ Engine provides mechanisms, the game (Savanna here) the rules and content.
 - [x] Save/load: `ve::save` (slots, capture / apply: moved and removed level objects, `ve::Saveable` hooks; Foliage overrides, Terrain edits and time of day built in). Savanna: F5 / F9 (reload behind the loading screen, then apply), player + regrowth Saveable, counters as game data; the autotest saves, changes things, loads and checks
 - [x] Gamepad input + rebinding (engine): SDL game controllers, axes with radial dead zones, triggers as actions, `startRebind`, bindings JSON, virtual pad for tests. Savanna: pad layout for the player, F10 controls window saved to `controls.json`
 - [x] CPU profiler zones (engine): `VE_PROFILE` scopes, nested, F1 "CPU zones" table + bench output
-- [ ] Retained-mode game UI (inventory grids, health bars) beyond ImGui (engine widgets, game layouts)
+- [x] Retained-mode game UI (engine, `ve/ui/Gui.hpp`): canvases of anchored elements (panels, labels, images, buttons, progress bars, sliders, stacks, grids), mouse + keyboard / pad focus navigation, drag & drop, tooltips, modal capture, TTF fonts, mesh icon baking. Savanna: title screen over a live sunset (Continue / New / Load / Settings / Controls / Quit), pause menu, settings saved to `settings.json`, HUD (health / stamina, hotbar, clock), inventory, build menu with piece cards; the autotest opens and drives each

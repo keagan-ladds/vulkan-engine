@@ -71,6 +71,10 @@ public:
 
     void run();  // returns when quit() is called or the window closes
     void quit();
+    // Runs at shutdown after the scene is gone, before the renderer: release
+    // GPU resources the game keeps outside the scene (e.g. baked icons in a
+    // static table).
+    void atShutdown(std::function<void()> fn) { m_atShutdown.push_back(std::move(fn)); }
 
     Window& window() { return *m_window; }
     Input& input() { return m_input; }
@@ -118,6 +122,7 @@ public:
     bool loadingInEditor() const;
 
 private:
+    std::vector<std::function<void()>> m_atShutdown;
     void pollEvents();
     void tickFrame();
     void tickLoading(); // a loading-screen frame

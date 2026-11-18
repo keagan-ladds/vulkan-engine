@@ -9,14 +9,17 @@
 // made here. Grid: 2 m tiles, 2.5 m walls, foundations 0.5 m high, 45 deg
 // rotations (the reference sheet's numbers).
 //
-// Builder: the build mode (B). A ghost of the selected piece follows the
-// aim, snaps to other pieces' points, turns red where it doesn't fit; place
-// with the left mouse button, remove a piece with the right one. The pieces
-// are prefab instances spawned while playing, so save games keep them.
+// Builder: the build mode. B opens the build menu (categories of piece
+// cards with baked 3D icons); pick one and its ghost follows the aim, snaps
+// to other pieces' points and turns red where it doesn't fit; place with the
+// left mouse button, remove a piece with the right one, B for the menu
+// again, Escape to stop building. The pieces are prefab instances spawned
+// while playing, so save games keep them.
 
 #include <ve/scene/Reflection.hpp>
 #include <ve/gameplay/Placement.hpp>
 #include <ve/scene/GameObject.hpp>
+#include <ve/ui/Gui.hpp>
 #include <ve/scene/SaveGame.hpp>
 
 #include <glm/glm.hpp>
@@ -74,15 +77,24 @@ public:
     void start() override;
     void update(float dt) override;
     void lateUpdate(float dt) override;
-    void onGui() override;
     void onDestroy() override;
 
+    // The build menu (B): pick a piece from categories of cards.
+    void openMenu();
+    void closeMenu();
+    bool menuOpen() const;
+    ve::ui::Canvas& menu() { return *m_menu; }
+    void showCategory(const std::string& category);
+    void bakeIcons(); // the cards' pictures (at load)
+
     struct Entry {
-        std::string name, prefab;
+        std::string name, prefab, category, description;
+        std::shared_ptr<ve::Texture> icon; // baked from the piece's mesh
     };
     const std::vector<Entry>& catalogue() const { return m_catalogue; }
     bool active() const { return m_active; }
     void setActive(bool on);
+    bool justStopped() const; // Escape stopped building this frame (it isn't also a pause)
     int selection() const { return m_index; }
     void select(int index);
     void setYawDegrees(float yaw) { m_yaw = glm::radians(yaw); }
@@ -115,6 +127,15 @@ private:
     bool m_snapped = false;
     bool m_aimHit = false;
     std::optional<glm::vec3> m_aimOverride;
+    // UI.
+    void buildMenu();
+    void buildStatus();
+    ve::ui::Canvas* m_menu = nullptr;    // the build menu (modal)
+    ve::ui::Canvas* m_status = nullptr;  // the panel while placing
+    ve::ui::Grid* m_cards = nullptr;
+    ve::ui::Label* m_cardInfo = nullptr;
+    std::string m_category;
+    uint64_t m_stoppedFrame = ~0ull;
 };
 
 } // namespace savanna

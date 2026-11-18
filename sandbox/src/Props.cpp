@@ -1,7 +1,10 @@
 #include "Props.hpp"
 
 #include "Building.hpp"
+#include "GameUi.hpp"
 #include "Harvest.hpp"
+#include "Inventory.hpp"
+#include "MainMenu.hpp"
 
 #include <ve/world/Noise.hpp>
 #include "Player.hpp"
@@ -122,6 +125,7 @@ VE_REGISTER_TYPE(PlayerStart, "PlayerStart") { t.category("Savanna"); }
 
 void Campfire::start()
 {
+    tag = "fire"; // standing in it hurts (Player)
     m_material = propMaterial();
     ve::Renderer& r = renderer();
     ve::Scene& s = scene();
@@ -335,6 +339,7 @@ void Sunstone::collect()
     if (isDestroyed()) return;
     GameState& gs = gameState();
     ++gs.collected;
+    gs.inventory.add("sunstone", 1);
     gs.total = gs.collected + remaining(scene()) - 1; // this one is still in the scene until the frame ends
     gs.message = "Sunstone collected! (" + std::to_string(gs.collected) + "/" + std::to_string(gs.total) + ")";
     gs.messageTimer = 2.5f;
@@ -741,7 +746,7 @@ void AutoTest::update(float dt)
         for (int i = 0; who && i < ChoppableTree::kChops; ++i) uses += who->interact() ? 1 : 0;
         const bool felled = foliage->state(m_tree) != 0;
         log("chopped " + std::to_string(uses) + " times: felled " + std::to_string(felled ? 1 : 0) + ", state '" +
-            stateLabel(*foliage, m_tree) + "', wood " + std::to_string(gameState().wood));
+            stateLabel(*foliage, m_tree) + "', wood " + std::to_string(gameState().inventory.count("wood")));
         static_cast<Player*>(scene().find("Player"))->teleport(groundAt({1200.0f, -300.0f}), 0.0f); // far away: the cell unloads
         m_t = 0.0f;
         ++m_step;
@@ -784,7 +789,7 @@ void AutoTest::update(float dt)
         auto* bush = dynamic_cast<BerryBush*>(foliage->promoted(m_bush));
         const bool picked = bush && bush->pick();
         log(std::string("berry bush promoted: ") + (bush ? "yes" : "NO") + ", picked: " + (picked ? "yes" : "no") + ", state '" +
-            stateLabel(*foliage, m_bush) + "', berries " + std::to_string(gameState().berries));
+            stateLabel(*foliage, m_bush) + "', berries " + std::to_string(gameState().inventory.count("berries")));
         m_t = 0.0f;
         ++m_step;
     } else if (m_step == 14 && m_t > 3.0f) {
@@ -838,17 +843,17 @@ void AutoTest::update(float dt)
             std::to_string(before) + " -> " + std::to_string(gameState().collected));
         // Save games: save now, change things, load, and check they're back.
         const GameState& gs = gameState();
-        s_expect = {gs.collected, gs.wood, gs.berries, Sunstone::remaining(scene()), scene().find("Player")->transform().position(), m_tree.packed()};
+        s_expect = {gs.collected, gs.inventory.count("wood"), gs.inventory.count("berries"), Sunstone::remaining(scene()), scene().find("Player")->transform().position(), m_tree.packed()};
         log(std::string("saved: ") + (saveProgress(scene(), "autotest") ? "yes" : "NO") + " (collected " + std::to_string(gs.collected) +
-            ", wood " + std::to_string(gs.wood) + ", " + std::to_string(s_expect.stones) + " stones left)");
+            ", wood " + std::to_string(gs.inventory.count("wood")) + ", " + std::to_string(s_expect.stones) + " stones left)");
         m_t = 0.0f;
         ++m_step;
     } else if (m_step == 18 && m_t > 0.5f) {
         auto stones = scene().findAllWithTag("collectible");
         if (!stones.empty()) static_cast<Sunstone*>(stones.front())->collect();
-        gameState().wood += 5;
+        gameState().inventory.add("wood", 5);
         static_cast<Player*>(scene().find("Player"))->teleport(groundAt({1200.0f, -300.0f}), 0.0f);
-        log("after the save: collected " + std::to_string(gameState().collected) + ", wood " + std::to_string(gameState().wood) +
+        log("after the save: collected " + std::to_string(gameState().collected) + ", wood " + std::to_string(gameState().inventory.count("wood")) +
             ", player moved 1.2 km");
         m_t = 0.0f;
         ++m_step;
@@ -863,7 +868,7 @@ void AutoTest::update(float dt)
         const ve::FoliageInstanceId tree = ve::FoliageInstanceId::unpack(s_expect.tree);
         const std::string treeState = foliage && foliage->system() ? stateLabel(*foliage->system(), tree) : "?";
         log("after loading: collected " + std::to_string(gs.collected) + " (saved " + std::to_string(s_expect.collected) + "), wood " +
-            std::to_string(gs.wood) + " (" + std::to_string(s_expect.wood) + "), stones left " + std::to_string(Sunstone::remaining(scene())) +
+            std::to_string(gs.inventory.count("wood")) + " (" + std::to_string(s_expect.wood) + "), stones left " + std::to_string(Sunstone::remaining(scene())) +
             " (" + std::to_string(s_expect.stones) + "), player " + std::to_string(glm::distance(p, s_expect.player)) +
             " m from the saved spot, chopped acacia '" + treeState + "'");
         ve::save::remove("autotest");
@@ -1165,9 +1170,124 @@ void AutoTest::update(float dt)
     } else if (m_step == 46 && m_t > 1.5f) {
         shot("7-building");
         if (m_t > 2.0f) {
-            engine().quit();
+            m_t = 0.0f;
             ++m_step;
         }
+    } else if (m_step >= 47) {
+        uiSteps(log);
+    }
+}
+
+// The game's UI: inventory, build menu, pause, title (MainMenu.hpp). The
+// pause stops the clock, so these steps count frames.
+void AutoTest::uiSteps(const std::function<void(const std::string&)>& log)
+{
+    const uint32_t frames = m_frames - m_stepFrame;
+    auto next = [&] {
+        m_stepFrame = m_frames;
+        m_t = 0.0f;
+        ++m_step;
+    };
+    auto* inv = scene().findFirst<InventoryScreen>();
+    auto* builder = scene().findFirst<Builder>();
+    auto* menu = scene().findFirst<MainMenu>();
+    Inventory& items = gameState().inventory;
+    switch (m_step) {
+    case 47: {
+        items.add("berries", 7);
+        items.add("sunstone", 2);
+        if (inv) inv->setOpen(true);
+        log(std::string("ui: inventory open: ") + (inv && inv->open() ? "yes" : "NO") + ", " + std::to_string(items.count("wood")) +
+            " wood, " + std::to_string(items.count("berries")) + " berries");
+        next();
+        break;
+    }
+    case 48:
+        if (frames < 20) break;
+        shot("8-inventory");
+        if (frames < 24) break;
+        if (inv) {
+            const Inventory::Stack from = items.slots[0];
+            inv->clickSlot(0);
+            inv->clickSlot(10); // (an empty slot)
+            log("ui: moved slot 0 (" + from.item + " x" + std::to_string(from.count) + ") to slot 10: " +
+                (items.slots[10].item == from.item && items.slots[10].count == from.count && items.slots[0].item.empty() ? "yes" : "NO"));
+            inv->setOpen(false);
+        }
+        next();
+        break;
+    case 49:
+        if (builder) {
+            builder->openMenu();
+            builder->showCategory("Walls");
+        }
+        log(std::string("ui: build menu open: ") + (builder && builder->menuOpen() ? "yes" : "NO"));
+        next();
+        break;
+    case 50: {
+        if (frames < 20) break;
+        shot("9-build-menu");
+        if (frames < 24 || !builder) break;
+        // Pick a card as the player would: the piece is selected, the menu closes, building starts.
+        int want = -1;
+        for (size_t i = 0; i < builder->catalogue().size(); ++i)
+            if (builder->catalogue()[i].category == "Walls" && want < 0) want = int(i);
+        bool clicked = false;
+        if (want >= 0)
+            if (ve::ui::Element* card = builder->menu().root().find("piece:" + builder->catalogue()[size_t(want)].name)) {
+                card->click();
+                clicked = true;
+            }
+        log("ui: clicked the card for " + (want >= 0 ? builder->catalogue()[size_t(want)].name : std::string("?")) + ": " +
+            (clicked && builder->selection() == want && !builder->menuOpen() && builder->active() ? "selected, building" : "NO"));
+        builder->setActive(false);
+        next();
+        break;
+    }
+    case 51:
+        if (menu) menu->pause();
+        log(std::string("ui: paused: ") + (menu && menu->screen() == MainMenu::Screen::Paused && time().timeScale == 0.0f ? "yes" : "NO"));
+        next();
+        break;
+    case 52:
+        if (frames < 20) break;
+        shot("10-pause");
+        if (frames < 24 || !menu) break;
+        menu->showPanel("settings");
+        next();
+        break;
+    case 53:
+        if (frames < 20) break;
+        shot("11-settings");
+        if (frames < 24 || !menu) break;
+        menu->showPanel("");
+        menu->toTitle(); // Main menu
+        log(std::string("ui: back on the title: ") + (menu->screen() == MainMenu::Screen::Title && time().timeScale == 1.0f ? "yes" : "NO"));
+        next();
+        break;
+    case 54:
+        if (frames < 90) break; // (the camera and the light settle)
+        shot("12-title");
+        if (frames < 94 || !menu) break;
+        // New game: the world is rebuilt as it was built; this test resumes in the new one.
+        s_resume = 55;
+        menu->newGame();
+        log("ui: new game (the level reloads)");
+        next();
+        break;
+    case 55: {
+        if (m_t < 2.0f) break;
+        int pieces = 0;
+        for (const auto& o : scene().objects())
+            if (!o->isDestroyed() && dynamic_cast<BuildPiece*>(o.get())) ++pieces;
+        log(std::string("ui: after the new game: playing ") + (menu && menu->screen() == MainMenu::Screen::Playing ? "yes" : "NO") +
+            ", inventory empty " + (items.count("berries") == 0 && items.count("wood") == 0 ? "yes" : "NO") + ", built pieces " +
+            std::to_string(pieces));
+        engine().quit();
+        next();
+        break;
+    }
+    default: break;
     }
 }
 
@@ -1197,7 +1317,7 @@ void Hud::findEnvironment()
 bool saveProgress(ve::Scene& scene, const std::string& slot)
 {
     const GameState& gs = gameState();
-    const bool ok = ve::save::saveGame(scene, slot, {{"collected", gs.collected}, {"wood", gs.wood}, {"berries", gs.berries}});
+    const bool ok = ve::save::saveGame(scene, slot, {{"collected", gs.collected}, {"inventory", gs.inventory.save()}});
     gameState().message = ok ? "Game saved" : "Saving failed";
     gameState().messageTimer = 2.0f;
     return ok;
@@ -1207,8 +1327,7 @@ void applyGameData(const ve::Json& game)
 {
     GameState& gs = gameState();
     gs.collected = game.value("collected", 0);
-    gs.wood = game.value("wood", 0);
-    gs.berries = game.value("berries", 0);
+    gs.inventory.load(game.value("inventory", ve::Json::array()));
     gs.message = "Game loaded";
     gs.messageTimer = 2.0f;
 }
@@ -1277,6 +1396,7 @@ void Hud::drawControls()
 
 void Hud::update(float dt)
 {
+    if (m_canvas) m_canvas->visible = m_wanted && !vfx::PhotoMode::anyActive(); // a clean view for photos
     // SAVANNA_CONTROLS=1: open the controls window (screenshots).
     static const bool s_controlsShot = std::getenv("SAVANNA_CONTROLS") != nullptr;
     if (s_controlsShot && !m_showControls && !m_controlsShotDone) {
@@ -1313,67 +1433,147 @@ void Hud::update(float dt)
 
 void Hud::onGui()
 {
-    if (m_showControls) drawControls();
-    if (engine().editor() && engine().editor()->paused()) return; // the editor's panels take the screen
-    if (vfx::PhotoMode::anyActive()) return;                         // a clean view to compose the shot
-    ImGuiIO& io = ImGui::GetIO();
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-    const ImVec2 c(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+    if (m_showControls) drawControls(); // F10 (ImGui: a tools-style window)
+}
 
-    // Crosshair.
-    if (input().mouseCaptured()) {
-        dl->AddCircleFilled(c, 2.5f, IM_COL32(255, 255, 255, 200));
-        dl->AddCircle(c, 3.5f, IM_COL32(0, 0, 0, 120));
-    }
-
-    // Status panel (top right).
+void Hud::start()
+{
+    namespace ui = ve::ui;
+    m_canvas = &addComponent<ui::Canvas>();
+    m_canvas->tooltipFont = gui::font::body;
+    ui::Element& root = m_canvas->root();
     const GameState& gs = gameState();
-    const float tod = m_dayNight ? m_dayNight->timeOfDay : 12.0f;
-    const int hours = static_cast<int>(tod);
-    const int minutes = static_cast<int>((tod - hours) * 60.0f);
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), "%02d:%02d   %s%s\nSunstones: %d / %d\nWood: %d   Berries: %d", hours, minutes,
-                  m_weather ? vfx::Weather::name(m_weather->weather()) : "-", m_player.flying() ? "   [FLY]" : "", gs.collected,
-                  gs.total, gs.wood, gs.berries);
-    const ImVec2 size = ImGui::CalcTextSize(buf);
-    const ImVec2 p(io.DisplaySize.x - size.x - 20.0f, 16.0f);
-    dl->AddRectFilled({p.x - 10, p.y - 6}, {p.x + size.x + 10, p.y + size.y + 6}, IM_COL32(20, 14, 8, 140), 6.0f);
-    dl->AddText(p, IM_COL32(255, 235, 200, 255), buf);
 
-    // What are we looking at? A physics raycast from the eye (ignores the player's own capsule).
-    if (input().mouseCaptured()) {
-        if (auto hit = physics().raycast(m_player.eyePosition(), m_player.lookDirection(), 25.0f)) {
-            // Instanced props have no GameObject; their collider carries a prop id instead.
-            const std::string name = hit->gameObject ? hit->gameObject->name() : std::string(propName(hit->userValue));
-            if (!name.empty() && name != "Terrain") {
-                char label[96];
-                std::snprintf(label, sizeof(label), "%s  (%.1f m)", name.c_str(), hit->distance);
-                const ImVec2 ls = ImGui::CalcTextSize(label);
-                dl->AddText({c.x - ls.x * 0.5f, c.y + 14.0f}, IM_COL32(255, 255, 255, 170), label);
-            }
-        }
+    // Crosshair, and the name of what's in front of us (a physics ray from the eye).
+    auto& cross = root.add<ui::Image>("crosshair");
+    cross.anchor({0.5f, 0.5f}).pivot({0.5f, 0.5f}).size({16.0f, 16.0f});
+    cross.custom = [this](ui::Painter& p, const ui::Rect& r) {
+        if (!input().mouseCaptured()) return;
+        p.circle(r.center(), 3.5f, ui::rgba(0x00000080));
+        p.circle(r.center(), 2.4f, ui::rgba(0xffffffe0));
+    };
+    auto& aim = gui::label(root, "", gui::font::body, 18.0f, ui::rgba(0xffffffa8));
+    aim.anchor({0.5f, 0.5f}).pivot({0.5f, 0.0f}).at({0.0f, 16.0f}).size({600.0f, 26.0f});
+    aim.alignX = ui::Align::Center;
+    aim.bind = [this]() -> std::string {
+        if (!input().mouseCaptured()) return {};
+        auto hit = physics().raycast(m_player.eyePosition(), m_player.lookDirection(), 25.0f);
+        if (!hit) return {};
+        const std::string name = hit->gameObject ? hit->gameObject->name() : std::string(propName(hit->userValue));
+        if (name.empty() || name == "Terrain") return {};
+        char b[96];
+        std::snprintf(b, sizeof(b), "%s  (%.1f m)", name.c_str(), hit->distance);
+        return b;
+    };
+
+    // The interaction prompt / the last event, in a pill under the crosshair.
+    auto& pill = root.add<ui::Panel>("prompt");
+    pill.anchor({0.5f, 0.5f}).pivot({0.5f, 0.0f}).at({0.0f, 52.0f}).size({520.0f, 44.0f});
+    pill.color = ui::rgba(0x120c08b0);
+    pill.borderColor = ui::withAlpha(gui::color::goldDark, 0.7f);
+    pill.borderWidth = 1.0f;
+    pill.rounding = 22.0f;
+    auto& promptText = gui::label(pill, "", gui::font::bold, 22.0f, gui::color::gold);
+    promptText.fill();
+    promptText.alignX = ui::Align::Center;
+    promptText.bind = [this, &pill, &promptText]() -> std::string {
+        const GameState& gs = gameState();
+        std::string text = gs.messageTimer > 0.0f ? gs.message : std::string();
+        if (const auto* who = m_player.getComponent<ve::Interactor>(); who && text.empty())
+            if (const std::string p = who->prompt(); !p.empty()) text = "[E]  " + p;
+        pill.visible = !text.empty();
+        // Fit the pill to the text.
+        const float w = std::max(200.0f, float(text.size()) * 11.5f + 60.0f);
+        pill.size({w, 44.0f});
+        promptText.color = gs.messageTimer > 0.0f ? gui::color::text : gui::color::gold;
+        return text;
+    };
+
+    // Vitals, bottom left: health and stamina.
+    auto& vitals = root.add<ui::Stack>("vitals");
+    vitals.anchor({0.0f, 1.0f}).pivot({0.0f, 1.0f}).at({36.0f, -40.0f}).size({380.0f, 70.0f});
+    vitals.spacing = 10.0f;
+    auto row = [&](const char* name, glm::vec4 a, glm::vec4 b, std::function<float()> value, float width) {
+        auto& line = vitals.add<ui::Element>(name);
+        line.size({10.0f, 28.0f});
+        auto& tag = gui::label(line, name, gui::font::heading, 20.0f, gui::color::dim);
+        tag.anchor({0.0f, 0.5f}).pivot({0.0f, 0.5f}).size({100.0f, 28.0f});
+        auto& b2 = gui::bar(line, a, b, std::move(value));
+        b2.anchor({0.0f, 0.5f}).pivot({0.0f, 0.5f}).at({104.0f, 0.0f}).size({width, 20.0f});
+    };
+    row("Health", gui::color::health, gui::color::healthEnd, [this] { return m_player.health / m_player.maxHealth; }, 270.0f);
+    row("Stamina", gui::color::stamina, gui::color::staminaEnd, [this] { return m_player.stamina / m_player.maxStamina; }, 220.0f);
+
+    // Hotbar, top left: the inventory's first row.
+    auto& hotbar = root.add<ui::Grid>("hotbar");
+    hotbar.columns = 8;
+    hotbar.cell = {64.0f, 64.0f};
+    hotbar.spacing = {6.0f, 6.0f};
+    hotbar.at({32.0f, 28.0f}).size(hotbar.contentSize(8));
+    for (int i = 0; i < 8; ++i) {
+        auto& cell = hotbar.add<ui::Panel>("hot" + std::to_string(i));
+        cell.color = ui::rgba(0x0d0906a0);
+        cell.borderColor = ui::withAlpha(gui::color::goldDark, 0.5f);
+        cell.borderWidth = 1.0f;
+        cell.rounding = 4.0f;
+        auto& icon = cell.add<ui::Image>("icon");
+        icon.fill(8.0f);
+        icon.custom = [i](ui::Painter& p, const ui::Rect& r) {
+            const Inventory::Stack& s = gameState().inventory.slots[size_t(i)];
+            const ItemType* t = s.item.empty() ? nullptr : itemType(s.item);
+            if (!t) return;
+            if (t->icon) p.image(t->icon, r);
+            p.text({r.min, r.max + glm::vec2(4.0f, 6.0f)}, std::to_string(s.count), gui::font::bold, 18.0f, gui::color::text, ui::Align::End,
+                   ui::Align::End, false, gui::color::shadow);
+        };
+        auto& key = gui::label(cell, std::to_string(i + 1), gui::font::body, 14.0f, ui::withAlpha(gui::color::dim, 0.8f));
+        key.fill({5.0f, 2.0f, 0.0f, 0.0f});
+        key.alignY = ui::Align::Start;
     }
 
-    // Centre message: the interaction prompt (what the player looks at), or the last event.
-    std::string centre = gs.messageTimer > 0.0f ? gs.message : std::string();
-    if (const auto* who = m_player.getComponent<ve::Interactor>(); who && centre.empty())
-        if (const std::string p = who->prompt(); !p.empty()) centre = "[E] " + p;
-    if (!centre.empty()) {
-        const std::string& message = centre;
-        const ImVec2 ms = ImGui::CalcTextSize(message.c_str());
-        const ImVec2 mp(c.x - ms.x * 0.5f, c.y + 40.0f);
-        dl->AddRectFilled({mp.x - 8, mp.y - 4}, {mp.x + ms.x + 8, mp.y + ms.y + 4}, IM_COL32(20, 14, 8, 150), 5.0f);
-        dl->AddText(mp, IM_COL32(255, 220, 150, 255), message.c_str());
-    }
+    // Clock, weather and sunstones, top right.
+    auto& info = root.add<ui::Panel>("info");
+    info.anchor({1.0f, 0.0f}).pivot({1.0f, 0.0f}).at({-28.0f, 26.0f}).size({300.0f, 112.0f});
+    info.color = ui::rgba(0x120c08a8);
+    info.borderColor = ui::withAlpha(gui::color::goldDark, 0.6f);
+    info.borderWidth = 1.0f;
+    info.rounding = 6.0f;
+    auto& clock = gui::label(info, "", gui::font::title, 40.0f, gui::color::text);
+    clock.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({18.0f, 8.0f}).size({18.0f, 50.0f});
+    clock.bind = [this] {
+        const float tod = m_dayNight ? m_dayNight->timeOfDay : 12.0f;
+        char b[16];
+        std::snprintf(b, sizeof(b), "%02d:%02d", int(tod), int((tod - int(tod)) * 60.0f));
+        return std::string(b);
+    };
+    auto& weather = gui::label(info, "", gui::font::body, 20.0f, gui::color::dim);
+    weather.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({18.0f, 16.0f}).size({18.0f, 36.0f});
+    weather.alignX = ui::Align::End;
+    weather.bind = [this] {
+        return std::string(m_weather ? vfx::Weather::name(m_weather->weather()) : "") + (m_player.flying() ? "  ·  flying" : "");
+    };
+    auto& stones = gui::label(info, "", gui::font::heading, 22.0f, gui::color::gold);
+    stones.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({18.0f, 64.0f}).size({18.0f, 32.0f});
+    stones.bind = [] {
+        const GameState& g = gameState();
+        return "Sunstones  " + std::to_string(g.collected) + " / " + std::to_string(g.total);
+    };
+    (void)gs;
 
-    if (m_showHelp) {
-        const char* help = "WASD move  Shift sprint  Space jump  F fly  E pick up  Q/RMB throw\n"
-                           "T/G time +/-  R weather  M combat music  B build  Tab mouse  F5/F9 save/load  F10 controls  F1 debug  F12 photo mode  H hide help";
-        const ImVec2 hs = ImGui::CalcTextSize(help);
-        const ImVec2 hp(16.0f, io.DisplaySize.y - hs.y - 16.0f);
-        dl->AddRectFilled({hp.x - 8, hp.y - 6}, {hp.x + hs.x + 8, hp.y + hs.y + 6}, IM_COL32(20, 14, 8, 120), 6.0f);
-        dl->AddText(hp, IM_COL32(240, 230, 210, 230), help);
-    }
+    // Controls, along the bottom (H hides them).
+    auto& help = gui::label(root, "", gui::font::body, 17.0f, ui::rgba(0xf0e6d2b0));
+    help.anchors({0.0f, 1.0f}, {1.0f, 1.0f}).pivot({0.0f, 1.0f}).at({0.0f, -10.0f}).size({0.0f, 24.0f});
+    help.alignX = ui::Align::Center;
+    help.bind = [this]() -> std::string {
+        if (!m_showHelp) return {};
+        return "WASD move   Shift sprint   Space jump   E use   Q throw   Tab inventory   B build   F fly   R weather   F5/F9 save/load   "
+               "Esc menu   H hide";
+    };
+}
+
+void Hud::setVisible(bool visible)
+{
+    m_wanted = visible;
 }
 
 } // namespace savanna

@@ -10,7 +10,7 @@ class CameraController : public ve::GameObject {
 public:
     CameraController();
     void update(float dt) override;
-    void onGui() override;
+    void start() override; // builds the help strip (a ve::ui canvas)
 
     float speed = 6.0f;
     float sensitivity = 0.0025f;

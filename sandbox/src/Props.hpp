@@ -7,10 +7,14 @@
 
 #include <ve/scene/GameObject.hpp>
 #include <ve/scene/Reflection.hpp>
+#include <ve/ui/Gui.hpp>
 #include <ve/world/Foliage.hpp>
+
+#include "Inventory.hpp"
 
 #include <memory>
 #include <set>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -36,7 +40,7 @@ class Player;
 struct GameState {
     int collected = 0;
     int total = 0;
-    int wood = 0, berries = 0; // from chopped trees / picked bushes (Harvest.hpp)
+    Inventory inventory; // wood, berries, sunstones... (Inventory.hpp)
     float messageTimer = 0.0f;
     std::string message;
 };
@@ -154,6 +158,7 @@ public:
     glm::vec3 m_site{0.0f};
     std::vector<uint64_t> m_built;
     bool m_buildShot = false;
+    void uiSteps(const std::function<void(const std::string&)>& log);
 
 private:
     glm::vec3 groundAt(glm::vec2 p) const;
@@ -176,8 +181,11 @@ private:
 class Hud : public ve::GameObject {
 public:
     explicit Hud(Player& player);
+    void start() override;
     void update(float dt) override;
     void onGui() override;
+    void setVisible(bool visible); // (the main menu hides it)
+    void setShowHelp(bool show) { m_showHelp = show; }
 
 private:
     void findEnvironment(); // the scene's Weather / DayNightCycle (scene objects)
@@ -191,6 +199,8 @@ private:
     bool m_controlsShotDone = false;
     bool m_wasRebinding = false;
     bool m_combat = false; // M: stand-in for a fight (pushes the "Combat" music mood)
+    ve::ui::Canvas* m_canvas = nullptr; // the HUD (ve::ui elements, see start())
+    bool m_wanted = true;
 };
 
 } // namespace savanna

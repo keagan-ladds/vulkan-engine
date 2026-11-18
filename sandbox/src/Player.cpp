@@ -1,6 +1,8 @@
 #include "Player.hpp"
 
 #include "Building.hpp"
+#include "Props.hpp"
+#include "SavannaLayout.hpp"
 
 #include <ve/gameplay/Interaction.hpp>
 #include <ve/world/Grass.hpp>
@@ -85,7 +87,7 @@ void Player::teleport(const glm::vec3& feet, float yaw)
 void Player::saveState(ve::Json& out) const
 {
     const glm::vec3 p = transform().position();
-    out = {{"position", {p.x, p.y, p.z}}, {"yaw", m_yaw}, {"pitch", m_pitch}, {"flying", m_fly}};
+    out = {{"position", {p.x, p.y, p.z}}, {"yaw", m_yaw}, {"pitch", m_pitch}, {"flying", m_fly}, {"health", health}, {"stamina", stamina}};
 }
 
 void Player::loadState(const ve::Json& in)
@@ -94,6 +96,25 @@ void Player::loadState(const ve::Json& in)
     if (p.is_array() && p.size() == 3) teleport({p[0].get<float>(), p[1].get<float>(), p[2].get<float>()}, in.value("yaw", m_yaw));
     m_pitch = in.value("pitch", m_pitch);
     m_fly = in.value("flying", m_fly);
+    health = in.value("health", maxHealth);
+    stamina = in.value("stamina", maxStamina);
+}
+
+void Player::damage(float amount, const std::string& cause)
+{
+    if (amount <= 0.0f || m_fly) return;
+    health = std::max(0.0f, health - amount);
+    m_sinceHurt = 0.0f;
+    if (health > 0.0f) return;
+    // Collapsed: wake up at the camp, a little worse for wear.
+    GameState& gs = gameState();
+    gs.message = "You collapsed (" + cause + ") and woke up at the camp";
+    gs.messageTimer = 4.0f;
+    health = maxHealth * 0.5f;
+    stamina = maxStamina;
+    const glm::vec2 c = layout::kCamp + glm::vec2(6.0f, 6.0f);
+    const ve::Terrain* t = ve::Terrain::find(scene());
+    teleport({c.x, t ? t->height(c.x, c.y) : 3.2f, c.y}, m_yaw);
 }
 
 void Player::setPose(const glm::vec3& feet, float yawDegrees, float pitchDegrees)
@@ -147,8 +168,7 @@ void Player::throwRock()
 void Player::update(float)
 {
     ve::Input& in = input();
-    if (in.keyPressed(Key::Tab)) in.setMouseCaptured(!in.mouseCaptured());
-    if (in.keyPressed(Key::Escape)) engine().quit();
+    // (Escape opens the pause menu and Tab the inventory: MainMenu.hpp, Inventory.hpp.)
 
     // Look (always in real time, unaffected by Time::timeScale).
     if (in.mouseCaptured()) {
@@ -165,7 +185,21 @@ void Player::update(float)
 
     // Edges ("pressed this frame") must be read in update(): fixedUpdate may
     // run zero or several times per frame. Hand them over as flags.
-    if (in.actionPressed("Jump")) m_jumpRequested = true;
+    if (in.actionPressed("Jump") && (m_fly || stamina >= 10.0f)) m_jumpRequested = true;
+
+    // Vitals: stamina comes back a moment after it was last used, health
+    // slowly after a while without getting hurt. Standing in a fire burns.
+    const float dt = time().deltaTime;
+    m_sinceStamina += dt;
+    m_sinceHurt += dt;
+    if (m_sinceStamina > 0.8f) stamina = std::min(maxStamina, stamina + 18.0f * dt);
+    if (m_exhausted && stamina > maxStamina * 0.3f) m_exhausted = false;
+    if (m_sinceHurt > 4.0f) health = std::min(maxHealth, health + 1.5f * dt);
+    if (!m_fly)
+        for (ve::GameObject* fire : scene().findAllWithTag("fire")) {
+            const glm::vec3 d = transform().position() - fire->transform().position();
+            if (glm::length(glm::vec2(d.x, d.z)) < 0.95f && std::abs(d.y) < 1.2f) damage(22.0f * dt, "burnt");
+        }
     if (in.actionPressed("ToggleFly")) {
         m_fly = !m_fly;
         if (!m_fly) m_controller->teleport(transform().position()); // land where we are
@@ -198,17 +232,43 @@ void Player::fixedUpdate(float)
     const glm::vec3 feet = transform().position();
     const ve::Terrain* terrain = ve::Terrain::find(scene());
     const bool wading = terrain && terrain->height(feet.x, feet.z) < terrain->waterLevel - 0.3f;
-    float speed = in.actionDown("Sprint") ? sprintSpeed : walkSpeed;
+    const float dt = time().fixedDeltaTime;
+    m_sprinting = in.actionDown("Sprint") && !m_exhausted && glm::length(wish) > 0.1f && m_controller->grounded();
+    if (m_sprinting) {
+        stamina = std::max(0.0f, stamina - 20.0f * dt);
+        m_sinceStamina = 0.0f;
+        if (stamina <= 0.0f) m_exhausted = true;
+    }
+    float speed = m_sprinting ? sprintSpeed : walkSpeed;
     if (wading) speed *= 0.5f;
 
     // Smooth the horizontal velocity: snappy on the ground, floaty in the air.
     const float accel = m_controller->grounded() ? 12.0f : 2.0f;
     m_walkVelocity += (wish * speed - m_walkVelocity) * std::min(1.0f, accel * time().fixedDeltaTime);
 
-    if (m_jumpRequested && m_controller->grounded()) m_controller->jump(jumpSpeed);
+    if (m_jumpRequested && m_controller->grounded()) {
+        m_controller->jump(jumpSpeed);
+        stamina = std::max(0.0f, stamina - 10.0f);
+        m_sinceStamina = 0.0f;
+    }
     m_jumpRequested = false;
+    // Falls: the faster the landing, the more it hurts.
+    const bool grounded = m_controller->grounded();
+    if (!grounded) m_fallSpeed = std::max(m_fallSpeed, -m_controller->velocity().y);
+    else if (!m_wasGrounded) {
+        if (m_fallSpeed > 11.0f) damage((m_fallSpeed - 11.0f) * 9.0f, "a bad fall");
+        m_fallSpeed = 0.0f;
+    }
+    m_wasGrounded = grounded;
     // The controller applies gravity, collides, climbs steps and pushes crates.
     m_controller->move(m_walkVelocity, time().fixedDeltaTime);
 }
 
+} // namespace savanna
+
+namespace savanna {
+ve::Camera* Player::camera() const
+{
+    return m_head ? m_head->getComponent<ve::Camera>() : nullptr;
+}
 } // namespace savanna

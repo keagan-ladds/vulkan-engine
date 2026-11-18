@@ -2,63 +2,93 @@
   "pieces": [
     {
       "name": "Stone foundation",
-      "prefab": "prefabs/building/foundation_stone.prefab"
+      "prefab": "prefabs/building/foundation_stone.prefab",
+      "category": "Foundations",
+      "description": "A raised stone plinth, 2 x 2 m. Everything else builds on it; it sits into slopes."
     },
     {
       "name": "Timber floor",
-      "prefab": "prefabs/building/floor_timber.prefab"
+      "prefab": "prefabs/building/floor_timber.prefab",
+      "category": "Foundations",
+      "description": "Planks on joists. A floor for a veranda, or upstairs on top of walls."
     },
     {
       "name": "Mud brick wall",
-      "prefab": "prefabs/building/wall_mud.prefab"
+      "prefab": "prefabs/building/wall_mud.prefab",
+      "category": "Walls",
+      "description": "Sun-dried mud bricks on a dark plinth. 2 m wide, 2.5 m high."
     },
     {
       "name": "Plastered wall",
-      "prefab": "prefabs/building/wall_plaster.prefab"
+      "prefab": "prefabs/building/wall_plaster.prefab",
+      "category": "Walls",
+      "description": "Mud brick under a coat of lime plaster: cooler inside, brighter outside."
     },
     {
       "name": "Mud wall with door",
-      "prefab": "prefabs/building/wall_door_mud.prefab"
+      "prefab": "prefabs/building/wall_door_mud.prefab",
+      "category": "Walls",
+      "description": "A mud wall with a doorway. Fit a door into it."
     },
     {
       "name": "Plastered wall with window",
-      "prefab": "prefabs/building/wall_window_plaster.prefab"
+      "prefab": "prefabs/building/wall_window_plaster.prefab",
+      "category": "Walls",
+      "description": "A plastered wall with a window opening. Fit a window into it."
     },
     {
       "name": "Timber post",
-      "prefab": "prefabs/building/post_timber.prefab"
+      "prefab": "prefabs/building/post_timber.prefab",
+      "category": "Frame",
+      "description": "A timber post for verandas and lean-tos, 2.5 m."
     },
     {
       "name": "Timber beam",
-      "prefab": "prefabs/building/beam_timber.prefab"
+      "prefab": "prefabs/building/beam_timber.prefab",
+      "category": "Frame",
+      "description": "A 2 m beam: lay it across posts to carry a roof."
     },
     {
       "name": "Corrugated metal roof",
-      "prefab": "prefabs/building/roof_metal.prefab"
+      "prefab": "prefabs/building/roof_metal.prefab",
+      "category": "Roofs",
+      "description": "Rusty corrugated sheets on rafters. Put the low edge on a wall top."
     },
     {
       "name": "Thatched roof",
-      "prefab": "prefabs/building/roof_thatch.prefab"
+      "prefab": "prefabs/building/roof_thatch.prefab",
+      "category": "Roofs",
+      "description": "Dry grass thatch, thick and cool. Put the low edge on a wall top."
     },
     {
       "name": "Timber stairs",
-      "prefab": "prefabs/building/stairs_timber.prefab"
+      "prefab": "prefabs/building/stairs_timber.prefab",
+      "category": "Outdoor",
+      "description": "Three steps up to a foundation or a veranda."
     },
     {
       "name": "Veranda railing",
-      "prefab": "prefabs/building/railing_timber.prefab"
+      "prefab": "prefabs/building/railing_timber.prefab",
+      "category": "Outdoor",
+      "description": "A railing for the edge of a veranda."
     },
     {
       "name": "Timber fence",
-      "prefab": "prefabs/building/fence_timber.prefab"
+      "prefab": "prefabs/building/fence_timber.prefab",
+      "category": "Outdoor",
+      "description": "A rough fence for kraals and gardens. Fences join end to end."
     },
     {
       "name": "Plank door",
-      "prefab": "prefabs/building/door_timber.prefab"
+      "prefab": "prefabs/building/door_timber.prefab",
+      "category": "Doors & windows",
+      "description": "A plank door on a hinged frame. Snaps into a doorway; E opens and closes it."
     },
     {
       "name": "Shuttered window",
-      "prefab": "prefabs/building/window_shuttered.prefab"
+      "prefab": "prefabs/building/window_shuttered.prefab",
+      "category": "Doors & windows",
+      "description": "A framed window with bars and painted shutters. Snaps into a window opening."
     }
   ]
 }

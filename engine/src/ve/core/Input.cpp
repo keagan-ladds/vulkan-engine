@@ -91,11 +91,11 @@ void Input::processEvent(const SDL_Event& e)
     }
 }
 
-void Input::setUiCapture(bool keyboard, bool mouse)
+void Input::setUiCapture(bool keyboard, bool mouse, bool force)
 {
-    // While the mouse is captured for gameplay the UI never gets it.
-    m_uiKeyboard = keyboard && !m_mouseCaptured;
-    m_uiMouse = mouse && !m_mouseCaptured;
+    // While the mouse is captured for gameplay the UI never gets it (unless forced: a modal menu).
+    m_uiKeyboard = keyboard && (!m_mouseCaptured || force);
+    m_uiMouse = mouse && (!m_mouseCaptured || force);
 }
 
 bool Input::keyDown(Key key) const
@@ -228,7 +228,7 @@ void Input::bindAction(const std::string& action, GamepadAxis trigger)
 bool Input::triggerDown(GamepadAxis a, bool previous) const
 {
     const float v = (previous ? m_prevPadAxes : m_padAxes)[size_t(a)];
-    return m_pad && std::abs(v) > triggerThreshold;
+    return !m_uiKeyboard && m_pad && std::abs(v) > triggerThreshold;
 }
 
 // --- Gamepad --------------------------------------------------------------------
@@ -249,17 +249,17 @@ std::string Input::gamepadName() const
 
 bool Input::gamepadDown(GamepadButton b) const
 {
-    return m_pad && b < GamepadButton::Count && m_padButtons[size_t(b)];
+    return !m_uiKeyboard && m_pad && b < GamepadButton::Count && m_padButtons[size_t(b)];
 }
 
 bool Input::gamepadPressed(GamepadButton b) const
 {
-    return m_pad && b < GamepadButton::Count && m_padButtons[size_t(b)] && !m_prevPadButtons[size_t(b)];
+    return !m_uiKeyboard && m_pad && b < GamepadButton::Count && m_padButtons[size_t(b)] && !m_prevPadButtons[size_t(b)];
 }
 
 float Input::gamepadAxis(GamepadAxis a) const
 {
-    if (!m_pad || a >= GamepadAxis::Count) return 0.0f;
+    if (m_uiKeyboard || !m_pad || a >= GamepadAxis::Count) return 0.0f;
     if (a == GamepadAxis::LeftTrigger || a == GamepadAxis::RightTrigger) return std::clamp(m_padAxes[size_t(a)], 0.0f, 1.0f);
     // Radial dead zone over the stick's two axes, rescaled to start at 0.
     const size_t x = (a == GamepadAxis::LeftX || a == GamepadAxis::LeftY) ? 0 : 2;

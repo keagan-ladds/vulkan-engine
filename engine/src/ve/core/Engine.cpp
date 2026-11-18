@@ -4,6 +4,7 @@
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Profiler.hpp"
+#include "ve/ui/Gui.hpp"
 #include "ve/core/Window.hpp"
 #include "ve/editor/Editor.hpp"
 #include "ve/physics/Physics.hpp"
@@ -172,6 +173,8 @@ Engine::~Engine()
     m_editor.reset();
     m_scene.reset();
     MeshLibrary::releaseMeshes();
+    for (auto& fn : m_atShutdown) fn();
+    m_atShutdown.clear();
     m_assets.reset();
     if (m_ui) m_ui->shutdown(); // no-op if run() already did it
     m_ui.reset();
@@ -372,7 +375,7 @@ void Engine::tickFrame()
         runLoadStep();
     }
     m_ui->beginFrame();
-    m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
+    ui::System::get().route(*this); // game UI first: what it takes, gameplay doesn't see (+ ImGui's capture)
 
     if (m_editor) m_editor->beginFrame(m_time.unscaledDeltaTime);
     // Editor "Edit" mode: the game is paused; only runInEditor objects update.
@@ -412,6 +415,7 @@ void Engine::tickFrame()
     {
         VE_PROFILE("GUI");
         m_scene->onGui();
+        ui::System::get().draw(*this); // game UI canvases (under the tools' ImGui windows)
         if (m_editor) m_editor->onGui();
         m_ui->drawDebugOverlay();
     }

@@ -392,6 +392,39 @@ if (placePressed && preview.valid()) ve::prefab::instantiate(scene(), piecePath,
 - Roofs: eaves (low edge) on wall tops; a roof whose slope cuts through a
   side wall is (correctly) blocked.
 
+### Game UI: HUD, menus, inventories
+
+Engine elements, game look. Keep a small theme of the game's own (Savanna:
+`GameUi.hpp`, fonts + colours + `window` / `menuButton` builders) and build
+screens from it:
+
+```cpp
+ui::loadFont("heading", "assets/fonts/Cinzel_600SemiBold.ttf", {24, 48});
+auto& canvas = addComponent<ui::Canvas>();       // on a GameObject
+canvas.modal = true;  canvas.onBack = [this] { close(); };
+auto& bar = canvas.root().add<ui::ProgressBar>("health");
+bar.anchor({0, 1}).pivot({0, 1}).at({40, -60}).size({300, 14});
+bar.bind = [this] { return player.health / player.maxHealth; };
+auto& b = canvas.root().add<ui::Button>("Resume");
+b.onClick = [this] { resume(); };
+```
+
+- Work in reference units (1920x1080); anchors keep things at edges /
+  centres at any aspect ratio.
+- HUDs are non-modal canvases (gameplay keeps the input); inventories,
+  build menus and menus are modal (gameplay goes quiet, the cursor shows,
+  arrows / pad navigate). Toggle keys that should also *close* a modal
+  screen go in its `shortcuts` (the modal canvas swallows the action).
+- Give elements names ("slot3", "piece:Mud brick wall"): tests find them
+  with `root().find(name)` and `click()` them like a player would.
+- Live values: `Label::bind` / `ProgressBar::bind` instead of updating
+  every frame by hand.
+- Item / piece pictures: bake them once at load (`ui::bakeIcon` from the
+  mesh data; a load step) and keep the `shared_ptr<Texture>`.
+- A title screen over the real world: spawn a high-priority camera, hold
+  the time of day, hide the HUD, and drop the camera when play starts
+  (Savanna's `MainMenu`).
+
 ### Walking AI: navmesh + agents
 
 ```cpp

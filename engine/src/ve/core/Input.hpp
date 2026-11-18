@@ -72,7 +72,9 @@ public:
     // Engine-internal: called once per frame before events, then per event.
     void beginFrame();
     void processEvent(const SDL_Event& event);
-    void setUiCapture(bool keyboard, bool mouse);
+    // UI capture: keys / pad and / or the mouse go to the UI, not gameplay.
+    // force: even while the mouse is captured for gameplay (a modal game menu).
+    void setUiCapture(bool keyboard, bool mouse, bool force = false);
 
     // --- Keyboard -------------------------------------------------------------
     bool keyDown(Key key) const;

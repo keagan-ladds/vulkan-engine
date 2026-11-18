@@ -1,4 +1,5 @@
 #include "ve/ui/UiLayer.hpp"
+#include "ve/ui/Gui.hpp"
 
 #include "ve/core/Profiler.hpp"
 
@@ -59,7 +60,7 @@ void UiLayer::init(Engine& engine)
     info.Device = r.device().handle();
     info.QueueFamily = r.device().graphicsFamily();
     info.Queue = r.device().graphicsQueue();
-    info.DescriptorPoolSize = 64; // let the backend create its own pool
+    info.DescriptorPoolSize = 512; // let the backend create its own pool (game UI images use it too)
     info.MinImageCount = std::max(2u, r.swapchain().minImageCount());
     info.ImageCount = std::max(info.MinImageCount, r.swapchain().imageCount());
     info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
@@ -79,6 +80,7 @@ void UiLayer::shutdown()
     if (!m_initialized) return;
     m_engine->renderer().device().waitIdle();
     m_engine->renderer().graph().removePass("UI");
+    ui::System::get().releaseTextures();
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
@@ -102,6 +104,7 @@ bool UiLayer::wantsMouse() const
 
 void UiLayer::beginFrame()
 {
+    ui::System::get().applyPendingFonts(); // game UI fonts: the atlas is rebuilt before the frame
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();

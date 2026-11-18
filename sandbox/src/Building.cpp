@@ -1,5 +1,6 @@
 #include "Building.hpp"
 
+#include "GameUi.hpp"
 #include "Props.hpp"
 
 #include <ve/assets/AssetManager.hpp>
@@ -15,6 +16,7 @@
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Prefab.hpp>
 #include <ve/scene/Scene.hpp>
+#include <ve/ui/IconBaker.hpp>
 #include <ve/world/Terrain.hpp>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -335,6 +337,21 @@ std::shared_ptr<ve::Mesh> pieceMesh(Kind kind, Mat mat, Builder3& b)
     return mesh;
 }
 
+// What a piece looks like as one mesh (icons): its body, plus a door's leaf (closed).
+ve::MeshData pieceMeshData(Kind kind, Mat mat)
+{
+    Builder3 b;
+    build(b, kind, mat);
+    ve::MeshData md = b.md;
+    if (kind == Kind::Door) {
+        Builder3 leaf;
+        doorLeafMesh(leaf);
+        md.append(leaf.md, glm::translate(glm::mat4(1.0f), {-kDoorX + 0.07f, 0.0f, 0.0f}));
+    }
+    md.makeFlatShaded();
+    return md;
+}
+
 } // namespace
 
 // -----------------------------------------------------------------------------
@@ -446,6 +463,34 @@ Builder::Builder() : GameObject("Builder")
 void Builder::start()
 {
     loadCatalogue();
+    buildStatus();
+    // The cards' pictures: during the loading screen if there is one.
+    if (engine().loading()) {
+        ve::Scene* sc = &scene();
+        const uint64_t id = this->id();
+        engine().addLoadStep("Preparing the build kit", [sc, id] {
+            if (auto* b = dynamic_cast<Builder*>(sc->findById(id))) b->bakeIcons();
+        });
+    } else {
+        bakeIcons();
+    }
+}
+
+void Builder::bakeIcons()
+{
+    for (Entry& e : m_catalogue) {
+        if (e.icon) continue;
+        const ve::Json* pj = ve::prefab::load(e.prefab);
+        if (!pj) continue;
+        const ve::Json f = pj->value("object", ve::Json::object()).value("fields", ve::Json::object());
+        const auto kind = Kind(f.value("kind", 0));
+        const auto mat = Mat(f.value("material", 0));
+        ve::ui::IconView view;
+        view.yawDegrees = kind == Kind::Stairs ? 215.0f : 35.0f; // stairs: from the side you climb
+        view.pitchDegrees = (kind == Kind::Foundation || kind == Kind::Floor) ? 38.0f : 22.0f;
+        e.icon = ve::ui::bakeIcon(renderer(), pieceMeshData(kind, mat), 192, view);
+    }
+    buildMenu();
 }
 
 void Builder::loadCatalogue()
@@ -457,7 +502,8 @@ void Builder::loadCatalogue()
         ve::Json j;
         in >> j;
         for (const ve::Json& e : j.value("pieces", ve::Json::array()))
-            m_catalogue.push_back({e.value("name", std::string("?")), e.value("prefab", std::string())});
+            m_catalogue.push_back({e.value("name", std::string("?")), e.value("prefab", std::string()), e.value("category", std::string("Pieces")),
+                                   e.value("description", std::string()), nullptr});
     } catch (const std::exception& e) {
         ve::log::warn("Building: {}", e.what());
     }
@@ -479,6 +525,11 @@ void Builder::setActive(bool on)
     if (!on) m_preview.hide();
 }
 
+bool Builder::justStopped() const
+{
+    return m_stoppedFrame == renderer().frameNumber();
+}
+
 void Builder::select(int index)
 {
     if (m_catalogue.empty()) return;
@@ -498,8 +549,14 @@ ve::GameObject* Builder::aimedPiece() const
 void Builder::update(float)
 {
     ve::Input& in = input();
-    if (in.actionPressed("BuildMode")) setActive(!m_active);
+    if (in.actionPressed("BuildMode")) openMenu(); // (while it's open, B closes it: a menu shortcut)
+    if (m_status) m_status->visible = m_active;
     if (!m_active || m_catalogue.empty()) return;
+    if (in.keyPressed(ve::Key::Escape)) {
+        setActive(false);
+        m_stoppedFrame = renderer().frameNumber();
+        return;
+    }
     if (in.actionPressed("BuildNext") || in.wheel() < 0.0f) select(m_index + 1);
     if (in.actionPressed("BuildPrev") || in.wheel() > 0.0f) select(m_index - 1);
     if (in.actionPressed("BuildRotate")) m_yaw += glm::radians(45.0f);
@@ -598,19 +655,142 @@ void Builder::onDestroy()
     m_preview.hide();
 }
 
-void Builder::onGui()
+// -----------------------------------------------------------------------------
+// Build menu + status panel (engine UI elements, the game's style)
+// -----------------------------------------------------------------------------
+
+bool Builder::menuOpen() const
 {
-    if (!m_active || m_catalogue.empty()) return;
-    const ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos({io.DisplaySize.x * 0.5f, io.DisplaySize.y - 70.0f}, ImGuiCond_Always, {0.5f, 1.0f});
-    ImGui::SetNextWindowBgAlpha(0.55f);
-    ImGui::Begin("##build", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs);
-    ImGui::Text("BUILDING   %s  (%d/%d)", m_catalogue[size_t(m_index)].name.c_str(), m_index + 1, int(m_catalogue.size()));
-    ImGui::SameLine();
-    if (m_preview.valid()) ImGui::TextColored({0.5f, 1.0f, 0.6f, 1.0f}, m_snapped ? "  snapped" : "  ok");
-    else ImGui::TextColored({1.0f, 0.45f, 0.4f, 1.0f}, "  blocked");
-    ImGui::TextDisabled("Wheel / Z X select   R rotate   LMB place   RMB remove   B exit");
-    ImGui::End();
+    return m_menu && m_menu->visible;
+}
+
+void Builder::openMenu()
+{
+    if (!m_menu || m_catalogue.empty()) return;
+    if (m_category.empty()) showCategory(m_catalogue.front().category);
+    m_menu->visible = true;
+    m_menu->focus(nullptr);
+    input().setMouseCaptured(false);
+}
+
+void Builder::closeMenu()
+{
+    if (!m_menu || !m_menu->visible) return;
+    m_menu->visible = false;
+    input().setMouseCaptured(true);
+}
+
+void Builder::buildMenu()
+{
+    namespace ui = ve::ui;
+    if (!m_menu) {
+        m_menu = &addComponent<ui::Canvas>();
+        m_menu->modal = true;
+        m_menu->order = 20;
+        m_menu->tooltipFont = gui::font::body;
+        m_menu->onBack = [this] { closeMenu(); };
+        m_menu->shortcuts = {{ve::Key::B, ve::GamepadButton::DPadUp, [this] { closeMenu(); }}};
+    }
+    m_menu->visible = false;
+    ui::Element& root = m_menu->root();
+    root.clear();
+    auto& dim = root.add<ui::Panel>("dim");
+    dim.fill();
+    dim.color = ui::rgba(0x00000060);
+    dim.blocksPointer = true;
+    ui::Element& content = gui::window(root, "Build", {1180.0f, 640.0f});
+
+    // Category tabs, in the catalogue's order.
+    auto& tabs = content.add<ui::Stack>("tabs");
+    tabs.vertical = false;
+    tabs.spacing = 8.0f;
+    tabs.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).size({0.0f, 46.0f});
+    std::vector<std::string> categories;
+    for (const Entry& e : m_catalogue)
+        if (std::find(categories.begin(), categories.end(), e.category) == categories.end()) categories.push_back(e.category);
+    for (const std::string& c : categories) {
+        auto& tab = gui::boxButton(tabs, c, [this, c] { showCategory(c); }, 20.0f);
+        tab.name = "tab:" + c;
+        tab.size({float(c.size()) * 11.0f + 44.0f, 46.0f});
+    }
+
+    auto& cards = content.add<ui::Grid>("cards");
+    cards.columns = 6;
+    cards.cell = {172.0f, 206.0f};
+    cards.spacing = {12.0f, 12.0f};
+    cards.at({0.0f, 66.0f}).size(cards.contentSize(12));
+    m_cards = &cards;
+
+    m_cardInfo = &gui::label(content, "", gui::font::body, 20.0f, gui::color::dim);
+    m_cardInfo->anchors({0.0f, 1.0f}, {1.0f, 1.0f}).pivot({0.0f, 1.0f}).at({0.0f, 0.0f}).size({0.0f, 30.0f});
+    m_cardInfo->text = "Pick a piece   ·   B / Esc close";
+    if (!m_category.empty()) showCategory(m_category);
+}
+
+void Builder::showCategory(const std::string& category)
+{
+    namespace ui = ve::ui;
+    m_category = category;
+    if (!m_cards) return;
+    m_cards->clear();
+    for (size_t i = 0; i < m_catalogue.size(); ++i) {
+        const Entry& e = m_catalogue[i];
+        if (e.category != category) continue;
+        auto& card = m_cards->add<ui::Button>("", "piece:" + e.name);
+        card.normal = gui::color::slot;
+        card.hover = ui::rgba(0x3a2a18f0);
+        card.down = ui::rgba(0x5a3e20ff);
+        card.borderColor = ui::withAlpha(gui::color::goldDark, 0.6f);
+        card.borderWidth = 1.0f;
+        card.rounding = 6.0f;
+        card.focusBorder = gui::color::gold;
+        card.selected = m_active && int(i) == m_index;
+        card.tooltip = e.description;
+        auto& icon = card.add<ui::Image>("icon");
+        icon.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({12.0f, 8.0f}).size({12.0f, 148.0f});
+        icon.texture = e.icon;
+        auto& name = gui::label(card, e.name, gui::font::body, 18.0f, gui::color::text);
+        name.anchors({0.0f, 1.0f}, {1.0f, 1.0f}).pivot({0.0f, 1.0f}).at({6.0f, -6.0f}).size({6.0f, 44.0f});
+        name.alignX = ui::Align::Center;
+        name.wrap = true;
+        card.onClick = [this, i] {
+            select(int(i));
+            setActive(true);
+            closeMenu();
+        };
+        card.onHover = [this, i](bool on) {
+            if (on && m_cardInfo) m_cardInfo->text = m_catalogue[i].name + "  —  " + m_catalogue[i].description;
+        };
+    }
+    for (const auto& c : m_menu->root().find("tabs")->children())
+        if (auto* tab = dynamic_cast<ui::Button*>(c.get())) tab->selected = tab->name == "tab:" + category;
+}
+
+void Builder::buildStatus()
+{
+    namespace ui = ve::ui;
+    m_status = &addComponent<ui::Canvas>();
+    m_status->visible = false;
+    auto& panel = m_status->root().add<ui::Panel>("building");
+    panel.anchor({0.5f, 1.0f}).pivot({0.5f, 1.0f}).at({0.0f, -50.0f}).size({760.0f, 78.0f});
+    panel.color = ui::rgba(0x120c08b8);
+    panel.borderColor = ui::withAlpha(gui::color::goldDark, 0.7f);
+    panel.borderWidth = 1.0f;
+    panel.rounding = 6.0f;
+    auto& icon = panel.add<ui::Image>("icon");
+    icon.anchor({0.0f, 0.5f}).pivot({0.0f, 0.5f}).at({10.0f, 0.0f}).size({64.0f, 64.0f});
+    icon.custom = [this](ui::Painter& p, const ui::Rect& r) {
+        if (!m_catalogue.empty() && m_catalogue[size_t(m_index)].icon) p.image(m_catalogue[size_t(m_index)].icon, r);
+    };
+    auto& title = gui::label(panel, "", gui::font::heading, 26.0f, gui::color::gold);
+    title.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({86.0f, 6.0f}).size({16.0f, 36.0f});
+    title.bind = [this]() -> std::string {
+        if (m_catalogue.empty()) return {};
+        return m_catalogue[size_t(m_index)].name + (m_preview.valid() ? (m_snapped ? "   ·   snapped" : "") : "   ·   blocked");
+    };
+    auto& keys = gui::label(panel, "LMB place    RMB remove    R rotate    Wheel next    B build menu    Esc stop building", gui::font::body, 18.0f,
+                            gui::color::dim);
+    keys.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({86.0f, 42.0f}).size({16.0f, 28.0f});
 }
 
 } // namespace savanna
