@@ -17,6 +17,8 @@
 # go <name>.spv.cmd (the command) and <name>.spv.d (the depfile), which the
 # running app uses to recompile edited shaders (shader hot-reload).
 # =============================================================================
+set(VE_SHADER_DEFINES "" CACHE STRING "Extra preprocessor defines for every shader (list; perf experiments, see docs/08-perf-tests.md)")
+
 function(ve_compile_shaders TARGET)
     cmake_parse_arguments(ARG "" "" "SOURCES;INCLUDE_DIRS" ${ARGN})
 
@@ -41,16 +43,21 @@ function(ve_compile_shaders TARGET)
         elseif(EXT STREQUAL ".comp")
             set(STAGE_DEFINE "-DVE_COMPUTE_STAGE")
         endif()
+        # Extra defines for every shader (-DVE_SHADER_DEFINES="A;B=1"): perf experiments.
+        set(EXTRA_DEFINES "")
+        foreach(D IN LISTS VE_SHADER_DEFINES)
+            list(APPEND EXTRA_DEFINES "-D${D}")
+        endforeach()
         # The same command, one argument per line, for shader hot-reload
         # (engine/src/ve/render/ShaderHotReload.hpp).
-        set(CMD_ARGS "${Vulkan_GLSLC_EXECUTABLE}" --target-env=vulkan1.3 -O -g ${STAGE_DEFINE} ${INCLUDE_FLAGS}
+        set(CMD_ARGS "${Vulkan_GLSLC_EXECUTABLE}" --target-env=vulkan1.3 -O -g ${STAGE_DEFINE} ${EXTRA_DEFINES} ${INCLUDE_FLAGS}
                      -MD -MF "${OUT}.d" "${SRC_ABS}" -o "${OUT}")
         list(JOIN CMD_ARGS "\n" CMD_TEXT)
         file(CONFIGURE OUTPUT "${OUT}.cmd" CONTENT "${CMD_TEXT}\n" @ONLY)
         add_custom_command(
             OUTPUT  "${OUT}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${VE_SHADER_OUTPUT_DIR}"
-            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -g ${STAGE_DEFINE} ${INCLUDE_FLAGS}
+            COMMAND ${Vulkan_GLSLC_EXECUTABLE} --target-env=vulkan1.3 -O -g ${STAGE_DEFINE} ${EXTRA_DEFINES} ${INCLUDE_FLAGS}
                     -MD -MF "${OUT}.d" "${SRC_ABS}" -o "${OUT}"
             DEPENDS "${SRC_ABS}"
             DEPFILE "${OUT}.d"

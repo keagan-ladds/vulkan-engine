@@ -21,7 +21,9 @@ void main()
     vec4 base = m.params[0] * veSampleOr(m.textures[0], uv, vec4(1.0));
     base *= mix(vec4(1.0), inColor, m.params[3].z); // vertex colour
     float cutoff = m.params[1].w;
+#ifndef VE_PERF_NO_DISCARD // perf experiment (docs/08-perf-tests.md): no discard in the shader at all
     if (cutoff > 0.0 && base.a < cutoff) discard;
+#endif
 
     vec3 N = normalize(inNormal);
     if (!gl_FrontFacing) N = -N; // double-sided materials light their back side correctly
@@ -55,6 +57,7 @@ void main()
     // Translucency (thin leaves): directional light from behind the surface
     // shines through it, tinted by the albedo. A soft wrap term for light
     // anywhere behind, and forward scattering when looking towards the light.
+#ifndef VE_PERF_NO_TRANSLUCENCY // perf experiment (docs/08-perf-tests.md): code compiled out
     float translucency = m.params[3].w;
     if (translucency > 0.0 && (frame.lightCounts.w & 2u) == 0u) {
         vec3 V = normalize(frame.cameraPosition.xyz - inWorldPos);
@@ -73,6 +76,7 @@ void main()
             color += tint * L.color.rgb * scatter * translucency * (1.0 / 3.14159265);
         }
     }
+#endif
     outColor = vec4(color, base.a);
     outGBuffer = veGBuffer(s.normal, s.roughness);
 }

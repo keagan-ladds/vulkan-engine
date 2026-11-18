@@ -11,6 +11,7 @@ project cold and keep going.
 | [02-roadmap.md](02-roadmap.md) | Phased plan with checklists and acceptance criteria (**the source of truth for progress**) |
 | [03-conventions.md](03-conventions.md) | Coding conventions + "how do I..." recipes (add a pass, material, component, asset) |
 | [04-agent-handoff.md](04-agent-handoff.md) | Instructions for an agent executing the roadmap: workflow, verification, gotchas |
+| [08-perf-tests.md](08-perf-tests.md) | Performance tests that need a real GPU (standard shader variants: translucency, discard / early-Z) |
 | [decisions.md](decisions.md) | Architecture decision log: what was chosen, alternatives, and why |
 
 ## Quick start

@@ -107,7 +107,13 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     // VE_FIXED_DT=0.016667: every frame advances time by this much, however long it
     // took (headless tests on slow software rendering see real-time motion per frame).
     if (const char* f = std::getenv("VE_FIXED_DT"); f && *f) m_fixedFrameDt = std::strtof(f, nullptr);
-    m_window = std::make_unique<Window>(config.title, config.width, config.height, rs.headless);
+    // VE_RESOLUTION=2560x1440: window / render size (benchmarks on a real GPU).
+    int width = config.width, height = config.height;
+    if (const char* r = std::getenv("VE_RESOLUTION"); r && *r) {
+        int w = 0, h = 0;
+        if (std::sscanf(r, "%dx%d", &w, &h) == 2 && w > 0 && h > 0) width = w, height = h;
+    }
+    m_window = std::make_unique<Window>(config.title, width, height, rs.headless);
     m_renderer = std::make_unique<Renderer>();
     m_renderer->init(*m_window, rs, config.validation, shaderDirs);
     m_audio = std::make_unique<AudioSystem>();
