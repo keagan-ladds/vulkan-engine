@@ -167,3 +167,13 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
     (`FoliageSystem::setExclusions`), keeping chopped / picked states;
     `GrassLayer` re-bakes its window in the background, as it does after
     terrain brush edits. Ghost previews (`PlacementGhost`) are ignored.
+
+## Realistic foliage models (F8)
+
+`tools/foliage/` generates the trees and plants the Savanna scene uses as
+glTF files (`models/foliage/*.gltf`, textures in `textures/foliage/`): LOD0-2
+nodes per variant, `_COL` trunk hulls, stumps for the `Stump` state; the
+engine adds an impostor (`impostor: true` on the FoliageType). See
+`tools/foliage/README.md` for the generator, the Blender add-on and how to
+tune or add a species. Instance groups grow with variants x levels x
+materials: Savanna raises `RendererSettings::maxVisibleInstancesPerView` to 2M.

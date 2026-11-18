@@ -482,6 +482,11 @@ and ask the host for everything else (decision D19).
 - [x] Look-at and aim IK (`AimIK`, `LookAtIK`): weighted chains, angle limits, blending. Savanna: villagers look at a nearby player and point at the nearest sunstone after greeting; the autotest checks both aims converge
 - [ ] Later: root motion, motion vectors from skinning; text selection / clipboard, multi-line text, on-screen keyboard for pads; ragdolls, buoyancy (Phase 11 list)
 
+### F8 — Realistic foliage (branch `claude/foliage-generator`)
+- [x] Foliage generator (`tools/foliage`, see its README): procedural leaf-card atlases and tileable bark (albedo + normal); trees grown by space colonisation inside species crown envelopes, pipe-model radii, bark ring meshes (flare, buttresses), crown-normal leaf cards with vertex-colour AO, 3 LODs (+ engine impostor), convex trunk colliders, stump models; glTF writer (no Blender needed), Blender add-on (generate editable objects, export) and headless batch, Cycles preview script
+- [x] Species: umbrella thorn acacia, fever tree, baobab, savanna bush, jungle tree, palm, fern; Savanna's scene uses them (acacia stumps for chopping), spacing retuned for the bigger crowns
+- [ ] Wind sway for tree foliage (vertex colour / height weighted, like the grass), seasonal variants (bare / flowering), grass and reeds as models, quiver trees and desert shrubs, more variants per species
+
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)
 - [x] Scene serialization (JSON scene files, editor save / load)
