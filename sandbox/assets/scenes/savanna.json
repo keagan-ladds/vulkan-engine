@@ -643,7 +643,12 @@
                 "shadowDistance": 300,
                 "colliderSurface": "Wood",
                 "mesh": "models/foliage/baobab.gltf",
-                "impostor": true
+                "impostor": true,
+                "lodThresholds": [
+                  0.28,
+                  0.1,
+                  0.035
+                ]
               }
             }
           ]
@@ -696,7 +701,12 @@
                 "promoteType": "ChoppableTree",
                 "colliderSurface": "Wood",
                 "mesh": "models/foliage/acacia.gltf",
-                "impostor": true
+                "impostor": true,
+                "lodThresholds": [
+                  0.28,
+                  0.1,
+                  0.035
+                ]
               }
             }
           ]
@@ -742,7 +752,12 @@
                 "shadowDistance": 300,
                 "colliderSurface": "Wood",
                 "mesh": "models/foliage/fever_tree.gltf",
-                "impostor": true
+                "impostor": true,
+                "lodThresholds": [
+                  0.28,
+                  0.1,
+                  0.035
+                ]
               }
             }
           ]
@@ -979,7 +994,12 @@
                 "shadowDistance": 300,
                 "colliderSurface": "Wood",
                 "mesh": "models/foliage/jungle_tree.gltf",
-                "impostor": true
+                "impostor": true,
+                "lodThresholds": [
+                  0.28,
+                  0.1,
+                  0.035
+                ]
               }
             }
           ]

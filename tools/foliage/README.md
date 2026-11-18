@@ -90,7 +90,12 @@ looks are entries in `textures.ATLASES` / `textures.BARKS`. Then point a
 `FoliageType`'s `mesh` at the file (and `states: "Stump = <file>_stump.gltf"`).
 
 Budgets (LOD0 / LOD1 / LOD2 triangles): acacias ~11k / 4k / 1.1k, jungle
-trees ~13k / 3.5k / 1k, palms ~0.9k / 0.5k / 0.2k.
+trees ~13k / 3.5k / 1k, palms ~0.9k / 0.5k / 0.2k. The big trees are wide, so
+their FoliageTypes switch LODs earlier (`lodThresholds` 0.28 / 0.1 / 0.035
+screen fraction instead of the default 0.10 / 0.035 / 0.012): that halved the
+camp view's frame time on the software renderer (4.8 s -> 2.3 s; the old
+procedural trees: 1.1 s). Alpha-tested cards in the shadow maps are now the
+largest cost (fewer, bigger cards in the shadow LODs would be next).
 
 Not yet: wind sway (no foliage wind in the engine's standard shader), seasonal
 variants (bare trees), grass / reeds as models.
