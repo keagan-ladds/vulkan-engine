@@ -504,7 +504,7 @@ int main()
         // holds the old and the new set while it reopens a scene.
         config.renderer.maxInstances = 1u << 19;
         // Realistic foliage models: more variants x LOD levels x materials -> more instance groups to reserve for.
-        config.renderer.maxVisibleInstancesPerView = 1u << 21;
+        config.renderer.maxVisibleInstancesPerView = 1u << 22; // multi-LOD tree models (bark + leaves per LOD); the editor reload holds more
         if (const char* v = std::getenv("VE_VALIDATION")) config.validation = v[0] == '1';
 
         ve::Engine engine(config);
