@@ -43,8 +43,12 @@ public:
     void onGui() override;
 
     // --- Sources ---------------------------------------------------------------
-    ve::DirectionalLight* sun = nullptr;  // if null, the brightest directional light
-    ve::DirectionalLight* moon = nullptr; // optional, draws a moon disc
+    // By GameObject id (looked up every frame, so deleting the light's object
+    // can't leave a dangling pointer). 0 / missing: no sun / moon.
+    uint64_t sunObject = 0;  // its DirectionalLight is the sun; else the brightest directional light
+    uint64_t moonObject = 0; // optional, its DirectionalLight draws a moon disc
+    void setSun(const ve::DirectionalLight* light);
+    void setMoon(const ve::DirectionalLight* light);
 
     // --- Sky -------------------------------------------------------------------
     float sunIlluminance = 9.0f;  // overall sky brightness
@@ -98,6 +102,9 @@ private:
     ve::PipelineHandle m_skyPipeline;
     std::shared_ptr<ve::Texture> m_noise;
 
+    // sunObject / moonObject resolved in prepare(); valid for the current frame only.
+    ve::DirectionalLight* m_sun = nullptr;
+    ve::DirectionalLight* m_moon = nullptr;
     glm::vec3 m_sunDir{0.0f, 1.0f, 0.0f};
     glm::vec3 m_sunRadiance{1.0f};
     glm::vec3 m_ambientSky{0.0f};

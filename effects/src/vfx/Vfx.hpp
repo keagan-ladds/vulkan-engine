@@ -4,7 +4,7 @@
 // vfx - optional visual effects built on the public engine API.
 //
 //   auto fx = vfx::addDefaultEffects(engine.renderer());
-//   fx.atmosphere->sun = &sunLight;            // which DirectionalLight is the sun
+//   fx.atmosphere->setSun(&sunLight);          // which DirectionalLight is the sun
 //   fx.fog->density = 0.03f;
 //
 // Nothing in the engine depends on this module; every effect is just a

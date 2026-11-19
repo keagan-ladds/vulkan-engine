@@ -42,6 +42,7 @@ public:
     // The scene's Weather (found automatically), or null. Valid for the current frame.
     Weather* weather() const { return m_weather; }
 
+    // The lights (separate objects; the editor can delete them). Valid for the current frame, may be null.
     ve::DirectionalLight* sun() const { return m_sun; }
     ve::DirectionalLight* moon() const { return m_moon; }
     glm::vec3 towardsSun() const { return m_towardsSun; }
@@ -50,10 +51,9 @@ public:
 private:
     Weather* m_weather = nullptr; // looked up every frame by id (can't dangle)
     uint64_t m_weatherId = 0;
-    ve::DirectionalLight* m_sun = nullptr;
+    ve::DirectionalLight* m_sun = nullptr;  // looked up every frame by id
     ve::DirectionalLight* m_moon = nullptr;
-    ve::GameObject* m_sunObject = nullptr;
-    ve::GameObject* m_moonObject = nullptr;
+    uint64_t m_sunId = 0, m_moonId = 0;
     glm::vec3 m_towardsSun{0, 1, 0};
 };
 

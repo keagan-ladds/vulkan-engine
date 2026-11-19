@@ -7,6 +7,7 @@
 #include <ve/render/Renderer.hpp>
 #include <ve/render/Texture.hpp>
 #include <ve/scene/Components.hpp>
+#include <ve/scene/Scene.hpp>
 
 #include <imgui.h>
 
@@ -166,13 +167,25 @@ void AtmospherePass::setup(ve::RenderGraph& g)
                   std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
 }
 
+void AtmospherePass::setSun(const ve::DirectionalLight* light) { sunObject = light ? light->gameObject().id() : 0; }
+void AtmospherePass::setMoon(const ve::DirectionalLight* light) { moonObject = light ? light->gameObject().id() : 0; }
+
 void AtmospherePass::prepare(ve::FrameData& frame)
 {
     ve::Renderer& r = renderer();
 
+    // The sun / moon lights, by id: deleted objects come back null (and are only
+    // freed after the frame is rendered, so the pointers hold until execute()).
+    auto light = [&](uint64_t id) -> ve::DirectionalLight* {
+        ve::GameObject* o = (id && frame.scene) ? frame.scene->findById(id) : nullptr;
+        return o ? o->getComponent<ve::DirectionalLight>() : nullptr;
+    };
+    m_sun = light(sunObject);
+    m_moon = light(moonObject);
+
     // Which way is the sun?
-    if (sun) {
-        m_sunDir = -glm::normalize(sun->transform().forward());
+    if (m_sun) {
+        m_sunDir = -glm::normalize(m_sun->transform().forward());
     } else if (frame.globals.lightCounts.x > 0) {
         m_sunDir = -glm::vec3(frame.lights->directional[0].direction);
     }
@@ -246,8 +259,8 @@ void AtmospherePass::execute(ve::RenderContext& ctx)
     ctx.beginRendering({{m_clouds, true, glm::vec4(0, 0, 0, 1)}});
     if (clouds) {
         glm::vec3 cloudLight = m_sunRadiance;
-        if (moon && moon->isActive()) {
-            cloudLight += moon->color * moon->intensity * 0.6f * std::max(0.0f, -moon->transform().forward().y);
+        if (m_moon && m_moon->isActive()) {
+            cloudLight += m_moon->color * m_moon->intensity * 0.6f * std::max(0.0f, -m_moon->transform().forward().y);
         }
         CloudPush p{};
         p.layer = {cloudBottom, cloudTop, coverage, cloudDensity};
@@ -273,8 +286,8 @@ void AtmospherePass::execute(ve::RenderContext& ctx)
     SkyPush p{};
     const float radius = glm::radians(0.27f * sunDiskSize);
     p.sunDisk = glm::vec4(m_sunRadiance * sunDiskBrightness, std::cos(radius));
-    if (moon && moon->isActive()) {
-        const glm::vec3 md = -glm::normalize(moon->transform().forward());
+    if (m_moon && m_moon->isActive()) {
+        const glm::vec3 md = -glm::normalize(m_moon->transform().forward());
         p.moonDir = glm::vec4(md, md.y > -0.05f ? 3.0f * night : 0.0f);
     }
     p.night = glm::vec4(starBrightness * night, night, 0, 0);
