@@ -19,6 +19,7 @@ private:
     size_t m_bouldersNew = 0;
     float m_heightBefore = 0.0f; // terrain brush checks
     size_t m_editedTiles = 0;
+    ve::GameObject* m_markers = nullptr; // model marker nodes check
 };
 
 } // namespace savanna

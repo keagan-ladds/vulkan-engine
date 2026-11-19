@@ -6,6 +6,17 @@
 //
 //   ModelInstance      places an imported glTF model (by asset path); its nodes
 //                      are spawned as (non-persistent) children when it starts.
+//                      Marker nodes (usually Blender empties) become components
+//                      instead of being drawn (`markers`, on by default):
+//                        SNAP[_type[_accepts]][_align]  SnapPoint at the node
+//                            (accepts: `+`-separated, `any` = *, `none` = nothing;
+//                            default: the type; no type = grid; facing = node +Z)
+//                        BOX[_name]                     PlacementBox
+//                        EXCL[_circle]                  FoliageExclusion (box, or circle)
+//                      Size: a cube empty's (-1..1 times its scale), or the node's
+//                      mesh bounds. Blender's ".001" suffixes are ignored; glTF
+//                      extras (custom properties) override fields: type, accepts,
+//                      align; falloff, grass, foliage, radius.
 //   PrimitiveRenderer  a cube / sphere / cylinder / plane with a simple PBR
 //                      material - handy for blocking out levels.
 //
@@ -30,6 +41,7 @@ public:
     bool staticColliders = false; // exact mesh colliders on every node (buildings)
     std::string hiddenNodes;      // comma-separated node names to leave out (e.g. "Door")
     std::string animation;        // animated models: the clip to loop (empty = the first)
+    bool markers = true;          // SNAP / BOX / EXCL nodes become components (see above)
 
     void start() override { rebuild(); }
     void onDestroy() override;

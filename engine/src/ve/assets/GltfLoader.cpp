@@ -274,6 +274,7 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
         for (size_t c = 0; c < gn.children_count; ++c) {
             node.children.push_back(static_cast<int>(gn.children[c] - data->nodes));
         }
+        if (gn.extras.data) node.extras = gn.extras.data;
     }
     const cgltf_scene* scene = data->scene ? data->scene : (data->scenes_count ? &data->scenes[0] : nullptr);
     if (scene) {

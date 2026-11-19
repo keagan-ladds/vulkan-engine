@@ -1,0 +1,2889 @@
+{
+  "objects": [
+    {
+      "active": true,
+      "children": [
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biome": "Swamp",
+                "biomeFalloff": 85.0,
+                "biomeRadius": 55.0,
+                "biomeStrength": 1.0,
+                "exponent": 1.5,
+                "falloff": 85.0,
+                "height": 10.0,
+                "mode": 0,
+                "noiseAmplitude": 3.200000047683716,
+                "noiseFrequency": 0.02500000037252903,
+                "noiseSeed": 7,
+                "radius": 55.0,
+                "ridgeAmount": 0.0,
+                "ridgeFrequency": 0.029999999329447746,
+                "ridgeSeed": 11
+              },
+              "type": "TerrainStamp"
+            }
+          ],
+          "id": "5a1e00000000b011",
+          "name": "Swamp basin",
+          "position": [
+            -130.0,
+            -1.2999999523162842,
+            110.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biome": "Rocky",
+                "biomeFalloff": 30.0,
+                "biomeRadius": 20.0,
+                "biomeStrength": 0.8999999761581421,
+                "exponent": 1.600000023841858,
+                "falloff": 48.0,
+                "height": 24.0,
+                "mode": 1,
+                "noiseAmplitude": 0.0,
+                "noiseFrequency": 0.02500000037252903,
+                "noiseSeed": 7,
+                "radius": 0.0,
+                "ridgeAmount": 5.0,
+                "ridgeFrequency": 0.029999999329447746,
+                "ridgeSeed": 11
+              },
+              "type": "TerrainStamp"
+            }
+          ],
+          "id": "5a1e00000000b012",
+          "name": "Kopje",
+          "position": [
+            120.0,
+            0.0,
+            -80.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biome": "Rocky",
+                "biomeFalloff": 20.0,
+                "biomeRadius": 8.0,
+                "biomeStrength": 0.8999999761581421,
+                "exponent": 1.399999976158142,
+                "falloff": 26.0,
+                "height": 13.0,
+                "mode": 1,
+                "noiseAmplitude": 0.0,
+                "noiseFrequency": 0.02500000037252903,
+                "noiseSeed": 7,
+                "radius": 0.0,
+                "ridgeAmount": 0.0,
+                "ridgeFrequency": 0.029999999329447746,
+                "ridgeSeed": 11
+              },
+              "type": "TerrainStamp"
+            }
+          ],
+          "id": "5a1e00000000b013",
+          "name": "Small kopje",
+          "position": [
+            -50.0,
+            0.0,
+            -140.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biome": "Camp",
+                "biomeFalloff": 18.0,
+                "biomeRadius": 8.0,
+                "biomeStrength": 0.800000011920929,
+                "exponent": 1.5,
+                "falloff": 20.0,
+                "height": 10.0,
+                "mode": 0,
+                "noiseAmplitude": 0.0,
+                "noiseFrequency": 0.02500000037252903,
+                "noiseSeed": 7,
+                "radius": 14.0,
+                "ridgeAmount": 0.0,
+                "ridgeFrequency": 0.029999999329447746,
+                "ridgeSeed": 11
+              },
+              "type": "TerrainStamp"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "falloff": 0.0,
+                "foliage": true,
+                "grass": false,
+                "radius": 26.0
+              },
+              "type": "FoliageExclusion"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "falloff": 6.0,
+                "foliage": false,
+                "grass": true,
+                "radius": 8.0
+              },
+              "type": "FoliageExclusion"
+            }
+          ],
+          "id": "5a1e00000000b014",
+          "name": "Camp clearing",
+          "position": [
+            20.0,
+            3.200000047683716,
+            10.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        }
+      ],
+      "fields": {
+        "baseHeight": 2.5,
+        "biomes": [
+          {
+            "color": [
+              0.7200000286102295,
+              0.5600000023841858,
+              0.28999999165534973
+            ],
+            "color2": [
+              0.44999998807907104,
+              0.46000000834465027,
+              0.20999999344348907
+            ],
+            "colorNoiseFrequency": 0.012000000104308128,
+            "colorNoiseSeed": 31,
+            "coverage": 0.0,
+            "coverageFrequency": 0.004000000189989805,
+            "coverageSeed": 61,
+            "maxHeight": 1000000000.0,
+            "maxSlope": 1.0,
+            "minHeight": -1000000000.0,
+            "name": "Savannah",
+            "patchColor": [
+              0.5799999833106995,
+              0.3100000023841858,
+              0.17000000178813934
+            ],
+            "patchCoverage": 0.3499999940395355,
+            "patchFrequency": 0.019999999552965164,
+            "patchSeed": 41,
+            "patchStrength": 0.8500000238418579
+          },
+          {
+            "color": [
+              0.20000000298023224,
+              0.25,
+              0.10000000149011612
+            ],
+            "color2": [
+              0.20000000298023224,
+              0.25,
+              0.10000000149011612
+            ],
+            "colorNoiseFrequency": 0.012000000104308128,
+            "colorNoiseSeed": 31,
+            "coverage": 0.0,
+            "coverageFrequency": 0.004000000189989805,
+            "coverageSeed": 61,
+            "maxHeight": 1000000000.0,
+            "maxSlope": 1.0,
+            "minHeight": -1000000000.0,
+            "name": "Swamp",
+            "patchColor": [
+              0.5,
+              0.5,
+              0.5
+            ],
+            "patchCoverage": 0.3499999940395355,
+            "patchFrequency": 0.0,
+            "patchSeed": 41,
+            "patchStrength": 0.8500000238418579
+          },
+          {
+            "color": [
+              0.5220000147819519,
+              0.27900001406669617,
+              0.15299999713897705
+            ],
+            "color2": [
+              0.5220000147819519,
+              0.27900001406669617,
+              0.15299999713897705
+            ],
+            "colorNoiseFrequency": 0.012000000104308128,
+            "colorNoiseSeed": 31,
+            "coverage": 0.0,
+            "coverageFrequency": 0.004000000189989805,
+            "coverageSeed": 61,
+            "maxHeight": 1000000000.0,
+            "maxSlope": 1.0,
+            "minHeight": -1000000000.0,
+            "name": "Camp",
+            "patchColor": [
+              0.5,
+              0.5,
+              0.5
+            ],
+            "patchCoverage": 0.3499999940395355,
+            "patchFrequency": 0.0,
+            "patchSeed": 41,
+            "patchStrength": 0.8500000238418579
+          },
+          {
+            "color": [
+              0.5,
+              0.46000000834465027,
+              0.4099999964237213
+            ],
+            "color2": [
+              0.5,
+              0.46000000834465027,
+              0.4099999964237213
+            ],
+            "colorNoiseFrequency": 0.012000000104308128,
+            "colorNoiseSeed": 31,
+            "coverage": 0.0,
+            "coverageFrequency": 0.004000000189989805,
+            "coverageSeed": 61,
+            "maxHeight": 1000000000.0,
+            "maxSlope": 1.0,
+            "minHeight": -1000000000.0,
+            "name": "Rocky",
+            "patchColor": [
+              0.5,
+              0.5,
+              0.5
+            ],
+            "patchCoverage": 0.3499999940395355,
+            "patchFrequency": 0.0,
+            "patchSeed": 41,
+            "patchStrength": 0.8500000238418579
+          }
+        ],
+        "borderEnd": 315.0,
+        "borderHeight": 55.0,
+        "borderNoise": 60.0,
+        "borderNoiseFrequency": 0.008999999612569809,
+        "borderRock": 0.6000000238418579,
+        "borderRockEnd": 300.0,
+        "borderRockStart": 230.0,
+        "borderStart": 200.0,
+        "brightnessVariation": 0.20000000298023224,
+        "cellSize": 2.0,
+        "chunkCells": 32,
+        "detailScales": [
+          0.3100000023841858,
+          0.0430000014603138
+        ],
+        "detailTexture": "textures/ground_detail.png",
+        "mudColor": [
+          0.23000000417232513,
+          0.18000000715255737,
+          0.11999999731779099
+        ],
+        "noiseAmplitude": 16.0,
+        "noiseFrequency": 0.0035000001080334187,
+        "noiseOctaves": 5,
+        "rockColor": [
+          0.5,
+          0.46000000834465027,
+          0.4099999964237213
+        ],
+        "seed": 1,
+        "size": 640.0,
+        "steepEnd": 0.5,
+        "steepStart": 0.30000001192092896,
+        "waterLevel": 0.0,
+        "waves": [
+          1.5,
+          0.010999999940395355,
+          0.013000000268220901
+        ],
+        "wetnessSlot": 1
+      },
+      "id": "5a1e00000000b001",
+      "name": "Terrain",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Terrain"
+    },
+    {
+      "active": true,
+      "fields": {
+        "lightning": true,
+        "lightningInterval": 9.0,
+        "lightningStrength": 3.0,
+        "rainSound": "audio/rain_loop.wav",
+        "rainVolume": 0.6000000238418579,
+        "startWeather": 1,
+        "stormBackground": 0.0,
+        "stormSound": "audio/rain_thunder_loop.wav",
+        "stormVolume": 0.800000011920929,
+        "windDirection": [
+          0.800000011920929,
+          0.6000000238418579
+        ],
+        "windSound": "audio/wind_loop.wav",
+        "windVolume": 0.3499999940395355
+      },
+      "id": "5a1e00000000a001",
+      "name": "Weather",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Weather"
+    },
+    {
+      "active": true,
+      "fields": {
+        "advanceInEditor": false,
+        "dayLengthMinutes": 16.0,
+        "moonIntensity": 0.07999999821186066,
+        "nightExposure": 1.399999976158142,
+        "sunIntensity": 3.200000047683716,
+        "timeKeys": true,
+        "timeOfDay": 17.306549072265625
+      },
+      "id": "5a1e00000000a002",
+      "name": "DayNight",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "DayNightCycle"
+    },
+    {
+      "active": true,
+      "fields": {
+        "absorption": 1.2000000476837158,
+        "deepColor": [
+          0.05000000074505806,
+          0.09000000357627869,
+          0.05999999865889549,
+          1.0
+        ],
+        "rippleScale": 0.3499999940395355,
+        "rippleStrength": 0.11999999731779099,
+        "shallowColor": [
+          0.2199999988079071,
+          0.25,
+          0.15000000596046448,
+          1.0
+        ],
+        "shoreFoam": 0.5,
+        "size": [
+          640.0,
+          640.0
+        ]
+      },
+      "id": "5a1e00000000a003",
+      "name": "Water",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Water"
+    },
+    {
+      "active": true,
+      "children": [
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "alignToNormal": 0.0,
+                "autoLods": 0,
+                "avoid": "",
+                "biomeThreshold": 0.6499999761581421,
+                "biomes": "Savannah:1, Camp:1",
+                "castShadows": true,
+                "clusterCoverage": 0.5,
+                "clusterFrequency": 0.0,
+                "colliderDistance": 60.0,
+                "colliderSize": [
+                  0.30000001192092896,
+                  3.0,
+                  0.30000001192092896
+                ],
+                "colliderUserValue": 0,
+                "collision": 0,
+                "impostor": false,
+                "jitter": 0.800000011920929,
+                "library": "baobab",
+                "lodMode": 0,
+                "lodThresholds": [
+                  0.10000000149011612,
+                  0.03500000014901161,
+                  0.012000000104308128
+                ],
+                "maxHeight": 1000000.0,
+                "maxInstances": 300,
+                "maxScale": 1.2999999523162842,
+                "maxSlope": 0.3400000035762787,
+                "mesh": "",
+                "minHeight": 0.6000000238418579,
+                "minScale": 0.8999999761581421,
+                "probability": 0.30000001192092896,
+                "seed": 1001,
+                "shadowDistance": 1000000.0,
+                "sink": 0.15000000596046448,
+                "spacing": 30.0,
+                "tint": 0.12999999523162842,
+                "viewDistance": 3000.0
+              },
+              "type": "FoliageType"
+            }
+          ],
+          "id": "f2ed66ffdcc99396",
+          "name": "Baobabs",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "alignToNormal": 0.0,
+                "autoLods": 0,
+                "avoid": "Baobabs:12",
+                "biomeThreshold": 0.6499999761581421,
+                "biomes": "Savannah:1, Camp:1",
+                "castShadows": true,
+                "clusterCoverage": 0.5,
+                "clusterFrequency": 0.012000000104308128,
+                "colliderDistance": 60.0,
+                "colliderSize": [
+                  0.30000001192092896,
+                  3.0,
+                  0.30000001192092896
+                ],
+                "colliderUserValue": 0,
+                "collision": 0,
+                "impostor": false,
+                "jitter": 0.800000011920929,
+                "library": "acacia",
+                "lodMode": 0,
+                "lodThresholds": [
+                  0.10000000149011612,
+                  0.03500000014901161,
+                  0.012000000104308128
+                ],
+                "maxHeight": 1000000.0,
+                "maxInstances": 5000,
+                "maxScale": 1.2999999523162842,
+                "maxSlope": 0.3400000035762787,
+                "mesh": "",
+                "minHeight": 0.6000000238418579,
+                "minScale": 0.800000011920929,
+                "probability": 0.8199999928474426,
+                "seed": 1002,
+                "shadowDistance": 1000000.0,
+                "sink": 0.15000000596046448,
+                "spacing": 8.5,
+                "tint": 0.12999999523162842,
+                "viewDistance": 3000.0
+              },
+              "type": "FoliageType"
+            }
+          ],
+          "id": "21bade026a6ae768",
+          "name": "Acacias",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "alignToNormal": 0.0,
+                "autoLods": 0,
+                "avoid": "",
+                "biomeThreshold": 0.3499999940395355,
+                "biomes": "Swamp:1",
+                "castShadows": true,
+                "clusterCoverage": 0.5,
+                "clusterFrequency": 0.0,
+                "colliderDistance": 60.0,
+                "colliderSize": [
+                  0.30000001192092896,
+                  3.0,
+                  0.30000001192092896
+                ],
+                "colliderUserValue": 0,
+                "collision": 0,
+                "impostor": false,
+                "jitter": 0.800000011920929,
+                "library": "fever tree",
+                "lodMode": 0,
+                "lodThresholds": [
+                  0.10000000149011612,
+                  0.03500000014901161,
+                  0.012000000104308128
+                ],
+                "maxHeight": 1000000.0,
+                "maxInstances": 2000,
+                "maxScale": 1.2000000476837158,
+                "maxSlope": 1.0,
+                "mesh": "",
+                "minHeight": 0.20000000298023224,
+                "minScale": 0.800000011920929,
+                "probability": 0.6000000238418579,
+                "seed": 1003,
+                "shadowDistance": 1000000.0,
+                "sink": 0.15000000596046448,
+                "spacing": 5.5,
+                "tint": 0.12999999523162842,
+                "viewDistance": 3000.0
+              },
+              "type": "FoliageType"
+            }
+          ],
+          "id": "9dd8904f07489671",
+          "name": "Fever trees",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "alignToNormal": 0.5,
+                "autoLods": 0,
+                "avoid": "",
+                "biomeThreshold": 0.5,
+                "biomes": "Rocky:1.11",
+                "castShadows": true,
+                "clusterCoverage": 0.5,
+                "clusterFrequency": 0.0,
+                "colliderDistance": 60.0,
+                "colliderSize": [
+                  0.30000001192092896,
+                  3.0,
+                  0.30000001192092896
+                ],
+                "colliderUserValue": 0,
+                "collision": 0,
+                "impostor": false,
+                "jitter": 0.800000011920929,
+                "library": "boulder",
+                "lodMode": 0,
+                "lodThresholds": [
+                  0.10000000149011612,
+                  0.03500000014901161,
+                  0.012000000104308128
+                ],
+                "maxHeight": 1000000.0,
+                "maxInstances": 500,
+                "maxScale": 5.0,
+                "maxSlope": 1.0,
+                "mesh": "",
+                "minHeight": 0.5,
+                "minScale": 2.0,
+                "probability": 0.3499999940395355,
+                "seed": 1004,
+                "shadowDistance": 1000000.0,
+                "sink": 0.15000000596046448,
+                "spacing": 6.0,
+                "tint": 0.12999999523162842,
+                "viewDistance": 3000.0
+              },
+              "type": "FoliageType"
+            }
+          ],
+          "id": "6102dd7063e8540e",
+          "name": "Boulders",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "alignToNormal": 0.699999988079071,
+                "autoLods": 0,
+                "avoid": "Boulders:3",
+                "biomeThreshold": 0.0,
+                "biomes": "",
+                "castShadows": true,
+                "clusterCoverage": 0.5,
+                "clusterFrequency": 0.0,
+                "colliderDistance": 40.0,
+                "colliderSize": [
+                  0.30000001192092896,
+                  3.0,
+                  0.30000001192092896
+                ],
+                "colliderUserValue": 0,
+                "collision": 0,
+                "impostor": false,
+                "jitter": 0.800000011920929,
+                "library": "rock",
+                "lodMode": 0,
+                "lodThresholds": [
+                  0.10000000149011612,
+                  0.03500000014901161,
+                  0.012000000104308128
+                ],
+                "maxHeight": 1000000.0,
+                "maxInstances": 0,
+                "maxScale": 1.399999976158142,
+                "maxSlope": 1.0,
+                "mesh": "",
+                "minHeight": 0.30000001192092896,
+                "minScale": 0.4000000059604645,
+                "probability": 0.18000000715255737,
+                "seed": 1005,
+                "shadowDistance": 50.0,
+                "sink": 0.15000000596046448,
+                "spacing": 6.0,
+                "tint": 0.12999999523162842,
+                "viewDistance": 450.0
+              },
+              "type": "FoliageType"
+            }
+          ],
+          "id": "466de486522c4f8d",
+          "name": "Rocks",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "alignToNormal": 0.0,
+                "autoLods": 0,
+                "avoid": "Baobabs:5, Acacias:2.5, Fever trees:1.5, Boulders:3",
+                "biomeThreshold": 0.0,
+                "biomes": "",
+                "castShadows": true,
+                "clusterCoverage": 0.5,
+                "clusterFrequency": 0.0,
+                "colliderDistance": 40.0,
+                "colliderSize": [
+                  0.30000001192092896,
+                  3.0,
+                  0.30000001192092896
+                ],
+                "colliderUserValue": 0,
+                "collision": 0,
+                "impostor": false,
+                "jitter": 0.800000011920929,
+                "library": "bush",
+                "lodMode": 0,
+                "lodThresholds": [
+                  0.10000000149011612,
+                  0.03500000014901161,
+                  0.012000000104308128
+                ],
+                "maxHeight": 1000000.0,
+                "maxInstances": 0,
+                "maxScale": 1.399999976158142,
+                "maxSlope": 1.0,
+                "mesh": "",
+                "minHeight": 0.30000001192092896,
+                "minScale": 0.699999988079071,
+                "probability": 0.5,
+                "seed": 1006,
+                "shadowDistance": 60.0,
+                "sink": 0.15000000596046448,
+                "spacing": 4.5,
+                "tint": 0.12999999523162842,
+                "viewDistance": 350.0
+              },
+              "type": "FoliageType"
+            }
+          ],
+          "id": "83faac572f564652",
+          "name": "Bushes",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        }
+      ],
+      "fields": {
+        "bodiesPerFrame": 300,
+        "cellSize": 64.0,
+        "colliderFocus": "Player",
+        "edgeMargin": 45.0,
+        "instancesPerFrame": 6000,
+        "preload": true
+      },
+      "id": "0620f0877e5fe381",
+      "name": "Foliage",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Foliage"
+    },
+    {
+      "active": true,
+      "fields": {
+        "alphaCutoff": 0.5,
+        "biomeThreshold": 0.5,
+        "biomes": "*:1, Rocky:-1.2, Swamp:-0.8",
+        "bladeWidth": 0.05999999865889549,
+        "bladesPerClump": 6,
+        "cards": 0,
+        "castShadows": true,
+        "clumpRadius": 0.30000001192092896,
+        "colorA": [
+          0.7799999713897705,
+          0.6299999952316284,
+          0.3199999928474426
+        ],
+        "colorB": [
+          0.550000011920929,
+          0.550000011920929,
+          0.25999999046325684
+        ],
+        "colorFrequency": 0.012000000104308128,
+        "fadeStart": 30.0,
+        "farDensity": 0.30000001192092896,
+        "fragmentShader": "grass.frag",
+        "heightFrequency": 0.05000000074505806,
+        "heightVariation": 0.30000001192092896,
+        "lodBlend": 4.0,
+        "lodDistances": [
+          8.0,
+          25.0,
+          60.0
+        ],
+        "maskResolution": 1.0,
+        "maxGroundHeight": 1000000.0,
+        "maxHeight": 1.0499999523162842,
+        "maxSlope": 0.3400000035762787,
+        "maxTilt": 0.20000000298023224,
+        "mesh": "",
+        "minGroundHeight": 0.25,
+        "minHeight": 0.44999998807907104,
+        "patchContrast": 2.0,
+        "patchFrequency": 0.029999999329447746,
+        "patchOffset": 0.20000000298023224,
+        "radius": 110.0,
+        "seed": 0,
+        "shadowDistance": 30.0,
+        "spacing": 0.75,
+        "sway": 1.0,
+        "texture": ""
+      },
+      "id": "781b9a43d04ce50b",
+      "name": "Grass",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "GrassLayer"
+    },
+    {
+      "active": true,
+      "fields": {
+        "alphaCutoff": 0.5,
+        "biomeThreshold": 0.4000000059604645,
+        "biomes": "Swamp:1",
+        "bladeWidth": 0.029999999329447746,
+        "bladesPerClump": 5,
+        "cards": 0,
+        "castShadows": true,
+        "clumpRadius": 0.30000001192092896,
+        "colorA": [
+          0.30000001192092896,
+          0.4000000059604645,
+          0.14000000059604645
+        ],
+        "colorB": [
+          0.41999998688697815,
+          0.46000000834465027,
+          0.18000000715255737
+        ],
+        "colorFrequency": 0.05000000074505806,
+        "fadeStart": 30.0,
+        "farDensity": 0.30000001192092896,
+        "fragmentShader": "grass.frag",
+        "heightFrequency": 0.05000000074505806,
+        "heightVariation": 0.0,
+        "lodBlend": 4.0,
+        "lodDistances": [
+          8.0,
+          25.0,
+          60.0
+        ],
+        "maskResolution": 1.0,
+        "maxGroundHeight": 0.6000000238418579,
+        "maxHeight": 2.299999952316284,
+        "maxSlope": 1.0,
+        "maxTilt": 0.20000000298023224,
+        "mesh": "",
+        "minGroundHeight": -0.5,
+        "minHeight": 1.399999976158142,
+        "patchContrast": 2.0,
+        "patchFrequency": 0.0,
+        "patchOffset": 0.20000000298023224,
+        "radius": 140.0,
+        "seed": 0,
+        "shadowDistance": 40.0,
+        "spacing": 1.2000000476837158,
+        "sway": 1.0,
+        "texture": ""
+      },
+      "id": "27e47ffc284a2d4f",
+      "name": "Reeds",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "GrassLayer"
+    },
+    {
+      "active": true,
+      "fields": {
+        "baseIntensity": 22.0
+      },
+      "id": "917bf40158ca20e2",
+      "name": "Campfire",
+      "position": [
+        20.0,
+        3.200000047683716,
+        10.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Campfire"
+    },
+    {
+      "active": true,
+      "fields": {
+        "intensity": 7.0
+      },
+      "id": "77fb2c4d2e1d728a",
+      "name": "Torch",
+      "position": [
+        13.337164878845215,
+        3.200000047683716,
+        6.085077285766602
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Torch"
+    },
+    {
+      "active": true,
+      "fields": {
+        "intensity": 7.0
+      },
+      "id": "84a90f37ec4329a6",
+      "name": "Torch",
+      "position": [
+        17.62611961364746,
+        2.6324663162231445,
+        4.183318138122559
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Torch"
+    },
+    {
+      "active": true,
+      "fields": {
+        "intensity": 7.0
+      },
+      "id": "5669e7d202e74c96",
+      "name": "Torch",
+      "position": [
+        27.28179359436035,
+        3.200000047683716,
+        7.412433624267578
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Torch"
+    },
+    {
+      "active": true,
+      "children": [
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "79c4a62d9293c2a0",
+          "name": "Crate",
+          "position": [
+            -1.229736328125,
+            0.3999605178833008,
+            5.841255187988281e-06
+          ],
+          "rotation": [
+            3.9278595068026334e-05,
+            4.530407295533223e-06,
+            -8.619817526778206e-05,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "425a6c6a2da835b1",
+          "name": "Crate",
+          "position": [
+            -0.4097881317138672,
+            0.39989137649536133,
+            -1.1324882507324219e-05
+          ],
+          "rotation": [
+            1.3189549463277217e-05,
+            -8.528454600309487e-06,
+            -1.5143094969971571e-05,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "888d11df060e1295",
+          "name": "Crate",
+          "position": [
+            0.40987586975097656,
+            0.3998119831085205,
+            -3.7550926208496094e-06
+          ],
+          "rotation": [
+            3.167523391311988e-05,
+            -1.5520396118517965e-05,
+            -1.203331748911296e-06,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "beda953fb17d97da",
+          "name": "Crate",
+          "position": [
+            1.2297611236572266,
+            0.3999943733215332,
+            -1.3709068298339844e-05
+          ],
+          "rotation": [
+            -1.0278916306560859e-05,
+            2.4241879145847633e-05,
+            -1.0247651971440064e-06,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "b7f988b7b6a10aed",
+          "name": "Crate",
+          "position": [
+            -0.8196067810058594,
+            1.1998884677886963,
+            3.4809112548828125e-05
+          ],
+          "rotation": [
+            7.396345608867705e-05,
+            -3.1145060347625986e-05,
+            -0.00014679717423859984,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "b841e0f5dca31e7e",
+          "name": "Crate",
+          "position": [
+            0.000118255615234375,
+            1.1998069286346436,
+            2.8371810913085938e-05
+          ],
+          "rotation": [
+            2.5390632799826562e-05,
+            -6.928814855200471e-06,
+            1.0764727448986378e-05,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "4465b82b4549cd99",
+          "name": "Crate",
+          "position": [
+            0.8195095062255859,
+            1.199796438217163,
+            -1.800060272216797e-05
+          ],
+          "rotation": [
+            7.002747679507593e-06,
+            1.3808869880449492e-05,
+            0.00018965170602314174,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "030820c5bb9dbfd7",
+          "name": "Crate",
+          "position": [
+            -0.4094219207763672,
+            1.9997398853302002,
+            0.00023376941680908203
+          ],
+          "rotation": [
+            0.00010703379666665569,
+            -2.8752319849445485e-05,
+            -0.0001605676079634577,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "351c1cc1643c652e",
+          "name": "Crate",
+          "position": [
+            0.4094982147216797,
+            1.9996531009674072,
+            0.00016391277313232422
+          ],
+          "rotation": [
+            4.568256554193795e-05,
+            1.3981922165839933e-05,
+            7.395300053758547e-05,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "castShadows": true,
+                "color": [
+                  0.75,
+                  0.550000011920929,
+                  0.3799999952316284,
+                  1.0
+                ],
+                "metallic": 0.0,
+                "roughness": 0.800000011920929,
+                "shape": 0,
+                "size": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "texture": "textures/thatch.png",
+                "uvScale": [
+                  1.0,
+                  1.0
+                ]
+              },
+              "type": "PrimitiveRenderer"
+            },
+            {
+              "enabled": true,
+              "fields": {
+                "angularDamping": 0.05000000074505806,
+                "continuousCollision": false,
+                "friction": 0.6000000238418579,
+                "isTrigger": false,
+                "linearDamping": 0.05000000074505806,
+                "mass": 15.0,
+                "restitution": 0.10000000149011612,
+                "shape": 1,
+                "shapeOffset": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "shapeSize": [
+                  0.800000011920929,
+                  0.800000011920929,
+                  0.800000011920929
+                ],
+                "type": 2
+              },
+              "type": "Rigidbody"
+            }
+          ],
+          "id": "f3bb3a440e00ecac",
+          "name": "Crate",
+          "position": [
+            0.0002498626708984375,
+            2.7996227741241455,
+            0.0005021095275878906
+          ],
+          "rotation": [
+            9.368437895318493e-05,
+            1.2602323295141105e-05,
+            -6.402214785339311e-05,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "tag": "crate",
+          "type": "GameObject"
+        }
+      ],
+      "id": "3aec950cd210294b",
+      "name": "Crates",
+      "position": [
+        24.0,
+        3.200000047683716,
+        1.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "GameObject"
+    },
+    {
+      "active": true,
+      "id": "36eb4386a05cd29d",
+      "name": "Reed screen",
+      "position": [
+        21.0,
+        3.1500000953674316,
+        17.5
+      ],
+      "rotation": [
+        -0.0,
+        -0.6087614297866821,
+        -0.0,
+        0.7933533191680908
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "ReedScreen"
+    },
+    {
+      "active": true,
+      "id": "27ccc75df1af1dd7",
+      "name": "Reed screen",
+      "position": [
+        18.299999237060547,
+        3.1500000953674316,
+        17.899999618530273
+      ],
+      "rotation": [
+        -0.0,
+        -0.5519369840621948,
+        -0.0,
+        0.8338858485221863
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "ReedScreen"
+    },
+    {
+      "active": true,
+      "id": "ac63b521619f0efd",
+      "name": "Reed screen",
+      "position": [
+        15.600000381469727,
+        3.1500000953674316,
+        18.299999237060547
+      ],
+      "rotation": [
+        -0.0,
+        -0.49242356419563293,
+        -0.0,
+        0.8703556656837463
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "ReedScreen"
+    },
+    {
+      "active": true,
+      "id": "a04141c71a529d1c",
+      "name": "Sunstone",
+      "position": [
+        8.953193664550781,
+        3.8965342044830322,
+        31.652259826660156
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "21f69f0ac0443087",
+      "name": "Sunstone",
+      "position": [
+        97.53715515136719,
+        4.0675458908081055,
+        62.832427978515625
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "898918fa78e710b7",
+      "name": "Sunstone",
+      "position": [
+        -69.69037628173828,
+        0.9283567070960999,
+        49.85252380371094
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "ad41ce115a2b1dd0",
+      "name": "Sunstone",
+      "position": [
+        -32.345970153808594,
+        3.869973659515381,
+        -0.6815948486328125
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "634a5a3608edb3a0",
+      "name": "Sunstone",
+      "position": [
+        82.83041381835938,
+        4.603783130645752,
+        73.13359069824219
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "7f225c9a1787ac77",
+      "name": "Sunstone",
+      "position": [
+        102.78109741210938,
+        7.443018436431885,
+        -42.38783264160156
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "62b3df6788a8ac9c",
+      "name": "Sunstone",
+      "position": [
+        32.53782653808594,
+        5.916562080383301,
+        -19.19327163696289
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "3449287f21932a24",
+      "name": "Sunstone",
+      "position": [
+        -46.54057312011719,
+        2.0256669521331787,
+        78.9591064453125
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "4c524c9a16cdfe8d",
+      "name": "Sunstone",
+      "position": [
+        2.9340667724609375,
+        3.698634624481201,
+        23.56792449951172
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "3604c274ffb22929",
+      "name": "Sunstone",
+      "position": [
+        -3.8398361206054688,
+        5.692264080047607,
+        -45.01958465576172
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "31d971093bf41e9b",
+      "name": "Sunstone",
+      "position": [
+        -10.286571502685547,
+        4.305281162261963,
+        91.87744140625
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "73f55b8360bd5342",
+      "name": "Sunstone",
+      "position": [
+        81.8260498046875,
+        4.503493785858154,
+        11.376480102539063
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "tag": "collectible",
+      "type": "Sunstone"
+    },
+    {
+      "active": true,
+      "id": "efbe1843525a7fe6",
+      "name": "PlayerStart",
+      "position": [
+        29.0,
+        3.200000047683716,
+        15.0
+      ],
+      "rotation": [
+        0.0,
+        0.6293204426765442,
+        0.0,
+        0.77714604139328
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "PlayerStart"
+    },
+    {
+      "active": true,
+      "children": [
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "fadeIn": 5.0,
+                "gap": [
+                  15.0,
+                  45.0
+                ],
+                "playOnStart": true,
+                "shuffle": true,
+                "tracks": "audio/ambient_01.wav; audio/ambient_02.wav",
+                "volume": 0.15000000596046448
+              },
+              "type": "MusicMood"
+            }
+          ],
+          "id": "ce33162ebd17f9ab",
+          "name": "Explore",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "fadeIn": 4.0,
+                "gap": [
+                  6.0,
+                  20.0
+                ],
+                "playOnStart": false,
+                "shuffle": true,
+                "tracks": "audio/ambient_02.wav",
+                "volume": 0.15000000596046448
+              },
+              "type": "MusicMood"
+            }
+          ],
+          "id": "c707ff8e9ba6028d",
+          "name": "Camp",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "fadeIn": 1.0,
+                "gap": [
+                  0.0,
+                  2.0
+                ],
+                "playOnStart": false,
+                "shuffle": true,
+                "tracks": "audio/ambient_01.wav",
+                "volume": 0.30000001192092896
+              },
+              "type": "MusicMood"
+            }
+          ],
+          "id": "23e66a226e5150c0",
+          "name": "Combat",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "exitMargin": 3.0,
+                "height": 0.0,
+                "mood": "Camp",
+                "priority": 0,
+                "radius": 20.0
+              },
+              "type": "MusicZone"
+            }
+          ],
+          "id": "bd943a9009bef2ee",
+          "name": "Camp music zone",
+          "position": [
+            20.0,
+            3.200000047683716,
+            10.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        }
+      ],
+      "id": "bd69ef4ecdbe1f86",
+      "name": "Music",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "GameObject"
+    },
+    {
+      "active": true,
+      "children": [
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biomeRadius": 12.0,
+                "biomes": "Savannah:1, Camp:0.8, Rocky:0.5, Swamp:0.3",
+                "bus": "Ambient",
+                "distance": [
+                  10.0,
+                  35.0
+                ],
+                "fadeTime": 3.0,
+                "fromHour": 19.0,
+                "heightRange": 4.0,
+                "hourFade": 1.0,
+                "interval": [
+                  3.0,
+                  10.0
+                ],
+                "loop": "audio/ambience/crickets_loop.wav",
+                "oneShots": "",
+                "parameters": "rain:-0.8, wind:-0.4",
+                "pitchVariation": 0.07999999821186066,
+                "toHour": 5.5,
+                "volume": 0.44999998807907104,
+                "volumeVariation": 0.30000001192092896
+              },
+              "type": "AmbientLayer"
+            }
+          ],
+          "id": "a83feeb2fca5b16e",
+          "name": "Crickets",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biomeRadius": 25.0,
+                "biomes": "Swamp:1",
+                "bus": "Ambient",
+                "distance": [
+                  10.0,
+                  35.0
+                ],
+                "fadeTime": 3.0,
+                "fromHour": 18.0,
+                "heightRange": 4.0,
+                "hourFade": 1.0,
+                "interval": [
+                  3.0,
+                  10.0
+                ],
+                "loop": "audio/ambience/frogs_loop.wav",
+                "oneShots": "",
+                "parameters": "",
+                "pitchVariation": 0.07999999821186066,
+                "toHour": 7.0,
+                "volume": 0.5,
+                "volumeVariation": 0.30000001192092896
+              },
+              "type": "AmbientLayer"
+            }
+          ],
+          "id": "804c1e28dfee51b0",
+          "name": "Swamp frogs",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biomeRadius": 12.0,
+                "biomes": "Savannah:1, Rocky:0.6",
+                "bus": "Ambient",
+                "distance": [
+                  10.0,
+                  35.0
+                ],
+                "fadeTime": 3.0,
+                "fromHour": 9.5,
+                "heightRange": 4.0,
+                "hourFade": 1.5,
+                "interval": [
+                  3.0,
+                  10.0
+                ],
+                "loop": "audio/ambience/day_insects_loop.wav",
+                "oneShots": "",
+                "parameters": "rain:-1, wind:-0.5",
+                "pitchVariation": 0.07999999821186066,
+                "toHour": 17.5,
+                "volume": 0.15000000596046448,
+                "volumeVariation": 0.30000001192092896
+              },
+              "type": "AmbientLayer"
+            }
+          ],
+          "id": "dd9911de5ae194eb",
+          "name": "Day insects",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biomeRadius": 12.0,
+                "biomes": "*:1, Swamp:-0.3",
+                "bus": "Ambient",
+                "distance": [
+                  12.0,
+                  40.0
+                ],
+                "fadeTime": 3.0,
+                "fromHour": 5.25,
+                "heightRange": 4.0,
+                "hourFade": 1.0,
+                "interval": [
+                  1.5,
+                  6.0
+                ],
+                "loop": "",
+                "oneShots": "audio/ambience/bird_1.wav; audio/ambience/bird_2.wav; audio/ambience/bird_3.wav",
+                "parameters": "rain:-1",
+                "pitchVariation": 0.07999999821186066,
+                "toHour": 9.5,
+                "volume": 0.5,
+                "volumeVariation": 0.30000001192092896
+              },
+              "type": "AmbientLayer"
+            }
+          ],
+          "id": "01101d03c7040d89",
+          "name": "Dawn birds",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biomeRadius": 12.0,
+                "biomes": "*:1, Rocky:-0.5",
+                "bus": "Ambient",
+                "distance": [
+                  15.0,
+                  45.0
+                ],
+                "fadeTime": 3.0,
+                "fromHour": 9.0,
+                "heightRange": 4.0,
+                "hourFade": 1.0,
+                "interval": [
+                  6.0,
+                  18.0
+                ],
+                "loop": "",
+                "oneShots": "audio/ambience/bird_4.wav; audio/ambience/bird_1.wav",
+                "parameters": "rain:-1",
+                "pitchVariation": 0.07999999821186066,
+                "toHour": 17.75,
+                "volume": 0.3499999940395355,
+                "volumeVariation": 0.30000001192092896
+              },
+              "type": "AmbientLayer"
+            }
+          ],
+          "id": "7cf814401ba260b3",
+          "name": "Day birds",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        },
+        {
+          "active": true,
+          "components": [
+            {
+              "enabled": true,
+              "fields": {
+                "biomeRadius": 12.0,
+                "biomes": "Savannah:1, Rocky:1",
+                "bus": "Ambient",
+                "distance": [
+                  60.0,
+                  120.0
+                ],
+                "fadeTime": 3.0,
+                "fromHour": 20.0,
+                "heightRange": 0.0,
+                "hourFade": 0.5,
+                "interval": [
+                  25.0,
+                  70.0
+                ],
+                "loop": "",
+                "oneShots": "audio/ambience/hyena_1.wav",
+                "parameters": "rain:-0.7",
+                "pitchVariation": 0.07999999821186066,
+                "toHour": 4.5,
+                "volume": 0.5,
+                "volumeVariation": 0.30000001192092896
+              },
+              "type": "AmbientLayer"
+            }
+          ],
+          "id": "afafbc2aa59e3512",
+          "name": "Hyenas",
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "type": "GameObject"
+        }
+      ],
+      "id": "15d1af3e1ce2d897",
+      "name": "Ambience",
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "GameObject"
+    },
+    {
+      "active": true,
+      "components": [
+        {
+          "enabled": true,
+          "fields": {
+            "hiddenNodes": "",
+            "path": "models/savannah_cabin.glb",
+            "staticColliders": true
+          },
+          "type": "ModelInstance"
+        }
+      ],
+      "id": "8c3388275c80a8d8",
+      "name": "savannah_cabin",
+      "position": [
+        20.061901092529297,
+        3.177337884902954,
+        5.060178279876709
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "GameObject"
+    }
+  ],
+  "version": 1
+}

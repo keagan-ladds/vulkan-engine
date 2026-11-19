@@ -121,6 +121,7 @@ void registerBuiltinTypes()
         t.field("staticColliders", &ModelInstance::staticColliders).tooltip("Exact mesh colliders on every node");
         t.field("hiddenNodes", &ModelInstance::hiddenNodes).tooltip("Comma-separated node names to leave out, e.g. Door");
         t.field("animation", &ModelInstance::animation).tooltip("Animated models: the clip to loop (empty = the first)");
+        t.field("markers", &ModelInstance::markers).tooltip("Nodes named SNAP_*, BOX_*, EXCL_* become snap points, placement boxes, foliage exclusions");
         t.onChanged([](ModelInstance& m) { m.rebuild(); });
     });
     r.add<Interactable>("Interactable", [](TypeBuilder<Interactable>& t) {

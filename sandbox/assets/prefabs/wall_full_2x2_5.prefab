@@ -1,0 +1,38 @@
+{
+  "object": {
+    "active": true,
+    "components": [
+      {
+        "enabled": true,
+        "fields": {
+          "animation": "",
+          "hiddenNodes": "",
+          "markers": true,
+          "path": "models/building/wall_full_2x2.5.glb",
+          "staticColliders": true
+        },
+        "type": "ModelInstance"
+      }
+    ],
+    "id": "b30f166d84b49694",
+    "name": "wall_full_2x2.5",
+    "position": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "type": "GameObject"
+  },
+  "version": 1
+}

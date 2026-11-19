@@ -1,4 +1,17 @@
 {
     // GLSL files use #include; treat .glsl as GLSL for syntax highlighting extensions.
-    "files.associations": { "*.glsl": "glsl", "*.vert": "glsl", "*.frag": "glsl", "*.comp": "glsl" }
+    "files.associations": { "*.glsl": "glsl", "*.vert": "glsl", "*.frag": "glsl", "*.comp": "glsl" },
+
+    // Keep the C/C++ extension's background processes from competing with the build
+    // for RAM (VS Code was being OOM-killed during compiles).
+    "C_Cpp.intelliSenseMemoryLimit": 2048,
+    "C_Cpp.maxConcurrentThreads": 2,
+    "C_Cpp.maxCachedProcesses": 2,
+    "C_Cpp.intelliSense.maxCachedProcesses": 2,
+    "C_Cpp.intelliSense.maxMemory": 2048,
+    "C_Cpp.references.maxCachedProcesses": 0,
+
+    // Don't let the file watcher/search crawl build output and fetched deps.
+    "files.watcherExclude": { "**/build/**": true, "**/build-release/**": true },
+    "search.exclude": { "**/build/**": true, "**/build-release/**": true }
 }
