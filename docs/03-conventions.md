@@ -72,6 +72,39 @@ crate.transform().setPosition({0, 1, 0});
 Read one-shot inputs (`keyPressed`, `actionPressed`) in `update()`. If physics
 in `fixedUpdate()` needs them, pass them over as a flag (see `Player`).
 
+### Input: actions, axes, gamepads, rebinding
+
+Gameplay reads named actions and axes, never keys, so players can rebind and a
+gamepad works without extra code:
+
+```cpp
+ve::Input& in = input();
+in.bindAction("Jump", ve::Key::Space);
+in.bindAction("Jump", ve::GamepadButton::A);
+in.bindAction("Throw", ve::GamepadAxis::RightTrigger);   // trigger past triggerThreshold
+in.bindAxis("MoveY", ve::Key::S, ve::Key::W);            // -1 .. +1
+in.bindAxis("MoveY", ve::GamepadAxis::LeftY, -1.0f);     // stick up = forward
+float fwd = in.axisValue("MoveY");                       // strongest source wins
+```
+
+- Sticks have a radial dead zone (`stickDeadZone`); the first connected
+  controller is used (`gamepadConnected()`, `gamepadName()`).
+- Rebinding UI: list `in.actions()` with `in.bindingNames(action)`, call
+  `in.startRebind(action)`; the next key, mouse button or pad button/trigger
+  replaces that device's bindings (Escape cancels, `rebinding()` tells you it
+  is waiting). Persist with `saveBindings()` / `loadBindings(json)`. The
+  savanna's F10 window does this and keeps `controls.json` in the save folder.
+- Tests: `attachVirtualGamepad()` + `setVirtualGamepadAxis/Button` drive an SDL
+  virtual controller (works headless).
+
+### Profile CPU time
+
+Wrap a scope in `VE_PROFILE("Name")` (main thread; nested scopes become child
+rows). The F1 overlay's "CPU zones" table and `VE_BENCH` output show the
+average and the worst frame of the last second. The engine already times the
+frame phases (fixed update, update, GUI, audio, render and its sub-steps) and
+the terrain, foliage and grass systems; GPU time per pass is in "Render passes".
+
 ### Write a reusable Component
 
 ```cpp
@@ -198,6 +231,318 @@ see `vfx.glsl`). Games should use 4–7.
 Put files under `<game>/assets/` (copied next to the exe on build), then
 `assets().loadTexture("textures/x.png", srgb)`, `loadModel("models/x.gltf")`
 followed by `scene.instantiate(*model)`, or `loadAudio("audio/x.wav")`.
+
+### Interaction ("press E to ...")
+
+```cpp
+// The thing (a component; subclass it or set the callbacks):
+auto& use = chest.addComponent<ve::Interactable>();
+use.prompt = "Open chest";                       // or use.promptFn = [&] { return ...; } ("" = can't now)
+use.onUse = [&](ve::GameObject& user) { chest.open(); };
+use.focusOffset = {0, 0.5f, 0};                  // aim point for objects without a collider
+
+// The player: finds the focus each frame (main camera view) and uses it on the action.
+auto& who = player.addComponent<ve::Interactor>();
+who.action = "Use";                              // an Input action (in.bindAction("Use", Key::E))
+// HUD: if (auto p = who.prompt(); !p.empty()) draw("[E] " + p);
+```
+
+Focus is what the eye ray hits (an Interactable on that object or a
+parent), else the best Interactable in a `coneDegrees` view cone within
+reach that nothing blocks. The engine never draws prompts: the game decides
+how (Savanna's HUD shows "[E] <prompt>").
+
+### Save games
+
+```cpp
+// Anything with state worth keeping: implement ve::Saveable (GameObject or Component).
+class Chest : public ve::GameObject, public ve::Saveable {
+    void saveState(ve::Json& out) const override { out["open"] = m_open; }
+    void loadState(const ve::Json& in) override { m_open = in.value("open", false); }
+};
+
+ve::save::saveGame(scene, "slot1", {{"gold", gold}});          // + the game's own data
+// Loading: rebuild the level first (pickups collected after the save come
+// back), then apply. Savanna does it behind the loading screen (World.hpp):
+engine.beginLoading(makeLoadingScene());
+engine.addLoadStep("Leaving", [&] { engine.scene().clear(); });
+engine.addLoadStep("Loading", [&] { buildLevel(engine); });
+engine.addLoadStep("Restoring", [&, save] { ve::save::apply(engine.scene(), save); /* + game data */ });
+```
+
+A save records moved physics objects of the level, level objects that are
+gone, and every Saveable's state, keyed by persistent id (level objects) or
+name (code-spawned ones, so give those unique names). The engine's Foliage
+(chopped / picked instances), Terrain (edits) and DayNightCycle (time) are
+Saveable. Slots: `ve::save::folder()` (per-user data folder, or
+`EngineConfig::saveFolder`, or `VE_SAVE_DIR`), written atomically.
+
+### Loading screens
+
+```cpp
+ve::Engine engine(config);
+engine.beginLoading(makeLoadingScene(), 0.5f);            // your own small scene (UI in onGui)
+engine.addLoadStep("Loading the world", [&] { loadWorld(engine); }); // main thread, one step per frame
+engine.run();
+```
+
+The loading scene's objects read `engine().loadProgress()` (0..1) and
+`engine().loadStatus()` (the current step / task name). Systems that fill
+the world over several frames register a task:
+`engine().addLoadTask("Placing vegetation", [] { return progress; })`
+(Foliage does, instead of its synchronous preload). The world updates in
+editor-paused mode meanwhile, so only `runInEditor` objects run. The
+backbuffer is sRGB: convert display colours to linear for ImGui (see the
+sandbox's `LoadingScreen.cpp`).
+
+Wait for what the player needs to start, not the whole world: a task's
+progress should reach 1 when the area around the viewer is ready and keep
+streaming the rest afterwards (foliage: `FoliageSettings::readyDistance`).
+When the editor is open the same calls show no loading scene: the editor
+draws a progress panel over the world as it fills in. So a game that can
+start in the editor should ask for Edit mode before `beginLoading`.
+
+### Fire (campfires, torches)
+
+```cpp
+auto& fire = flames.addComponent<vfx::Fire>();   // at the fuel, flames go up
+fire.height = 1.4f; fire.radius = 0.5f; fire.intensity = 4.0f;
+fire.coals = 0.0f;                               // torches / candles: no ember bed
+// update(): the light follows the flames
+light->intensity = base * fire.flicker();
+light->transform().setLocalPosition(lightPos + fire.lightJitter());
+```
+
+Smoke and sparks are `ParticleEmitter`s on top (see the sandbox's
+`Campfire`). `temperature` < 1 gives a lazier, redder fire; more `layers`
+gives a fuller one. `haze` (0 = off) sets the heat shimmer above the flames;
+the sandbox uses 1 for the campfire and 0.6 for torches. Everything is
+editable in the editor's inspector.
+
+### Animated characters (skinned glTF)
+
+```cpp
+auto model = assets().loadModel("models/villager.gltf"); // skin + clips (Idle, Walk)
+ve::GameObject& v = scene.instantiate(*model, this);    // under this object
+auto* anim = v.getComponent<ve::Animator>();
+anim->play("Walk", 0.3f);                               // crossfade 0.3 s
+anim->play("Idle", 0.3f);                               // and back
+ve::GameObject* hand = scene.find("LowerArm.R");        // joints are objects: parent props to them
+```
+
+In a scene file: a `ModelInstance` with `path` and `animation` (the clip to
+loop). Models face +Z (glTF). See the sandbox's `Villager` (wanders around
+the camp, walks and idles) and `tools/generate_assets.py` (`villager()`
+writes a rigged model with keyframed clips).
+
+### Prefabs
+
+```cpp
+ve::prefab::save(object, "prefabs/hut.prefab");                       // or Edit > Save as prefab
+ve::GameObject* hut = ve::prefab::instantiate(scene(), "prefabs/hut.prefab", pos, rot);
+```
+
+A prefab stores the object's registered type, fields, persistent components
+and children. Code that builds meshes from fields in `start()` (like
+`BuildPiece`) makes tiny prefabs: just the type and its fields. Instances
+spawned while playing are kept by save games automatically.
+
+### Building: snap points, previews, placing
+
+Engine mechanics, game rules. A piece is a prefab with `SnapPoint`s
+(and optionally `PlacementBox`es if its bounds are a poor fit, e.g. sloped
+roofs); the game's build tool runs:
+
+```cpp
+preview.show(scene(), piecePath);  preview.update();               // ghost (late update)
+glm::quat rot = glm::angleAxis(ve::placement::snapAngle(yaw, glm::radians(45.0f)), up);
+glm::vec3 pos = aim;
+if (auto s = ve::placement::findSnap(scene(), preview.snapPoints(), rot, aim, 0.9f, preview.object())) pos = s->position;
+preview.setPose(pos, rot);
+preview.setValid(ve::placement::fits(physics(), preview.volume(), pos, rot, 0.1f, allowTerrain));
+if (placePressed && preview.valid()) ve::prefab::instantiate(scene(), piecePath, pos, rot);
+```
+
+- Snap points are positions; the piece keeps the player's rotation. Lay
+  them out on one lattice (Savanna: tile corners / edge midpoints every
+  1 m, wall tops at 2.5 m, foundation tops at 0.5 m) and any pair lines up.
+- Fittings (doors, windows) go into openings:
+  - **Matching types:** the wall has a point typed `door-opening` (accepting
+    nothing), and the door a point typed `door` accepting `door-opening`.
+    Nothing else snaps there.
+  - **Rotation:** the door's point sets `alignRotation`, so the door also
+    turns to match the opening's facing (either way round, whichever is
+    nearer the player's rotation, so R still flips the swing).
+  - **Aiming:** `findSnap` also counts a target the player aims straight at,
+    so aiming into the hole works even though the door's origin is at its
+    bottom.
+  - **The build tool (game):** lets the fitting's volume touch its host (the
+    snap target's piece) in `fits`, only accepts fittings that snapped, and
+    removes fittings whose points sit on a removed piece's openings.
+- Saveable components on prefab pieces (a door's open state) must exist when
+  the instance is created. Declare them in the prefab, not in `start()`, or
+  a loaded game has nothing to restore them into.
+- Pieces that create colliders in `start()` skip them on ghosts
+  (`PlacementGhost::is(*this)`).
+- Optionally clear the vegetation under a piece: add a `FoliageExclusion`
+  (box, a little bigger than the footprint) to its prefab. Placing / removing
+  it re-places only the nearby foliage and re-bakes grass in the background
+  (Savanna: the stone foundation and the stairs).
+- Rebuild the navmesh around placed / removed pieces (`NavMeshSurface::rebuild`).
+- Roofs: eaves (low edge) on wall tops; a roof whose slope cuts through a
+  side wall is (correctly) blocked.
+
+### Seeing what's going on: debug drawing
+
+```cpp
+if (ve::debug::enabled("AI targets")) {          // a channel: F1 > Debug draw (off until ticked)
+    ve::debug::path(corners, ve::debug::kMagenta);
+    ve::debug::text(head, "Hunting", ve::debug::kYellow);
+}
+ve::debug::sphere(hit.point, 0.2f, ve::debug::kRed, {.duration = 3.0f}); // stays 3 s
+```
+
+- Draw every frame (duration 0) for live state; give one-off events
+  (an impact, a spawn) a duration.
+- Put game drawing behind a channel so it costs nothing until switched on.
+- Turn on "Physics colliders" / "Navmesh" / "Nav agents" in F1 before
+  guessing why something collides or won't walk there (`SAVANNA_DRAW=...`
+  in screenshots).
+
+### Collision layers and surfaces
+
+- Name layers by what things *are* ("Debris", "Projectile", "Enemy"), add
+  them once at startup, then write the rules as pairs that don't collide
+  (`setCollision(debris, characters, false)`). Use masks for queries that
+  should look past something (Savanna: the Use ray ignores "Debris").
+- Give everything you can stand on or hit a surface: footsteps, impact
+  sounds and particles key off `groundSurface()` / `RaycastHit::surface` /
+  `Collision::otherSurface`. Terrain says "Terrain": ask the terrain's
+  biome at the point for grass / sand / mud.
+
+### Joints: hinged, welded, roped
+
+- Doors, gates, lids: a dynamic body on a `HingeJoint` with limits, opened by
+  a Position motor (set `motorTarget`), so players and debris can push them
+  (Savanna's doors).
+- Things that should snap (supports, planks, bridges): `FixedJoint` with a
+  `breakForce`, react in `onBreak`.
+- Ropes: a chain of light bodies on `DistanceJoint`s (`minDistance = 0`) -
+  a single long distance joint is a stick, not a rope.
+- Give jointed debris a layer the character ignores if it shouldn't trip
+  the player.
+
+### Animation on top of clips
+
+- Upper-body actions (wave, swing, carry) on a masked layer
+  (`addLayer("Arms", "Spine")`), faded with `setLayerWeight`; the legs keep
+  walking underneath.
+- Timing from the clip, not from timers: `addEvent("Walk", 0.25f, "step")`.
+- `LookAtIK` for heads that follow something (a speaker, the player, a
+  threat), `AimIK` for arms / weapons / tools pointing at a target: set and
+  clear the target, the blend does the easing.
+- `FootIK` on anything that walks on uneven ground; `TwoBoneIK` for hands
+  that must reach something (a door handle, a ladder rung). Models need end
+  joints (Foot / Hand) for the IK to aim with.
+
+### Multiplayer-ready gameplay
+
+Write gameplay as if a host were always there (offline *is* a host with
+nobody connected), and multiplayer mostly works:
+
+```cpp
+// Anything that changes the shared world: ask the authority.
+void Chest::onUse() {
+    ve::net::Writer w; w.write(id());
+    net().toServer("chest.open", w);          // offline / host: runs right now
+}
+// Registered once (constructor / start), runs on the host only:
+net().on("chest.open", [this](ve::net::PeerId from, ve::net::Reader& r) {
+    auto id = r.read<uint64_t>();  if (r.failed()) return;   // check what clients send
+    ... validate (reach, permission) ...
+    m_open = true;  netObject->markDirty();    // replicate (NetReplicated)
+});
+```
+
+- **Who changes what:** the host changes the world; a player's machine
+  changes only what it owns (its character). Clients never call
+  `spawn` / `despawn` / `destroy()` on shared objects: they ask.
+- **New things in the world:** `net().spawn(prefab, ...)` instead of
+  `prefab::instantiate`; removing: `net().despawn(obj)` instead of
+  `destroy()`. Both work offline.
+- **State others must see:** `NetReplicated` + `markDirty()` (a door's open
+  flag, an avatar's name); moving things: `NetworkTransform`. Ordinary
+  per-machine visuals (particles, sounds, UI) stay local; trigger them from
+  the replicated state or a `toClients` event.
+- **Player-specific vs world:** the world snapshot is a save capture, so
+  per-player things (the local Player, inventory) must be left out of it
+  (Savanna's `worldSnapshot` drops the "name:Player" state).
+- **Handlers:** register in the constructor of an object that exists before
+  messages can arrive (messages waiting for a loading screen are handled at
+  the top of the next frame, before `start()`); `off()` them in
+  `onDestroy()`.
+- Test with `tools/nettest.sh build-release/bin <out>` (host + client
+  processes on one machine).
+
+### Game UI: HUD, menus, inventories
+
+Engine elements, game look. Keep a small theme of the game's own (Savanna:
+`GameUi.hpp`, fonts + colours + `window` / `menuButton` builders) and build
+screens from it:
+
+```cpp
+ui::loadFont("heading", "assets/fonts/Cinzel_600SemiBold.ttf", {24, 48});
+auto& canvas = addComponent<ui::Canvas>();       // on a GameObject
+canvas.modal = true;  canvas.onBack = [this] { close(); };
+auto& bar = canvas.root().add<ui::ProgressBar>("health");
+bar.anchor({0, 1}).pivot({0, 1}).at({40, -60}).size({300, 14});
+bar.bind = [this] { return player.health / player.maxHealth; };
+auto& b = canvas.root().add<ui::Button>("Resume");
+b.onClick = [this] { resume(); };
+```
+
+- Work in reference units (1920x1080); anchors keep things at edges /
+  centres at any aspect ratio.
+- HUDs are non-modal canvases (gameplay keeps the input); inventories,
+  build menus and menus are modal (gameplay goes quiet, the cursor shows,
+  arrows / pad navigate). Toggle keys that should also *close* a modal
+  screen go in its `shortcuts` (the modal canvas swallows the action).
+- Text: `ui::TextInput` (focus it to type; `accept` to filter, `onSubmit` for
+  Enter); long lists: put rows in a `ui::ScrollView`'s `content()` rather
+  than a bare Stack, so they scroll and follow keyboard focus.
+- Give elements names ("slot3", "piece:Mud brick wall"): tests find them
+  with `root().find(name)` and `click()` them like a player would.
+- Live values: `Label::bind` / `ProgressBar::bind` instead of updating
+  every frame by hand.
+- Item / piece pictures: bake them once at load (`ui::bakeIcon` from the
+  mesh data; a load step) and keep the `shared_ptr<Texture>`.
+- A title screen over the real world: spawn a high-priority camera, hold
+  the time of day, hide the HUD, and drop the camera when play starts
+  (Savanna's `MainMenu`).
+
+### Walking AI: navmesh + agents
+
+```cpp
+// The level: a NavMeshSurface over the area (scene file or code).
+auto& nav = scene.spawn("Navigation").addComponent<ve::NavMeshSurface>();
+nav.size = {192.0f, 400.0f, 192.0f};        // box around the object
+nav.settings.agentRadius = 0.35f;
+
+// A character: the engine walks, the game decides where.
+auto& agent = addComponent<ve::NavAgent>();
+agent.speed = 1.3f;
+if (agent.arrived())
+    if (auto p = ve::NavMeshSurface::find(scene())->randomPointNear(home, 8.0f)) agent.setDestination(*p);
+```
+
+- Agents join once the navmesh under them is built (a few frames; behind a
+  loading screen it's done before play starts). Move them with `warp()`,
+  not the Transform. Following something that moves: call `setDestination`
+  a few times a second (see `Villager`).
+- Static Rigidbodies, the terrain and foliage colliders block; kinematic and
+  dynamic bodies don't (agents avoid each other, not crates). After moving
+  static geometry call `rebuild(area)`; chopped trees rebuild by themselves.
+- Big worlds: `streamRadius` keeps only tiles around the camera (or `focus`).
 
 ### Thousands of props: instancing
 

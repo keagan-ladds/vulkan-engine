@@ -85,7 +85,7 @@ void PickingPass::execute(RenderContext& ctx)
             if (!it.owner) continue;
             if (it.mesh != bound) {
                 VkBuffer vb = it.mesh->vertexBuffer();
-                VkDeviceSize offset = 0;
+                VkDeviceSize offset = it.mesh->vertexOffset();
                 vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
                 vkCmdBindIndexBuffer(ctx.cmd, it.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
                 bound = it.mesh;

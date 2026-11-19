@@ -149,6 +149,7 @@ struct FoliageLayer : FoliageRules {
     std::vector<std::vector<InstanceLod>> variants; // one LOD chain per mesh variant (picked at random)
     std::vector<Collider> colliders;                // none / one shared / one per variant
     uint32_t colliderUserValue = 0;                 // RaycastHit::userValue of this layer's colliders
+    std::string colliderSurface;                    // their physics surface ("Wood", "Stone": footsteps, impacts)
 
     // ---- More "where" ----
     // Biome rules: return the chance (0..1) of keeping a candidate.
@@ -189,11 +190,29 @@ private:
     uint64_t m_system = 0; // FoliageSystem object id
 };
 
+// An area nothing is placed in: a circle, or a box turned by `yaw` (radians, about Y).
+struct FoliageExclusionShape {
+    glm::vec2 center{0.0f};
+    float radius = 0.0f;              // circle
+    bool box = false;
+    glm::vec2 halfExtents{0.0f};      // box (local x, z)
+    float yaw = 0.0f;
+
+    // Distance from p to the shape's edge: <= 0 inside.
+    float distance(glm::vec2 p) const;
+    glm::vec4 bounds() const;         // world x0, z0, x1, z1
+    bool operator==(const FoliageExclusionShape&) const = default;
+};
+
 struct FoliageSettings {
     float cellSize = 64.0f;
     uint32_t instancesPerFrame = 6000; // budget for adding instances to groups
     uint32_t bodiesPerFrame = 300;     // budget for creating static bodies
     float unloadMargin = 1.15f;        // unload beyond viewDistance * margin (hysteresis)
+    // Loading screens wait for the cells this close to the viewer; farther
+    // ones (big trees are drawn kilometres away) keep streaming in, nearest
+    // first, once play starts. <= 0: wait for everything in view.
+    float readyDistance = 300.0f;
 };
 
 struct FoliageStats {
@@ -212,9 +231,22 @@ public:
 
     uint32_t addLayer(FoliageLayer layer);
     void addExclusion(glm::vec2 center, float radius); // nothing is placed inside (camps, roads...)
+    void addExclusion(const FoliageExclusionShape& shape);
+    // Replaces every exclusion and places the cells around `area` (x0, z0, x1, z1)
+    // again: e.g. a building was placed. Instance states (chopped...) are kept.
+    void setExclusions(std::vector<FoliageExclusionShape> shapes, glm::vec4 area);
 
     // Synchronously loads everything visible from `viewer` (+ colliders).
     void preload(const glm::vec3& viewer);
+    // Fraction of the cells within settings.readyDistance (all in view if <= 0)
+    // that are fully placed (loading screens).
+    float streamProgress() const;
+
+    // The ground changed inside `area` (world x0, z0, x1, z1; e.g. terrain
+    // brush edits): new world callbacks and layer densities (same layers, in
+    // order; empty function = keep), and the cells around the area are placed
+    // again. Everything else, and instance states, stay as they are.
+    void refresh(FoliageWorld world, const std::vector<std::function<float(const FoliageSample&)>>& densities, glm::vec4 area);
 
     // Colliders are streamed around this object (e.g. the player); null = the camera.
     GameObject* colliderFocus = nullptr;
@@ -224,6 +256,7 @@ public:
     void onDestroy() override;
     const FoliageStats& stats() const { return m_stats; }
 
+    uint32_t layerCount() const { return uint32_t(m_layers.size()); }
     // Instances layer `layer` would place near `p` (deterministic, works for unloaded cells too).
     std::vector<glm::vec3> query(uint32_t layer, glm::vec2 p, float radius) const;
 
@@ -242,6 +275,16 @@ public:
     void setOverrides(const std::vector<std::pair<uint64_t, uint32_t>>& states);
     // The GameObject standing in for an instance while it's promoted (else null).
     GameObject* promoted(FoliageInstanceId id) const;
+
+    // ---- Obstacles (navmesh building) ----
+    // Every instance inside `area` (world x0, z0, x1, z1) whose current state
+    // has a collider, with its world transform. Works for unloaded cells too.
+    void forEachCollider(glm::vec4 area, const std::function<void(const Collider&, const glm::mat4&)>& fn) const;
+    // Called when an instance changes state (chopped, removed, restored): e.g.
+    // a navmesh rebuilds around `position`. Returns an id for removeStateListener.
+    using StateListener = std::function<void(FoliageInstanceId id, const glm::vec3& position)>;
+    uint32_t addStateListener(StateListener fn);
+    void removeStateListener(uint32_t id);
 
 private:
     struct Instance {
@@ -320,6 +363,8 @@ private:
     glm::ivec4 cellRange(int x0, int z0, int x1, int z1) const;
     void ensureGroups(LayerData& layer);
     void startWorker();
+    void stopWorkers();
+    void replaceCells(glm::vec4 area); // unload the cells near area (and queued ones) to be placed again
     void workerLoop();
     size_t applyInstances(Cell& cell, size_t budget);
     void unload(Cell& cell);
@@ -330,10 +375,12 @@ private:
     FoliageWorld m_world;
     FoliageSettings m_settings;
     std::vector<LayerData> m_layers;
-    std::vector<std::pair<glm::vec2, float>> m_exclusions;
+    std::vector<FoliageExclusionShape> m_exclusions;
     std::unordered_map<uint64_t, Cell> m_cells;
     std::unordered_map<uint64_t, uint32_t> m_overrides; // instance id -> state (main thread only)
     std::vector<FoliageInstanceId> m_promoted;          // instances currently stood in for by GameObjects
+    std::vector<std::pair<uint32_t, StateListener>> m_stateListeners;
+    uint32_t m_nextListener = 1;
     uint32_t m_nextTicket = 1;
     // update() only redoes the expensive walks over every cell when something
     // they depend on changed (big worlds have tens of thousands of cells).
@@ -343,7 +390,7 @@ private:
     bool m_bodiesWaiting = false; // colliders not all created (body budget)
     FoliageStats m_stats;
 
-    std::thread m_worker;
+    std::vector<std::thread> m_workers; // placement workers (cores - 1, at least 1)
     std::mutex m_mutex;
     std::condition_variable m_cv;
     std::vector<Job> m_jobs;

@@ -361,6 +361,10 @@ const char* propName(uint32_t userValue)
 
 void registerPropMeshes()
 {
+    // Once: re-adding would drop the built meshes (and impostors) when the level reloads.
+    static bool registered = false;
+    if (registered) return;
+    registered = true;
     ve::MeshLibrary::add("acacia", [](ve::Renderer& r) {
         ve::FoliageMeshes set;
         for (uint32_t i = 0; i < 5; ++i) addVariant(r, set, acacia(100 + i), "acacia", {{kTreeMid, 0.035f}}, 0.10f, true);

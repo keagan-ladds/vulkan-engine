@@ -190,6 +190,10 @@ public:
     RenderStage stage() const { return m_stage; }
     int order() const { return m_order; }
     bool enabled = true;
+    // Also runs on loading-screen frames (Renderer::setLoadingFrames), which
+    // otherwise only draw the UI: work the world's streaming relies on
+    // (instance uploads) and the UI itself.
+    bool runsWhileLoading = false;
     float gpuTimeMs = 0.0f;     // measured with GPU timestamps, smoothed (shown in the F1 overlay)
     float lastGpuTimeMs = 0.0f; // the latest raw measurement (benchmarks)
 
@@ -264,6 +268,8 @@ public:
     const std::vector<RenderPass*>& lastExecuted() const { return m_executed; }
     // Passes at this stage or later are skipped (photo capture leaves out the UI).
     int maxStage = 1 << 30;
+    // Loading-screen frames: only passes with runsWhileLoading.
+    bool loadingFrame = false;
     // Transitions a texture outside of any pass (e.g. backbuffer -> present).
     void transition(VkCommandBuffer cmd, TextureId id, Access access);
     void clearPasses();

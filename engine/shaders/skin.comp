@@ -1,0 +1,49 @@
+#version 460
+// GPU skinning (ve::SkinningSystem): one thread per vertex of one skinned
+// mesh. Rest vertex x (up to 4 weighted joint matrices) -> output vertex,
+// which the regular pipelines then draw like any mesh.
+#define VE_CUSTOM_PUSH_CONSTANTS
+#include "ve.glsl"
+
+layout(local_size_x = 64) in;
+
+struct RawVertex { // ve::Vertex: position 3, normal 3, uv 2, tangent 4, colour 4 (tightly packed)
+    float f[16];
+};
+struct SkinWeight {
+    uvec4 joints;
+    vec4 weights;
+};
+
+layout(set = 0, binding = 10, std430) readonly buffer Rest { RawVertex rest[]; };
+layout(set = 0, binding = 11, std430) readonly buffer Weights { SkinWeight skinWeights[]; };
+layout(set = 0, binding = 12, std430) readonly buffer Matrices { mat4 jointMatrices[]; };
+layout(set = 0, binding = 13, std430) writeonly buffer Output { RawVertex skinned[]; };
+
+layout(push_constant) uniform Push {
+    uint restBase;
+    uint outputBase;
+    uint count;
+    uint matrixBase; // this mesh's joint matrices (mesh space)
+} pc;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.count) return;
+    RawVertex v = rest[pc.restBase + i];
+    SkinWeight w = skinWeights[pc.restBase + i];
+    mat4 m = jointMatrices[pc.matrixBase + w.joints.x] * w.weights.x;
+    if (w.weights.y > 0.0) m += jointMatrices[pc.matrixBase + w.joints.y] * w.weights.y;
+    if (w.weights.z > 0.0) m += jointMatrices[pc.matrixBase + w.joints.z] * w.weights.z;
+    if (w.weights.w > 0.0) m += jointMatrices[pc.matrixBase + w.joints.w] * w.weights.w;
+
+    vec3 p = (m * vec4(v.f[0], v.f[1], v.f[2], 1.0)).xyz;
+    vec3 n = normalize(mat3(m) * vec3(v.f[3], v.f[4], v.f[5]));
+    vec3 t = mat3(m) * vec3(v.f[8], v.f[9], v.f[10]);
+    t = dot(t, t) > 1e-12 ? normalize(t) : vec3(1.0, 0.0, 0.0);
+    v.f[0] = p.x; v.f[1] = p.y; v.f[2] = p.z;
+    v.f[3] = n.x; v.f[4] = n.y; v.f[5] = n.z;
+    v.f[8] = t.x; v.f[9] = t.y; v.f[10] = t.z;
+    skinned[pc.outputBase + i] = v;
+}

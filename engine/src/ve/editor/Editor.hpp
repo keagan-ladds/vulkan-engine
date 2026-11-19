@@ -14,6 +14,7 @@
 // =============================================================================
 
 #include "ve/editor/Gizmo.hpp"
+#include "ve/world/Terrain.hpp"
 #include "ve/scene/Reflection.hpp"
 
 #include <filesystem>
@@ -39,6 +40,9 @@ public:
     void beginFrame(float realDt); // shortcuts, editor camera, pick results
     void onGui();                  // panels, gizmo, debug shapes
     bool paused() const { return m_mode == Mode::Edit; }
+    // In Edit mode, or about to be (a game that starts in the editor): loading
+    // then shows the editor's progress bar instead of the game's loading screen.
+    bool editing() const { return m_mode == Mode::Edit || (m_hasPending && m_pendingMode == Mode::Edit); }
 
     Mode mode() const { return m_mode; }
     void setMode(Mode mode);
@@ -82,11 +86,15 @@ private:
     void updateCamera(float dt);
     void handleShortcuts();
     void drawMenuBar();
+    void drawLoading();
     void drawHierarchy();
     void drawHierarchyNode(GameObject& object);
     void drawInspector();
     bool drawField(const FieldInfo& field, void* object, GameObject& owner);
     void drawViewport();
+    void drawTerrainTools(Terrain& terrain);
+    // Terrain brush in the viewport (true = the tool owns the mouse this frame).
+    bool terrainBrush(Terrain& terrain, const ViewProjector& view, DebugDraw& dd, glm::vec2 mouse);
     void drawPlayToolbar();
     std::vector<std::string> listAssets(const std::string& extensions);
 
@@ -102,6 +110,10 @@ private:
     PickingPass* m_picking = nullptr;
     glm::vec2 m_pressPos{0.0f};
     bool m_pressInViewport = false;
+
+    int m_terrainTool = -1; // Terrain::Brush::Mode, -1 = off
+    Terrain::Brush m_brush;
+    bool m_brushing = false;
 
     Gizmo m_gizmo;
     Gizmo::Options m_gizmoOptions;
@@ -120,6 +132,9 @@ private:
     std::string m_scenePath;
     char m_saveAsBuffer[256] = "scenes/untitled.json";
     bool m_openSaveAs = false;
+    char m_prefabBuffer[256] = "prefabs/object.prefab";
+    bool m_openSavePrefab = false;
+    bool m_snapToPoints = true; // moving an object with SnapPoints snaps it to others nearby
     std::vector<std::string> m_assetCache;
     std::string m_assetCacheKey;
     float m_assetCacheAge = 1e9f;

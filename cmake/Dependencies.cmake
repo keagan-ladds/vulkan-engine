@@ -5,7 +5,8 @@
 #   Vulkan headers + loader + glslc, SDL2, glm
 #
 # Fetched automatically at configure time (pinned versions):
-#   Vulkan Memory Allocator, Dear ImGui, cgltf, stb, miniaudio, nlohmann/json
+#   Vulkan Memory Allocator, Dear ImGui, cgltf, stb, miniaudio, nlohmann/json,
+#   Jolt, meshoptimizer, Recast/Detour, ENet
 #
 # The fetched libraries are header-only or loose source files, so we compile
 # them ourselves into one static library `ve_thirdparty` with warnings off.
@@ -89,6 +90,46 @@ FetchContent_Declare(meshoptimizer
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SYSTEM)
 FetchContent_MakeAvailable(meshoptimizer)
+
+# Recast & Detour: navmesh building (Recast) and path finding / crowds
+# (Detour, DetourCrowd). Private to ve_engine (ve::NavMesh, ve::NavAgent).
+# Fetched with git: GitHub archive downloads are blocked in some sandboxes.
+set(RECASTNAVIGATION_DEMO OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_TESTS OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(RECASTNAVIGATION_DT_POLYREF64 ON CACHE BOOL "" FORCE)  # big tiled worlds: many tiles x polys
+FetchContent_Declare(recastnavigation
+    GIT_REPOSITORY https://github.com/recastnavigation/recastnavigation.git
+    GIT_TAG v1.6.0
+    GIT_SHALLOW TRUE
+    SYSTEM)
+FetchContent_MakeAvailable(recastnavigation)
+foreach(t Recast Detour DetourCrowd)
+    if(MSVC)
+        target_compile_options(${t} PRIVATE /w)
+    else()
+        target_compile_options(${t} PRIVATE -w)
+    endif()
+endforeach()
+
+# ENet: reliable / unreliable UDP channels for ve/net (MIT). Fetched with git
+# like Recast (archive downloads are blocked in some sandboxes).
+FetchContent_Declare(enet
+    GIT_REPOSITORY https://github.com/lsalzman/enet.git
+    GIT_TAG v1.3.18
+    GIT_SHALLOW TRUE
+    SYSTEM)
+FetchContent_MakeAvailable(enet)
+if(MSVC)
+    target_compile_options(enet PRIVATE /w)
+else()
+    target_compile_options(enet PRIVATE -w)
+    set_target_properties(enet PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+target_include_directories(enet SYSTEM INTERFACE ${enet_SOURCE_DIR}/include)
+if(WIN32)
+    target_link_libraries(enet PUBLIC ws2_32 winmm)
+endif()
 
 add_library(ve_thirdparty STATIC
     ${CMAKE_CURRENT_LIST_DIR}/thirdparty/thirdparty_impl.cpp

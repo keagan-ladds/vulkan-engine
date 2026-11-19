@@ -7,25 +7,23 @@ verification workflow.
 
 Legend: `[x]` done · `[ ]` todo · `[~]` partially done (see note)
 
-## Status snapshot (2026-11-16)
+## Status snapshot (2026-11-18)
 
-Phases 0–10 are implemented and verified on Linux with an Intel Iris Xe
-(Mesa 25, Vulkan 1.4):
+Phases 0–13 are done, as are F2 (animation), most of F3, F5 tooling and the
+engine side of F4 (interaction, save games, loading screens, gamepad,
+profiler, navmesh + agents, prefabs, snap / placement, game UI), plus the
+Savanna building kit, menus and inventory. Multiplayer (F6) has its
+foundation: host-authoritative sessions, object replication and requests;
+Savanna players see each other and build together.
 
-- Zero compiler warnings on a clean Debug build. Release also builds and runs.
-- Zero Vulkan validation messages, covering startup, every test-hook view,
-  window resizing, the autotest and shutdown.
-- The savanna scene runs vsync-locked at 60 FPS at 1600×900 in a Debug build
-  with validation on, with about 11 ms of GPU time. Per-pass timings are in the
-  F1 overlay.
-- `SAVANNA_AUTOTEST=1` passes in both Debug and Release.
+- Zero Vulkan validation messages through the autotest (which also covers
+  save / load, navigation and building) and the editor test.
+- Savanna starts in ~0.9 s in Release, behind a loading screen.
 
-Physics (Phase 11, formerly future phase F1) is done too: Jolt rigid bodies, a
-character controller and raycasts, all used by the savanna scene and the game
-template. One physics step takes about 0.3–0.7 ms for roughly 410 bodies.
-
-Phase 12 (dense worlds), the scene-file world (W1–W5) and music/ambience are done
-too. Next up: physics follow-ups, F2 (animation) and building/gameplay systems. Also see
+Next up: F6 N2 (gameplay through the host: interactions, pickups,
+villagers, doors) alongside game-side F4 (animal AI, crafting, building
+follow-ups, combat). New gameplay should be written host-authoritative from
+the start (see conventions, "Multiplayer-ready gameplay"). Also see
 [Known issues](#known-issues--tech-debt).
 
 ---
@@ -172,30 +170,26 @@ too. Next up: physics follow-ups, F2 (animation) and building/gameplay systems. 
   `overlapSphere/Box`, `overlap`, with a `QueryFilter` (statics, dynamics,
   characters, triggers, ignore). Per-game layer masks come with the
   configurable collision layers below.
-- [ ] **Collider debug drawing**: implement Jolt's `DebugRenderer` on top of a
-  new engine line/wireframe renderer (also useful for AI paths, nav, bounds).
-  F1 toggle.
-- [ ] **User-configurable collision layers/masks**: currently fixed at
-  static / moving / character. Games need e.g. projectiles, triggers,
-  enemies, debris and "ignore player".
-- [ ] **Joints / constraints**: hinge (doors, gates), fixed (breakable
-  building pieces), distance/rope, plus a constraint component API.
+- [x] **Collider debug drawing**: body wireframes (from the shapes' triangles,
+  cached per shape) as `ve::debug` lines, F1 > Debug draw.
+- [x] **User-configurable collision layers/masks** (F7).
+- [x] **Joints / constraints** (F7): hinge, fixed, slider, distance
+  components; limits, motors, springs, breaking.
 - [ ] **Vehicles**: the concept art has trucks. Wrap Jolt's
   `VehicleConstraint` (wheeled vehicle, suspension, engine/transmission) as a component.
 - [ ] **Water/buoyancy**: Jolt `ApplyBuoyancyImpulse` for floating debris,
   plus swim/wade volumes for the character.
 - [ ] **Ragdolls** (needs F2 animation skeletons): Jolt `Ragdoll` from a skeleton.
-- [ ] **Collider streaming for large worlds**: only create bodies for
-  trees/rocks near the player (ties into the foliage system). Thousands of
-  static bodies across a huge map are a waste.
+- [x] **Collider streaming for large worlds**: terrain physics tiles and
+  foliage colliders exist only near the player (Phase 12d / 13).
 - [ ] **Character improvements**: character-vs-character collision
   (`CharacterVsCharacterCollisionSimple`), climbing onto dynamic crates,
   crouch (shape swap), being pushed by moving kinematic platforms, and fall
   damage hooks (landing velocity).
 - [ ] **Interpolation of kinematic bodies** (they currently follow their
   Transform, which is already smooth; only matters if driven by physics velocity).
-- [ ] **Physics materials**: per-shape friction/restitution + surface type
-  (footstep sounds, impact particles).
+- [x] **Physics materials**: per-body friction / restitution + surface names
+  (F7); per-triangle materials (one mesh, several surfaces) later.
 - [ ] **Determinism / save-state** (later): body state serialisation for save games.
 - [~] Known issue: Jolt quantises heightfield heights to 8 bits per block (a
   few cm on steep slopes). The triangulation now matches the render mesh.
@@ -269,7 +263,9 @@ million grass blades), scaling up on discrete GPUs.
 - [x] Scene data (Phase W4/W5, docs/06-world.md): `Foliage` + `FoliageType`, `GrassLayer` (glTF LOD chains: mesh -> mesh -> cards), `FoliageExclusion`, `MeshLibrary`; per-biome densities; regenerates on terrain edits
 - **Result:** preload about 110 ms for about 9.4k props; worker about 0.06 ms per (cell, layer); static bodies 3.3k → about 450 (near the player only); grass + reeds about 0.3–0.7 ms GPU; same visuals and draw counts as the old one-shot scatter
 - [x] Interactive foliage: stable `FoliageInstanceId`s, per-instance states (alternative meshes + colliders, or removed) that are re-applied whenever a cell streams in, `overrides()` / `setOverrides()` for save games, and promotion of instances near the player to GameObjects (`promoteDistance`, `promote`) with a `FoliageLink`. Savanna: chop acacias into stumps (`ChoppableTree`), pick berry bushes that regrow (`BerryBush`, `Regrowth`); autotest chops, walks 1.3 km away and back, picks and waits for regrowth
-- Not done: Hi-Z occlusion culling (most useful for jungle; not needed for open savannah); grass interaction (player bending blades); a multi-threaded worker pool; saving overrides to disk (waits for the save system)
+- [x] Hi-Z occlusion culling of instances (camera view, last frame's depth pyramid): camera instance draws −55 % in the jungle, −59 % at the camp
+- [x] Grass interaction: `GrassBender` components push blades aside (the player has one)
+- Not done: a multi-threaded worker pool; saving overrides to disk (waits for the save system)
 
 ### 13 — Terrain streaming & LOD (prerequisite for multi-km worlds) ✅
 - [x] Chunked heightfield streaming: `TerrainData` is an immutable generator
@@ -293,6 +289,9 @@ million grass blades), scaling up on discrete GPUs.
   vertex with height-based blending; distance anti-tiling (rotated 3.7×
   second copy + macro noise); untextured biomes keep their vertex colours.
   Savanna: soil, sand ripples, leaf litter, rock
+- [x] Editor sculpt / paint brushes (`TerrainEdits`, saved with the scene);
+  brush rebuilds are incremental (tiles, LOD nodes, colliders, foliage cells
+  and grass textures outside the brushed area are kept)
 - **Result** (lavapipe, Release): 4 km world, 2049² samples, ~62k foliage
   instances preloaded in ~1.2 s; main thread ~1.8 ms per frame, as on the
   640 m map (it was 21 ms before foliage stopped re-walking every cell)
@@ -390,10 +389,10 @@ No feature or quality setting was removed; shader changes give the same image
 
 Ordered roughly by how much they'll bite while building a game.
 
-1. **No per-object motion vectors.** TAA and the temporal accumulators
-   reproject with camera motion only; moving objects (characters, wind-blown
-   foliage) rely on neighbourhood clipping and get slightly softer. Clouds and
-   fog still blur their own dither instead of reprojecting it.
+1. **Motion vectors cover moving objects, not vertex animation.** Wind-blown
+   foliage and grass rely on TAA's neighbourhood clipping and get slightly
+   softer. Clouds and fog still blur their own dither instead of
+   reprojecting it.
 2. **Material params are positional** (slot indices, no reflection). Each
    shader documents its layout in a comment. A SPIR-V reflection layer could
    add named parameters.
@@ -409,10 +408,12 @@ Ordered roughly by how much they'll bite while building a game.
 
 ## Future phases (not started; ordered by usefulness for a Valheim-like game)
 
-### F2 — Animation
-- [ ] Skinned meshes from glTF (joints/weights in a second vertex stream so `Vertex` stays fixed)
-- [ ] Animation clips, sampler, blending, `Animator` component
-- [ ] GPU skinning (compute pre-pass writing skinned vertices, or vertex shader)
+### F2 — Animation ✅
+- [x] Skinned meshes from glTF (joints / weights kept per `SkinnedMeshSource`, so `Vertex` stays fixed)
+- [x] Animation clips (T/R/S channels, step / linear / cubic spline), crossfade blending, `Animator` component; joints are GameObjects
+- [x] GPU skinning: `skin.comp` pre-pass into a shared output buffer drawn by the regular pipelines (`Mesh::createShared`)
+- [x] Savanna: two `Villager`s (generated rigged model, Idle + Walk) wander around the camp; autotest checks clips, joints and skinned bounds
+- Later: motion vectors from skinning, root motion (layers, events, two-bone / foot / aim IK: F7)
 
 ### F3 — World & performance
 - [x] Clustered point lights: 16×9×24 clusters binned on the CPU each frame
@@ -422,18 +423,71 @@ Ordered roughly by how much they'll bite while building a game.
   reprojection from depth, Catmull-Rom history, YCoCg variance clipping
 - [ ] Temporal reprojection for fog/clouds (fewer steps)
 - [ ] Multithreaded scene gathering / command recording
+- [x] Procedural fire (effects: `vfx::Fire` + `FirePass`; noise flames, coal bed, flicker for lights). Savanna: campfire and torches use it
+- [x] Heat haze above fires (`Fire::haze`: copy of the screen around the fires, noise offsets, depth-aware)
 
 ### F4 — Building & gameplay systems
-- [ ] Grid/snap building system (pieces, sockets, structural stability)
-- [ ] Inventory/crafting data model (data files)
-- [~] Interaction system (raycast "use" with prompts): Savanna's `Interactable` (Harvest.hpp) does it for promoted foliage; generalise it (and `Sunstone`) into the engine
-- [ ] AI (state machines / behaviour trees), navmesh (Recast/Detour)
-- [ ] Combat (hitboxes, damage, stamina), boss encounters
+Engine provides mechanisms, the game (Savanna here) the rules and content.
+- [x] Interaction (engine): `ve::Interactable` + `ve::Interactor` (eye ray, then view cone with line of sight; focus / prompt / use); Savanna's trees, berry bushes and sunstones use it, its HUD shows the prompt; the autotest chops and collects through it
+- [x] Navmesh (engine): `NavMeshSurface` (tiled Recast build from terrain + static colliders + foliage colliders on worker threads, loading task, rebuilds around chopped trees, optional streaming around the camera), queries (paths, nearest / random points, raycast), `NavAgent` (Detour crowd: path following + avoidance). Savanna: villagers idle / wander / follow the player when asked (game-side state machine)
+- [ ] Animal AI (herds grazing, fleeing the player) on the same agents, in the game
+- [x] Inventory (game): item types with baked icons, 24-slot stacks (add / remove / move / merge), saved with the game; inventory screen (Tab / I, drag & drop, details)
+- [ ] Crafting (game; recipes as data files)
+- [x] Grid/snap building (engine: prefabs, `SnapPoint` + `findSnap`, grid helpers, `PlacementBox` + `fits`, `PlacementPreview` ghost, save games keep spawned prefab instances; editor snaps on drag. Savanna: 12-kind kit (foundation, floor, mud / plaster walls, door, window, post, beam, metal / thatch roofs, stairs, railing, fence) as prefabs, build mode B, navmesh rebuilds; autotest builds, saves, reloads)
+- [x] Foliage exclusions on building pieces: `FoliageExclusion` boxes (turn with the object), applied incrementally while playing (foliage re-places nearby cells keeping states, grass re-bakes in the background); Savanna's foundation and stairs prefabs carry one
+- [x] Doors / windows as fittings: snap into wall openings and turn to match (`SnapPoint::alignRotation`), host-aware fit test, removed with their wall; Savanna: plank door (hinged leaf, Use opens, state saved) and shuttered window
+- [ ] Building follow-ups (game): costs / crafting, structural stability (support graph), damage / repair, more pieces (gables, verandas, multi-storey), material variants on the same piece (reference's "same structure, different materials")
+- [ ] Combat (game: hitboxes, damage, stamina), boss encounters
+
+### F6 — Multiplayer (co-op, host-authoritative)
+Started early on purpose: retrofitting networking means rewriting every
+system that changes the world, so new gameplay is written against the
+authority API from now on (offline = a host with nobody connected). Model:
+one player hosts (listen server, Valheim-style); clients own their character
+and ask the host for everything else (decision D19).
+
+**N1 — Foundation ✅**
+- [x] Transport (engine, `ve/net/Transport`): ENet 1.3.18, reliable + unreliable channels, timeouts that survive loading screens
+- [x] Byte streams (`ve/net/Stream`): values, varints, strings, CBOR JSON, 7-byte rotations; bounds-checked reads
+- [x] `Network` (engine.net()): host / join / leave, handshake (game id + protocol version, refusals), peer list with round trips, `isServer()` / `isClient()`; poll at frame start, flush at frame end; messages arriving while loading wait for the load
+- [x] Requests: named messages (`on`, `toServer`, `toClients`); on the host / offline `toServer` runs locally, so one code path serves all three modes
+- [x] Objects: `NetworkObject` (identity = GameObject id, owner), `NetworkTransform` (owner sends 20 Hz unreliable, others interpolate 100 ms behind, teleports snap), `NetReplicated` (custom state, sent reliably when marked dirty), `spawn` / `despawn` of prefabs on every machine, ownership changes, the owner leaving despawns (or hands back) its objects
+- [x] Late join: the world snapshot is a save-game capture (moved / removed level objects, spawned pieces, every Saveable incl. foliage, terrain edits, time of day), then the spawns saves don't cover, owners and state
+- [x] Savanna: `SAVANNA_NET=host` / `join:<address>`, player avatars (villager model, walk / idle from speed, replicated name), building through the host (`build.place` / `build.remove`, navmesh rebuilt everywhere), host clock and weather sent to clients
+- [x] Test: `tools/nettest.sh` runs a host and a client process headless over localhost: snapshot (piece placed before joining), live spawns, interpolated avatar movement, a client build request, the client leaving (its avatar despawned)
+
+**N2 — Gameplay through the host**
+- [ ] Interactions as requests: chopping / picking (foliage overrides replicated), sunstones, doors (`DoorHinge` as NetReplicated), throwing rocks (host-simulated physics)
+- [ ] Villagers / animals: simulated on the host, NetworkTransform + animation state for clients
+- [ ] Inventories per player (the host keeps each player's; saved per player id)
+- [ ] Save games in a hosted world: the host saves, players keep their characters (a character file per player)
+- [x] Menu: Host game / Join game (name, address, port fields), connection status in the panel
+- [ ] Connection errors / players joining in the HUD, player list (Tab), joining from a played title world (reload first)
+- [ ] The host validates requests (piece fits, reach, materials)
+
+**N3 — Quality**
+- [ ] Interest management: only send what's near each player (big worlds), per-object send priority
+- [ ] Delta-compressed snapshots instead of whole transforms; bandwidth stats in F1
+- [ ] Client-side prediction for actions with latency (placing, hitting), lag compensation for combat
+- [ ] Dedicated server build (headless, no window / GPU), NAT punch-through or relay, Steam / platform sessions
+- [ ] Network conditions simulator (latency / loss) for tests
+
+### F7 — Engine follow-ups (debugging, physics, animation, UI)
+- [x] Debug drawing (`ve/debug`): lines / shapes / labels from anywhere, depth-tested over the final image with faint hidden parts, durations, channels in F1 (physics colliders, terrain, characters, navmesh, nav agents; games add their own). Savanna: "Villagers" channel, `SAVANNA_DRAW`
+- [x] Collision layers: 32 named layers + collision matrix, per-body layer (Rigidbody, CharacterController, static bodies), query masks. Savanna: thrown rocks are "Debris", the Use ray looks past them; the autotest checks a box falling through a platform it doesn't collide with, and masked rays
+- [x] Physics materials: per-body `surface` names in hits, contacts and the character's ground (`groundSurface`); foliage types and terrain set theirs. Savanna: footsteps by surface (grass / dirt / wood / stone, generated sounds), building pieces by material
+- [x] Animation layers (joint masks, override / additive, fading weights), clip events, two-bone IK and foot IK. Savanna: villagers wave on an arm layer, step sounds from Walk events, feet on slopes; the model has foot / hand joints and a Wave clip
+- [x] UI text input (`ui::TextInput`: OS text, caret, editing keys with repeat, filters, submit) and scrolling lists (`ui::ScrollView`: clip, wheel, bar, drag, focus follow). Savanna: Save as (name + list), Load and Controls lists scroll, Multiplayer panel (name, address, port, Host / Join / Leave)
+- [x] Joints: `FixedJoint`, `HingeJoint`, `SliderJoint`, `DistanceJoint` (limits, soft limits, velocity / position motors, friction, break force / torque + `onBreak`, broken state saved, safe body lifetime, debug drawing). Savanna: doors are dynamic leaves on motor-driven hinges (pushable), a rope lantern by the fire; the autotest's joint yard checks a limited pendulum, a 180 deg/s motor, a slider to 1.5 m, a 4-link rope and a weld breaking under a dropped block
+- [x] Look-at and aim IK (`AimIK`, `LookAtIK`): weighted chains, angle limits, blending. Savanna: villagers look at a nearby player and point at the nearest sunstone after greeting; the autotest checks both aims converge
+- [ ] Later: root motion, motion vectors from skinning; text selection / clipboard, multi-line text, on-screen keyboard for pads; ragdolls, buoyancy (Phase 11 list)
 
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)
-- [ ] Scene/prefab serialization (JSON)
-- [ ] Retained-mode game UI (inventory grids, health bars) beyond ImGui
-- [ ] Gamepad input + rebinding UI
-- [ ] Save/load
-- [ ] CPU profiler zones (GPU per-pass timing already exists)
+- [x] Scene serialization (JSON scene files, editor save / load)
+- [x] Prefabs (E3): `.prefab` files, `prefab::instantiate`, `PrefabInstance` link, editor Save as prefab / Create > Prefab (no overrides / propagation yet)
+- [x] Loading screens (engine): `Engine::beginLoading(loadingScene)` + load steps (main thread, one per frame) + load tasks (progress of work over frames); the game's loading scene (UI) is drawn while the world streams in editor-paused mode. Foliage fills its cells on a worker pool (cores − 1) instead of the blocking preload. Savanna: sunset title, progress bar, tips. Loading waits for the area around the viewer (foliage `readyDistance`; terrain LOD on a worker pool, unbudgeted uploads): 2.4 s -> 0.9 s in Release. In the editor: no loading scene, a progress panel over the world as it fills in (also `openScene`)
+- [x] Save/load: `ve::save` (slots, capture / apply: moved and removed level objects, `ve::Saveable` hooks; Foliage overrides, Terrain edits and time of day built in). Savanna: F5 / F9 (reload behind the loading screen, then apply), player + regrowth Saveable, counters as game data; the autotest saves, changes things, loads and checks
+- [x] Gamepad input + rebinding (engine): SDL game controllers, axes with radial dead zones, triggers as actions, `startRebind`, bindings JSON, virtual pad for tests. Savanna: pad layout for the player, F10 controls window saved to `controls.json`
+- [x] CPU profiler zones (engine): `VE_PROFILE` scopes, nested, F1 "CPU zones" table + bench output
+- [x] Retained-mode game UI (engine, `ve/ui/Gui.hpp`): canvases of anchored elements (panels, labels, images, buttons, progress bars, sliders, stacks, grids), mouse + keyboard / pad focus navigation, drag & drop, tooltips, modal capture, TTF fonts, mesh icon baking. Savanna: title screen over a live sunset (Continue / New / Load / Settings / Controls / Quit), pause menu, settings saved to `settings.json`, HUD (health / stamina, hotbar, clock), inventory, build menu with piece cards; the autotest opens and drives each

@@ -1,6 +1,10 @@
 #include "Props.hpp"
 
+#include "Building.hpp"
+#include "GameUi.hpp"
 #include "Harvest.hpp"
+#include "Inventory.hpp"
+#include "MainMenu.hpp"
 
 #include <ve/world/Noise.hpp>
 #include "Player.hpp"
@@ -8,14 +12,23 @@
 
 #include <ve/world/Terrain.hpp>
 #include "Vegetation.hpp"
+#include "Villager.hpp"
+#include "World.hpp"
 
+#include <ve/anim/Animation.hpp>
 #include <ve/assets/AssetManager.hpp>
+#include <ve/scene/MeshComponents.hpp>
+#include <ve/debug/Debug.hpp>
+#include <ve/scene/SaveGame.hpp>
+#include <ve/gameplay/Interaction.hpp>
+#include <ve/nav/Navigation.hpp>
 #include <ve/audio/Ambience.hpp>
 #include <ve/audio/Audio.hpp>
 #include <ve/audio/Music.hpp>
 #include <ve/core/Engine.hpp>
 #include <ve/editor/Editor.hpp>
 #include <ve/core/Input.hpp>
+#include <ve/core/Log.hpp>
 #include <ve/core/Time.hpp>
 #include <ve/physics/Physics.hpp>
 #include <ve/render/Instancing.hpp>
@@ -29,6 +42,7 @@
 #include <ve/render/Material.hpp>
 #include <ve/scene/Reflection.hpp>
 #include <vfx/PhotoMode.hpp>
+#include <vfx/Fire.hpp>
 #include <vfx/Particles.hpp>
 #include <vfx/DayNight.hpp>
 #include <vfx/Water.hpp>
@@ -39,9 +53,20 @@
 #include <imgui.h>
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <cstdio>
 
 namespace savanna {
+
+namespace {
+void forSubtree(ve::Transform& t, const std::function<void(ve::Transform&)>& fn)
+{
+    fn(t);
+    for (ve::Transform* c : t.children()) forSubtree(*c, fn);
+}
+} // namespace
+
 
 GameState& gameState()
 {
@@ -58,26 +83,6 @@ float flicker(float t, float seed)
            0.1f * (ve::noise::valueNoise(glm::vec2(t * 6.0f, seed)) - 0.5f);
 }
 
-vfx::ParticleSettings flameSettings(float scale)
-{
-    vfx::ParticleSettings s;
-    s.rate = 70.0f * scale;
-    s.maxParticles = 300;
-    s.lifetimeMin = 0.35f;
-    s.lifetimeMax = 0.8f;
-    s.spawnRadius = 0.28f * scale;
-    s.velocity = {0.0f, 1.6f * scale, 0.0f};
-    s.velocityRandom = {0.25f, 0.4f, 0.25f};
-    s.sizeStart = 0.35f * scale;
-    s.sizeEnd = 0.08f * scale;
-    s.colorStart = {5.0f, 2.2f, 0.6f, 0.9f};
-    s.colorMid = {3.2f, 0.9f, 0.15f, 0.7f};
-    s.colorEnd = {0.6f, 0.08f, 0.0f, 0.0f};
-    s.blend = ve::BlendMode::Additive;
-    s.rotationSpeed = 2.0f;
-    s.softness = 0.2f;
-    return s;
-}
 
 } // namespace
 
@@ -122,6 +127,7 @@ VE_REGISTER_TYPE(PlayerStart, "PlayerStart") { t.category("Savanna"); }
 
 void Campfire::start()
 {
+    tag = "fire"; // standing in it hurts (Player)
     m_material = propMaterial();
     ve::Renderer& r = renderer();
     ve::Scene& s = scene();
@@ -154,11 +160,17 @@ void Campfire::start()
     m_light->castShadows = true;
     m_light->shadowBias = 0.004f;
 
-    // Flames, smoke and sparks.
+    // Flames (procedural, vfx::Fire) over a bed of glowing coals; smoke and sparks are particles.
     auto& flames = s.spawn("Flames");
     flames.setParent(this, false);
-    flames.transform().setLocalPosition({0.0f, 0.2f, 0.0f});
-    flames.addComponent<vfx::ParticleEmitter>().settings = flameSettings(1.0f);
+    flames.transform().setLocalPosition({0.0f, 0.1f, 0.0f});
+    m_fire = &flames.addComponent<vfx::Fire>();
+    m_fire->height = 1.4f;
+    m_fire->radius = 0.5f;
+    m_fire->intensity = 4.0f;
+    m_fire->layers = 4;
+    m_fire->seed = 3;
+    if (const char* h = std::getenv("SAVANNA_HAZE")) m_fire->haze = float(std::atof(h)); // comparisons
 
     auto& smokeObj = s.spawn("Smoke");
     smokeObj.setParent(this, false);
@@ -213,7 +225,10 @@ void Campfire::start()
 void Campfire::update(float dt)
 {
     m_t += dt;
-    if (m_light) m_light->intensity = baseIntensity * flicker(m_t, 1.3f);
+    if (!m_light) return;
+    // The glow follows the flames: brightness and a small wobble (shadows dance).
+    m_light->intensity = baseIntensity * (m_fire ? m_fire->flicker() : flicker(m_t, 1.3f));
+    if (m_fire) m_light->transform().setLocalPosition(glm::vec3(0.0f, 0.9f, 0.0f) + m_fire->lightJitter());
 }
 
 // -----------------------------------------------------------------------------
@@ -232,11 +247,23 @@ void Torch::start()
 
     auto& flame = scene().spawn("TorchFlame");
     flame.setParent(this, false);
-    flame.transform().setLocalPosition({0.0f, 2.1f, 0.0f});
-    flame.addComponent<vfx::ParticleEmitter>().settings = flameSettings(0.45f);
+    flame.transform().setLocalPosition({0.0f, 1.97f, 0.0f});
+    m_fire = &flame.addComponent<vfx::Fire>();
+    m_fire->height = 0.5f;
+    m_fire->radius = 0.12f;
+    m_fire->intensity = 3.5f;
+    m_fire->layers = 3;
+    m_fire->coals = 0.0f;
+    m_fire->speed = 1.3f;
+    m_fire->haze = 0.6f;
+    if (const char* h = std::getenv("SAVANNA_HAZE")) m_fire->haze *= float(std::atof(h));
+    m_fire->seed = uint32_t(reinterpret_cast<uintptr_t>(this) % 997u);
+    auto& glow = scene().spawn("TorchLight");
+    glow.setParent(&flame, false);
+    glow.transform().setLocalPosition({0.0f, 0.2f, 0.0f});
     // A thin solid pole (static capsule standing on the ground).
     addComponent<ve::Rigidbody>(ve::Collider::capsule(0.95f, 0.07f).offset({0.0f, 1.0f, 0.0f}), ve::BodyType::Static);
-    m_light = &flame.addComponent<ve::PointLight>();
+    m_light = &glow.addComponent<ve::PointLight>();
     m_light->color = {1.0f, 0.55f, 0.22f};
     m_light->range = 10.0f;
     m_light->castShadows = true;
@@ -247,7 +274,9 @@ void Torch::start()
 void Torch::update(float dt)
 {
     m_t += dt;
-    if (m_light) m_light->intensity = intensity * flicker(m_t, 5.7f);
+    if (!m_light) return;
+    m_light->intensity = intensity * (m_fire ? m_fire->flicker() : flicker(m_t, 5.7f));
+    if (m_fire) m_light->transform().setLocalPosition(glm::vec3(0.0f, 0.2f, 0.0f) + m_fire->lightJitter());
 }
 
 // -----------------------------------------------------------------------------
@@ -284,6 +313,11 @@ void Sunstone::start()
     m_player = dynamic_cast<Player*>(scene().find("Player"));
 
     m_base = transform().position();
+    // No collider: the player's Interactor finds it in its view cone.
+    auto& use = addComponent<ve::Interactable>();
+    use.prompt = "Pick up sunstone";
+    use.focusOffset = {0.0f, 0.6f, 0.0f};
+    use.onUse = [this](ve::GameObject&) { collect(); };
     m_visual = &scene().spawn("SunstoneVisual");
     m_visual->setParent(this, false);
     m_visual->addComponent<ve::MeshRenderer>(mesh, material);
@@ -300,16 +334,6 @@ void Sunstone::update(float dt)
     m_visual->transform().setLocalPosition({0.0f, 0.6f + 0.15f * std::sin(m_t * 2.0f), 0.0f});
     m_visual->transform().setLocalRotation(glm::angleAxis(m_t * 1.2f, glm::normalize(glm::vec3(0.3f, 1.0f, 0.1f))));
 
-    // Pick up when close, roughly looked at, and "Use" pressed.
-    if (!m_player) return;
-    const glm::vec3 toStone = m_visual->transform().position() - m_player->eyePosition();
-    const float dist = glm::length(toStone);
-    if (dist < 3.0f && glm::dot(toStone / dist, m_player->lookDirection()) > 0.6f) {
-        GameState& gs = gameState();
-        gs.message = "[E] Pick up sunstone";
-        gs.messageTimer = 0.1f;
-        if (m_player->usePressed()) collect();
-    }
 }
 
 void Sunstone::collect()
@@ -317,6 +341,7 @@ void Sunstone::collect()
     if (isDestroyed()) return;
     GameState& gs = gameState();
     ++gs.collected;
+    gs.inventory.add("sunstone", 1);
     gs.total = gs.collected + remaining(scene()) - 1; // this one is still in the scene until the frame ends
     gs.message = "Sunstone collected! (" + std::to_string(gs.collected) + "/" + std::to_string(gs.total) + ")";
     gs.messageTimer = 2.5f;
@@ -414,9 +439,31 @@ glm::vec3 AutoTest::groundAt(glm::vec2 p) const
     return {p.x, m_terrain->height(p.x, p.y) + 0.1f, p.y};
 }
 
+int AutoTest::foliageAt(const glm::vec3& p, float radius) const
+{
+    // What the placement rules put there, in every layer (deterministic; loaded or not).
+    int n = 0;
+    if (auto* f = scene().findFirst<ve::Foliage>(); f && f->system())
+        for (uint32_t l = 0; l < f->system()->layerCount(); ++l) n += int(f->system()->query(l, {p.x, p.z}, radius).size());
+    return n;
+}
+
+void AutoTest::buildStep(int piece, const glm::vec3& aim, float yawDegrees)
+{
+    auto* b = scene().findFirst<Builder>();
+    b->setActive(true);
+    b->select(piece);
+    b->setYawDegrees(yawDegrees);
+    b->setAimOverride(aim);
+    m_t = 0.0f;
+    m_stepFrame = m_frames;
+    ++m_step;
+}
+
 void AutoTest::update(float dt)
 {
     m_t += dt;
+    ++m_frames;
     auto log = [](const std::string& s) { std::fprintf(stderr, "[autotest] %s\n", s.c_str()); };
     // Music mood and ambient layer levels (target levels: the fades take a few seconds).
     auto logAudio = [&](const std::string& where) {
@@ -683,16 +730,25 @@ void AutoTest::update(float dt)
         ++m_step;
     } else if (m_step == 7 && m_t > 1.0f) {
         shot("1-acacia");
+        // Step up to the trunk and look at it: the player's Interactor should focus it.
+        if (const auto info = scene().findFirst<ve::Foliage>()->system()->instance(m_tree))
+            static_cast<Player*>(scene().find("Player"))->setPose(groundAt(glm::vec2(info->position.x + 1.3f, info->position.z)), 90.0f, -10.0f);
         m_t = 0.0f;
         ++m_step;
     } else if (m_step == 8 && m_t > 0.3f) {
         ve::FoliageSystem* foliage = scene().findFirst<ve::Foliage>()->system();
         auto* tree = dynamic_cast<ChoppableTree*>(foliage->promoted(m_tree));
         log(std::string("acacia promoted to a ChoppableTree: ") + (tree ? "yes" : "NO"));
-        int felled = 0;
-        for (int i = 0; tree && i < ChoppableTree::kChops; ++i) felled += tree->chop() ? 1 : 0;
-        log("chopped " + std::to_string(ChoppableTree::kChops) + " times: felled " + std::to_string(felled) + ", state '" +
-            stateLabel(*foliage, m_tree) + "', wood " + std::to_string(gameState().wood));
+        // Through the engine's interaction system, like pressing E.
+        auto* who = scene().find("Player")->getComponent<ve::Interactor>();
+        const ve::Interactable* focus = who ? who->focus() : nullptr;
+        log("interactor focus: " + std::string(focus && &focus->gameObject() == tree ? "the acacia" : focus ? focus->gameObject().name() : "nothing") +
+            ", prompt '" + (who ? who->prompt() : std::string()) + "'");
+        int uses = 0;
+        for (int i = 0; who && i < ChoppableTree::kChops; ++i) uses += who->interact() ? 1 : 0;
+        const bool felled = foliage->state(m_tree) != 0;
+        log("chopped " + std::to_string(uses) + " times: felled " + std::to_string(felled ? 1 : 0) + ", state '" +
+            stateLabel(*foliage, m_tree) + "', wood " + std::to_string(gameState().inventory.count("wood")));
         static_cast<Player*>(scene().find("Player"))->teleport(groundAt({1200.0f, -300.0f}), 0.0f); // far away: the cell unloads
         m_t = 0.0f;
         ++m_step;
@@ -735,16 +791,907 @@ void AutoTest::update(float dt)
         auto* bush = dynamic_cast<BerryBush*>(foliage->promoted(m_bush));
         const bool picked = bush && bush->pick();
         log(std::string("berry bush promoted: ") + (bush ? "yes" : "NO") + ", picked: " + (picked ? "yes" : "no") + ", state '" +
-            stateLabel(*foliage, m_bush) + "', berries " + std::to_string(gameState().berries));
+            stateLabel(*foliage, m_bush) + "', berries " + std::to_string(gameState().inventory.count("berries")));
         m_t = 0.0f;
         ++m_step;
     } else if (m_step == 14 && m_t > 3.0f) {
         ve::FoliageSystem* foliage = scene().findFirst<ve::Foliage>()->system();
         log("after the regrowth time: berry bush state '" + stateLabel(*foliage, m_bush) + "'");
-        engine().quit();
+        m_t = 0.0f;
         ++m_step;
     } else if (m_step == 14 && m_t > 0.5f) {
         shot("4-berries-picked");
+    } else if ((m_step == 15 || m_step == 16) && m_t > 1.5f) {
+        // F2: the camp villagers (skinned, animated) wander and swing their legs.
+        std::string line;
+        size_t i = 0;
+        for (const auto& obj : scene().objects()) {
+            auto* vp = dynamic_cast<Villager*>(obj.get());
+            if (!vp || vp->isDestroyed()) continue;
+            Villager& v = *vp;
+            const ve::Animator* a = v.animator();
+            const ve::GameObject* thigh = nullptr;
+            forSubtree(v.transform(), [&](ve::Transform& t) {
+                if (!thigh && t.gameObject().name() == "UpperLeg.L") thigh = &t.gameObject();
+            });
+            const float angle = thigh ? glm::degrees(glm::angle(thigh->transform().localRotation())) : -1.0f;
+            const glm::vec3 p = v.transform().position();
+            float top = 0.0f;
+            forSubtree(v.transform(), [&](ve::Transform& t) {
+                if (const auto* sm = t.gameObject().getComponent<ve::SkinnedMeshRenderer>(); sm && sm->mesh) top = sm->mesh->bounds().max.y;
+            });
+            line += (i++ ? "; " : "") + std::string("clip '") + (a ? a->current() : "?") + "' thigh " + std::to_string(angle) + " deg at (" +
+                    std::to_string(p.x) + ", " + std::to_string(p.z) + "), skinned top " + std::to_string(top);
+        }
+        log("villagers " + std::to_string(i) + ": " + line + "; skinned this frame " + std::to_string(renderer().skinning().skinnedThisFrame()));
+        if (m_step == 15) shot("5-villagers");
+        if (m_step == 16) {
+            // Interaction without a collider: face a sunstone 2 m away (the Interactor's view cone).
+            auto stones = scene().findAllWithTag("collectible");
+            if (!stones.empty()) {
+                const glm::vec3 s = stones.front()->transform().position();
+                auto* player = static_cast<Player*>(scene().find("Player"));
+                player->setPose(groundAt(glm::vec2(s.x + 2.0f, s.z)), 90.0f, -12.0f);
+            }
+        }
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 17 && m_t > 0.5f) {
+        auto* who = scene().find("Player")->getComponent<ve::Interactor>();
+        const int before = gameState().collected;
+        const std::string prompt = who ? who->prompt() : std::string();
+        const bool used = who && who->interact();
+        log("sunstone via the interactor: prompt '" + prompt + "', used " + (used ? "yes" : "no") + ", collected " +
+            std::to_string(before) + " -> " + std::to_string(gameState().collected));
+        // Save games: save now, change things, load, and check they're back.
+        const GameState& gs = gameState();
+        s_expect = {gs.collected, gs.inventory.count("wood"), gs.inventory.count("berries"), Sunstone::remaining(scene()), scene().find("Player")->transform().position(), m_tree.packed()};
+        log(std::string("saved: ") + (saveProgress(scene(), "autotest") ? "yes" : "NO") + " (collected " + std::to_string(gs.collected) +
+            ", wood " + std::to_string(gs.inventory.count("wood")) + ", " + std::to_string(s_expect.stones) + " stones left)");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 18 && m_t > 0.5f) {
+        auto stones = scene().findAllWithTag("collectible");
+        if (!stones.empty()) static_cast<Sunstone*>(stones.front())->collect();
+        gameState().inventory.add("wood", 5);
+        static_cast<Player*>(scene().find("Player"))->teleport(groundAt({1200.0f, -300.0f}), 0.0f);
+        log("after the save: collected " + std::to_string(gameState().collected) + ", wood " + std::to_string(gameState().inventory.count("wood")) +
+            ", player moved 1.2 km");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 19 && m_t > 0.5f) {
+        s_resume = 20; // the reloaded level's AutoTest carries on
+        log(std::string("loading the save (level rebuilt behind the loading screen): ") + (loadProgress("autotest") ? "started" : "NO SAVE"));
+        ++m_step;
+    } else if (m_step == 20 && m_t > 3.0f) {
+        const GameState& gs = gameState();
+        const glm::vec3 p = scene().find("Player")->transform().position();
+        auto* foliage = scene().findFirst<ve::Foliage>();
+        const ve::FoliageInstanceId tree = ve::FoliageInstanceId::unpack(s_expect.tree);
+        const std::string treeState = foliage && foliage->system() ? stateLabel(*foliage->system(), tree) : "?";
+        log("after loading: collected " + std::to_string(gs.collected) + " (saved " + std::to_string(s_expect.collected) + "), wood " +
+            std::to_string(gs.inventory.count("wood")) + " (" + std::to_string(s_expect.wood) + "), stones left " + std::to_string(Sunstone::remaining(scene())) +
+            " (" + std::to_string(s_expect.stones) + "), player " + std::to_string(glm::distance(p, s_expect.player)) +
+            " m from the saved spot, chopped acacia '" + treeState + "'");
+        ve::save::remove("autotest");
+        // Gamepad: a virtual SDL controller drives the player (stick forward, then Y = stop flying).
+        const bool pad = input().attachVirtualGamepad();
+        m_padStart = scene().find("Player")->transform().position();
+        input().setVirtualGamepadAxis(ve::GamepadAxis::LeftY, -1.0f); // stick fully forward
+        log(std::string("virtual gamepad: ") + (pad ? "attached" : "NOT AVAILABLE") + ", connected '" + input().gamepadName() + "'");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 21 && m_t > 1.0f) {
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        const float moved = glm::distance(player->transform().position(), m_padStart);
+        log("gamepad: MoveY " + std::to_string(input().axisValue("MoveY")) + ", moved " + std::to_string(moved) + " m in 1 s (flying " +
+            (player->flying() ? "yes" : "no") + ")");
+        input().setVirtualGamepadAxis(ve::GamepadAxis::LeftY, 0.0f);
+        input().setVirtualGamepadButton(ve::GamepadButton::Y, true); // ToggleFly
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 22 && m_t > 0.3f) {
+        input().setVirtualGamepadButton(ve::GamepadButton::Y, false);
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        std::string names;
+        for (const std::string& n : input().bindingNames("ToggleFly")) names += (names.empty() ? "" : ", ") + n;
+        log(std::string("gamepad: Y pressed -> flying ") + (player->flying() ? "yes" : "no") + "; ToggleFly is bound to " + names);
+        // Bindings survive a JSON round trip (the F10 controls file).
+        const ve::Json saved = input().saveBindings();
+        input().clearAction("ToggleFly");
+        input().loadBindings(saved);
+        log("bindings JSON round trip: ToggleFly has " + std::to_string(input().bindingNames("ToggleFly").size()) + " binding(s)");
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 23 && m_t > 0.5f) {
+        // Navigation: the level's navmesh (built behind the loading screen) routes around huts.
+        ve::NavMeshSurface* nav = ve::NavMeshSurface::find(scene());
+        if (!nav) {
+            log("navmesh: NONE");
+            engine().quit();
+            return;
+        }
+        const auto& st = nav->stats();
+        log("navmesh: ready " + std::string(nav->ready() ? "yes" : "no") + ", tiles " + std::to_string(st.tiles) + ", polygons " +
+            std::to_string(st.polygons) + ", " + std::to_string(st.lastTileMs) + " ms per tile");
+        ve::GameObject* hut = scene().find("Hut");
+        if (hut) {
+            const glm::vec3 h = hut->transform().position();
+            const glm::vec3 a = groundAt({h.x - 6.0f, h.z}), b = groundAt({h.x + 6.0f, h.z});
+            const ve::NavPath path = nav->findPath(a, b);
+            const auto blocked = nav->raycast(a, b);
+            log("path across a hut: complete " + std::string(path.complete ? "yes" : "no") + ", " + std::to_string(path.corners.size()) +
+                " corners, " + std::to_string(path.length()) + " m (straight 12 m), straight line blocked " + (blocked ? "yes" : "no"));
+        }
+        // A villager follows the player (the game's AI on the engine's NavAgent).
+        Villager* v = nullptr;
+        for (const auto& obj : scene().objects())
+            if (!v && !obj->isDestroyed()) v = dynamic_cast<Villager*>(obj.get());
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        if (v && player) {
+            const glm::vec3 vp = v->transform().position();
+            const glm::vec3 goal = nav->randomPointNear(vp + glm::vec3(9.0f, 0.0f, 8.0f), 3.0f).value_or(vp + glm::vec3(9.0f, 0.0f, 8.0f));
+            player->setPose(goal, 0.0f, -10.0f);
+            v->follow(*player);
+            m_followStart = glm::distance(vp, goal);
+            m_follower = v->id();
+            log("villager follows: start " + std::to_string(m_followStart) + " m from the player, on navmesh " +
+                (v->agent().onNavMesh() ? "yes" : "no"));
+        }
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 24 && m_t > 9.0f) {
+        auto* v = static_cast<Villager*>(scene().findById(m_follower));
+        auto* player = static_cast<Player*>(scene().find("Player"));
+        if (v && player) {
+            const glm::vec3 vp = v->transform().position(), pp = player->transform().position();
+            log("villager after 9 s: " + std::to_string(glm::distance(glm::vec2(vp.x, vp.z), glm::vec2(pp.x, pp.z))) + " m from the player (was " +
+                std::to_string(m_followStart) + "), following " + (v->mode() == Villager::Mode::Follow ? "yes" : "no") + ", walking " +
+                (v->walking() ? "yes" : "no"));
+            // Look at the villager from a few metres back for the screenshot, navmesh drawn.
+            const glm::vec3 d = vp - pp;
+            player->setPose(pp - glm::normalize(glm::vec3(d.x, 0.0f, d.z)) * 3.0f + glm::vec3(0.0f, 1.0f, 0.0f),
+                            glm::degrees(std::atan2(-d.x, -d.z)), -18.0f);
+            if (ve::NavMeshSurface* nav = ve::NavMeshSurface::find(scene())) nav->showDebug = true;
+        }
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 25 && m_t > 0.5f) {
+        shot("6-villager-follows");
+        if (m_t > 1.0f) {
+            if (ve::NavMeshSurface* nav = ve::NavMeshSurface::find(scene())) nav->showDebug = false;
+            // Building: the build mode's own code path (snap, fit, place), aimed by the test.
+            m_site = groundAt(layout::kCamp + glm::vec2(-13.0f, 13.0f));
+            m_site.y -= 0.1f;
+            buildStep(0, m_site, 0.0f); // stone foundation
+        }
+    } else if (m_step >= 26 && m_step <= 44 && m_t > 0.4f && m_frames - m_stepFrame >= 4) {
+        auto* b = scene().findFirst<Builder>();
+        auto pos = [&](size_t i) {
+            ve::GameObject* o = i < m_built.size() ? scene().findById(m_built[i]) : nullptr;
+            return o ? o->transform().position() : glm::vec3(-9999.0f);
+        };
+        auto placeLog = [&](const char* what, const glm::vec3& expected) {
+            const bool valid = b->previewValid(), snapped = b->previewSnapped();
+            ve::GameObject* o = b->place();
+            if (o) m_built.push_back(o->id());
+            const float err = o ? glm::distance(o->transform().position(), expected) : -1.0f;
+            log(std::string("build: ") + what + " placed " + (o ? "yes" : "NO") + ", valid " + (valid ? "yes" : "no") + ", snapped " +
+                (snapped ? "yes" : "no") + ", " + std::to_string(err) + " m from the expected spot");
+        };
+        const glm::vec3 a = pos(0);
+        switch (m_step) {
+        case 26:
+            placeLog("foundation", b->previewPosition());
+            buildStep(0, m_site + glm::vec3(2.3f, 0.2f, 0.15f), 0.0f); // next to it, a little off
+            break;
+        case 27:
+            placeLog("2nd foundation (snaps 2 m east)", a + glm::vec3(2.0f, 0.0f, 0.0f));
+            buildStep(0, a + glm::vec3(0.1f, 0.0f, 0.1f), 0.0f); // on top of the first
+            break;
+        case 28:
+            log(std::string("build: a 3rd foundation inside the 1st is ") + (b->previewValid() ? "ALLOWED" : "blocked") +
+                (b->place() ? " (PLACED)" : ""));
+            buildStep(2, a + glm::vec3(0.25f, 0.6f, -0.85f), 0.0f); // mud wall on the north edge of the first
+            break;
+        case 29:
+            placeLog("mud wall", a + glm::vec3(0.0f, BuildPiece::kFoundation, -1.0f));
+            buildStep(4, pos(1) + glm::vec3(-0.2f, 0.6f, -0.9f), 0.0f); // door wall on the second's north edge
+            break;
+        case 30:
+            placeLog("door wall", pos(1) + glm::vec3(0.0f, BuildPiece::kFoundation, -1.0f));
+            buildStep(5, a + glm::vec3(-0.9f, 0.6f, 0.2f), 90.0f); // window wall along the west edge
+            break;
+        case 31:
+            placeLog("window wall", a + glm::vec3(-1.0f, BuildPiece::kFoundation, 0.0f));
+            // Roofs: eaves (the low edge) on the north walls' tops, rising south over the rooms.
+            buildStep(8, a + glm::vec3(0.1f, BuildPiece::kFoundation + BuildPiece::kWall + 0.15f, 0.1f), 180.0f);
+            break;
+        case 32:
+            placeLog("metal roof", a + glm::vec3(0.0f, BuildPiece::kFoundation + BuildPiece::kWall, 0.0f));
+            buildStep(9, pos(1) + glm::vec3(0.1f, BuildPiece::kFoundation + BuildPiece::kWall + 0.15f, 0.1f), 180.0f); // thatch beside it
+            break;
+        case 33:
+            placeLog("thatched roof", pos(1) + glm::vec3(0.0f, BuildPiece::kFoundation + BuildPiece::kWall, 0.0f));
+            buildStep(10, a + glm::vec3(0.2f, 0.05f, 1.6f), 0.0f); // stairs up to the first foundation from the south
+            // Look at the site: the screenshot shows the stairs' ghost and the build panel.
+            static_cast<Player*>(scene().find("Player"))->setPose(a + glm::vec3(-4.5f, 1.0f, 6.5f), glm::degrees(std::atan2(-4.5f, 6.5f)), -14.0f);
+            break;
+        case 34:
+            if (!m_buildShot) { // one frame with the stairs' ghost on screen first
+                shot("7a-build-mode");
+                m_buildShot = true;
+                break;
+            }
+            placeLog("stairs", a + glm::vec3(0.0f, 0.0f, 1.5f));
+            // A door into the door wall's opening, aimed with a skewed rotation: it turns to match.
+            buildStep(13, pos(3) + glm::vec3(0.25f, 1.2f, 0.3f), 37.0f);
+            break;
+        case 35: {
+            placeLog("door (into the opening)", pos(3));
+            auto yawGap = [&](size_t piece, size_t host) { // degrees between their x axes, mod 180
+                ve::GameObject* x = piece < m_built.size() ? scene().findById(m_built[piece]) : nullptr;
+                ve::GameObject* y = host < m_built.size() ? scene().findById(m_built[host]) : nullptr;
+                if (!x || !y) return -1.0f;
+                const glm::vec3 ax = x->transform().rotation() * glm::vec3(1, 0, 0), ay = y->transform().rotation() * glm::vec3(1, 0, 0);
+                return glm::degrees(std::acos(std::clamp(std::abs(glm::dot(ax, ay)), 0.0f, 1.0f)));
+            };
+            log("build: door turned to its wall: " + std::to_string(yawGap(8, 3)) + " deg off (aimed at 37 deg)");
+            buildStep(14, pos(4) + glm::vec3(0.2f, 1.5f, 0.1f), 100.0f); // a window into the window wall
+            break;
+        }
+        case 36: {
+            placeLog("window (into the opening)", pos(4));
+            ve::GameObject* x = m_built.size() > 9 ? scene().findById(m_built[9]) : nullptr;
+            ve::GameObject* y = scene().findById(m_built[4]);
+            const float gap = x && y ? glm::degrees(std::acos(std::clamp(std::abs(glm::dot(x->transform().rotation() * glm::vec3(1, 0, 0),
+                                                                                             y->transform().rotation() * glm::vec3(1, 0, 0))),
+                                                                       0.0f, 1.0f)))
+                                     : -1.0f;
+            log("build: window turned to its wall: " + std::to_string(gap) + " deg off (aimed at 100 deg)");
+            // Open the door the way the player does (Use on its Interactable).
+            if (ve::GameObject* door = scene().findById(m_built[8]))
+                if (auto* use = door->getComponent<ve::Interactable>()) use->use(*scene().find("Player"));
+            buildStep(12, pos(1) + glm::vec3(3.2f, 0.0f, 0.4f), 0.0f); // a fence off the second foundation, then remove it
+            break;
+        }
+        case 37: {
+            float leaf = -1.0f;
+            if (ve::GameObject* door = scene().findById(m_built[8]))
+                for (ve::Transform* c : door->transform().children())
+                    if (c->gameObject().name() == "Door leaf") leaf = glm::degrees(glm::angle(c->localRotation()));
+            auto* hinge = scene().findById(m_built[8]) ? scene().findById(m_built[8])->getComponent<DoorHinge>() : nullptr;
+            log(std::string("build: door opened with Use: ") + (hinge && hinge->open() ? "yes" : "NO") + ", leaf swung " +
+                std::to_string(leaf) + " deg");
+            placeLog("fence", b->previewPosition());
+            ve::GameObject* fence = m_built.empty() ? nullptr : scene().findById(m_built.back());
+            const int removed = b->remove(fence);
+            if (removed) m_built.pop_back();
+            log("build: fence removed " + std::to_string(removed));
+            // Removing a wall takes the door fitted into it along.
+            buildStep(4, pos(1) + glm::vec3(0.1f, 0.6f, 0.85f), 0.0f);
+            break;
+        }
+        case 38:
+            placeLog("2nd door wall", pos(1) + glm::vec3(0.0f, BuildPiece::kFoundation, 1.0f));
+            buildStep(13, pos(m_built.size() - 1) + glm::vec3(0.2f, 1.0f, 0.2f), 200.0f);
+            break;
+        case 39:
+            placeLog("2nd door", pos(m_built.size() - 1));
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            ++m_step;
+            break;
+        case 40: {
+            const uint64_t wall = m_built[m_built.size() - 2], door = m_built.back();
+            const int removed = b->remove(scene().findById(wall));
+            log("build: removing the 2nd door wall removed " + std::to_string(removed) + " piece(s), its door gone " +
+                (scene().findById(door) ? "NO" : "yes"));
+            m_built.resize(m_built.size() - 2);
+            b->setAimOverride(std::nullopt);
+            b->setActive(false);
+            // Exclusions while playing: a box dropped on an existing foliage instance clears it
+            // (the path a foundation's FoliageExclusion takes), and taking it away brings it back.
+            m_exclusionAt = glm::vec3(0.0f);
+            if (auto* f = scene().findFirst<ve::Foliage>(); f && f->system())
+                for (uint32_t l = 0; l < f->system()->layerCount() && m_exclusionAt == glm::vec3(0.0f); ++l) {
+                    auto near = f->system()->query(l, layout::kCamp + glm::vec2(30.0f, 30.0f), 25.0f);
+                    if (!near.empty()) m_exclusionAt = near.front();
+                }
+            m_foliageOnSite = foliageAt(m_exclusionAt, 0.3f);
+            auto& ex = scene().spawn("Exclusion test");
+            ex.transform().setPosition(m_exclusionAt);
+            ex.transform().setRotation(glm::angleAxis(glm::radians(30.0f), glm::vec3(0, 1, 0)));
+            auto& fe = ex.addComponent<ve::FoliageExclusion>();
+            fe.box = true;
+            fe.size = {2.0f, 2.0f};
+            m_exclusionObject = ex.id();
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            ++m_step;
+            break;
+        }
+        case 41: {
+            const int during = foliageAt(m_exclusionAt, 0.3f);
+            if (ve::GameObject* ex = scene().findById(m_exclusionObject)) ex->destroy();
+            log("build: foliage at a spot " + std::to_string(m_foliageOnSite) + " before an exclusion box, " + std::to_string(during) +
+                " with it");
+            m_foliageDuring = during;
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            ++m_step;
+            break;
+        }
+        case 42: {
+            log("build: ... and " + std::to_string(foliageAt(m_exclusionAt, 0.3f)) + " after removing it");
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            ++m_step;
+            break;
+        }
+        case 43: {
+            // Save, then load (the level rebuilt behind the loading screen): the pieces come back.
+            s_expect.pieces.clear();
+            for (size_t i = 0; i < m_built.size(); ++i)
+                if (ve::GameObject* o = scene().findById(m_built[i])) s_expect.pieces.push_back({o->name(), o->transform().position()});
+            const bool saved = ve::save::saveGame(scene(), "buildtest");
+            log("build: " + std::to_string(s_expect.pieces.size()) + " pieces, saved " + (saved ? "yes" : "NO"));
+            s_resume = 45;
+            log(std::string("build: loading the save: ") + (loadProgress("buildtest") ? "started" : "NO SAVE"));
+            ++m_step;
+            break;
+        }
+        default: break;
+        }
+    } else if (m_step == 45 && m_t > 3.0f) {
+        int found = 0;
+        float worst = 0.0f;
+        for (const auto& [name, p] : s_expect.pieces) {
+            float best = 1e9f;
+            for (const auto& o : scene().objects()) {
+                if (o->isDestroyed() || !dynamic_cast<BuildPiece*>(o.get()) || o->name() != name) continue;
+                best = std::min(best, glm::distance(o->transform().position(), p));
+            }
+            if (best < 0.01f) ++found;
+            worst = std::max(worst, best);
+        }
+        log("build: after loading, " + std::to_string(found) + " of " + std::to_string(s_expect.pieces.size()) +
+            " pieces back in place (worst " + std::to_string(worst) + " m)");
+        bool doorOpen = false;
+        scene().forEach<DoorHinge>([&](DoorHinge& h) { doorOpen = doorOpen || h.open(); });
+        log(std::string("build: the door is still open after loading: ") + (doorOpen ? "yes" : "NO"));
+        ve::save::remove("buildtest");
+        // Look at the little house for the screenshot.
+        if (!s_expect.pieces.empty()) {
+            // From the south-west: the late sun lights the faces we see.
+            const glm::vec3 c = s_expect.pieces.front().second + glm::vec3(1.0f, 0.0f, 0.0f);
+            static_cast<Player*>(scene().find("Player"))->setPose(c + glm::vec3(-6.0f, 1.2f, 6.5f), glm::degrees(std::atan2(-6.0f, 6.5f)), -12.0f);
+        }
+        m_t = 0.0f;
+        ++m_step;
+    } else if (m_step == 46 && m_t > 1.5f) {
+        shot("7-building");
+        if (m_t > 2.0f) {
+            m_t = 0.0f;
+            m_step = 70; // physics layers / surfaces, then the UI
+        }
+    } else if (m_step >= 70) {
+        physicsSteps(log);
+    } else if (m_step >= 47) {
+        uiSteps(log);
+    }
+}
+
+namespace {
+// Physics test helpers: what a body touched, and a character that just stands.
+class ContactRecorder : public ve::Component {
+public:
+    std::string surface;
+    int layer = -1;
+    void onCollisionEnter(const ve::Collision& c) override
+    {
+        if (surface.empty()) {
+            surface = c.otherSurface;
+            layer = c.otherLayer;
+        }
+    }
+};
+class StandStill : public ve::Component {
+public:
+    void fixedUpdate(float dt) override
+    {
+        if (auto* c = gameObject().getComponent<ve::CharacterController>()) c->move(glm::vec3(0.0f), dt);
+    }
+};
+} // namespace
+
+// Collision layers and physics surfaces (engine), then on to the UI steps.
+void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
+{
+    ve::PhysicsWorld& ph = physics();
+    const glm::vec2 spot = layout::kCamp + glm::vec2(-14.0f, 16.0f);
+    const glm::vec3 ground = groundAt(spot);
+    const float platformY = ground.y + 4.0f;
+    switch (m_step) {
+    case 70: {
+        const int platformLayer = ph.addLayer("TestPlatform"), ghostLayer = ph.addLayer("TestGhost");
+        ph.setCollision(platformLayer, ghostLayer, false);
+        auto& platform = scene().spawn("Test platform");
+        platform.transform().setPosition({spot.x, platformY, spot.y});
+        auto& pb = platform.addComponent<ve::Rigidbody>(ve::Collider::box({1.5f, 0.15f, 1.5f}), ve::BodyType::Static);
+        pb.layer = "TestPlatform";
+        pb.surface = "Stone";
+        auto box = [&](const char* name, const char* layer, float dx) -> ve::GameObject& {
+            auto& b = scene().spawn(name);
+            b.transform().setPosition({spot.x + dx, platformY + 1.5f, spot.y});
+            b.addComponent<ve::Rigidbody>(ve::Collider::box(glm::vec3(0.2f)), ve::BodyType::Dynamic).layer = layer;
+            b.addComponent<ContactRecorder>();
+            return b;
+        };
+        m_physGhost = box("Ghost box", "TestGhost", -0.6f).id();
+        m_physSolid = box("Solid box", "Default", 0.6f).id();
+        m_physPlatform = platform.id();
+        log("layers: " + std::to_string(ph.layerCount()) + " (Default, Debris, TestPlatform, TestGhost), TestPlatform x TestGhost collide: " +
+            (ph.collides(platformLayer, ghostLayer) ? "YES (wrong)" : "no"));
+        m_stepFrame = m_frames;
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 71: {
+        if (m_t < 2.5f) break;
+        ve::GameObject* ghost = scene().findById(m_physGhost);
+        ve::GameObject* solid = scene().findById(m_physSolid);
+        if (!ghost || !solid) break;
+        const float gy = ghost->transform().position().y, sy = solid->transform().position().y;
+        const auto* rec = solid->getComponent<ContactRecorder>();
+        log("layers: the TestGhost box fell through the platform: " + std::string(gy < platformY - 1.0f ? "yes" : "NO") +
+            ", the Default box rests on it: " + (sy > platformY ? "yes" : "NO") + " (contact surface '" + (rec ? rec->surface : "?") +
+            "', layer " + ph.layerName(rec ? rec->layer : -1) + ")");
+        // Queries: all layers -> the platform; without TestPlatform -> the ground under it.
+        const glm::vec3 from{spot.x + 1.2f, platformY + 3.0f, spot.y};
+        const auto all = ph.raycast(from, {0, -1, 0}, 20.0f, ve::QueryFilter{});
+        ve::QueryFilter noPlatform;
+        noPlatform.layers = ~ph.layerMask({"TestPlatform"});
+        const auto masked = ph.raycast(from, {0, -1, 0}, 20.0f, noPlatform);
+        log("queries: unmasked ray hits the platform: " + std::string(all && all->gameObject && all->gameObject->id() == m_physPlatform ? "yes" : "NO") +
+            " (surface '" + (all ? all->surface : "") + "', layer " + (all ? ph.layerName(all->layer) : "") +
+            "), masked ray reaches the ground: " + (masked && masked->point.y < platformY - 1.0f ? "yes" : "NO") + " (surface '" +
+            (masked ? masked->surface : "") + "')");
+        for (uint64_t id : {m_physGhost, m_physSolid, m_physPlatform})
+            if (ve::GameObject* o = scene().findById(id)) o->destroy();
+        // A character standing on a stone foundation, then on the ground.
+        const BuildPiece* stone = nullptr;
+        for (const auto& o : scene().objects())
+            if (auto* p = dynamic_cast<BuildPiece*>(o.get()); p && !p->isDestroyed() && p->kind == BuildPiece::Kind::Foundation &&
+                                                            p->material == BuildPiece::Material::Stone && !ve::PlacementGhost::is(*p))
+                stone = p;
+        auto& probe = scene().spawn("Ground probe");
+        probe.transform().setPosition(stone ? stone->transform().position() + glm::vec3(0.0f, BuildPiece::kFoundation + 0.05f, 0.0f)
+                                            : ground + glm::vec3(0, 0.05f, 0));
+        probe.addComponent<ve::CharacterController>();
+        probe.addComponent<StandStill>();
+        m_physProbe = probe.id();
+        m_physOnStone = stone != nullptr;
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 72:
+    case 73: {
+        if (m_t < 1.0f) break;
+        ve::GameObject* probe = scene().findById(m_physProbe);
+        auto* cc = probe ? probe->getComponent<ve::CharacterController>() : nullptr;
+        if (!cc) break;
+        if (m_step == 72) {
+            log("surfaces: a character on " + std::string(m_physOnStone ? "a stone foundation" : "(no stone foundation found)") +
+                " stands on '" + cc->groundSurface() + "'");
+            const glm::vec3 g = groundAt(spot + glm::vec2(3.0f, 0.0f));
+            cc->teleport(g + glm::vec3(0, 0.05f, 0));
+            m_t = 0.0f;
+            ++m_step;
+        } else {
+            log("surfaces: ... and on the terrain '" + cc->groundSurface() + "'");
+            probe->destroy();
+            m_t = 0.0f;
+            m_stepFrame = m_frames;
+            m_step = 74; // animation layers / events / IK
+        }
+        break;
+    }
+    case 74: { // a villager: wave (layer), walk (footstep events), a hand reaching (IK)
+        Villager* v = scene().findFirst<Villager>();
+        if (!v || !v->animator() || !v->body()) {
+            log("anim: no villager");
+            m_step = 47;
+            break;
+        }
+        m_animVillager = v->id();
+        m_animSteps = v->steps();
+        v->wave(3.0f);
+        // Walk somewhere 6 m away (footstep events while walking).
+        if (auto* nav = ve::NavMeshSurface::find(scene()))
+            if (auto p = nav->randomPointNear(v->transform().position() + glm::vec3(6.0f, 0.0f, 0.0f), 2.0f)) v->agent().setDestination(*p);
+        // The left hand reaches for a point in front of the shoulder (two-bone IK).
+        auto& ik = v->body()->addComponent<ve::TwoBoneIK>("UpperArm.L", "LowerArm.L", "Hand.L");
+        ik.pole = {0.0f, 0.0f, -1.0f}; // elbow back
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 75: {
+        auto* v = dynamic_cast<Villager*>(scene().findById(m_animVillager));
+        ve::TwoBoneIK* ik = nullptr; // ours (the villager's FootIK has two more)
+        if (v && v->body())
+            for (const auto& c : v->body()->components())
+                if (auto* k = dynamic_cast<ve::TwoBoneIK*>(c.get()); k && k->upperJoint == "UpperArm.L") ik = k;
+        if (!v || !ik) {
+            m_step = 47;
+            break;
+        }
+        // Keep the target in front of the shoulder (the villager moves).
+        ve::GameObject* shoulder = nullptr;
+        std::function<ve::GameObject*(ve::GameObject&, const char*)> below = [&](ve::GameObject& o, const char* n) -> ve::GameObject* {
+            if (o.name() == n) return &o;
+            for (ve::Transform* c : o.transform().children())
+                if (ve::GameObject* f = below(c->gameObject(), n)) return f;
+            return nullptr;
+        };
+        shoulder = below(*v->body(), "UpperArm.L");
+        if (shoulder) ik->target = shoulder->transform().position() + v->transform().rotation() * glm::vec3(0.1f, 0.05f, -0.35f);
+        if (m_t > 3.0f) { // look at it (the next frame's screenshot)
+            const glm::vec3 p = v->transform().position();
+            const glm::vec3 eye = p + v->transform().rotation() * glm::vec3(1.2f, 0.0f, 3.2f);
+            const glm::vec3 d = p - eye;
+            static_cast<Player*>(scene().find("Player"))->setPose(eye, glm::degrees(std::atan2(-d.x, -d.z)), -8.0f);
+        }
+        if (m_t < 4.0f) break;
+        ve::Animator* a = v->animator();
+        const int layer = a->layerIndex("Wave");
+        ve::GameObject* hand = below(*v->body(), "Hand.R");
+        ve::GameObject* head = below(*v->body(), "Head");
+        ve::GameObject* handL = below(*v->body(), "Hand.L");
+        log("anim: layers " + std::to_string(a->layerCount()) + ", Wave layer weight " + std::to_string(a->layerWeight(layer)) + " playing '" +
+            a->current(layer) + "', base layer '" + a->current() + "', right hand above the head: " +
+            (hand && head && hand->transform().position().y > head->transform().position().y ? "yes" : "NO"));
+        log("anim: footstep events while walking: " + std::to_string(v->steps() - m_animSteps) + (v->steps() > m_animSteps ? "" : " (NO)"));
+        ik->solve(); // (measured right after solving: the next frame's animation resets the arm first)
+        const float miss = handL ? glm::distance(handL->transform().position(), ik->target) : 99.0f;
+        log("anim: two-bone IK hand to target: " + std::to_string(miss) + " m off" + (miss < 0.02f ? "" : " (NO)"));
+        if (auto* feet = v->body()->getComponent<ve::FootIK>()) {
+            const glm::vec3 l = feet->footTarget(0), r = feet->footTarget(1);
+            log("anim: foot IK targets " + std::to_string(l.y - groundAt({l.x, l.z}).y) + " / " + std::to_string(r.y - groundAt({r.x, r.z}).y) +
+                " m above the ground, hips offset " + std::to_string(feet->hipsOffset()) + " m");
+        }
+        shot("8a-villager");
+        v->body()->removeComponent(ik);
+        m_t = 0.0f;
+        m_stepFrame = m_frames;
+        m_step = 76; // joints
+        break;
+    }
+    case 76: { // a yard of joints: pendulum, motor wheel, slider, rope, a weld that breaks
+        const glm::vec2 yard = layout::kCamp + glm::vec2(-24.0f, 24.0f);
+        const float g = groundAt(yard).y;
+        auto body = [&](const char* name, glm::vec3 at, const ve::Collider& c, float mass, glm::vec4 color, glm::vec3 size,
+                        ve::PrimitiveRenderer::Shape shape = ve::PrimitiveRenderer::Shape::Cube) -> ve::GameObject& {
+            auto& o = scene().spawn(name);
+            o.transform().setPosition(at);
+            auto& pr = o.addComponent<ve::PrimitiveRenderer>();
+            pr.shape = shape;
+            pr.size = size;
+            pr.color = color;
+            auto& rb = o.addComponent<ve::Rigidbody>(c, ve::BodyType::Dynamic);
+            rb.mass = mass;
+            m_jointObjects.push_back(o.id());
+            return o;
+        };
+        // Pendulum: a weight 1.2 m under a hinge (Z axis), limited to +-60 degrees, pushed.
+        auto& bob = body("Pendulum", {yard.x, g + 2.0f, yard.y}, ve::Collider::box(glm::vec3(0.15f)), 4.0f, {0.9f, 0.5f, 0.2f, 1}, glm::vec3(0.3f));
+        auto& pend = bob.addComponent<ve::HingeJoint>();
+        pend.anchor = {0.0f, 1.2f, 0.0f};
+        pend.axis = {0.0f, 0.0f, 1.0f};
+        pend.useLimits = true;
+        pend.limitMin = -60.0f;
+        pend.limitMax = 60.0f;
+        bob.getComponent<ve::Rigidbody>()->setLinearVelocity({7.0f, 0.0f, 0.0f});
+        // A wheel (a bar) turned by a velocity motor at 180 deg/s.
+        auto& wheel = body("Motor wheel", {yard.x + 3.0f, g + 1.6f, yard.y}, ve::Collider::box({0.6f, 0.06f, 0.06f}), 3.0f, {0.3f, 0.6f, 1.0f, 1},
+                           {1.2f, 0.12f, 0.12f});
+        auto& motor = wheel.addComponent<ve::HingeJoint>();
+        motor.axis = {0.0f, 0.0f, 1.0f};
+        motor.motor = ve::Joint::Motor::Velocity;
+        motor.motorTarget = 180.0f;
+        // A slider driven to +1.5 m along X (limits +-2 m).
+        auto& sled = body("Slider", {yard.x + 6.0f, g + 1.0f, yard.y}, ve::Collider::box(glm::vec3(0.2f)), 5.0f, {0.4f, 0.9f, 0.4f, 1}, glm::vec3(0.4f));
+        auto& slide = sled.addComponent<ve::SliderJoint>();
+        slide.useLimits = true;
+        slide.limitMin = -2.0f;
+        slide.limitMax = 2.0f;
+        slide.motor = ve::Joint::Motor::Position;
+        slide.motorTarget = 1.5f;
+        slide.motorMaxForce = 2000.0f;
+        // A rope: four links of 0.5 m from a point in the air.
+        const glm::vec3 top{yard.x + 10.0f, g + 3.0f, yard.y};
+        ve::GameObject* prev = nullptr;
+        for (int i = 0; i < 4; ++i) {
+            auto& link = body("Rope link", top + glm::vec3(0.35f * float(i + 1), -0.35f * float(i + 1), 0.0f), ve::Collider::sphere(0.08f), 0.5f,
+                              {0.8f, 0.7f, 0.5f, 1}, glm::vec3(0.16f), ve::PrimitiveRenderer::Shape::Sphere);
+            auto& rope = link.addComponent<ve::DistanceJoint>();
+            if (prev) rope.connect(prev);
+            else rope.connectedAnchor = top; // (the world)
+            rope.minDistance = 0.0f;
+            rope.maxDistance = 0.5f;
+            prev = &link;
+        }
+        m_ropeEnd = prev->id();
+        m_ropeTop = top;
+        // A plank welded to the world, breaking under 1500 N; a 120 kg block lands on its end.
+        auto& plank = body("Plank", {yard.x + 14.0f, g + 1.0f, yard.y}, ve::Collider::box({0.8f, 0.05f, 0.2f}), 4.0f, {0.6f, 0.45f, 0.3f, 1},
+                           {1.6f, 0.1f, 0.4f});
+        auto& weld = plank.addComponent<ve::FixedJoint>();
+        weld.anchor = {-0.8f, 0.0f, 0.0f};
+        weld.breakForce = 1500.0f;
+        weld.breakTorque = 1500.0f;
+        weld.onBreak = [this](ve::Joint& j) { m_weldBroke = j.lastForce() > j.lastTorque() ? j.lastForce() : j.lastTorque(); };
+        body("Heavy block", {yard.x + 14.6f, g + 2.6f, yard.y}, ve::Collider::box(glm::vec3(0.25f)), 120.0f, {0.4f, 0.4f, 0.45f, 1}, glm::vec3(0.5f));
+        ve::debug::setChannel("Physics joints", true);
+        // Look at the yard.
+        static_cast<Player*>(scene().find("Player"))->setPose({yard.x + 7.0f, g + 0.5f, yard.y + 9.0f}, 0.0f, -8.0f);
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 77: {
+        if (m_t < 3.0f) break;
+        auto find = [&](const char* name) -> ve::GameObject* {
+            for (uint64_t id : m_jointObjects)
+                if (ve::GameObject* o = scene().findById(id); o && o->name() == name) return o;
+            return nullptr;
+        };
+        const auto* pend = find("Pendulum") ? find("Pendulum")->getComponent<ve::HingeJoint>() : nullptr;
+        const auto* wheel = find("Motor wheel") ? find("Motor wheel")->getComponent<ve::Rigidbody>() : nullptr;
+        const auto* slide = find("Slider") ? find("Slider")->getComponent<ve::SliderJoint>() : nullptr;
+        const auto* weld = find("Plank") ? find("Plank")->getComponent<ve::FixedJoint>() : nullptr;
+        const ve::GameObject* end = scene().findById(m_ropeEnd);
+        if (!m_jointsLogged) {
+        m_jointsLogged = true;
+        log("joints: pendulum " + std::string(pend && pend->attached() ? "attached" : "NOT attached") + ", angle " +
+            std::to_string(pend ? pend->angle() : 0.0f) + " deg (within +-60: " + (pend && std::abs(pend->angle()) <= 60.5f ? "yes" : "NO") + ")");
+        log("joints: motor wheel spins at " + std::to_string(wheel ? glm::degrees(glm::length(wheel->angularVelocity())) : 0.0f) +
+            " deg/s (asked 180)");
+        log("joints: slider at " + std::to_string(slide ? slide->position() : 0.0f) + " m (asked 1.5)");
+        const float ropeLen = end ? glm::distance(end->transform().position(), m_ropeTop) : 0.0f;
+        log("joints: rope end hangs " + std::to_string(ropeLen) + " m from its anchor (4 links of 0.5 m: " +
+            (ropeLen <= 2.05f && ropeLen > 1.6f ? "yes" : "NO") + ")");
+        log(std::string("joints: the weld broke under the block: ") + (weld && weld->broken() ? "yes" : "NO") + " (" +
+            std::to_string(m_weldBroke) + " at the break)");
+        }
+        shot("8b-joints");
+        if (m_t < 3.5f) break;
+        for (uint64_t id : m_jointObjects)
+            if (ve::GameObject* o = scene().findById(id)) o->destroy();
+        m_jointObjects.clear();
+        ve::debug::setChannel("Physics joints", false);
+        m_t = 0.0f;
+        m_stepFrame = m_frames;
+        m_step = 78; // look-at / aim IK
+        break;
+    }
+    case 78:
+    case 79: { // a villager looks at one point and points at another
+        auto* v = dynamic_cast<Villager*>(scene().findById(m_animVillager));
+        if (!v || !v->body() || !v->looker() || !v->pointer()) {
+            log("aim: no villager with IK");
+            m_step = 47;
+            break;
+        }
+        v->agent().stop();
+        const glm::quat facing = v->body()->transform().rotation(); // the model's +Z = its front
+        const glm::vec3 base = v->transform().position();
+        m_lookAt = base + glm::vec3(0.0f, 1.9f, 0.0f) + facing * glm::vec3(1.0f, 0.2f, 2.0f);
+        m_pointAt = base + glm::vec3(0.0f, 2.2f, 0.0f) + facing * glm::vec3(-2.5f, 0.0f, 1.0f);
+        if (m_step == 78) {
+            v->pointAt(m_pointAt, 10.0f);
+            // Look from in front of it.
+            const glm::vec3 eye = base + facing * glm::vec3(0.6f, 0.0f, 3.6f);
+            const glm::vec3 d = base - eye;
+            static_cast<Player*>(scene().find("Player"))->setPose(eye + glm::vec3(0.0f, -0.2f, 0.0f), glm::degrees(std::atan2(-d.x, -d.z)), -6.0f);
+            m_t = 0.0f;
+            ++m_step;
+            break;
+        }
+        v->looker()->setTarget(m_lookAt); // (every frame: the villager's own update aims it at the player otherwise)
+        v->pointer()->setTarget(m_pointAt);
+        if (m_t < 2.0f) break;
+        ve::debug::sphere(m_lookAt, 0.12f, ve::debug::kCyan);
+        ve::debug::sphere(m_pointAt, 0.15f, ve::debug::kYellow);
+        ve::debug::ray(v->looker()->aimOrigin(), v->looker()->aimDirection() * 2.0f, ve::debug::kCyan);
+        ve::debug::ray(v->pointer()->aimOrigin(), v->pointer()->aimDirection() * 2.5f, ve::debug::kYellow);
+        shot("8c-look-point");
+        if (m_t < 2.3f) break;
+        log("aim: look-at blend " + std::to_string(v->looker()->blend()) + ", " + std::to_string(v->looker()->lastError()) + " deg off its target" +
+            (v->looker()->lastError() < 2.0f ? "" : " (NO)"));
+        log("aim: pointing arm blend " + std::to_string(v->pointer()->blend()) + ", " + std::to_string(v->pointer()->lastError()) +
+            " deg off its target" + (v->pointer()->lastError() < 3.0f ? "" : " (NO)"));
+        v->looker()->clearTarget();
+        v->pointer()->clearTarget();
+        m_t = 0.0f;
+        m_stepFrame = m_frames;
+        m_step = 47; // the UI steps
+        break;
+    }
+    default: break;
+    }
+}
+
+// The game's UI: inventory, build menu, pause, title (MainMenu.hpp). The
+// pause stops the clock, so these steps count frames.
+void AutoTest::uiSteps(const std::function<void(const std::string&)>& log)
+{
+    const uint32_t frames = m_frames - m_stepFrame;
+    auto next = [&] {
+        m_stepFrame = m_frames;
+        m_t = 0.0f;
+        ++m_step;
+    };
+    auto* inv = scene().findFirst<InventoryScreen>();
+    auto* builder = scene().findFirst<Builder>();
+    auto* menu = scene().findFirst<MainMenu>();
+    Inventory& items = gameState().inventory;
+    switch (m_step) {
+    case 47: {
+        items.add("berries", 7);
+        items.add("sunstone", 2);
+        if (inv) inv->setOpen(true);
+        log(std::string("ui: inventory open: ") + (inv && inv->open() ? "yes" : "NO") + ", " + std::to_string(items.count("wood")) +
+            " wood, " + std::to_string(items.count("berries")) + " berries");
+        next();
+        break;
+    }
+    case 48:
+        if (frames < 20) break;
+        shot("8-inventory");
+        if (frames < 24) break;
+        if (inv) {
+            const Inventory::Stack from = items.slots[0];
+            inv->clickSlot(0);
+            inv->clickSlot(10); // (an empty slot)
+            log("ui: moved slot 0 (" + from.item + " x" + std::to_string(from.count) + ") to slot 10: " +
+                (items.slots[10].item == from.item && items.slots[10].count == from.count && items.slots[0].item.empty() ? "yes" : "NO"));
+            inv->setOpen(false);
+        }
+        next();
+        break;
+    case 49:
+        if (builder) {
+            builder->openMenu();
+            builder->showCategory("Walls");
+        }
+        log(std::string("ui: build menu open: ") + (builder && builder->menuOpen() ? "yes" : "NO"));
+        next();
+        break;
+    case 50: {
+        if (frames < 20) break;
+        shot("9-build-menu");
+        if (frames < 24 || !builder) break;
+        // Pick a card as the player would: the piece is selected, the menu closes, building starts.
+        int want = -1;
+        for (size_t i = 0; i < builder->catalogue().size(); ++i)
+            if (builder->catalogue()[i].category == "Walls" && want < 0) want = int(i);
+        bool clicked = false;
+        if (want >= 0)
+            if (ve::ui::Element* card = builder->menu().root().find("piece:" + builder->catalogue()[size_t(want)].name)) {
+                card->click();
+                clicked = true;
+            }
+        log("ui: clicked the card for " + (want >= 0 ? builder->catalogue()[size_t(want)].name : std::string("?")) + ": " +
+            (clicked && builder->selection() == want && !builder->menuOpen() && builder->active() ? "selected, building" : "NO"));
+        builder->setActive(false);
+        next();
+        break;
+    }
+    case 51:
+        if (menu) menu->pause();
+        log(std::string("ui: paused: ") + (menu && menu->screen() == MainMenu::Screen::Paused && time().timeScale == 0.0f ? "yes" : "NO"));
+        next();
+        break;
+    case 52:
+        if (frames < 20) break;
+        shot("10-pause");
+        if (frames < 24 || !menu) break;
+        menu->showPanel("settings");
+        next();
+        break;
+    case 53:
+        if (frames < 20) break;
+        shot("11-settings");
+        if (frames < 24 || !menu) break;
+        // Lists, text fields: a long Load list (scrolls), typing a save name, the multiplayer panel.
+        {
+            const ve::Json world = ve::save::capture(scene());
+            for (int i = 1; i <= 14; ++i) ve::save::write("ui-test-" + std::string(i < 10 ? "0" : "") + std::to_string(i), world);
+        }
+        menu->showPanel("load");
+        m_step = 60;
+        m_stepFrame = m_frames;
+        break;
+    case 60: {
+        if (frames < 20) break;
+        auto* view = dynamic_cast<ve::ui::ScrollView*>(menu->panels().root().find("slots"));
+        if (view && !view->content().children().empty()) view->scrollTo(*view->content().children().back()); // (as keyboard focus would)
+        if (frames < 24) break;
+        if (frames == 24)
+            log(std::string("ui: the load list scrolls: ") + (view && view->overflows() ? "yes" : "NO") + " (" +
+            std::to_string(view ? view->content().children().size() : 0) + " saves, scrolled to " + std::to_string(view ? view->scroll : 0.0f) +
+                " of " + std::to_string(view ? view->maxScroll() : 0.0f) + ")");
+        shot("11a-load-list");
+        if (frames < 28) break;
+        menu->showPanel("save"); // (focuses the name field)
+        next();
+        m_step = 61;
+        break;
+    }
+    case 61: {
+        auto* field = dynamic_cast<ve::ui::TextInput*>(menu->panels().root().find("name"));
+        if (frames == 2 && field) { // type over the suggested name, with a typo fixed
+            field->setText("");
+            input().injectText("camp-12");
+            input().injectKeyTyped(ve::Key::Backspace);
+        }
+        if (frames < 20) break;
+        shot("11b-save");
+        if (frames < 24 || !field) break;
+        if (frames != 24) break;
+        log("ui: typed into the save name: '" + field->text + "' " + (field->text == "camp-1" ? "(right)" : "(NO)") +
+            ", being edited: " + (ve::ui::System::get().editing() == field ? "yes" : "NO") + ", gameplay keys blocked: " +
+            (input().keyDown(ve::Key::W) || ve::ui::System::get().editing() ? "yes" : "NO"));
+        if (ve::ui::Element* save = menu->panels().root().find("save")) save->click();
+        log(std::string("ui: saved as 'camp-1': ") + (ve::save::read("camp-1") ? "yes" : "NO") + ", back in the game: " +
+            (menu->screen() == MainMenu::Screen::Playing ? "yes" : "NO"));
+        for (int i = 1; i <= 14; ++i) ve::save::remove("ui-test-" + std::string(i < 10 ? "0" : "") + std::to_string(i));
+        ve::save::remove("camp-1");
+        menu->pause();
+        menu->showPanel("multiplayer");
+        m_step = 62;
+        m_stepFrame = m_frames;
+        break;
+    }
+    case 62: {
+        if (frames < 20) break;
+        shot("11c-multiplayer");
+        if (frames < 24) break;
+        menu->showPanel("");
+        menu->toTitle(); // Main menu
+        log(std::string("ui: back on the title: ") + (menu->screen() == MainMenu::Screen::Title && time().timeScale == 1.0f ? "yes" : "NO"));
+        m_step = 54;
+        m_stepFrame = m_frames;
+        m_t = 0.0f;
+        break;
+    }
+    case 54:
+        if (frames < 90) break; // (the camera and the light settle)
+        shot("12-title");
+        if (frames < 94 || !menu) break;
+        // New game: the world is rebuilt as it was built; this test resumes in the new one.
+        s_resume = 55;
+        menu->newGame();
+        log("ui: new game (the level reloads)");
+        next();
+        break;
+    case 55: {
+        if (m_t < 2.0f) break;
+        int pieces = 0;
+        for (const auto& o : scene().objects())
+            if (!o->isDestroyed() && dynamic_cast<BuildPiece*>(o.get())) ++pieces;
+        log(std::string("ui: after the new game: playing ") + (menu && menu->screen() == MainMenu::Screen::Playing ? "yes" : "NO") +
+            ", inventory empty " + (items.count("berries") == 0 && items.count("wood") == 0 ? "yes" : "NO") + ", built pieces " +
+            std::to_string(pieces));
+        engine().quit();
+        next();
+        break;
+    }
+    default: break;
     }
 }
 
@@ -771,14 +1718,111 @@ void Hud::findEnvironment()
     find(m_dayNight, m_dayNightId);
 }
 
+bool saveProgress(ve::Scene& scene, const std::string& slot)
+{
+    const GameState& gs = gameState();
+    const bool ok = ve::save::saveGame(scene, slot, {{"collected", gs.collected}, {"inventory", gs.inventory.save()}});
+    gameState().message = ok ? "Game saved" : "Saving failed";
+    gameState().messageTimer = 2.0f;
+    return ok;
+}
+
+void applyGameData(const ve::Json& game)
+{
+    GameState& gs = gameState();
+    gs.collected = game.value("collected", 0);
+    gs.inventory.load(game.value("inventory", ve::Json::array()));
+    gs.message = "Game loaded";
+    gs.messageTimer = 2.0f;
+}
+
+bool loadProgress(const std::string& slot)
+{
+    const bool ok = reloadWithSave(ve::Engine::get(), slot);
+    if (!ok) {
+        gameState().message = "No saved game";
+        gameState().messageTimer = 2.0f;
+    }
+    return ok;
+}
+
+void loadControls()
+{
+    std::ifstream in(ve::save::folder() / "controls.json");
+    if (!in) return;
+    try {
+        ve::Json j;
+        in >> j;
+        ve::Engine::get().input().loadBindings(j);
+    } catch (const std::exception& e) {
+        ve::log::warn("controls.json: {}", e.what());
+    }
+}
+
+void saveControls()
+{
+    std::error_code ec;
+    std::filesystem::create_directories(ve::save::folder(), ec);
+    std::ofstream out(ve::save::folder() / "controls.json");
+    out << ve::Engine::get().input().saveBindings().dump(1) << '\n';
+}
+
+void Hud::drawControls()
+{
+    ve::Input& in = input();
+    ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Controls (F10)", &m_showControls)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextDisabled("Gamepad: %s", in.gamepadConnected() ? in.gamepadName().c_str() : "none connected");
+    if (!in.rebinding().empty()) ImGui::TextColored(ImVec4(1, 0.8f, 0.3f, 1), "Press a key, mouse or gamepad button for '%s' (Esc cancels)",
+                                                    in.rebinding().c_str());
+    if (ImGui::BeginTable("bindings", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        for (const std::string& action : in.actions()) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(action.c_str());
+            ImGui::TableNextColumn();
+            std::string names;
+            for (const std::string& n : in.bindingNames(action)) names += (names.empty() ? "" : ", ") + n;
+            ImGui::TextUnformatted(names.c_str());
+            ImGui::TableNextColumn();
+            ImGui::PushID(action.c_str());
+            if (ImGui::SmallButton("Rebind")) in.startRebind(action);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::TextDisabled("Keyboard/mouse and gamepad bindings are replaced separately.");
+    ImGui::End();
+}
+
 void Hud::update(float dt)
 {
+    if (m_canvas) m_canvas->visible = m_wanted && !vfx::PhotoMode::anyActive(); // a clean view for photos
+    // SAVANNA_CONTROLS=1: open the controls window (screenshots).
+    static const bool s_controlsShot = std::getenv("SAVANNA_CONTROLS") != nullptr;
+    if (s_controlsShot && !m_showControls && !m_controlsShotDone) {
+        m_showControls = m_controlsShotDone = true;
+        input().setMouseCaptured(false);
+    }
+    // A rebind just finished (F10): keep it for next time.
+    const bool rebinding = !input().rebinding().empty();
+    if (m_wasRebinding && !rebinding) saveControls();
+    m_wasRebinding = rebinding;
+    if (input().keyPressed(ve::Key::F10)) {
+        m_showControls = !m_showControls;
+        input().setMouseCaptured(!m_showControls);
+    }
     gameState().total = gameState().collected + Sunstone::remaining(scene()); // stones can be added in the editor
     GameState& gs = gameState();
     gs.messageTimer = std::max(0.0f, gs.messageTimer - dt);
     findEnvironment();
-    if (input().keyPressed(ve::Key::R) && m_weather) m_weather->next(12.0f);
+    if (input().keyPressed(ve::Key::R) && m_weather && !Builder::building(scene())) m_weather->next(12.0f); // R rotates pieces while building
     if (input().keyPressed(ve::Key::H)) m_showHelp = !m_showHelp;
+    if (input().keyPressed(ve::Key::F5)) saveProgress(scene(), "quick");
+    if (input().keyPressed(ve::Key::F9)) loadProgress("quick");
     // A stand-in for a fight until there are enemies: game code pushes a mood
     // when combat starts and pops it when it ends; the music returns to
     // whatever was playing (camp or explore).
@@ -793,62 +1837,147 @@ void Hud::update(float dt)
 
 void Hud::onGui()
 {
-    if (engine().editor() && engine().editor()->paused()) return; // the editor's panels take the screen
-    if (vfx::PhotoMode::anyActive()) return;                         // a clean view to compose the shot
-    ImGuiIO& io = ImGui::GetIO();
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-    const ImVec2 c(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+    if (m_showControls) drawControls(); // F10 (ImGui: a tools-style window)
+}
 
-    // Crosshair.
-    if (input().mouseCaptured()) {
-        dl->AddCircleFilled(c, 2.5f, IM_COL32(255, 255, 255, 200));
-        dl->AddCircle(c, 3.5f, IM_COL32(0, 0, 0, 120));
-    }
-
-    // Status panel (top right).
+void Hud::start()
+{
+    namespace ui = ve::ui;
+    m_canvas = &addComponent<ui::Canvas>();
+    m_canvas->tooltipFont = gui::font::body;
+    ui::Element& root = m_canvas->root();
     const GameState& gs = gameState();
-    const float tod = m_dayNight ? m_dayNight->timeOfDay : 12.0f;
-    const int hours = static_cast<int>(tod);
-    const int minutes = static_cast<int>((tod - hours) * 60.0f);
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), "%02d:%02d   %s%s\nSunstones: %d / %d\nWood: %d   Berries: %d", hours, minutes,
-                  m_weather ? vfx::Weather::name(m_weather->weather()) : "-", m_player.flying() ? "   [FLY]" : "", gs.collected,
-                  gs.total, gs.wood, gs.berries);
-    const ImVec2 size = ImGui::CalcTextSize(buf);
-    const ImVec2 p(io.DisplaySize.x - size.x - 20.0f, 16.0f);
-    dl->AddRectFilled({p.x - 10, p.y - 6}, {p.x + size.x + 10, p.y + size.y + 6}, IM_COL32(20, 14, 8, 140), 6.0f);
-    dl->AddText(p, IM_COL32(255, 235, 200, 255), buf);
 
-    // What are we looking at? A physics raycast from the eye (ignores the player's own capsule).
-    if (input().mouseCaptured()) {
-        if (auto hit = physics().raycast(m_player.eyePosition(), m_player.lookDirection(), 25.0f)) {
-            // Instanced props have no GameObject; their collider carries a prop id instead.
-            const std::string name = hit->gameObject ? hit->gameObject->name() : std::string(propName(hit->userValue));
-            if (!name.empty() && name != "Terrain") {
-                char label[96];
-                std::snprintf(label, sizeof(label), "%s  (%.1f m)", name.c_str(), hit->distance);
-                const ImVec2 ls = ImGui::CalcTextSize(label);
-                dl->AddText({c.x - ls.x * 0.5f, c.y + 14.0f}, IM_COL32(255, 255, 255, 170), label);
-            }
-        }
+    // Crosshair, and the name of what's in front of us (a physics ray from the eye).
+    auto& cross = root.add<ui::Image>("crosshair");
+    cross.anchor({0.5f, 0.5f}).pivot({0.5f, 0.5f}).size({16.0f, 16.0f});
+    cross.custom = [this](ui::Painter& p, const ui::Rect& r) {
+        if (!input().mouseCaptured()) return;
+        p.circle(r.center(), 3.5f, ui::rgba(0x00000080));
+        p.circle(r.center(), 2.4f, ui::rgba(0xffffffe0));
+    };
+    auto& aim = gui::label(root, "", gui::font::body, 18.0f, ui::rgba(0xffffffa8));
+    aim.anchor({0.5f, 0.5f}).pivot({0.5f, 0.0f}).at({0.0f, 16.0f}).size({600.0f, 26.0f});
+    aim.alignX = ui::Align::Center;
+    aim.bind = [this]() -> std::string {
+        if (!input().mouseCaptured()) return {};
+        auto hit = physics().raycast(m_player.eyePosition(), m_player.lookDirection(), 25.0f);
+        if (!hit) return {};
+        const std::string name = hit->gameObject ? hit->gameObject->name() : std::string(propName(hit->userValue));
+        if (name.empty() || name == "Terrain") return {};
+        char b[96];
+        std::snprintf(b, sizeof(b), "%s  (%.1f m)", name.c_str(), hit->distance);
+        return b;
+    };
+
+    // The interaction prompt / the last event, in a pill under the crosshair.
+    auto& pill = root.add<ui::Panel>("prompt");
+    pill.anchor({0.5f, 0.5f}).pivot({0.5f, 0.0f}).at({0.0f, 52.0f}).size({520.0f, 44.0f});
+    pill.color = ui::rgba(0x120c08b0);
+    pill.borderColor = ui::withAlpha(gui::color::goldDark, 0.7f);
+    pill.borderWidth = 1.0f;
+    pill.rounding = 22.0f;
+    auto& promptText = gui::label(pill, "", gui::font::bold, 22.0f, gui::color::gold);
+    promptText.fill();
+    promptText.alignX = ui::Align::Center;
+    promptText.bind = [this, &pill, &promptText]() -> std::string {
+        const GameState& gs = gameState();
+        std::string text = gs.messageTimer > 0.0f ? gs.message : std::string();
+        if (const auto* who = m_player.getComponent<ve::Interactor>(); who && text.empty())
+            if (const std::string p = who->prompt(); !p.empty()) text = "[E]  " + p;
+        pill.visible = !text.empty();
+        // Fit the pill to the text.
+        const float w = std::max(200.0f, float(text.size()) * 11.5f + 60.0f);
+        pill.size({w, 44.0f});
+        promptText.color = gs.messageTimer > 0.0f ? gui::color::text : gui::color::gold;
+        return text;
+    };
+
+    // Vitals, bottom left: health and stamina.
+    auto& vitals = root.add<ui::Stack>("vitals");
+    vitals.anchor({0.0f, 1.0f}).pivot({0.0f, 1.0f}).at({36.0f, -40.0f}).size({380.0f, 70.0f});
+    vitals.spacing = 10.0f;
+    auto row = [&](const char* name, glm::vec4 a, glm::vec4 b, std::function<float()> value, float width) {
+        auto& line = vitals.add<ui::Element>(name);
+        line.size({10.0f, 28.0f});
+        auto& tag = gui::label(line, name, gui::font::heading, 20.0f, gui::color::dim);
+        tag.anchor({0.0f, 0.5f}).pivot({0.0f, 0.5f}).size({100.0f, 28.0f});
+        auto& b2 = gui::bar(line, a, b, std::move(value));
+        b2.anchor({0.0f, 0.5f}).pivot({0.0f, 0.5f}).at({104.0f, 0.0f}).size({width, 20.0f});
+    };
+    row("Health", gui::color::health, gui::color::healthEnd, [this] { return m_player.health / m_player.maxHealth; }, 270.0f);
+    row("Stamina", gui::color::stamina, gui::color::staminaEnd, [this] { return m_player.stamina / m_player.maxStamina; }, 220.0f);
+
+    // Hotbar, top left: the inventory's first row.
+    auto& hotbar = root.add<ui::Grid>("hotbar");
+    hotbar.columns = 8;
+    hotbar.cell = {64.0f, 64.0f};
+    hotbar.spacing = {6.0f, 6.0f};
+    hotbar.at({32.0f, 28.0f}).size(hotbar.contentSize(8));
+    for (int i = 0; i < 8; ++i) {
+        auto& cell = hotbar.add<ui::Panel>("hot" + std::to_string(i));
+        cell.color = ui::rgba(0x0d0906a0);
+        cell.borderColor = ui::withAlpha(gui::color::goldDark, 0.5f);
+        cell.borderWidth = 1.0f;
+        cell.rounding = 4.0f;
+        auto& icon = cell.add<ui::Image>("icon");
+        icon.fill(8.0f);
+        icon.custom = [i](ui::Painter& p, const ui::Rect& r) {
+            const Inventory::Stack& s = gameState().inventory.slots[size_t(i)];
+            const ItemType* t = s.item.empty() ? nullptr : itemType(s.item);
+            if (!t) return;
+            if (t->icon) p.image(t->icon, r);
+            p.text({r.min, r.max + glm::vec2(4.0f, 6.0f)}, std::to_string(s.count), gui::font::bold, 18.0f, gui::color::text, ui::Align::End,
+                   ui::Align::End, false, gui::color::shadow);
+        };
+        auto& key = gui::label(cell, std::to_string(i + 1), gui::font::body, 14.0f, ui::withAlpha(gui::color::dim, 0.8f));
+        key.fill({5.0f, 2.0f, 0.0f, 0.0f});
+        key.alignY = ui::Align::Start;
     }
 
-    // Centre message (pickup prompt etc).
-    if (gs.messageTimer > 0.0f && !gs.message.empty()) {
-        const ImVec2 ms = ImGui::CalcTextSize(gs.message.c_str());
-        const ImVec2 mp(c.x - ms.x * 0.5f, c.y + 40.0f);
-        dl->AddRectFilled({mp.x - 8, mp.y - 4}, {mp.x + ms.x + 8, mp.y + ms.y + 4}, IM_COL32(20, 14, 8, 150), 5.0f);
-        dl->AddText(mp, IM_COL32(255, 220, 150, 255), gs.message.c_str());
-    }
+    // Clock, weather and sunstones, top right.
+    auto& info = root.add<ui::Panel>("info");
+    info.anchor({1.0f, 0.0f}).pivot({1.0f, 0.0f}).at({-28.0f, 26.0f}).size({300.0f, 112.0f});
+    info.color = ui::rgba(0x120c08a8);
+    info.borderColor = ui::withAlpha(gui::color::goldDark, 0.6f);
+    info.borderWidth = 1.0f;
+    info.rounding = 6.0f;
+    auto& clock = gui::label(info, "", gui::font::title, 40.0f, gui::color::text);
+    clock.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({18.0f, 8.0f}).size({18.0f, 50.0f});
+    clock.bind = [this] {
+        const float tod = m_dayNight ? m_dayNight->timeOfDay : 12.0f;
+        char b[16];
+        std::snprintf(b, sizeof(b), "%02d:%02d", int(tod), int((tod - int(tod)) * 60.0f));
+        return std::string(b);
+    };
+    auto& weather = gui::label(info, "", gui::font::body, 20.0f, gui::color::dim);
+    weather.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({18.0f, 16.0f}).size({18.0f, 36.0f});
+    weather.alignX = ui::Align::End;
+    weather.bind = [this] {
+        return std::string(m_weather ? vfx::Weather::name(m_weather->weather()) : "") + (m_player.flying() ? "  ·  flying" : "");
+    };
+    auto& stones = gui::label(info, "", gui::font::heading, 22.0f, gui::color::gold);
+    stones.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({18.0f, 64.0f}).size({18.0f, 32.0f});
+    stones.bind = [] {
+        const GameState& g = gameState();
+        return "Sunstones  " + std::to_string(g.collected) + " / " + std::to_string(g.total);
+    };
+    (void)gs;
 
-    if (m_showHelp) {
-        const char* help = "WASD move  Shift sprint  Space jump  F fly  E pick up  Q/RMB throw\n"
-                           "T/G time +/-  R weather  M combat music  Tab mouse  F1 debug  F12 photo mode  H hide help";
-        const ImVec2 hs = ImGui::CalcTextSize(help);
-        const ImVec2 hp(16.0f, io.DisplaySize.y - hs.y - 16.0f);
-        dl->AddRectFilled({hp.x - 8, hp.y - 6}, {hp.x + hs.x + 8, hp.y + hs.y + 6}, IM_COL32(20, 14, 8, 120), 6.0f);
-        dl->AddText(hp, IM_COL32(240, 230, 210, 230), help);
-    }
+    // Controls, along the bottom (H hides them).
+    auto& help = gui::label(root, "", gui::font::body, 17.0f, ui::rgba(0xf0e6d2b0));
+    help.anchors({0.0f, 1.0f}, {1.0f, 1.0f}).pivot({0.0f, 1.0f}).at({0.0f, -10.0f}).size({0.0f, 24.0f});
+    help.alignX = ui::Align::Center;
+    help.bind = [this]() -> std::string {
+        if (!m_showHelp) return {};
+        return "WASD move   Shift sprint   Space jump   E use   Q throw   Tab inventory   B build   F fly   R weather   F5/F9 save/load   "
+               "Esc menu   H hide";
+    };
+}
+
+void Hud::setVisible(bool visible)
+{
+    m_wanted = visible;
 }
 
 } // namespace savanna

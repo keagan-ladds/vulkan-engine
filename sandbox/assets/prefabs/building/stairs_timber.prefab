@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "object": {
+    "type": "BuildPiece",
+    "name": "Timber stairs",
+    "active": true,
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotation": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "scale": [
+      1,
+      1,
+      1
+    ],
+    "fields": {
+      "kind": 10,
+      "material": 2
+    },
+    "components": [
+      {
+        "type": "FoliageExclusion",
+        "enabled": true,
+        "fields": {
+          "box": true,
+          "size": [
+            2.2,
+            1.2
+          ],
+          "offset": [
+            0,
+            0
+          ],
+          "radius": 1.5,
+          "falloff": 0.35,
+          "foliage": true,
+          "grass": true
+        }
+      }
+    ]
+  }
+}

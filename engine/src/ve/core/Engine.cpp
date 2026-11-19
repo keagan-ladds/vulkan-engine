@@ -1,8 +1,12 @@
 #include "ve/core/Engine.hpp"
+#include "ve/net/Network.hpp"
+#include "ve/debug/Debug.hpp"
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Profiler.hpp"
+#include "ve/ui/Gui.hpp"
 #include "ve/core/Window.hpp"
 #include "ve/editor/Editor.hpp"
 #include "ve/physics/Physics.hpp"
@@ -15,6 +19,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <thread>
 #include <chrono>
 #include <cstdio>
 #include <ctime>
@@ -73,6 +78,7 @@ Renderer& EngineAccess::renderer() { return Engine::get().renderer(); }
 AssetManager& EngineAccess::assets() { return Engine::get().assets(); }
 AudioSystem& EngineAccess::audio() { return Engine::get().audio(); }
 PhysicsWorld& EngineAccess::physics() { return Engine::get().physics(); }
+net::Network& EngineAccess::net() { return Engine::get().net(); }
 
 Engine::Engine(const EngineConfig& config) : m_config(config)
 {
@@ -107,6 +113,7 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_audio = std::make_unique<AudioSystem>();
     if (config.enableAudio) m_audio->init();
     m_physics = std::make_unique<PhysicsWorld>();
+    m_net = std::make_unique<net::Network>(*this);
     m_physics->init();
     m_assets = std::make_unique<AssetManager>();
     m_assets->init(*m_renderer, assetDirs);
@@ -153,7 +160,11 @@ void Engine::benchFrame(float cpuMs)
     log::info("[bench] {} frames: main thread {:.3f} ms, frame {:.3f} ms (max {:.3f}), gpu wait {:.3f} ms, submit {:.3f} ms, "
               "physics step {:.3f} ms, gpu {:.3f} ms",
               n, b.threadMs / n, b.cpuMs / n, b.cpuMax, b.waitMs / n, b.submitMs / n, b.physicsMs / n, b.gpuMs / n);
+    const InstanceStats& is = m_renderer->instances().stats();
+    log::info("[bench] instances {} (camera draws {}, shadow draws {})", is.instances, is.visibleCamera, is.visibleShadow);
     for (const auto& [name, ms] : b.passMs) log::info("[bench]   {:<28} {:8.3f} ms", name, ms / n);
+    for (const Profiler::Zone& z : Profiler::get().zones())
+        log::info("[bench] cpu {}{:<28} {:8.3f} ms", std::string(size_t(z.depth) * 2, ' '), z.name, z.avgMs);
     quit();
 }
 
@@ -166,10 +177,13 @@ Engine::~Engine()
     m_editor.reset();
     m_scene.reset();
     MeshLibrary::releaseMeshes();
+    for (auto& fn : m_atShutdown) fn();
+    m_atShutdown.clear();
     m_assets.reset();
     if (m_ui) m_ui->shutdown(); // no-op if run() already did it
     m_ui.reset();
     m_audio.reset();
+    m_net.reset();     // (after the scene: components ask it whether they're online)
     m_physics.reset(); // after the scene: Rigidbodies remove themselves from the world
     m_renderer.reset();
     m_window.reset();
@@ -221,9 +235,12 @@ void Engine::run()
         m_time.time += m_time.deltaTime;
         m_time.realTime = std::chrono::duration<float>(now - startTime).count();
         m_time.fixedDeltaTime = m_config.fixedTimestep;
+        const bool loadingFrame = loading();
         if (m_bench) m_bench->frameStart = threadCpuMs();
+        Profiler::get().beginFrame();
         tickFrame();
-        if (m_bench) benchFrame(std::chrono::duration<float, std::milli>(Clock::now() - now).count());
+        Profiler::get().endFrame();
+        if (m_bench && !loadingFrame) benchFrame(std::chrono::duration<float, std::milli>(Clock::now() - now).count());
         ++m_time.frameCount;
     }
 
@@ -231,14 +248,144 @@ void Engine::run()
     m_ui->shutdown();
 }
 
-void Engine::tickFrame()
+void Engine::beginLoading(std::unique_ptr<Scene> loadingScene, float minSeconds, const glm::vec4& clearColor)
 {
+    m_loadingScene = loadingScene ? std::move(loadingScene) : std::make_unique<Scene>();
+    m_loadMinSeconds = minSeconds;
+    m_loadElapsed = 0.0f;
+    m_loadSteps.clear();
+    m_loadTasks.clear();
+    m_loadStepsTotal = m_loadStepsDone = 0;
+    m_loadStatus = "Loading";
+    m_loadClearColor = clearColor;
+    m_renderer->setLoadingFrames(!loadingInEditor(), clearColor);
+}
+
+void Engine::addLoadStep(std::string name, std::function<void()> step)
+{
+    if (!loading()) {
+        step(); // nothing to show progress on: just do it
+        return;
+    }
+    m_loadSteps.push_back({std::move(name), std::move(step)});
+    ++m_loadStepsTotal;
+}
+
+void Engine::addLoadTask(std::string name, std::function<float()> progress)
+{
+    if (loading()) m_loadTasks.push_back({std::move(name), std::move(progress), 0.0f});
+}
+
+float Engine::loadProgress() const
+{
+    // Steps and tasks weigh the same; each task counts with its own progress.
+    const size_t parts = m_loadStepsTotal + m_loadTasks.size();
+    if (parts == 0) return loading() ? 0.0f : 1.0f;
+    float done = float(m_loadStepsDone);
+    for (const LoadTask& t : m_loadTasks) done += t.last;
+    return std::clamp(done / float(parts), 0.0f, 1.0f);
+}
+
+void Engine::endLoading()
+{
+    m_loadingScene.reset();
+    m_loadTasks.clear();
+    m_loadSteps.clear();
+    m_renderer->setLoadingFrames(false);
+    m_accumulator = 0.0; // no burst of fixed steps for the time spent loading
+    Profiler::get().reset(); // loading frames have different zones and timings
+    log::info("Loading done in {:.1f} s", m_loadElapsed);
+}
+
+void Engine::runLoadStep()
+{
+    // One main-thread step per frame (the screen is redrawn in between).
+    if (m_loadSteps.empty()) return;
+    LoadStep step = std::move(m_loadSteps.front());
+    m_loadSteps.erase(m_loadSteps.begin());
+    m_loadStatus = step.name;
+    const auto t0 = std::chrono::steady_clock::now();
+    step.run();
+    log::info("Loading: '{}' took {:.2f} s", step.name, std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count());
+    ++m_loadStepsDone;
+}
+
+bool Engine::pollLoadTasks()
+{
+    bool tasksDone = true;
+    for (LoadTask& t : m_loadTasks) {
+        const float before = t.last;
+        t.last = std::clamp(t.progress ? t.progress() : 1.0f, 0.0f, 1.0f);
+        if (t.last >= 1.0f && before < 1.0f) log::info("Loading: '{}' done at {:.1f} s", t.name, m_loadElapsed);
+        if (t.last < 1.0f) {
+            if (tasksDone && m_loadSteps.empty()) m_loadStatus = t.name;
+            tasksDone = false;
+        }
+    }
+    if (!m_loadSteps.empty()) m_loadStatus = m_loadSteps.front().name;
+    return tasksDone && m_loadSteps.empty();
+}
+
+bool Engine::loadingInEditor() const
+{
+    return m_loadingScene && m_editor && m_editor->editing();
+}
+
+void Engine::tickLoading()
+{
+    const auto frameStart = std::chrono::steady_clock::now();
+    m_renderer->setLoadingFrames(true, m_loadClearColor);
     m_ui->beginFrame();
     m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
+    m_loadElapsed += m_time.unscaledDeltaTime;
+
+    runLoadStep();
+    // The world streams (runInEditor objects only), gameplay waits.
+    m_scene->startPending();
+    m_scene->update(m_time.deltaTime, true);
+    m_scene->lateUpdate(m_time.deltaTime, true);
+    const bool done = pollLoadTasks();
+
+    m_loadingScene->startPending();
+    m_loadingScene->update(m_time.unscaledDeltaTime);
+    m_loadingScene->lateUpdate(m_time.unscaledDeltaTime);
+    m_loadingScene->onGui();
+    m_renderer->render(*m_loadingScene, m_time);
+    m_ui->endFrameIfNotRendered();
+    m_loadingScene->flushDestroyed();
+    m_scene->flushDestroyed();
+
+    if (done && m_loadElapsed >= m_loadMinSeconds) {
+        endLoading();
+        return;
+    }
+    // A loading screen needs no more than ~30 Hz: the cores are better spent
+    // on the loading workers (software renderers and weak CPUs especially).
+    const auto frameTime = std::chrono::steady_clock::now() - frameStart;
+    if (frameTime < std::chrono::milliseconds(33)) std::this_thread::sleep_for(std::chrono::milliseconds(33) - frameTime);
+}
+
+void Engine::tickFrame()
+{
+    m_net->poll(); // (also while loading: keeps the connection alive; messages wait for the load)
+    // Loading while the editor is open: no game loading screen. The editor
+    // stays usable and shows progress while the world fills in around it.
+    const bool editorLoading = loadingInEditor();
+    if (m_loadingScene && !editorLoading) {
+        tickLoading();
+        return;
+    }
+    if (editorLoading) {
+        m_renderer->setLoadingFrames(false);
+        m_loadElapsed += m_time.unscaledDeltaTime;
+        runLoadStep();
+    }
+    m_ui->beginFrame();
+    ui::System::get().route(*this); // game UI first: what it takes, gameplay doesn't see (+ ImGui's capture)
 
     if (m_editor) m_editor->beginFrame(m_time.unscaledDeltaTime);
     // Editor "Edit" mode: the game is paused; only runInEditor objects update.
-    const bool paused = (m_editor && m_editor->paused()) || gamePaused;
+    const bool paused = (m_editor && m_editor->paused()) || gamePaused || editorLoading;
 
     m_scene->startPending();
 
@@ -246,32 +393,58 @@ void Engine::tickFrame()
     if (!paused) m_accumulator += m_time.deltaTime;
     int steps = 0;
     // Each step: gameplay fixedUpdate() hooks (forces, character movement), then the physics world.
-    while (m_accumulator >= m_time.fixedDeltaTime && steps < m_config.maxFixedStepsPerFrame) {
-        m_scene->fixedUpdate(m_time.fixedDeltaTime);
-        const auto t0 = std::chrono::steady_clock::now();
-        m_physics->step(*m_scene, m_time.fixedDeltaTime);
-        m_physics->lastStepMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        m_accumulator -= m_time.fixedDeltaTime;
-        ++steps;
+    {
+        VE_PROFILE("Fixed update + physics");
+        while (m_accumulator >= m_time.fixedDeltaTime && steps < m_config.maxFixedStepsPerFrame) {
+            m_scene->fixedUpdate(m_time.fixedDeltaTime);
+            const auto t0 = std::chrono::steady_clock::now();
+            m_physics->step(*m_scene, m_time.fixedDeltaTime);
+            m_physics->lastStepMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            m_accumulator -= m_time.fixedDeltaTime;
+            ++steps;
+        }
+        if (steps == m_config.maxFixedStepsPerFrame) m_accumulator = 0.0; // drop time we can't catch up on
+        m_time.fixedAlpha = static_cast<float>(m_accumulator / m_time.fixedDeltaTime);
+        // Smooth motion: place physics objects between their last two fixed-step poses.
+        if (!paused) m_physics->interpolate(*m_scene, m_time.fixedAlpha);
     }
-    if (steps == m_config.maxFixedStepsPerFrame) m_accumulator = 0.0; // drop time we can't catch up on
-    m_time.fixedAlpha = static_cast<float>(m_accumulator / m_time.fixedDeltaTime);
-    // Smooth motion: place physics objects between their last two fixed-step poses.
-    if (!paused) m_physics->interpolate(*m_scene, m_time.fixedAlpha);
 
-    m_scene->update(m_time.deltaTime, paused);
-    m_scene->lateUpdate(m_time.deltaTime, paused);
-    m_scene->onGui();
-    if (m_editor) m_editor->onGui();
-    m_ui->drawDebugOverlay();
+    {
+        VE_PROFILE("Update");
+        m_scene->update(m_time.deltaTime, paused);
+    }
+    {
+        VE_PROFILE("Late update");
+        m_scene->lateUpdate(m_time.deltaTime, paused);
+    }
+    {
+        VE_PROFILE("Network");
+        m_net->flush(); // what we own moved / changed this frame
+    }
+    debug::drawEngineChannels(); // colliders, navmesh, agents (when their F1 channels are on)
+    if (editorLoading && pollLoadTasks()) endLoading(); // (no minimum time: there's no screen to read)
+    {
+        VE_PROFILE("GUI");
+        m_scene->onGui();
+        debug::drawLabels();            // ve::debug::text, under everything else
+        ui::System::get().draw(*this); // game UI canvases (under the tools' ImGui windows)
+        if (m_editor) m_editor->onGui();
+        m_ui->drawDebugOverlay();
+    }
 
     if (Camera* cam = m_scene->mainCamera()) {
         const Transform& t = cam->transform();
         m_audio->setListener(t.position(), t.forward(), t.up());
     }
-    m_audio->update(m_time.unscaledDeltaTime);
-
-    m_renderer->render(*m_scene, m_time);
+    {
+        VE_PROFILE("Audio");
+        m_audio->update(m_time.unscaledDeltaTime);
+    }
+    {
+        VE_PROFILE("Render");
+        m_renderer->render(*m_scene, m_time);
+    }
+    debug::endFrame(m_time.realTime); // one-frame lines are drawn: drop them
     m_ui->endFrameIfNotRendered();
     m_scene->flushDestroyed();
 }

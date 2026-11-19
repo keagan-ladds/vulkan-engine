@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "object": {
+    "type": "BuildPiece",
+    "name": "Corrugated metal roof",
+    "active": true,
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotation": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "scale": [
+      1,
+      1,
+      1
+    ],
+    "fields": {
+      "kind": 8,
+      "material": 2
+    }
+  }
+}

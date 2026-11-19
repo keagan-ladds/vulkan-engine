@@ -1,5 +1,10 @@
 #include "ve/ui/UiLayer.hpp"
 
+#include "ve/debug/Debug.hpp"
+#include "ve/ui/Gui.hpp"
+
+#include "ve/core/Profiler.hpp"
+
 #include "ve/audio/Audio.hpp"
 
 #include "ve/core/Engine.hpp"
@@ -57,7 +62,7 @@ void UiLayer::init(Engine& engine)
     info.Device = r.device().handle();
     info.QueueFamily = r.device().graphicsFamily();
     info.Queue = r.device().graphicsQueue();
-    info.DescriptorPoolSize = 64; // let the backend create its own pool
+    info.DescriptorPoolSize = 512; // let the backend create its own pool (game UI images use it too)
     info.MinImageCount = std::max(2u, r.swapchain().minImageCount());
     info.ImageCount = std::max(info.MinImageCount, r.swapchain().imageCount());
     info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
@@ -77,6 +82,7 @@ void UiLayer::shutdown()
     if (!m_initialized) return;
     m_engine->renderer().device().waitIdle();
     m_engine->renderer().graph().removePass("UI");
+    ui::System::get().releaseTextures();
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplSDL2_Shutdown();
     ImGui::DestroyContext();
@@ -100,6 +106,7 @@ bool UiLayer::wantsMouse() const
 
 void UiLayer::beginFrame()
 {
+    ui::System::get().applyPendingFonts(); // game UI fonts: the atlas is rebuilt before the frame
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
@@ -148,6 +155,28 @@ void UiLayer::drawDebugOverlay()
         ImGui::Text("Camera: %.1f %.1f %.1f", f.camera.position.x, f.camera.position.y, f.camera.position.z);
     }
 
+    if (ImGui::CollapsingHeader("CPU zones", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // Main-thread VE_PROFILE scopes: smoothed average and worst of the last second.
+        if (ImGui::BeginTable("##zones", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Zone", ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("avg ms", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableSetupColumn("max ms", ImGuiTableColumnFlags_WidthFixed, 60.0f);
+            ImGui::TableHeadersRow();
+            for (const Profiler::Zone& z : Profiler::get().zones()) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Indent(float(z.depth) * 12.0f + 0.001f);
+                ImGui::TextUnformatted(z.name.c_str());
+                ImGui::Unindent(float(z.depth) * 12.0f + 0.001f);
+                ImGui::TableNextColumn();
+                ImGui::Text("%6.2f", z.avgMs);
+                ImGui::TableNextColumn();
+                ImGui::TextDisabled("%6.2f", z.maxMs);
+            }
+            ImGui::EndTable();
+        }
+    }
+
     if (ImGui::CollapsingHeader("Settings")) {
         RendererSettings& s = r.settings();
         if (ImGui::Checkbox("VSync", &s.vsync)) r.applySettings();
@@ -174,6 +203,15 @@ void UiLayer::drawDebugOverlay()
         }
     }
 
+    if (ImGui::CollapsingHeader("Debug draw")) {
+        // ve::debug channels: engine ones (colliders, navmesh, agents) and any the game asked about.
+        for (const auto& [name, on] : debug::channels()) {
+            bool v = on;
+            if (ImGui::Checkbox(name.c_str(), &v)) debug::setChannel(name, v);
+        }
+        ImGui::TextDisabled("%zu lines this frame", debug::lineCount());
+        if (ImGui::Button("Clear lasting lines")) debug::clear();
+    }
     if (ImGui::CollapsingHeader("Audio")) {
         if (m_engine->audio().available()) m_engine->audio().onGui();
         else ImGui::TextDisabled("No audio device");
@@ -217,8 +255,14 @@ void UiPass::execute(RenderContext& ctx)
     ImGui::Render();
     m_layer.m_rendered = true;
     ImDrawData* drawData = ImGui::GetDrawData();
-    if (!drawData || drawData->CmdListsCount == 0) return;
-    ctx.beginRendering({{renderer().backbuffer()}});
+    // Loading-screen frames draw nothing else: the UI starts from a cleared screen.
+    const bool loading = renderer().loadingFrames();
+    if (!loading && (!drawData || drawData->CmdListsCount == 0)) return;
+    ctx.beginRendering({{renderer().backbuffer(), loading, renderer().loadingClearColor()}});
+    if (!drawData || drawData->CmdListsCount == 0) {
+        ctx.endRendering();
+        return;
+    }
     ImGui_ImplVulkan_RenderDrawData(drawData, ctx.cmd);
     ctx.endRendering();
 }

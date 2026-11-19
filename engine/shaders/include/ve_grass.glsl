@@ -152,6 +152,24 @@ vec3 veGrassPlace(VeMaterial m, VeGrassClump c, vec3 position, vec4 tangent, vec
         world.xz += wind.xy * bend * w;
         world.y -= abs(bend) * w * 0.3;
     }
+
+    // Benders (ve::GrassBender): blades lean away from objects walking
+    // through them, the whole blade from its root, more near the centre.
+    for (int i = 0; i < VE_MAX_GRASS_BENDERS; ++i) {
+        vec4 b = frame.grassBenders[i];
+        if (b.w <= 0.0) continue;
+        vec2 away = c.root.xz - b.xz;
+        float d = length(away);
+        // Feet near the ground at the clump (not someone on a roof above it).
+        if (d >= b.w || abs(b.y - c.root.y) > 1.5) continue;
+        float lean = smoothstep(0.0, 1.0, 1.0 - d / b.w) * 1.2; // radians, up to ~70 degrees
+        vec2 dir = d > 1e-3 ? away / d : vec2(1.0, 0.0);
+        vec3 rel = world - c.root;
+        float h = max(rel.y, 0.0);
+        // Rotate the blade about its root towards `dir` (keeps its length).
+        world.xz += dir * h * sin(lean);
+        world.y -= h * (1.0 - cos(lean));
+    }
     return world;
 }
 

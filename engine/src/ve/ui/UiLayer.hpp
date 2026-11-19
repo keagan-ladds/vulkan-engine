@@ -43,7 +43,7 @@ private:
 
 class UiPass : public RenderPass {
 public:
-    explicit UiPass(UiLayer& layer) : RenderPass("UI", RenderStage::Overlay), m_layer(layer) {}
+    explicit UiPass(UiLayer& layer) : RenderPass("UI", RenderStage::Overlay), m_layer(layer) { runsWhileLoading = true; }
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
 

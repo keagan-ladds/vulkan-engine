@@ -641,7 +641,8 @@
                 "biomeThreshold": 0.65,
                 "minHeight": 0.6,
                 "maxSlope": 0.34,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -692,7 +693,8 @@
                 "shadowDistance": 300,
                 "states": "Stump = acacia stump",
                 "promoteDistance": 8,
-                "promoteType": "ChoppableTree"
+                "promoteType": "ChoppableTree",
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -736,7 +738,8 @@
                 "viewDistance": 3000,
                 "maxInstances": 2000,
                 "seed": 1003,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -781,7 +784,8 @@
                 "viewDistance": 3000,
                 "maxInstances": 500,
                 "seed": 1004,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Stone"
               }
             }
           ]
@@ -826,7 +830,8 @@
                 "shadowDistance": 50,
                 "colliderDistance": 40,
                 "seed": 1005,
-                "biomes": "*:1, Jungle:-0.7"
+                "biomes": "*:1, Jungle:-0.7",
+                "colliderSurface": "Stone"
               }
             }
           ]
@@ -968,7 +973,8 @@
                 "viewDistance": 2500,
                 "maxInstances": 30000,
                 "seed": 1101,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -1015,7 +1021,8 @@
                 "viewDistance": 2500,
                 "maxInstances": 12000,
                 "seed": 1102,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -1108,7 +1115,8 @@
                 "viewDistance": 2500,
                 "maxInstances": 3000,
                 "seed": 1104,
-                "shadowDistance": 300
+                "shadowDistance": 300,
+                "colliderSurface": "Wood"
               }
             }
           ]
@@ -1393,6 +1401,111 @@
         1.0
       ],
       "type": "Campfire"
+    },
+    {
+      "active": true,
+      "fields": {
+        "model": "models/villager.gltf",
+        "wanderRadius": 6.0,
+        "speed": 1.2,
+        "restTime": 3.0,
+        "seed": 1
+      },
+      "id": "a11ce00000000c01",
+      "name": "Villager",
+      "position": [
+        22.5,
+        3.2,
+        14.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Villager"
+    },
+    {
+      "active": true,
+      "fields": {
+        "model": "models/villager.gltf",
+        "wanderRadius": 6.0,
+        "speed": 1.2,
+        "restTime": 3.0,
+        "seed": 2
+      },
+      "id": "a11ce00000000c02",
+      "name": "Villager",
+      "position": [
+        17.0,
+        3.2,
+        8.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "type": "Villager"
+    },
+    {
+      "id": "a11ce00000000d01",
+      "type": "GameObject",
+      "name": "Navigation",
+      "active": true,
+      "position": [
+        20.0,
+        0.0,
+        10.0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "components": [
+        {
+          "type": "NavMeshSurface",
+          "enabled": true,
+          "fields": {
+            "size": [
+              192.0,
+              400.0,
+              192.0
+            ],
+            "agentRadius": 0.35,
+            "agentHeight": 1.8,
+            "agentMaxClimb": 0.45,
+            "maxSlopeDegrees": 40.0,
+            "cellSize": 0.2,
+            "tileSize": 32.0,
+            "maxWaterDepth": 0.3,
+            "includeTerrain": true,
+            "includeStaticBodies": true,
+            "includeFoliage": true,
+            "streamRadius": 0.0,
+            "showDebug": false
+          }
+        }
+      ]
     },
     {
       "active": true,

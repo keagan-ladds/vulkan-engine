@@ -12,6 +12,7 @@
 // =============================================================================
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/SaveGame.hpp>
 
 #include <cstdint>
 #include <unordered_map>
@@ -24,11 +25,13 @@ namespace savanna {
 
 class Player;
 
-// Interaction: the player's "Use" key while looking at this object up close.
-class Interactable : public ve::GameObject {
+// A promoted tree / bush the player can use: an engine ve::Interactable
+// (the player's ve::Interactor finds it and fires Use) whose prompt and use
+// are this game's.
+class Harvestable : public ve::GameObject {
 public:
-    explicit Interactable(std::string name) : GameObject(std::move(name)) {}
-    void update(float dt) override;
+    explicit Harvestable(std::string name) : GameObject(std::move(name)) {}
+    void start() override;
 
 protected:
     // Prompt shown while looked at ("" = nothing to do), and the action.
@@ -37,10 +40,10 @@ protected:
     ve::FoliageLink* link() const;
 };
 
-class ChoppableTree : public Interactable {
+class ChoppableTree : public Harvestable {
 public:
     static constexpr int kChops = 3;
-    ChoppableTree() : Interactable("Choppable tree") {}
+    ChoppableTree() : Harvestable("Choppable tree") {}
     // One swing; on the last it falls and leaves a stump for good. Returns true when felled.
     bool chop();
     int chops = 0;
@@ -50,9 +53,9 @@ protected:
     void use() override { chop(); }
 };
 
-class BerryBush : public Interactable {
+class BerryBush : public Harvestable {
 public:
-    BerryBush() : Interactable("Berry bush") {}
+    BerryBush() : Harvestable("Berry bush") {}
     bool pick(); // false if already picked
 
 protected:
@@ -62,9 +65,12 @@ protected:
 
 // Puts picked bushes' berries back after regrowSeconds of game time (the
 // bookkeeping is the game's: the engine only knows each bush's state).
-class Regrowth : public ve::GameObject {
+class Regrowth : public ve::GameObject, public ve::Saveable {
 public:
     Regrowth() : GameObject("Regrowth") {}
+    // Save games: the bushes still growing back, and when.
+    void saveState(ve::Json& out) const override;
+    void loadState(const ve::Json& in) override;
     void update(float dt) override;
     void schedule(uint64_t instanceId, float seconds);
     float regrowSeconds = 120.0f;

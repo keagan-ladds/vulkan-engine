@@ -1,12 +1,15 @@
 #include "ve/render/Renderer.hpp"
+#include "ve/anim/Animation.hpp"
 #include "ve/render/ShaderHotReload.hpp"
 
 #include "ve/core/Log.hpp"
+#include "ve/core/Profiler.hpp"
 #include "ve/core/Time.hpp"
 #include "ve/core/Window.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Texture.hpp"
 #include "ve/render/passes/BuiltinPasses.hpp"
+#include "ve/render/passes/DebugLinePass.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
 
@@ -105,6 +108,15 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
     m_instances = std::make_unique<InstanceSystem>();
     m_instances->init(*this, m_settings.maxInstances, m_settings.maxVisibleInstancesPerView);
     writeInstanceDescriptors();
+    m_skinning = std::make_unique<SkinningSystem>();
+    m_skinning->init(*this, m_settings.maxSkinnedVertices, m_settings.maxSkinJoints);
+    for (uint32_t slot = 0; slot < Device::kFramesInFlight; ++slot) {
+        writeDescriptors(m_device.handle(), m_slots[slot].set, 10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                         {{m_skinning->restBuffer(), 0, VK_WHOLE_SIZE},
+                          {m_skinning->weightBuffer(), 0, VK_WHOLE_SIZE},
+                          {m_skinning->matrixBuffer(slot), 0, VK_WHOLE_SIZE},
+                          {m_skinning->outputBuffer(), 0, VK_WHOLE_SIZE}});
+    }
     createDefaultPasses();
     m_hotReload = std::make_unique<ShaderHotReload>(m_shaderDirs);
     m_initialized = true;
@@ -121,6 +133,7 @@ void Renderer::shutdown()
     m_bindless.setFallback(VK_NULL_HANDLE, VK_NULL_HANDLE);
     m_graph.reset();
     if (m_instances) m_instances->shutdown();
+    if (m_skinning) m_skinning->shutdown();
     m_fallbackMaterial.reset();
     m_builtinShaders = {};
     m_white.reset();
@@ -158,7 +171,7 @@ void Renderer::createGlobalLayout()
     VkDevice dev = m_device.handle();
 
     // set 0: per-frame data shared by every shader (see ve.glsl).
-    VkDescriptorSetLayoutBinding b[10]{};
+    VkDescriptorSetLayoutBinding b[14]{};
     b[0] = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     b[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     b[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
@@ -166,15 +179,17 @@ void Renderer::createGlobalLayout()
     b[4] = {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_ALL, nullptr};
     // GPU instancing: instances, visible lists, indirect commands, groups, cull views.
     for (uint32_t i = 5; i < 10; ++i) b[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
+    // GPU skinning: rest vertices, weights, joint matrices, skinned output (see Skinning.hpp).
+    for (uint32_t i = 10; i < 14; ++i) b[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutInfo.bindingCount = 10;
+    layoutInfo.bindingCount = 14;
     layoutInfo.pBindings = b;
     VK_CHECK(vkCreateDescriptorSetLayout(dev, &layoutInfo, nullptr, &m_globalSetLayout));
 
     const uint32_t n = Device::kFramesInFlight;
     VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, n},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7 * n},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 11 * n},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * n},
     };
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -350,12 +365,16 @@ void Renderer::createDefaults()
 
 void Renderer::createDefaultPasses()
 {
+    m_graph->addPass<SkinningPass>();
     m_graph->addPass<InstanceCullPass>();
     m_graph->addPass<ShadowPass>();
     m_graph->addPass<OpaquePass>();
     m_graph->addPass<TransparentPass>();
+    m_graph->addPass<HiZPass>();
+    m_graph->addPass<VelocityPass>();
     m_taaPass = &m_graph->addPass<TemporalAAPass>();
     m_graph->addPass<CompositePass>();
+    m_graph->addPass<DebugLinePass>(); // ve::debug lines over the finished image
 }
 
 void Renderer::applySettings()
@@ -636,7 +655,7 @@ void Renderer::drawItems(RenderContext& ctx, const std::vector<uint32_t>& indice
         }
         if (item.mesh != boundMesh) {
             VkBuffer vb = item.mesh->vertexBuffer();
-            VkDeviceSize offset = 0;
+            VkDeviceSize offset = item.mesh->vertexOffset();
             vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
             vkCmdBindIndexBuffer(cmd, item.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
             boundMesh = item.mesh;
@@ -699,15 +718,26 @@ void Renderer::gatherScene(Scene& scene)
     m_frame.items.clear();
     m_frame.opaque.clear();
     m_frame.transparent.clear();
+    m_frame.moving.clear();
     m_frame.shadowViews.clear();
     m_frame.stats = {};
 
     setupCamera(scene);
     const CameraData& cam = m_frame.camera;
 
+    // Skinned meshes: joint matrices for this frame's skinning pass (and their bounds).
+    scene.forEach<SkinnedMeshRenderer>([&](SkinnedMeshRenderer& s) {
+        if (s.isActive() && s.visible) s.prepareSkinning(*m_skinning);
+    });
+    // Last frame's world matrices (motion vectors for moving objects).
+    std::unordered_map<const MeshRenderer*, glm::mat4> worlds;
+    worlds.reserve(m_prevWorlds.size());
     scene.forEach<MeshRenderer>([&](MeshRenderer& mr) {
         if (!mr.isActive() || !mr.visible || !mr.mesh) return;
         const glm::mat4& world = mr.transform().worldMatrix();
+        const auto prev = m_prevWorlds.find(&mr);
+        const glm::mat4 prevWorld = prev != m_prevWorlds.end() ? prev->second : world;
+        worlds.emplace(&mr, world);
         for (const Submesh& sm : mr.mesh->submeshes()) {
             Material* mat = mr.material(sm.materialSlot);
             if (!mat) mat = m_fallbackMaterial.get();
@@ -716,6 +746,7 @@ void Renderer::gatherScene(Scene& scene)
             item.submesh = &sm;
             item.material = mat;
             item.world = world;
+            item.prevWorld = prevWorld;
             item.bounds = sm.bounds.transformed(world);
             item.distance = glm::length(item.bounds.center() - cam.position);
             item.castShadows = mr.castShadows;
@@ -724,12 +755,15 @@ void Renderer::gatherScene(Scene& scene)
             m_frame.items.push_back(item);
         }
     });
+    m_prevWorlds.swap(worlds);
     m_frame.stats.totalObjects = static_cast<uint32_t>(m_frame.items.size());
 
     for (uint32_t i = 0; i < m_frame.items.size(); ++i) {
         const DrawItem& it = m_frame.items[i];
         if (!cam.frustum.intersects(it.bounds)) continue;
-        (it.material->shader().transparent() ? m_frame.transparent : m_frame.opaque).push_back(i);
+        const bool transparent = it.material->shader().transparent();
+        (transparent ? m_frame.transparent : m_frame.opaque).push_back(i);
+        if (!transparent && it.prevWorld != it.world) m_frame.moving.push_back(i);
     }
     m_frame.stats.visibleObjects = static_cast<uint32_t>(m_frame.opaque.size() + m_frame.transparent.size());
 
@@ -1261,10 +1295,21 @@ bool Renderer::render(Scene& scene, const Time& time)
         m_jitter = glm::vec2(halton(k, 2), halton(k, 3)) - 0.5f;
     }
     m_graph->maxStage = photo ? int(RenderStage::Overlay) : (1 << 30);
-    gatherScene(scene);
-    fillGlobals(time);
-    m_instances->prepare(slotIndex, m_frame); // also assigns ShadowView::cullView
-    m_graph->prepare(m_frame);
+    m_graph->loadingFrame = m_loadingFrames;
+    m_skinning->beginFrame(slotIndex);
+    {
+        VE_PROFILE("Gather scene");
+        gatherScene(scene);
+        fillGlobals(time);
+    }
+    {
+        VE_PROFILE("Instances");
+        m_instances->prepare(slotIndex, m_frame); // also assigns ShadowView::cullView
+    }
+    {
+        VE_PROFILE("Pass prepare");
+        m_graph->prepare(m_frame);
+    }
 
     std::memcpy(slot.globals.mapped, &m_frame.globals, sizeof(FrameGlobals));
     // The light buffer up to the used part of the cluster light lists.
@@ -1303,7 +1348,10 @@ bool Renderer::render(Scene& scene, const Time& time)
     ctx.graph = m_graph.get();
     ctx.frame = &m_frame;
     ctx.frameSlot = slotIndex;
-    m_graph->execute(ctx);
+    {
+        VE_PROFILE("Record commands");
+        m_graph->execute(ctx);
+    }
     slot.timedPasses = m_graph->lastExecuted();
     m_instances->recordReadback(slot.cmd, slotIndex);
     slot.timestampsWritten = slot.timestamps != VK_NULL_HANDLE;
@@ -1316,12 +1364,15 @@ bool Renderer::render(Scene& scene, const Time& time)
         vkCmdCopyImageToBuffer(slot.cmd, image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer.handle, 1, &region);
     };
     if (photo) readback(m_photo.target, m_photo.readback);
-    if (headless && !m_envCapturePath.empty() && m_frameNumber >= m_envCaptureFrame &&
-        m_frameNumber < m_envCaptureFrame + m_envCaptureCount) {
+    // VE_CAPTURE_FRAME counts world frames (loading-screen frames don't count).
+    const uint64_t worldFrame = m_worldFrames;
+    if (!m_loadingFrames) ++m_worldFrames;
+    if (headless && !m_loadingFrames && !m_envCapturePath.empty() && worldFrame >= m_envCaptureFrame &&
+        worldFrame < m_envCaptureFrame + m_envCaptureCount) {
         m_capturePath = m_envCapturePath;
         if (m_envCaptureCount > 1) {
             const std::filesystem::path p(m_envCapturePath);
-            m_capturePath = (p.parent_path() / (p.stem().string() + "_" + std::to_string(m_frameNumber - m_envCaptureFrame) +
+            m_capturePath = (p.parent_path() / (p.stem().string() + "_" + std::to_string(worldFrame - m_envCaptureFrame) +
                                                 p.extension().string())).string();
         }
     }

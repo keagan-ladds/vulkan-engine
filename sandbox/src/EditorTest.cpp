@@ -1,9 +1,12 @@
 #include "EditorTest.hpp"
 
+#include "Props.hpp"
+
 #include <ve/core/Engine.hpp>
 #include <ve/core/Log.hpp>
 #include <ve/editor/Editor.hpp>
 #include <ve/render/Renderer.hpp>
+#include <ve/scene/Prefab.hpp>
 #include <ve/scene/Scene.hpp>
 #include <ve/scene/SceneSerializer.hpp>
 #include <ve/world/Grass.hpp>
@@ -121,7 +124,82 @@ void EditorTest::update(float)
             m_frame = 600;
         }
     }
-    if (m_frame == 601 && std::string(std::getenv("SAVANNA_EDITORTEST")) != "hold") {
+    // Terrain brushes: raise a hill and paint desert next to it (incremental
+    // rebuild: foliage and grass must refresh, not be recreated), save, reload.
+    const glm::vec2 hill(60.0f, 60.0f), sand(80.0f, 60.0f);
+    if (m_frame == 605) {
+        auto* t = ve::Terrain::find(s);
+        auto* f = dynamic_cast<ve::Foliage*>(s.find("Foliage"));
+        auto* g = dynamic_cast<ve::GrassLayer*>(s.find("Grass"));
+        if (t && f && g && g->pass()) {
+            m_foliageSystem = f->system();
+            m_grassPass = g->pass()->name();
+            m_terrainVersion = t->version();
+            m_heightBefore = t->height(hill.x, hill.y);
+            log("brush: height before " + std::to_string(m_heightBefore) + ", desert weight " +
+                std::to_string(t->biomeWeight("Desert", sand.x, sand.y)));
+            ve::Terrain::Brush raise;
+            raise.radius = 8.0f;
+            raise.strength = 1.0f;
+            for (int i = 0; i < 30; ++i) t->applyBrush(raise, hill, 0.05f); // +12 m at the centre
+            ve::Terrain::Brush paint;
+            paint.mode = ve::Terrain::Brush::Mode::Paint;
+            paint.radius = 6.0f;
+            paint.strength = 1.0f;
+            for (size_t b = 0; b < t->biomes.size(); ++b)
+                if (t->biomes[b].name == "Desert") paint.biome = int(b);
+            for (int i = 0; i < 10; ++i) t->applyBrush(paint, sand, 0.05f);
+            ed->select(t);
+            if (auto* cam = s.find("Editor Camera")) cam->transform().setPosition({hill.x, m_heightBefore + 25.0f, hill.y + 70.0f});
+        }
+    }
+    if (m_frame == 636) {
+        if (const char* shot = std::getenv("SAVANNA_EDITORTEST_SHOT")) renderer().requestCapture(shot); // the brushed hill
+    }
+    if (m_frame == 640) {
+        auto* t = ve::Terrain::find(s);
+        auto* f = dynamic_cast<ve::Foliage*>(s.find("Foliage"));
+        auto* g = dynamic_cast<ve::GrassLayer*>(s.find("Grass"));
+        if (t && f && g) {
+            m_editedTiles = t->editedTiles();
+            log("brush: rebuilt " + std::string(t->version() > m_terrainVersion ? "yes" : "NO") + ", height after " +
+                std::to_string(t->height(hill.x, hill.y)) + " (+" + std::to_string(t->height(hill.x, hill.y) - m_heightBefore) +
+                "), desert weight " + std::to_string(t->biomeWeight("Desert", sand.x, sand.y)) + ", edited tiles " +
+                std::to_string(m_editedTiles));
+            log(std::string("brush: foliage kept its system (refreshed in place) ") + (f->system() == m_foliageSystem ? "yes" : "NO") +
+                ", grass kept its pass " + (g->pass() && g->pass()->name() == m_grassPass ? "yes" : "NO") + ", collider tiles " +
+                std::to_string(t->colliderTiles()));
+        }
+        m_foliageSystem = nullptr;
+        log(ed->saveScene(file) ? "brush: saved" : "brush: SAVE FAILED");
+    }
+    if (m_frame == 645) ed->openScene(file);
+    if (m_frame == 680) {
+        if (auto* t = ve::Terrain::find(s))
+            log("brush: after reopen, edited tiles " + std::to_string(t->editedTiles()) + " (saved " + std::to_string(m_editedTiles) +
+                "), height " + std::to_string(t->height(hill.x, hill.y)) + ", desert weight " +
+                std::to_string(t->biomeWeight("Desert", sand.x, sand.y)));
+    }
+    if (m_frame == 682) {
+        // Prefabs: save a configured object, make a new one from the file.
+        const std::string path = (std::filesystem::temp_directory_path() / "ve_editortest_torch.prefab").string();
+        auto* torch = dynamic_cast<Torch*>(s.find("Torch"));
+        if (torch) {
+            torch->intensity = 9.25f;
+            const bool saved = ve::prefab::save(*torch, path);
+            ve::prefab::clearCache(); // read it back from the file
+            ve::GameObject* copy = ve::prefab::instantiate(s, path, {5.0f, 3.0f, 5.0f});
+            auto* t2 = dynamic_cast<Torch*>(copy);
+            const auto* link = copy ? copy->getComponent<ve::PrefabInstance>() : nullptr;
+            log(std::string("prefab: saved ") + (saved ? "yes" : "NO") + ", instance is a Torch " + (t2 ? "yes" : "NO") + ", intensity " +
+                (t2 ? std::to_string(t2->intensity) : std::string("?")) + ", new id " + (copy && copy->id() != torch->id() ? "yes" : "NO") +
+                ", linked to the file " + (link && link->prefab == path ? "yes" : "NO"));
+            std::filesystem::remove(path);
+        } else {
+            log("prefab: no Torch in the scene");
+        }
+    }
+    if (m_frame == 683 && std::string(std::getenv("SAVANNA_EDITORTEST")) != "hold") {
         log("done");
         engine().quit();
     }

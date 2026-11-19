@@ -22,6 +22,7 @@
 #include "ve/gfx/Swapchain.hpp"
 #include "ve/render/FrameData.hpp"
 #include "ve/render/Instancing.hpp"
+#include "ve/render/Skinning.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/PipelineHandle.hpp"
 #include "ve/render/ShaderHotReload.hpp"
@@ -31,13 +32,13 @@
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace ve {
 
 class Renderer;
-
-
+class MeshRenderer;
 class Window;
 class Scene;
 class Texture;
@@ -63,10 +64,11 @@ struct RendererSettings {
     // sun beyond each cascade (distant mountains at sunset within it still
     // shadow the scene). Larger = longer sunset shadows, more overdraw.
     float shadowCasterReach = 600.0f;
-    // Directional shadows are rendered from the light direction snapped to
-    // steps of this many degrees, so a moving sun doesn't make shadow edges
-    // crawl every frame (they move in small steps instead). 0 = continuous.
-    float shadowDirectionStep = 0.2f;
+    // > 0: directional shadows are rendered from the light direction snapped
+    // to steps of this many degrees, so a moving sun doesn't make shadow edges
+    // crawl every frame; they jump in visible steps instead. 0 = continuous
+    // (TAA hides most of the crawl).
+    float shadowDirectionStep = 0.0f;
     // --- Point light shadows: cube maps ---
     uint32_t maxShadowedPointLights = 4;
     uint32_t pointShadowResolution = 512;
@@ -91,6 +93,10 @@ struct RendererSettings {
     // Point lights are binned into screen/depth clusters so each pixel only
     // evaluates the lights that reach it (off = every pixel loops over all).
     bool clusteredLights = true;
+    // Instances (trees, rocks...) hidden behind what was drawn last frame are
+    // skipped (Hi-Z occlusion culling of the camera view; HiZPass). Something
+    // that comes into view from behind cover can appear a frame late.
+    bool occlusionCulling = true;
     // --- Anti-aliasing ---
     // Temporal AA: the camera jitters by a sub-pixel offset every frame and
     // TemporalAAPass blends each frame into a reprojected history. Smooths
@@ -98,6 +104,9 @@ struct RendererSettings {
     bool temporalAA = false;
     uint32_t maxInstances = 262144;               // total across all groups (64 B each)
     uint32_t maxVisibleInstancesPerView = 1u << 20; // sum over batches of group capacity (4 B each, per cull view)
+    // --- GPU skinning (SkinnedMeshRenderer) ---
+    uint32_t maxSkinnedVertices = 262144; // rest + output vertices of all skinned meshes (64 B each, twice)
+    uint32_t maxSkinJoints = 8192;        // joint matrices per frame (64 B each, per frame in flight)
 };
 
 // Hemispherical ambient light. Effects (e.g. vfx::AtmospherePass) usually
@@ -179,6 +188,16 @@ public:
     std::shared_ptr<Shader> createShader(const ShaderDesc& desc);
     std::shared_ptr<Shader> builtinShader(BuiltinShader which) const { return m_builtinShaders[size_t(which)]; }
     std::shared_ptr<Material> createMaterial(std::shared_ptr<Shader> shader);
+    SkinningSystem& skinning() { return *m_skinning; }
+    // Loading screens (Engine::beginLoading): frames draw only the UI over a
+    // cleared screen, plus the passes with runsWhileLoading.
+    void setLoadingFrames(bool on, const glm::vec4& clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f))
+    {
+        m_loadingFrames = on;
+        m_loadingClear = clearColor;
+    }
+    bool loadingFrames() const { return m_loadingFrames; }
+    const glm::vec4& loadingClearColor() const { return m_loadingClear; }
     // Thousands of copies of a mesh, culled and drawn on the GPU (see Instancing.hpp).
     std::shared_ptr<InstanceGroup> createInstanceGroup(InstanceGroupDesc desc, uint32_t capacity);
     InstanceSystem& instances() { return *m_instances; }
@@ -358,7 +377,10 @@ private:
     void photoAccumulate();
     void photoFinish();
     void saveCapture(); // headless VE_CAPTURE / requestCapture: m_captureBuffer -> PNG
-    uint64_t m_envCaptureFrame = 0;
+    uint64_t m_envCaptureFrame = 0; // counted in world frames (not loading screens)
+    uint64_t m_worldFrames = 0;
+    bool m_loadingFrames = false;
+    glm::vec4 m_loadingClear{0.0f, 0.0f, 0.0f, 1.0f};
     uint64_t m_envCaptureCount = 1;
     std::string m_envCapturePath;
     TextureId m_dirShadowMap = kNoTexture;
@@ -369,7 +391,9 @@ private:
     std::vector<uint32_t> m_freeMaterials;
     uint32_t m_materialHighWater = 0;
 
+    std::unique_ptr<SkinningSystem> m_skinning;
     std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
+    std::unordered_map<const MeshRenderer*, glm::mat4> m_prevWorlds; // motion vectors
     uint32_t m_clusterWords = 0;          // used words of LightBuffer::clusterLights
     TemporalAAPass* m_taaPass = nullptr;  // the camera only jitters while it runs
     FrameData m_frame;

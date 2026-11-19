@@ -11,7 +11,9 @@ namespace ve {
 
 TerrainLod::TerrainLod(Renderer& renderer) : m_renderer(&renderer)
 {
-    m_worker = std::thread([this] { workerLoop(); });
+    // Nodes build independently: a few workers (the first view needs a few hundred).
+    const unsigned n = std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u);
+    for (unsigned i = 0; i < n; ++i) m_workers.emplace_back([this] { workerLoop(); });
 }
 
 TerrainLod::~TerrainLod()
@@ -22,10 +24,11 @@ TerrainLod::~TerrainLod()
         m_jobs.clear();
     }
     m_wake.notify_all();
-    m_worker.join();
+    for (std::thread& t : m_workers) t.join();
 }
 
-void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings)
+void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings,
+                         const glm::vec4* changed)
 {
     const bool layoutChanged = !m_data || data->res != m_data->res || data->cellSize != m_data->cellSize ||
                                data->origin != m_data->origin || settings.nodeCells != m_settings.nodeCells;
@@ -33,10 +36,20 @@ void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainL
     m_look = look;
     m_settings = settings;
     m_settings.nodeCells = std::max(m_settings.nodeCells, 4) & ~1; // even: parent vertices are every other one
-    ++m_version;
+    const uint64_t previous = m_version++;
     if (layoutChanged) m_nodes.clear(); // different grid: old meshes don't fit any more
     m_levels = 1;
     while (int64_t(m_settings.nodeCells) << (m_levels - 1) < m_data->res - 1) ++m_levels;
+    if (changed && !layoutChanged) {
+        // Nodes away from the edit are still up to date (normals reach 2 vertices beyond a node).
+        for (auto& [k, n] : m_nodes) {
+            if (n.version != previous) continue;
+            const float size = nodeSize(k.level), margin = 3.0f * m_data->cellSize * float(1 << k.level);
+            const glm::vec2 lo = m_data->origin + glm::vec2(float(k.x), float(k.z)) * size - margin;
+            const glm::vec2 hi = lo + size + 2.0f * margin;
+            if (hi.x < changed->x || lo.x > changed->z || hi.y < changed->y || lo.y > changed->w) n.version = m_version;
+        }
+    }
 }
 
 float TerrainLod::nodeSize(int level) const
@@ -103,7 +116,7 @@ void TerrainLod::select(const Key& k, const glm::vec3& camera, std::vector<Key>&
     if (n.version != m_version) request(k, dist / size); // edited terrain: rebuild, keep showing the old one
 }
 
-void TerrainLod::update(const glm::vec3& camera, bool preload)
+void TerrainLod::update(const glm::vec3& camera, bool preload, bool uploadAll)
 {
     if (!m_data) return;
     ++m_frame;
@@ -114,7 +127,7 @@ void TerrainLod::update(const glm::vec3& camera, bool preload)
         std::vector<Result> results;
         {
             std::lock_guard lock(m_mutex);
-            const size_t n = preload ? m_results.size() : std::min<size_t>(m_results.size(), m_settings.uploadsPerFrame);
+            const size_t n = preload || uploadAll ? m_results.size() : std::min<size_t>(m_results.size(), m_settings.uploadsPerFrame);
             results.assign(std::make_move_iterator(m_results.begin()), std::make_move_iterator(m_results.begin() + ptrdiff_t(n)));
             m_results.erase(m_results.begin(), m_results.begin() + ptrdiff_t(n));
         }
@@ -174,6 +187,7 @@ void TerrainLod::update(const glm::vec3& camera, bool preload)
     m_stats.drawn = uint32_t(m_drawn.size());
     m_stats.cached = uint32_t(m_nodes.size());
     m_stats.pending = uint32_t(m_jobs.size()) + uint32_t(m_busy) + uint32_t(m_results.size());
+    m_stats.missing = uint32_t(m_requests.size());
 }
 
 void TerrainLod::upload(Result& r)

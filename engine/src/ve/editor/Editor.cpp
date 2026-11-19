@@ -6,11 +6,13 @@
 #include "ve/core/Input.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/editor/PickingPass.hpp"
+#include "ve/gameplay/Placement.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/MeshComponents.hpp"
+#include "ve/scene/Prefab.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/scene/SceneSerializer.hpp"
 #include "ve/ui/UiLayer.hpp"
@@ -118,7 +120,7 @@ void Editor::setMode(Mode mode)
 {
     // Before the game has run a couple of frames its camera isn't placed yet:
     // apply the switch once it is (e.g. a game that starts in the editor).
-    if (m_frames < 3) {
+    if (m_frames < 3 || m_engine->loadStepsPending()) {
         m_pendingMode = mode;
         m_hasPending = true;
         return;
@@ -225,7 +227,9 @@ void Editor::requestPick(glm::ivec2 pixel)
 void Editor::beginFrame(float dt)
 {
     Input& in = m_engine->input();
-    if (m_frames < 3 && ++m_frames == 3 && m_hasPending) {
+    if (m_frames < 3) ++m_frames;
+    // A pending switch waits for the game's camera: a few frames, and the level's load steps.
+    if (m_hasPending && m_frames >= 3 && !m_engine->loadStepsPending()) {
         m_hasPending = false;
         setMode(m_pendingMode);
     }
@@ -309,6 +313,7 @@ void Editor::handleShortcuts()
 
 void Editor::onGui()
 {
+    if (m_engine->loadingInEditor()) drawLoading();
     if (m_mode == Mode::Off) return;
     if (m_mode == Mode::Play) {
         drawPlayToolbar();
@@ -323,6 +328,27 @@ void Editor::onGui()
     if (m_openSaveAs) {
         ImGui::OpenPopup("Save scene as");
         m_openSaveAs = false;
+    }
+    if (m_openSavePrefab) {
+        ImGui::OpenPopup("Save as prefab");
+        m_openSavePrefab = false;
+    }
+    if (ImGui::BeginPopupModal("Save as prefab", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Prefab path (relative to the assets folder):");
+        ImGui::SetNextItemWidth(360.0f);
+        const bool enter = ImGui::InputText("##prefab", m_prefabBuffer, sizeof(m_prefabBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+        if (ImGui::Button("Save") || enter) {
+            if (GameObject* sel = selected()) {
+                const bool ok = prefab::save(*sel, m_prefabBuffer);
+                m_status = ok ? std::string("Saved prefab ") + m_prefabBuffer : "Prefab: can't write the file";
+                m_statusTime = 3.0f;
+                m_assetCacheAge = 1e9f; // list it in Create > Prefab
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
     }
     if (ImGui::BeginPopupModal("Save scene as", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::TextUnformatted("Path (relative to the assets folder):");
@@ -487,14 +513,38 @@ bool Editor::saveScene(const std::filesystem::path& path)
 
 void Editor::openScene(const std::filesystem::path& path)
 {
-    SceneSerializer::clearPersistent(m_engine->scene());
-    SceneSerializer::load(m_engine->scene(), path);
-    m_scenePath = path.generic_string();
-    m_undo.clear();
-    m_redo.clear();
+    if (m_engine->loading()) return; // one at a time
+    // Through the engine's loading: terrain, foliage and navmeshes register
+    // load tasks, and the progress shows in the editor (drawLoading) while
+    // the world fills in.
     select(nullptr);
-    m_status = "Opened " + m_scenePath;
-    m_statusTime = 3.0f;
+    m_engine->beginLoading(nullptr);
+    m_engine->addLoadStep("Opening " + path.filename().generic_string(), [this, path] {
+        SceneSerializer::clearPersistent(m_engine->scene());
+        SceneSerializer::load(m_engine->scene(), path);
+        m_scenePath = path.generic_string();
+        m_undo.clear();
+        m_redo.clear();
+        m_status = "Opened " + m_scenePath;
+        m_statusTime = 3.0f;
+    });
+}
+
+void Editor::drawLoading()
+{
+    // A small panel at the bottom centre of the viewport: what's loading, how far.
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y - 48.0f}, ImGuiCond_Always, {0.5f, 1.0f});
+    ImGui::SetNextWindowBgAlpha(0.85f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
+                                   ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+    if (ImGui::Begin("##editorLoading", nullptr, flags)) {
+        static const char spin[] = "|/-\\";
+        const int frame = int(ImGui::GetTime() * 8.0) % 4;
+        ImGui::Text("%c  Loading: %s", spin[frame], m_engine->loadStatus().c_str());
+        ImGui::ProgressBar(m_engine->loadProgress(), {320.0f, 0.0f});
+    }
+    ImGui::End();
 }
 
 void Editor::newScene()
@@ -593,6 +643,13 @@ void Editor::drawMenuBar()
         GameObject* sel = selected();
         if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, sel)) select(duplicate(*sel));
         if (ImGui::MenuItem("Delete", "Del", false, sel)) deleteObject(*sel);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save as prefab...", nullptr, false, sel && sel->persistent)) {
+            std::string name = sel->name();
+            for (char& c : name) c = std::isalnum(static_cast<unsigned char>(c)) ? char(std::tolower(static_cast<unsigned char>(c))) : '_';
+            std::snprintf(m_prefabBuffer, sizeof(m_prefabBuffer), "prefabs/%s.prefab", name.c_str());
+            m_openSavePrefab = true;
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Create")) {
@@ -616,6 +673,24 @@ void Editor::drawMenuBar()
                     const std::string name = std::filesystem::path(m).stem().string();
                     newObject("GameObject", name,
                               Json::array({{{"type", "ModelInstance"}, {"fields", {{"path", m}, {"staticColliders", true}}}}}));
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Prefab")) {
+            const auto prefabs = listAssets(".prefab");
+            if (prefabs.empty()) ImGui::TextDisabled("No .prefab files in assets/ (Edit > Save as prefab)");
+            for (const auto& path : prefabs) {
+                if (!ImGui::MenuItem(path.c_str())) continue;
+                if (const Json* pj = prefab::load(path)) {
+                    // A copy of the prefab's object, linked back to it, in front of the camera.
+                    Json j = pj->value("object", Json::object());
+                    const glm::vec3 p = placementPoint(*m_engine, view);
+                    j["position"] = {p.x, p.y, p.z};
+                    Json comps = j.value("components", Json::array());
+                    comps.push_back({{"type", "PrefabInstance"}, {"fields", {{"prefab", path}}}});
+                    j["components"] = std::move(comps);
+                    createObject(j, nullptr, "Create " + std::filesystem::path(path).stem().string());
                 }
             }
             ImGui::EndMenu();
@@ -659,7 +734,9 @@ void Editor::drawMenuBar()
 
     // Toolbar.
     ImGui::Separator();
+    ImGui::BeginDisabled(m_engine->loading()); // not before the world is ready
     if (ImGui::Button("Play")) setMode(Mode::Play);
+    ImGui::EndDisabled();
     ImGui::Separator();
     auto modeButton = [&](const char* label, GizmoMode mode) {
         const bool on = m_gizmoOptions.mode == mode;
@@ -671,6 +748,8 @@ void Editor::drawMenuBar()
     modeButton("Rotate (E)", GizmoMode::Rotate);
     modeButton("Scale (R)", GizmoMode::Scale);
     if (ImGui::Button(m_gizmoOptions.local ? "Local" : "World")) m_gizmoOptions.local = !m_gizmoOptions.local;
+    ImGui::Checkbox("Snap points", &m_snapToPoints);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Moving an object with SnapPoints snaps it onto other objects' points");
     ImGui::Checkbox("Snap", &m_gizmoOptions.snap);
     if (m_gizmoOptions.snap) {
         ImGui::SetNextItemWidth(60.0f);
@@ -806,6 +885,7 @@ void Editor::drawHierarchyNode(GameObject& o)
 
 bool Editor::drawField(const FieldInfo& f, void* obj, GameObject& owner)
 {
+    if (f.hidden) return false;
     bool changed = false;
     const bool ranged = f.max > f.min;
     const char* label = f.name.c_str();
@@ -994,6 +1074,7 @@ void Editor::drawInspector()
         if (changed && type->onChanged) type->onChanged(sel);
         ImGui::PopID();
     }
+    if (auto* terrain = dynamic_cast<Terrain*>(sel)) drawTerrainTools(*terrain);
 
     // --- Components ---
     Component* removeMe = nullptr;
@@ -1140,8 +1221,31 @@ void Editor::drawViewport()
             dd.circle(glm::vec3(m[3]), {0, 1, 0}, a->maxDistance, IM_COL32(230, 120, 255, 110));
         }
 
+        auto* terrain = dynamic_cast<Terrain*>(sel);
+        if (terrain && m_terrainTool >= 0) {
+            // Sculpting / painting: the brush owns the mouse (no gizmo, no picking).
+            terrainBrush(*terrain, view, dd, mouse);
+            return;
+        }
         ImDrawList* fg = ImGui::GetBackgroundDrawList();
-        switch (m_gizmo.manipulate(fg, view, sel->transform(), m_gizmoOptions)) {
+        const Gizmo::Event ev = m_gizmo.manipulate(fg, view, sel->transform(), m_gizmoOptions);
+        // Modular pieces: while moving, pull the object onto a nearby snap point of another.
+        if (m_snapToPoints && m_gizmoOptions.mode == GizmoMode::Translate && (ev == Gizmo::Event::Changed || ev == Gizmo::Event::Ended)) {
+            const auto points = placement::snapPointsOf(*sel);
+            if (auto s = placement::findSnap(m_engine->scene(), points, sel->transform().rotation(), sel->transform().position(), 0.6f, sel)) {
+                sel->transform().setPosition(s->position);
+                sel->transform().setRotation(s->rotation); // fittings turn to match their opening
+            }
+        }
+        // Its snap points, so you can see what will connect.
+        std::function<void(GameObject&)> drawSnaps = [&](GameObject& g) {
+            for (const auto& c : g.components())
+                if (auto* sp = dynamic_cast<SnapPoint*>(c.get()))
+                    dd.sphere(sp->worldPosition(), view.worldSize(sp->worldPosition(), 5.0f), IM_COL32(120, 255, 160, 220));
+            for (Transform* ch : g.transform().children()) drawSnaps(ch->gameObject());
+        };
+        drawSnaps(*sel);
+        switch (ev) {
         case Gizmo::Event::Began: beginEdit(*sel); break;
         case Gizmo::Event::Ended:
             endEdit(m_gizmoOptions.mode == GizmoMode::Translate ? "Move" : m_gizmoOptions.mode == GizmoMode::Rotate ? "Rotate" : "Scale");
@@ -1171,6 +1275,105 @@ void Editor::drawViewport()
             }
         }
     }
+}
+
+// -----------------------------------------------------------------------------
+// Terrain tools
+// -----------------------------------------------------------------------------
+
+void Editor::drawTerrainTools(Terrain& terrain)
+{
+    if (!ImGui::CollapsingHeader("Terrain tools", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    ImGui::PushID("terraintools");
+    static const char* kModes[] = {"Off (select / move)", "Raise", "Lower", "Smooth", "Flatten", "Paint biome"};
+    int mode = m_terrainTool + 1;
+    if (ImGui::Combo("Brush", &mode, kModes, IM_ARRAYSIZE(kModes))) m_terrainTool = mode - 1;
+    if (m_terrainTool >= 0) {
+        ImGui::SliderFloat("Radius", &m_brush.radius, 1.0f, 200.0f, "%.1f m", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Strength", &m_brush.strength, 0.01f, 1.0f);
+        const auto m = Terrain::Brush::Mode(m_terrainTool);
+        if (m == Terrain::Brush::Mode::Flatten) {
+            ImGui::DragFloat("Target height", &m_brush.height, 0.05f);
+            ImGui::TextDisabled("Ctrl+click picks the height under the cursor");
+        }
+        if (m == Terrain::Brush::Mode::Paint && !terrain.biomes.empty()) {
+            m_brush.biome = std::clamp(m_brush.biome, 0, int(terrain.biomes.size()) - 1);
+            if (ImGui::BeginCombo("Biome", terrain.biomes[size_t(m_brush.biome)].name.c_str())) {
+                for (size_t b = 0; b < terrain.biomes.size(); ++b)
+                    if (ImGui::Selectable(terrain.biomes[b].name.c_str(), int(b) == m_brush.biome)) m_brush.biome = int(b);
+                ImGui::EndCombo();
+            }
+        }
+        ImGui::TextDisabled("Left mouse in the viewport: apply. Shift: Raise <-> Lower.");
+    }
+    ImGui::Text("Edited: %zu tile(s)", terrain.editedTiles());
+    if (terrain.editedTiles() > 0 && ImGui::Button("Clear all edits")) {
+        beginEdit(terrain);
+        terrain.clearEdits();
+        endEdit("Clear terrain edits");
+    }
+    ImGui::PopID();
+}
+
+bool Editor::terrainBrush(Terrain& terrain, const ViewProjector& view, DebugDraw& dd, glm::vec2 mouse)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    // Ray march to the ground, then bisect.
+    glm::vec3 o, d;
+    view.ray(mouse, o, d);
+    auto below = [&](const glm::vec3& p) { return terrain.inBounds(p.x, p.z) && p.y < terrain.height(p.x, p.z); };
+    bool found = false;
+    glm::vec3 hit(0.0f);
+    float t0 = 0.0f;
+    for (float t = 0.5f; t < 6000.0f; t += std::max(0.5f, t * 0.01f)) {
+        if (below(o + d * t)) {
+            float a = t0, b = t;
+            for (int k = 0; k < 16; ++k) {
+                const float m = 0.5f * (a + b);
+                (below(o + d * m) ? b : a) = m;
+            }
+            hit = o + d * b;
+            found = true;
+            break;
+        }
+        t0 = t;
+    }
+    if (m_brushing && (!ImGui::IsMouseDown(0) || !found)) {
+        m_brushing = false;
+        endEdit(m_terrainTool == int(Terrain::Brush::Mode::Paint) ? "Paint terrain" : "Sculpt terrain");
+    }
+    if (!found) return false;
+
+    // The brush outline, draped over the ground (outer edge and where the falloff starts).
+    for (float frac : {1.0f, 0.5f}) {
+        const float r = m_brush.radius * frac;
+        glm::vec3 prev(0.0f);
+        for (int s = 0; s <= 48; ++s) {
+            const float a = float(s) / 48.0f * 6.2831853f;
+            const float x = hit.x + std::cos(a) * r, z = hit.z + std::sin(a) * r;
+            const glm::vec3 p(x, (terrain.inBounds(x, z) ? terrain.height(x, z) : hit.y) + 0.15f, z);
+            if (s > 0) dd.line(prev, p, frac == 1.0f ? IM_COL32(255, 220, 80, 230) : IM_COL32(255, 220, 80, 110));
+            prev = p;
+        }
+    }
+    if (io.WantCaptureMouse && !m_brushing) return true;
+    auto mode = Terrain::Brush::Mode(m_terrainTool);
+    if (ImGui::IsMouseClicked(0)) {
+        if (io.KeyCtrl && mode == Terrain::Brush::Mode::Flatten) {
+            m_brush.height = hit.y;
+        } else {
+            beginEdit(terrain); // the whole stroke is one undo step
+            m_brushing = true;
+        }
+    }
+    if (m_brushing) {
+        if (io.KeyShift && mode == Terrain::Brush::Mode::Raise) mode = Terrain::Brush::Mode::Lower;
+        else if (io.KeyShift && mode == Terrain::Brush::Mode::Lower) mode = Terrain::Brush::Mode::Raise;
+        Terrain::Brush b = m_brush;
+        b.mode = mode;
+        terrain.applyBrush(b, {hit.x, hit.z}, std::min(io.DeltaTime, 0.1f));
+    }
+    return true;
 }
 
 } // namespace ve

@@ -19,7 +19,7 @@
 //   - Skirts: a short wall hangs down from every node edge and hides the
 //     small cracks between neighbours of different levels.
 //
-// Meshes are built on a worker thread (from the pure terrain generator, or the
+// Meshes are built on worker threads (from the pure terrain generator, or the
 // tile cache for the finest levels) and uploaded under a per-frame budget.
 // After a terrain edit, nodes keep their old mesh until the new one is ready.
 // =============================================================================
@@ -55,6 +55,7 @@ public:
     };
     struct Stats {
         uint32_t drawn = 0, cached = 0, pending = 0, built = 0;
+        uint32_t missing = 0; // nodes the view wants that have no mesh yet (a coarser one stands in)
         float buildMs = 0.0f; // worker time per node, smoothed
     };
 
@@ -62,10 +63,12 @@ public:
     ~TerrainLod();
 
     // New terrain (or edited): nodes rebuild lazily and keep their old mesh meanwhile.
-    void setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings);
+    // `changed` (world x0, z0, x1, z1): only brush edits there; other nodes keep their meshes.
+    void setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings,
+                 const glm::vec4* changed = nullptr);
     // Per frame: choose nodes for `camera`, queue missing meshes, upload finished ones.
     // preload = build everything needed for this view first (synchronously).
-    void update(const glm::vec3& camera, bool preload);
+    void update(const glm::vec3& camera, bool preload, bool uploadAll = false); // uploadAll: no per-frame budget (loading screens)
 
     const std::vector<Drawn>& drawn() const { return m_drawn; }
     int levels() const { return m_levels; }
@@ -133,7 +136,7 @@ private:
     std::vector<Result> m_results;
     int m_busy = 0;
     bool m_quit = false;
-    std::thread m_worker;
+    std::vector<std::thread> m_workers;
 };
 
 } // namespace ve

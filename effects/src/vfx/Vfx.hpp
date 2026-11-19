@@ -26,6 +26,7 @@ class AtmospherePass;
 class VolumetricFogPass;
 class BloomPass;
 class ParticlePass;
+class FirePass;
 
 // Slots in ve::FrameGlobals::globalParams used by the effects (see vfx.glsl).
 enum GlobalSlot : uint32_t {
@@ -39,10 +40,11 @@ struct Effects {
     AtmospherePass* atmosphere = nullptr;
     VolumetricFogPass* fog = nullptr;
     ParticlePass* particles = nullptr;
+    FirePass* fire = nullptr;
     BloomPass* bloom = nullptr;
 };
 
-// Adds sky + clouds, volumetric fog, particles and bloom with sensible defaults.
+// Adds sky + clouds, volumetric fog, fire, particles and bloom with sensible defaults.
 // Also registers the effects' scene types (registerTypes()).
 Effects addDefaultEffects(ve::Renderer& renderer);
 

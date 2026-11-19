@@ -2,6 +2,7 @@
 
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/core/Profiler.hpp"
 #include "ve/ui/UiLayer.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Components.hpp"
@@ -74,7 +75,7 @@ FoliageSystem::~FoliageSystem()
         m_quit = true;
     }
     m_cv.notify_all();
-    if (m_worker.joinable()) m_worker.join();
+    for (std::thread& w : m_workers) w.join();
     for (auto& [key, cell] : m_cells) destroyBodies(cell);
 }
 
@@ -95,7 +96,43 @@ uint32_t FoliageSystem::addLayer(FoliageLayer layer)
     return static_cast<uint32_t>(m_layers.size() - 1);
 }
 
-void FoliageSystem::addExclusion(glm::vec2 center, float radius) { m_exclusions.push_back({center, radius}); }
+float FoliageExclusionShape::distance(glm::vec2 p) const
+{
+    if (!box) return glm::length(p - center) - radius;
+    const glm::vec2 d = p - center;
+    const float c = std::cos(yaw), s = std::sin(yaw);
+    // Into the box's frame (yaw turns local x towards -z, like a Transform rotation about Y).
+    const glm::vec2 local(d.x * c - d.y * s, d.x * s + d.y * c);
+    const glm::vec2 q = glm::abs(local) - halfExtents;
+    return glm::length(glm::max(q, glm::vec2(0.0f))) + std::min(std::max(q.x, q.y), 0.0f);
+}
+
+glm::vec4 FoliageExclusionShape::bounds() const
+{
+    const float r = box ? glm::length(halfExtents) : radius;
+    return {center.x - r, center.y - r, center.x + r, center.y + r};
+}
+
+void FoliageSystem::addExclusion(glm::vec2 center, float radius)
+{
+    FoliageExclusionShape e;
+    e.center = center;
+    e.radius = radius;
+    m_exclusions.push_back(e);
+}
+
+void FoliageSystem::addExclusion(const FoliageExclusionShape& shape)
+{
+    m_exclusions.push_back(shape);
+}
+
+void FoliageSystem::setExclusions(std::vector<FoliageExclusionShape> shapes, glm::vec4 area)
+{
+    stopWorkers(); // they read the exclusions
+    m_exclusions = std::move(shapes);
+    replaceCells(area);
+    startWorker();
+}
 
 void FoliageSystem::ensureGroups(LayerData& layer)
 {
@@ -173,9 +210,8 @@ bool FoliageSystem::candidate(uint32_t layerIndex, int gx, int gz, Candidate* ou
                          (glm::vec2(rnd(1), rnd(2)) - 0.5f) * L.jitter) * L.spacing;
     if (p.x < m_world.boundsMin.x || p.y < m_world.boundsMin.y || p.x > m_world.boundsMax.x || p.y > m_world.boundsMax.y)
         return false;
-    for (const auto& [c, r] : m_exclusions) {
-        if (glm::dot(p - c, p - c) < r * r) return false;
-    }
+    for (const FoliageExclusionShape& e : m_exclusions)
+        if (e.distance(p) < 0.0f) return false;
     if (L.clusterFrequency > 0.0f) {
         const float n = valueNoise(p * L.clusterFrequency, L.seed);
         const float edge = 1.0f - L.clusterCoverage;
@@ -313,9 +349,76 @@ glm::vec3 FoliageSystem::focusPosition(const glm::vec3& viewer) const
     return colliderFocus ? colliderFocus->transform().position() : viewer;
 }
 
+void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<float(const FoliageSample&)>>& densities,
+                            glm::vec4 area)
+{
+    // The worker reads the world and the layers' callbacks: stop it while they change.
+    stopWorkers();
+    m_world = std::move(world);
+    for (size_t i = 0; i < m_layers.size(); ++i)
+        if (i < densities.size() && densities[i]) m_layers[i].desc.density = densities[i];
+    replaceCells(area);
+    startWorker();
+}
+
+void FoliageSystem::stopWorkers()
+{
+    {
+        std::lock_guard lock(m_mutex);
+        m_quit = true;
+    }
+    m_cv.notify_all();
+    for (std::thread& w : m_workers) w.join();
+    m_workers.clear();
+    m_quit = false;
+    m_jobs.clear();
+    m_results.clear();
+}
+
+void FoliageSystem::replaceCells(glm::vec4 area)
+{
+    float margin = 0.0f; // placement looks this far around (spacing, avoid distances)
+    for (const LayerData& layer : m_layers) {
+        const FoliageLayer& L = layer.desc;
+        float reach = L.spacing;
+        for (const auto& a : L.avoid) reach = std::max(reach, a.radius + m_layers[a.layer].desc.spacing);
+        margin = std::max(margin, reach);
+    }
+    // Cells near the area are placed again; so are queued ones (their jobs are gone).
+    const float cs = m_settings.cellSize;
+    for (auto it = m_cells.begin(); it != m_cells.end();) {
+        Cell& c = it->second;
+        const glm::vec2 lo(float(c.cx) * cs, float(c.cz) * cs);
+        const bool near = lo.x - margin <= area.z && lo.x + cs + margin >= area.x && lo.y - margin <= area.w && lo.y + cs + margin >= area.y;
+        if (near || c.state == CellState::Queued) {
+            unload(c);
+            it = m_cells.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    m_rescan = true;
+}
+
+float FoliageSystem::streamProgress() const
+{
+    if (m_scanViewer.x > 1e29f) return 0.0f; // not scanned yet
+    size_t done = 0, total = 0;
+    const float ready = m_settings.readyDistance;
+    for (const auto& [key, cell] : m_cells) {
+        if (ready > 0.0f && cellDistance(cell.cx, cell.cz, m_scanViewer) > ready) continue;
+        ++total;
+        done += cell.state == CellState::Loaded ? 1 : 0;
+    }
+    return total == 0 ? 1.0f : float(done) / float(total);
+}
+
 void FoliageSystem::startWorker()
 {
-    if (!m_worker.joinable()) m_worker = std::thread([this] { workerLoop(); });
+    if (!m_workers.empty()) return;
+    // Placement is independent per cell: one worker per spare core.
+    const unsigned n = std::max(1u, std::min(std::thread::hardware_concurrency(), 16u) - 1u);
+    for (unsigned i = 0; i < n; ++i) m_workers.emplace_back([this] { workerLoop(); });
 }
 
 void FoliageSystem::workerLoop()
@@ -405,7 +508,7 @@ void FoliageSystem::createBody(Cell& cell, size_t i)
     if (colliders.empty()) return;
     const Collider& c = colliders[colliders.size() == 1 ? 0 : inst.variant % colliders.size()];
     slot.body = physics().createStaticBody(c, inst.position, inst.rotation, glm::vec3(inst.scale),
-                                           m_layers[cell.layer].desc.colliderUserValue);
+                                           m_layers[cell.layer].desc.colliderUserValue, m_layers[cell.layer].desc.colliderSurface);
     slot.hasBody = true;
     ++cell.bodies;
 }
@@ -481,6 +584,7 @@ void FoliageSystem::preload(const glm::vec3& viewer)
 
 void FoliageSystem::update(float)
 {
+    VE_PROFILE("Foliage streaming");
     startWorker();
     const glm::vec3 viewer3 = viewerPosition();
     const glm::vec2 viewer(viewer3.x, viewer3.z);
@@ -543,7 +647,7 @@ void FoliageSystem::update(float)
         results.swap(m_results);
         m_stats.pending = static_cast<uint32_t>(m_jobs.size());
     }
-    if (!newJobs.empty()) m_cv.notify_one();
+    if (!newJobs.empty()) m_cv.notify_all();
     for (Result& r : results) {
         m_stats.generateMs = m_stats.generateMs * 0.95f + r.ms * 0.05f;
         auto it = m_cells.find(r.key);
@@ -682,8 +786,17 @@ void FoliageSystem::setState(FoliageInstanceId id, uint32_t newState)
         log::warnOnce("Foliage layer '" + m_layers[id.layer].desc.name + "': no state " + std::to_string(newState));
         return;
     }
+    const auto prev = m_overrides.find(id.packed());
+    const uint32_t oldState = prev != m_overrides.end() ? prev->second : 0;
     if (newState == 0) m_overrides.erase(id.packed());
     else m_overrides[id.packed()] = newState;
+    if (oldState != newState && !m_stateListeners.empty()) {
+        Instance inst;
+        if (makeInstance(id.layer, id.gx, id.gz, &inst)) {
+            const auto listeners = m_stateListeners; // a listener may remove itself
+            for (const auto& [lid, fn] : listeners) fn(id, inst.position);
+        }
+    }
 
     size_t i;
     Cell* cell = loadedCell(id, &i);
@@ -696,6 +809,44 @@ void FoliageSystem::setState(FoliageInstanceId id, uint32_t newState)
     cell->slots[i].state = newState;
     showInstance(*cell, i);
     if (cell->wantBodies && i < cell->bodiesCreated) createBody(*cell, i);
+}
+
+void FoliageSystem::forEachCollider(glm::vec4 area, const std::function<void(const Collider&, const glm::mat4&)>& fn) const
+{
+    for (uint32_t l = 0; l < m_layers.size(); ++l) {
+        const LayerData& layer = m_layers[l];
+        if (layer.desc.colliders.empty() && layer.desc.states.empty()) continue;
+        const float sp = layer.desc.spacing;
+        // Instances stay inside their grid square: one square of margin is plenty.
+        const int x0 = int(std::floor(area.x / sp)) - 1, z0 = int(std::floor(area.y / sp)) - 1;
+        const int x1 = int(std::floor(area.z / sp)) + 1, z1 = int(std::floor(area.w / sp)) + 1;
+        Instance inst;
+        for (int gz = z0; gz <= z1; ++gz) {
+            for (int gx = x0; gx <= x1; ++gx) {
+                const FoliageInstanceId id{l, gx, gz};
+                const auto o = m_overrides.find(id.packed());
+                const uint32_t st = o != m_overrides.end() ? o->second : 0;
+                const auto& colliders = collidersFor(layer, st);
+                if (colliders.empty() || !makeInstance(l, gx, gz, &inst)) continue;
+                if (inst.position.x < area.x || inst.position.x > area.z || inst.position.z < area.y || inst.position.z > area.w) continue;
+                const Collider& c = colliders[colliders.size() == 1 ? 0 : inst.variant % colliders.size()];
+                const glm::mat4 m = glm::translate(glm::mat4(1.0f), inst.position) * glm::mat4_cast(inst.rotation) *
+                                    glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale));
+                fn(c, m);
+            }
+        }
+    }
+}
+
+uint32_t FoliageSystem::addStateListener(StateListener fn)
+{
+    m_stateListeners.emplace_back(m_nextListener, std::move(fn));
+    return m_nextListener++;
+}
+
+void FoliageSystem::removeStateListener(uint32_t id)
+{
+    std::erase_if(m_stateListeners, [id](const auto& l) { return l.first == id; });
 }
 
 std::vector<std::pair<uint64_t, uint32_t>> FoliageSystem::overrides() const

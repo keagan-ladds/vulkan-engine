@@ -17,6 +17,7 @@ vulkan-engine/
 │   ├── src/ve/physics/     Jolt-backed physics: PhysicsWorld, Collider, Rigidbody, CharacterController
 │   ├── src/ve/assets/      AssetManager, texture loading (stb), glTF loading (cgltf), Model
 │   ├── src/ve/audio/       AudioSystem, AudioClip, AudioSource, zones (miniaudio); Music, Ambience
+│   ├── src/ve/nav/         Navmesh building (Recast), paths + agents (Detour)
 │   ├── src/ve/ui/          ImGui integration + engine debug overlay
 │   ├── src/ve/world/       Terrain, FoliageSystem (streamed scattering), GrassPass (GPU grass), Vegetation (scene types), LodModel
 │   └── shaders/            engine shaders + include/ve.glsl (the shared shader interface)
@@ -85,6 +86,35 @@ loop:
   Scene::flushDestroyed()            deferred destruction
 ```
 
+**Loading screens** (`Engine::beginLoading(loadingScene)`): until loading
+ends, a frame instead runs one queued load step (`addLoadStep`, main-thread
+work such as loading the scene file), updates the world like the editor's
+Edit mode (only `runInEditor` objects: terrain, foliage and grass keep
+streaming; no fixed steps / physics, gameplay waits), polls the load tasks
+(`addLoadTask`, progress 0..1 of work spread over frames, e.g. foliage
+filling its cells on worker threads) and updates + draws the loading scene,
+a small scene of the game's (usually one object drawing UI in `onGui`).
+Those frames draw only the passes with `RenderPass::runsWhileLoading`
+(instance uploads, skinning, the UI over a cleared screen). Loading ends
+when every step ran and every task reports 1 (and `minSeconds` passed); the
+loading scene is destroyed and the next frame is the world's.
+`VE_CAPTURE_FRAME` / benchmarks count world frames only.
+
+What a loading screen waits for is "ready to play here", not the whole
+world: foliage counts only the cells within `FoliageSettings::readyDistance`
+(300 m) of the viewer (big trees drawn kilometres away keep streaming in,
+nearest first, after play starts), and the terrain's first LOD view is
+built on a small worker pool with no per-frame upload budget while loading
+(Savanna: about 0.9 s to play in Release, was 2.4 s).
+
+**In the editor** (Edit mode, or a game started in it): `beginLoading`
+shows no loading scene. Frames stay normal editor frames (the world paused,
+drawn as it fills in), one load step runs per frame, and the editor draws a
+progress panel from `loadStatus()` / `loadProgress()`; loading ends as soon
+as steps and tasks are done, and Play waits until then. `Editor::openScene`
+goes through the same path, so opening a large scene shows its terrain,
+vegetation and navmesh progress.
+
 ## 4. Scene model (Unity-style)
 
 - **`GameObject`** has a name, a `Transform` (position / rotation quat / scale,
@@ -131,6 +161,7 @@ Every pipeline uses **one global pipeline layout**:
 | set 0, b3 | `sampler2DArrayShadow` | directional shadow cascades (all lights × cascades as layers) |
 | set 0, b4 | `samplerCubeArrayShadow` | point light shadow cubes |
 | set 0, b5–b9 | instancing SSBOs | instances, visible-instance lists, indirect draw commands, instance groups, cull views (see §5.7) |
+| set 0, b10–b13 | skinning SSBOs | rest vertices, joint weights, this frame's joint matrices, skinned output (see §5.7b) |
 | set 1, b0 | `image2D storageImages[]` | bindless storage images (compute) |
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
@@ -150,9 +181,17 @@ it on). The projection is jittered by an 8-position Halton (2, 3) sequence
 frame's result with the camera motion from depth (closest of 3×3, unjittered
 `prevViewProj`), samples it with Catmull-Rom, clips it to the current 3×3
 YCoCg variance box and blends it in with weight `feedback` (0.9), on
-tonemapped values. There are no per-object motion vectors, so moving objects
-rely on the clipping (slight softening, no trails). `prevViewProj` is the
-unjittered matrix for every temporal effect.
+tonemapped values. `prevViewProj` is the unjittered matrix for every temporal
+effect.
+
+**Motion vectors.** The renderer keeps every MeshRenderer's last world
+matrix; opaque items whose matrix changed go to `FrameData::moving`.
+`VelocityPass` (AfterOpaque, with TAA) draws just those into `Velocity`
+(RG16F: last frame's unjittered UV minus this frame's) where they are the
+visible surface (compared with SceneDepth), over a "not moving" clear value.
+TAA uses that motion where present and camera motion from depth elsewhere,
+so moving objects keep their history instead of ghosting. Vertex animation
+(wind, and later skinning) isn't included yet.
 
 Set 0 has one copy per frame in flight. Set 1 is a single update-after-bind
 bindless set. Because every shader shares the layout, descriptor sets are bound
@@ -250,6 +289,7 @@ Default pass list:
 | AfterOpaque (0) | `ScreenSpaceGIPass` *(opt-in)*: half-res bounce + AO → `scene * ao + bounce` | effects |
 | AfterOpaque (10) | `ScreenSpaceReflectionsPass` *(opt-in)*: half-res trace → premultiplied blend | effects |
 | Transparent (0) | `TransparentPass` (sorted back-to-front; water) | engine |
+| Transparent (9) | `FirePass` | effects |
 | Transparent (10) | `ParticlePass` | effects |
 | Transparent (50) | `VolumetricFogPass` (half-res raymarch → upsample+blend), placed after transparents so water/particles are fogged | effects |
 | PostProcess (-10) | `DepthOfFieldPass` *(opt-in)*: half-res prep → gather → blend by CoC | effects |
@@ -275,11 +315,12 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
    `settings.maxShadowedDirectionalLights`, each with `settings.cascadeCount`
    cascades) and point shadow slots (closest `settings.maxShadowedPointLights`
    within range). Compute cascade splits (practical split scheme) and
-   texel-snapped, sphere-fitted orthographic matrices, seen from the light
-   direction snapped to `settings.shadowDirectionStep` degrees (0.2): with a
-   day/night cycle the sun moves every frame, and re-rasterising every shadow
-   edge from a new angle each frame made the edges crawl (2–4 % of the ground's
-   pixels changed per frame with a still camera; ~0.02 % snapped). Lighting
+   texel-snapped, sphere-fitted orthographic matrices. Optionally
+   (`settings.shadowDirectionStep` > 0, off by default) the light direction
+   for shadows is snapped to steps of that many degrees: a moving sun
+   re-rasterises every shadow edge from a new angle each frame, so the edges
+   crawl (2–4 % of the ground's pixels change per frame with a still camera,
+   TAA off; ~0.02 % snapped), but the steps themselves are visible. Lighting
    uses the exact direction. Compute the six cube-face matrices.
 4. `pass->prepare()` for all enabled passes.
 5. Upload FrameGlobals, LightBuffer and MaterialBuffer (host-visible, per frame in flight).
@@ -327,6 +368,15 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
   than `shadowMinCasterTexels` cascade texels) and the frustum, and appends the
   instance to that LOD's batches with an atomic on the indirect command's
   `instanceCount`.
+- **Occlusion** (camera view, `RendererSettings::occlusionCulling`, on):
+  `HiZPass` (after the opaque geometry) reduces SceneDepth to a pyramid of
+  512×256 … 1×1 R32F levels holding the farthest depth of their area. Next
+  frame the cull projects each instance's bounding box with last frame's
+  camera (`prevViewProj`), picks the level where it covers ≤ 2×2 texels and
+  skips it if its nearest point is behind all four. Boxes reaching off
+  screen or behind the camera always pass. Savanna: camera instance draws
+  −55 % in the jungle, −59 % at the camp, identical images. Something coming
+  out from behind cover can appear one frame late.
 - **LOD:** each group has up to 4 `InstanceLod`s, selected per instance by
   screen size (`radius · cot(fov/2) / distance`, if `screenSize` is set) or
   distance, scaled by `RendererSettings::lodBias`. Shadow views use
@@ -362,6 +412,63 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
 Shader stages: CMake defines `VE_VERTEX_STAGE` / `VE_FRAGMENT_STAGE` /
 `VE_COMPUTE_STAGE` per file, so shared includes can expose stage-specific
 helpers (the instancing helpers are vertex-only).
+
+### 5.7b Skeletal animation and GPU skinning (`ve/anim`, `render/Skinning`)
+
+- **Import.** The glTF loader reads skins (joint nodes + inverse bind
+  matrices), `JOINTS_0` / `WEIGHTS_0` (a `SkinnedMeshSource` per skinned mesh:
+  rest vertices, 4 joints + weights per vertex, and per joint the reach of its
+  vertices for bounds) and animation clips (translation / rotation / scale
+  channels; step, linear and cubic-spline keys).
+- **Skeleton = objects.** `Scene::instantiate` makes every glTF node a
+  GameObject as before, so joints are objects: attach a spear to a hand by
+  parenting it. Skinned mesh nodes get a `SkinnedMeshRenderer` (a
+  `MeshRenderer`) bound to the joint objects; animated models get an
+  `Animator` on their root.
+- **Animator.** Plays clips with crossfades: every playing clip has a weight
+  that fades in or out; per animated node the clips' poses (rest pose for
+  channels a clip doesn't animate) are blended (translation / scale
+  weighted, rotations normalised-weighted in one hemisphere) and written to
+  the node objects' local transforms. `play(name, fade, loop, speed)`.
+- **Layers.** Layer 0 is the whole body; `addLayer(name, maskJoint, blend)`
+  adds one over part of the skeleton (a joint and everything below it) that
+  plays its own clips: Override replaces the pose under it, Additive adds the
+  clip's difference from the rest pose. Each layer has a weight that fades
+  (`setLayerWeight(layer, w, fade)`): e.g. wave / swing an axe with the arms
+  while the legs walk.
+- **Events.** `addEvent(clip, time, name)` + `onEvent(event, clip)`: fired when
+  the current clip of a layer passes the time (loops included), not while it
+  fades out. Footsteps, hit frames, sounds.
+- **IK.** `TwoBoneIK` (upper / middle / end joint names, world `target`,
+  `pole` in model space, `weight`) runs after the animation: the middle
+  joint goes where the triangle's sides put it in the target / pole plane,
+  then the upper bone turns onto it and the lower onto the target (exact;
+  the end joint keeps its animated orientation). Joints no clip animates are
+  reset to rest first so IK doesn't accumulate. `FootIK` puts two of them on
+  the legs: raycasts under each animated foot, lifts / drops the foot onto
+  the ground (relative to the model's ground plane, so walking keeps its
+  lift), lowers the hips for the lower foot, smoothed.
+- **GPU skinning.** `SkinningSystem` keeps four shared storage buffers (set
+  0, bindings 10–13): rest vertices and weights (once per source, refcounted),
+  this frame's joint matrices (per frame slot) and the skinned output, which
+  is also a vertex buffer. Each frame the renderer asks every active
+  `SkinnedMeshRenderer` for its joint matrices (in its own space:
+  `inverse(meshWorld) · jointWorld · inverseBind`) and bounds (joint
+  positions padded by their reach); `SkinningPass` (first pass of the frame)
+  runs `skin.comp` once per mesh. The output range is a `Mesh::createShared`
+  mesh (vertex buffer bound at an offset), so the colour, shadow, picking and
+  motion-vector pipelines draw skinned meshes unchanged.
+  Limits: `RendererSettings::maxSkinnedVertices` (262 144),
+  `maxSkinJoints` per frame (8 192).
+- **Aim IK.** `AimIK` turns a chain of joints (root first, with weights) so
+  an axis of an effector joint points at a target: each joint takes its share
+  of the remaining turn (the last finishes it), the aim is limited to
+  `maxAngle` from the animated direction, a couple of iterations handle aims
+  that start off the joints (eyes, a muzzle), and it blends in / out over
+  `blendTime` when a target is set / cleared. `LookAtIK` is the preset for
+  heads (Spine 0.15, Chest 0.25, Head 0.6, the face's +Z from the eyes).
+- Not yet: motion vectors from skinning (moving bones of a standing
+  character), root motion, full-body IK.
 
 ### 5.8 GPU layer (gfx)
 
@@ -406,6 +513,12 @@ helpers (the instancing helpers are vertex-only).
   `terrain.frag` blends the layers by weight and texture height, samples rock
   triplanar, and blends a rotated, larger second copy with distance against
   tiling. Leftover weight shows the biome vertex colour.
+- **Edits.** `TerrainEdits` (editor brushes) add per-sample height offsets
+  and painted biomes, sparse in 64-cell tiles, inside `generateHeight` /
+  `generateBiomes`, so every consumer sees them. A rebuild after brush edits
+  only (`changedOnlyIn`) keeps the old snapshot's cached tiles, LOD meshes and
+  collider tiles outside the brushed area; foliage and grass refresh just
+  that area.
 - **Physics.** 64-cell heightfield tiles exist around the camera, every
   `CharacterController` and every dynamic `Rigidbody` (`colliderDistance`,
   25 % hysteresis). The render mesh, `height()` and the grass all split cells
@@ -462,6 +575,11 @@ stores nothing per blade.
   keep coverage. Hidden clumps are moved outside the depth range.
 - **Wind and output.** Wind comes from `frame.globalParams[windSlot]`. Blades
   write the thin G-buffer.
+- **Benders.** `GrassBender` components (the Savanna player has one) push
+  grass aside: each frame the 8 nearest the camera go to
+  `frame.grassBenders` (position of the feet, radius), and `veGrassPlace`
+  rotates every blade within the radius about its root, away from the
+  bender, by up to ~70° near the centre (shadows bend the same way).
 - **Shadows.** `GrassPass` is a `ShadowCaster` (a `Renderer::addShadowCaster`
   hook that `ShadowPass` calls for each directional cascade). It draws tiles
   within `shadowDistance` into cascades with texels ≤ `shadowMaxTexel`, using
@@ -473,6 +591,129 @@ stores nothing per blade.
 - **Card mode.** With `cardMesh` set, the mesh is scaled uniformly by the clump
   height. Vertex y is the sway weight and uv goes to `grass_card.frag`, which
   alpha-tests `cardTexture`.
+
+## 5.10 Gameplay helpers (`ve/gameplay`, `ve/scene/SaveGame`, `ve/scene/Prefab`)
+
+- **Save games.** `ve::Saveable` (`saveState` / `loadState`) on any object or
+  component; `save::capture(scene)` = level objects moved by physics +
+  level objects destroyed (the scene loader remembers the level's ids,
+  `Scene::levelObjects`) + every Saveable's state keyed by persistent id or
+  object name (+ component type); `save::apply` destroys, moves, then calls
+  `loadState`. Slots are JSON files (tmp + rename). The game decides when
+  to reload the level before applying (Savanna: behind the loading screen).
+
+- **Prefabs** (`ve/scene/Prefab.hpp`). A `.prefab` file is JSON holding an
+  object (type, fields, persistent components, children) at the origin.
+  `prefab::instantiate` creates an instance: children's ids are derived from
+  the root's, so a save game recreates them with the same ids. It also adds a
+  `PrefabInstance` component pointing back at the file. Instances are copies:
+  editing the file doesn't update them (no overrides / propagation yet).
+  Save games record runtime-spawned instances (a `PrefabInstance` root that
+  isn't a level object) under "spawned" and recreate them before restoring
+  Saveable state.
+
+- **Placement** (`ve/gameplay/Placement.hpp`), the mechanics of building:
+  - `SnapPoint` components are typed points on a piece. `findSnap` keeps the
+    piece's rotation and moves it so one of its points lands on a scene
+    point. A pair counts as close if the piece's point would land within a
+    radius of the target with its origin at the aim, or if the aim itself is
+    within the radius of the target.
+  - With `alignRotation` (fittings), the piece also turns about Y so its
+    `facing` matches the target's, whichever way round is nearer the
+    player's rotation. `SnapResult` gives the rotation and the target, i.e.
+    the host piece.
+  - `snapToGrid` / `snapAngle` are the grid helpers.
+  - `fits` tests the piece's volume against physics: its `PlacementBox`es,
+    or the bounds of what it draws if it has none, shrunk by a margin so
+    neighbours that only touch are fine. A predicate can allow some hits,
+    e.g. the terrain.
+  - `PlacementPreview` is the ghost: a prefab instance with a
+    `PlacementGhost` marker, its world-acting components disabled, not
+    saved, and drawn with one transparent material tinted valid / invalid.
+  - The game owns the pieces, rules, costs and the build tool; the editor
+    uses the same snapping when dragging.
+
+- **Interaction.** `Interactable` (component: prompt / `promptFn`, `onUse`,
+  `onFocus`, reach, focus offset; or override `currentPrompt` / `use` /
+  `focusChanged`) and `Interactor` (component on whoever interacts: each
+  frame the focus = the eye ray's hit object or a parent with an
+  Interactable, else the best Interactable in a view cone with a clear line
+  of sight; `interact()` on its Input action; `prompt()` for the game's
+  HUD). Mechanism only: Savanna decides what chopping, picking and
+  collecting do and how prompts look.
+
+## 5.11 Navigation (`ve/nav`)
+
+Backed by **Recast & Detour** (linked `PRIVATE`, only included by
+`Navigation.cpp`).
+
+- **`NavMeshSurface`** (component): a tiled navmesh over a box around its
+  object (or, with `streamRadius`, the tiles around the camera / a focus
+  object over the whole terrain). Each tile's input is gathered on the main
+  thread: terrain heights sampled directly (deep water marked unwalkable),
+  static `Rigidbody` colliders (`Collider::triangles`, Jolt's shape
+  triangulation; the terrain's own heightfield bodies are skipped) and
+  foliage colliders (`FoliageSystem::forEachCollider`, deterministic, so
+  unloaded cells count too). Tiles are voxelized and turned into Detour tiles
+  on worker threads and swapped in on the main thread; while a loading screen
+  is up the surface registers a "Finding paths" load task that drives the
+  build. `FoliageSystem` state listeners rebuild the tiles around a chopped
+  tree; `rebuild(area)` is there for other changes. Queries: `findPath`
+  (corners), `nearestPoint`, `randomPointNear`, `raycast`.
+- **`NavAgent`** (component): joins the surface's `dtCrowd` once there is
+  navmesh under it, then walks to `setDestination` targets with path
+  following, steering and avoidance of other agents; writes its Transform in
+  `lateUpdate` (turning towards where it walks), `arrived()` /
+  `remainingDistance()` for the game's AI.
+- Behaviour is game code: Savanna's `Villager` idles, wanders to random
+  reachable spots and follows the player when asked ("walk with me").
+- `showDebug` draws the navmesh's polygons near the camera.
+
+## 5.11b Debug drawing (`ve/debug/Debug.hpp`)
+
+`ve::debug::line / ray / arrow / path / cross / axes / box / aabb / circle /
+sphere / capsule / cylinder / text` from anywhere (game code, components,
+engine systems), sRGB colours, `{duration, thickness, depthTest}`. Lines are
+collected per frame (or kept for `duration` seconds) and drawn by
+`DebugLinePass` on the finished image (Overlay stage: after tonemapping and
+TAA, under the UI, not in photos): one instance per segment expanded to a
+screen-space quad (any thickness, clipped at the near plane), depth-tested
+against SceneDepth with the hidden parts drawn at 25 %. Labels go to ImGui's
+background list. Channels (`enabled("Name")` registers one, off;
+`setChannel`) are switched in F1 > Debug draw; engine channels draw physics
+bodies, terrain colliders, characters, the navmesh and nav agents (path
+corners, destination, velocity).
+
+## 5.12 Networking (`ve/net`)
+
+Host-authoritative co-op (decision D19). `engine.net()` (or `net()` in any
+GameObject / Component) is the session: offline by default, `host(port)` or
+`join(address, port)`.
+
+- **Frame:** `Network::poll()` at the start of the frame (also during loading,
+  to keep connections alive; messages wait until the load is done), then the
+  usual update / late update, then `Network::flush()` sends what this
+  machine owns that moved (NetworkTransform) or changed (dirty
+  NetReplicated).
+- **Authority:** `isServer()` is true offline and on the host. Clients
+  change the world only by asking: `toServer("name", payload)` runs the
+  handler on the host (immediately, locally, when offline or hosting). The
+  host applies it and replicates the result: `spawn(prefab, pos, rot,
+  owner)` / `despawn(obj)` on every machine, `toClients(...)` for events.
+- **Objects:** `NetworkObject` = identity (the GameObject id: level objects
+  match because everyone loads the same level, spawned ones are created with
+  the host's id) + owner (a peer, the host by default). `NetworkTransform`:
+  the owner sends, others interpolate. `NetReplicated`: netWrite / netRead
+  of custom state, sent when `markDirty()` is called; the host relays
+  client-owned state to the others after checking the sender owns it.
+- **Joining:** hello (game id + protocol version) -> welcome with the world
+  snapshot (`worldSnapshot` hook; default `save::capture`), then spawns not
+  in saves, owners, state and transforms. The client applies the snapshot
+  in `onJoined` (default `save::apply`), possibly after rebuilding the level
+  (messages wait while loading).
+- **Messages:** one byte type + payload (`ve/net/Stream.hpp`); spawns, state,
+  requests reliable and ordered; transforms unreliable. The transport
+  (`ve/net/Transport.hpp`, ENet) is internal to the engine.
 
 ## 6. Physics
 
@@ -498,11 +739,41 @@ Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
   and has an inner body so thrown objects hit it. Its position is the feet.
   Call `move(horizontalVelocity, dt)` from `fixedUpdate()`; gravity and
   `jump(speed)` are handled for you.
-- **Layers:** `NonMoving` (static), `Moving` (kinematic + dynamic), `Character`.
-  Static vs static never collide, and characters are only hit by moving bodies.
-  Raycasts ignore characters unless asked.
+- **Kinds:** `NonMoving` (static), `Moving` (kinematic + dynamic), `Character`,
+  `Sensor`. Static vs static never collide, and characters are only hit by
+  moving bodies. Raycasts ignore characters unless asked.
+- **Collision layers (the game's):** up to 32 named layers
+  (`physics().addLayer("Debris")`, "Default" = 0 always exists) and a
+  symmetric matrix (`setCollision(a, b, false)`). Bodies name theirs
+  (`Rigidbody::layer`, `CharacterController::layer`, `createStaticBody(...,
+  layer)`); a Jolt object layer is the kind in its low 2 bits and the game
+  layer above, and the pair filter checks both. Queries take a mask
+  (`QueryFilter::layers`, `layerMask({"Debris"})`); characters walk into what
+  their layer collides with.
+- **Physics materials:** friction / restitution per body, plus a `surface`
+  name ("Wood", "Stone"...): `Rigidbody::surface`, `FoliageType::colliderSurface`,
+  `createStaticBody(..., surface)`; terrain tiles are "Terrain" (games look
+  up the biome). Hits (`RaycastHit::surface / layer`), contacts
+  (`Collision::otherSurface / otherLayer`) and characters
+  (`CharacterController::groundSurface / groundObject`) report it: footsteps,
+  impact sounds and effects.
+- **Joints** (components next to a Rigidbody, on Jolt constraints): `FixedJoint`
+  (weld), `HingeJoint` (doors, wheels, pendulums: axis, limits in degrees,
+  friction), `SliderJoint` (axis, limits in metres), `DistanceJoint` (ropes /
+  springs between two anchors). The other body is `connect(object)` or
+  `connectedTo` (a name, for scene files); none = the world. Hinges and
+  sliders take a motor (Velocity or Position, max force, stiffness), limits
+  can be soft (spring frequency / damping). `breakForce` / `breakTorque`:
+  the solver's impulses each step / dt are compared and the joint comes off
+  (`onBreak`, `broken()` saved in games). A joint attaches once both bodies
+  exist and detaches before either is destroyed (a rebuilt body gets it back).
+  F1 > Debug draw > "Physics joints".
 - **Queries:** `physics().raycast(origin, dir, maxDist, ignoreBody, hitCharacters)` →
-  point, normal, distance, `Rigidbody*`, `GameObject*` (via body user data).
+  point, normal, distance, `Rigidbody*`, `GameObject*` (via body user data),
+  layer, surface; casts and overlaps take a `QueryFilter`.
+- **Debug drawing:** `drawDebug(center, radius, ...)` draws body wireframes as
+  `ve::debug` lines (F1 > Debug draw > "Physics colliders" / "Physics terrain" /
+  "Character controllers").
 - `scene.instantiate(model, parent, /*staticColliders*/ true)` gives every glTF
   mesh node a static triangle-mesh collider. `Model` keeps CPU `meshData` for this.
 - Threads: Jolt's job system with up to 4 workers. Per-step CPU time is shown in the F1 overlay.
@@ -553,9 +824,63 @@ The listener follows the main camera.
 
 Dear ImGui with the SDL2 and Vulkan (dynamic rendering) backends. It is drawn
 by `UiPass` directly onto the backbuffer. Games draw HUD/menus in `onGui()`
-hooks. F1 toggles the engine debug overlay: FPS/frame time, draw counts,
-renderer settings (shadows, exposure), and every render pass with an
-enable toggle and its own `onGui()` settings.
+hooks (debug tools, the editor); game screens use the retained layer
+below. F1 toggles the engine debug overlay: FPS/frame time, draw counts,
+CPU zones (`VE_PROFILE` scopes from `ve/core/Profiler.hpp`, main thread,
+nested, averaged over ~1 s), renderer settings (shadows, exposure), and every
+render pass with an enable toggle, its GPU time and its own `onGui()` settings.
+
+### 9.1 Game UI (`ve/ui/Gui.hpp`)
+
+A small retained-mode layer for game screens (HUD, inventory, menus), drawn
+through ImGui's background draw list (so it shares fonts, textures and the
+`UiPass`) but not using ImGui widgets. The engine holds the mechanism; the
+look (colours, fonts, layouts) and what screens exist are the game's.
+
+- `ui::Canvas` (a Component): a tree of `ui::Element`s laid out on a
+  reference resolution (1920x1080, scaled by window height). `order` sorts
+  canvases; a `modal` canvas takes all input (the game stops seeing keys and
+  the mouse) and owns keyboard / pad focus. `onBack` (Escape / pad B),
+  `shortcuts` (key or pad button -> action), `fade`, `hideInEditor`.
+- Elements: anchors + pivot + position + size (stretched between two
+  anchors, the position / size are insets), `visible`, `enabled`,
+  `opacity`, `tooltip`, `onClick`, `onHover`, drag and drop (`draggable`,
+  `onDrop`, `dragVisual`). Widgets: `Panel` (fill / gradient / border /
+  image), `Label` (font + size, alignment, wrap, shadow, `bind` for live
+  text), `Image` (texture or a `custom` draw callback), `Button`,
+  `ProgressBar` (gradient fill, trail), `Slider`, `Stack` (vertical /
+  horizontal), `Grid`.
+- Input routing (`ui::System::route`, before gameplay each frame): hover,
+  press, click, drag, tooltips; focus navigation on the top modal canvas
+  with arrows / d-pad / left stick, Enter / Space / pad A to click. It sets
+  `Input::setUiCapture`, so gameplay's keys, mouse and pad go quiet under a
+  modal canvas.
+- `ui::Painter` draws in canvas units (rects, gradients, borders, lines,
+  polygons, circles, images, text); colours are authored in sRGB and
+  converted for the sRGB backbuffer.
+- Fonts: `ui::loadFont(name, ttf, sizes)` bakes sizes into the atlas (any
+  time: applied before the next frame); text picks the nearest baked size
+  and scales.
+- Text fields: `ui::TextInput` (click or focus it and type: text from the
+  OS via `Input::textTyped()`, so keyboard layouts and IMEs work; caret,
+  Backspace / Delete / arrows / Home / End with key repeat, `accept` filter,
+  `onChanged`, `onSubmit` on Enter, Escape stops editing). While a field is
+  edited the keyboard belongs to it: gameplay keys, the canvas's shortcuts,
+  Space-to-click and Escape-to-back are off. Tests: `Input::injectText` /
+  `injectKeyTyped`.
+- Lists: `ui::ScrollView` clips its `content()` (a vertical Stack), scrolls
+  with the wheel, its bar or by dragging, and follows keyboard / pad focus
+  (`scrollTo`). Hit-testing skips what's clipped (`Element::clipsChildren`).
+- Icons: `ui::bakeIcon(renderer, meshData, size, view)` renders a mesh
+  offscreen (orthographic, three-quarter view, simple lighting) into a
+  texture for inventory / build menu slots. Textures kept outside the
+  scene (a static item table) must be dropped in `Engine::atShutdown`,
+  which runs before the renderer is destroyed.
+
+Input (`ve/core/Input.hpp`) maps keys, mouse buttons, gamepad buttons and
+triggers to named actions, and keys or stick axes to named axes; the first
+SDL game controller is used. Bindings can be rebound at runtime
+(`startRebind`) and saved as JSON; the game decides where and draws the UI.
 
 ## 10. Effects module (ve_effects, namespace `vfx`)
 
@@ -608,6 +933,23 @@ Optional add-ons built only on public engine APIs:
     background taps are clamped to the centre's CoC; full-res composite with
     alpha = CoC. Cost at 1600×900 on Iris Xe: SSGI about 1.3 ms, SSR about
     0.3 ms, DOF about 1.2 ms.
+- `Fire` component and `FirePass`: procedural flames, no textures and no
+  simulation. Each fire is 1–8 vertical sheets turned around Y towards the
+  camera (each a little off-axis and offset, so they read as one volume),
+  bent downwind at the tips, plus a horizontal coal bed. The fragment shader
+  rises domain-warped value noise through a teardrop shape, tears the top
+  into tongues and colours the "heat" with a black-body-like ramp. Output is
+  additive HDR with soft depth fades, and bloom makes the glow. The
+  component's `flicker()` / `lightJitter()` drive a point light so the glow
+  and shadows follow the flames. Cost: about 8 noise lookups per pixel over a
+  few small quads.
+  - Heat haze (`Fire::haze`): after the flames, the pass copies only the
+    screen rectangle the fires' haze boxes project to (`FireHazeCopy`), then
+    draws one camera-facing sheet above each fire (`fire_haze.frag`). It
+    samples the copy at offsets from rising noise, about 5 cm in the world
+    (so it shrinks with distance). It is masked at the sheet's edges and
+    never pulls in pixels from in front of the hot air. The flame tips are in
+    the copy, so they shimmer too.
 - `ParticleEmitter` component (CPU simulation) and `ParticlePass`
   (instanced camera-facing or velocity-stretched quads, alpha/additive).
   - Streaks stretch along the actual motion, wind drift included, so rain
@@ -647,12 +989,18 @@ Optional add-ons built only on public engine APIs:
 | `Vegetation.*` | Procedural low-poly meshes (`MeshData::append`, flat shading): acacia, baobab, fever tree, bushes, rocks; jungle trees, palms, undergrowth; quiver trees and dry bushes for the desert. LOD chains + impostors, registered in `ve::MeshLibrary` for the scene's `FoliageType` layers |
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
-| `Props.*` | Campfire/torches (point shadows, particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, ImGui HUD, `AutoTest` |
+| `Building.*` | Building kit on the engine's prefabs + placement: `BuildPiece` (14 kinds x materials, doors / windows as fittings snapping into wall openings, `DoorHinge` (Use, saved), mesh / colliders / snap points / placement boxes from code; the kit is `assets/prefabs/building/*.prefab` + `building/catalogue.json`), `Builder` (build mode B: ghost, snap, fit, place, remove, navmesh rebuild) |
+| `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, HUD (ve::ui canvas: health / stamina, hotbar, clock, prompts), `AutoTest` |
+| `Villager.*` | Navmesh agents with animation: Idle / Walk crossfades, a "Wave" layer on the right arm (greeting the player), footstep events of the Walk clip (sounds by surface), FootIK on slopes, a "Villagers" debug-draw channel |
+| `Multiplayer.*` | On `ve/net`: host / join from `SAVANNA_NET`, player avatars (NetworkObject + NetworkTransform + replicated name), the host's world snapshot without its own player, clock / weather sync, `NetTest` (two-process test, `tools/nettest.sh`); building requests live in `Building.cpp` |
+| `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop) |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 
 Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..4`,
-`SAVANNA_DEBUG=1` (F1 overlay on), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
+`SAVANNA_DEBUG=1` (F1 overlay on), `SAVANNA_MENU=1` (the title screen even with other hooks; it shows on a plain game launch only),
+`SAVANNA_NET=host[:port]` / `SAVANNA_NET=join:<address>[:port]` + `SAVANNA_NAME=<name>` (multiplayer),
+`SAVANNA_DRAW=colliders,terrain,characters,navmesh,agents,villagers,shapes` (debug-draw channels), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
 camera), `SAVANNA_AUTOTEST=1` / `SAVANNA_EDITORTEST=1` (scripted smoke tests
 that exit), `SAVANNA_SCENE=file.json` (another scene), and
 `VE_VALIDATION=0/1`. Any engine game: `VE_HEADLESS=1` (no window shown,

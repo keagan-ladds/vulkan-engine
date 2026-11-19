@@ -41,6 +41,8 @@ struct CullPush {
     uint32_t shadowLodBias;
     float fadeBand;
     uint32_t viewCount;
+    uint32_t hizValid;            // camera occlusion test against last frame's depth pyramid
+    uint32_t hiz[kHiZLevels];     // pyramid levels (bindless), 512x256 .. 1x1
 };
 
 } // namespace
@@ -448,8 +450,9 @@ void InstanceSystem::recordCulling(VkCommandBuffer cmd, uint32_t slotIndex)
         const uint32_t count = m_groups[gi]->count();
         if (count == 0) continue;
         const RendererSettings& rs = m_renderer->settings();
-        const CullPush push{gi,          s.batchCount, m_lodScale, rs.lodBias, rs.shadowLodBias,
-                            rs.lodCrossfade ? rs.lodFadeBand : 0.0f, s.viewCount};
+        CullPush push{gi,          s.batchCount, m_lodScale, rs.lodBias, rs.shadowLodBias,
+                      rs.lodCrossfade ? rs.lodFadeBand : 0.0f, s.viewCount, m_hizValid ? 1u : 0u, {}};
+        std::copy(m_hiz.begin(), m_hiz.end(), push.hiz);
         vkCmdPushConstants(cmd, m_renderer->pipelineLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(push), &push);
         vkCmdDispatch(cmd, (count + 63) / 64, 1, 1);
     }

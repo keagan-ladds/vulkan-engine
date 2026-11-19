@@ -37,6 +37,7 @@
 #include "ve/render/Mesh.hpp"
 #include "ve/render/RenderGraph.hpp"
 #include "ve/render/Renderer.hpp"
+#include "ve/scene/GameObject.hpp"
 
 #include <glm/glm.hpp>
 
@@ -120,6 +121,16 @@ struct GrassDesc {
     float lodBlend = 4.0f; // m over which neighbouring LODs are dithered
 };
 
+// Pushes grass aside around its object (players, animals, rolling rocks).
+// Each frame the kMaxGrassBenders benders nearest the camera go to every
+// grass pass (frame.grassBenders); blades within `radius` of the object's
+// position (its feet) lean away, more the closer they are.
+class GrassBender : public Component {
+public:
+    float radius = 0.8f;   // m
+    float strength = 1.0f; // 0..1: how far blades lean over
+};
+
 class GrassPass : public RenderPass, public ShadowCaster {
 public:
     explicit GrassPass(GrassDesc desc);
@@ -134,10 +145,15 @@ public:
 
     // Parameters are live: change them any time (LOD meshes / shaders excepted).
     GrassDesc& desc() { return m_desc; }
+    // The ground changed (e.g. terrain brush edits): new height / mask
+    // functions; the baked area is re-baked on a worker thread and swapped in
+    // when ready (the old textures stay meanwhile).
+    void refresh(std::function<float(glm::vec2)> height, std::function<glm::vec4(glm::vec2)> mask);
     Material& material(size_t lod = 0) { return *m_lods.at(lod).material; }
     size_t lodCount() const { return m_lods.size(); }
 
 private:
+    bool m_refresh = false; // re-bake the current area (refresh())
     // Height + mask samples and per-tile height ranges for one area.
     struct Baked {
         glm::vec2 lo{0.0f}, size{0.0f}; // world area covered

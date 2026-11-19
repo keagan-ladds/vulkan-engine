@@ -2,7 +2,8 @@
 // Temporal anti-aliasing resolve (ve::TemporalAAPass). The camera is jittered
 // by a different sub-pixel offset every frame; blending each frame into the
 // history converges to a supersampled image.
-//   - Reprojection: camera motion from the closest depth in the 3x3
+//   - Reprojection: the motion vector of moving objects (VelocityPass), else
+//     camera motion from depth; both taken at the closest depth in the 3x3
 //     neighbourhood (keeps edges of near objects from trailing).
 //   - History: Catmull-Rom filtered (bilinear would blur a little every frame).
 //   - Ghosting: the history is clipped to the variance box of the current
@@ -19,6 +20,7 @@ layout(push_constant) uniform Push {
     uint depth;        // SceneDepth
     uint historyValid;
     float feedback;    // history weight
+    uint velocity;     // VelocityPass output (RG16F; > 10 = not moving), ~0u = none
 } pc;
 
 layout(location = 0) in vec2 inUV;
@@ -101,8 +103,16 @@ void main()
     vec2 uvC = (vec2(closestP) + 0.5) * frame.screenSize.zw;
     vec4 prev = frame.prevViewProj * vec4(veWorldFromDepth(uvC, closest), 1.0);
     vec2 motion = prev.xy / prev.w * 0.5 + 0.5 - (uvC - frame.jitter.xy);
+    bool behind = prev.w <= 0.0;
+    if (pc.velocity != 0xFFFFFFFFu) {
+        vec2 v = texelFetch(veTextures[nonuniformEXT(pc.velocity)], closestP, 0).xy;
+        if (v.x < 10.0) {
+            motion = v; // a moving object: its own motion, not the camera's
+            behind = false;
+        }
+    }
     vec2 huv = inUV + motion;
-    if (prev.w <= 0.0 || any(lessThan(huv, vec2(0.0))) || any(greaterThan(huv, vec2(1.0)))) {
+    if (behind || any(lessThan(huv, vec2(0.0))) || any(greaterThan(huv, vec2(1.0)))) {
         outColor = vec4(untonemap(fromYCoCg(cur)), 1.0);
         return;
     }

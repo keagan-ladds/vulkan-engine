@@ -1,4 +1,11 @@
 #include "ve/scene/Reflection.hpp"
+#include "ve/net/Network.hpp"
+
+#include "ve/anim/Animation.hpp"
+#include "ve/gameplay/Interaction.hpp"
+#include "ve/gameplay/Placement.hpp"
+#include "ve/scene/Prefab.hpp"
+#include "ve/nav/Navigation.hpp"
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Ambience.hpp"
@@ -77,6 +84,40 @@ std::vector<const TypeInfo*> TypeRegistry::all(bool components)
 // Engine types
 // -----------------------------------------------------------------------------
 
+namespace {
+template <class T>
+void jointFields(TypeBuilder<T>& t, bool axis, bool limits, bool motor, bool distance)
+{
+    t.category("Physics");
+    t.field("connectedTo", &Joint::connectedTo).tooltip("the other body's object name (empty = the world)");
+    t.field("anchor", &Joint::anchor).tooltip("the pivot, in this object's space");
+    if (axis) t.field("axis", &Joint::axis).tooltip("in this object's space");
+    if (limits) {
+        t.field("useLimits", &Joint::useLimits);
+        t.field("limitMin", &Joint::limitMin).tooltip("hinge: degrees, slider: metres (<= 0)");
+        t.field("limitMax", &Joint::limitMax).tooltip("hinge: degrees, slider: metres (>= 0)");
+        t.field("friction", &Joint::friction);
+    }
+    if (distance) {
+        t.field("connectedAnchor", &Joint::connectedAnchor).tooltip("in the other's space (world point if none)");
+        t.field("minDistance", &Joint::minDistance).tooltip("< 0: the distance when created (0 = a rope)");
+        t.field("maxDistance", &Joint::maxDistance).tooltip("< 0: the distance when created");
+    }
+    if (limits || distance) {
+        t.field("springFrequency", &Joint::springFrequency).range(0.0f, 30.0f).tooltip("Hz; 0 = rigid limits");
+        t.field("springDamping", &Joint::springDamping).range(0.0f, 2.0f);
+    }
+    if (motor) {
+        t.enumField("motor", &Joint::motor, {"Off", "Velocity", "Position"});
+        t.field("motorTarget", &Joint::motorTarget).tooltip("velocity: deg/s or m/s; position: degrees or metres");
+        t.field("motorMaxForce", &Joint::motorMaxForce);
+        t.field("motorFrequency", &Joint::motorFrequency).range(0.1f, 30.0f);
+    }
+    t.field("breakForce", &Joint::breakForce).tooltip("N; 0 = never breaks");
+    t.field("breakTorque", &Joint::breakTorque).tooltip("N m; 0 = never breaks");
+}
+} // namespace
+
 void registerBuiltinTypes()
 {
     static bool done = false;
@@ -87,6 +128,16 @@ void registerBuiltinTypes()
     registerVegetationTypes(r);
 
     r.add<GameObject>("GameObject", [](TypeBuilder<GameObject>& t) { t.category("General"); });
+    r.add<net::NetworkObject>("NetworkObject", [](TypeBuilder<net::NetworkObject>& t) {
+        t.category("Network");
+        t.field("despawnWithOwner", &net::NetworkObject::despawnWithOwner).tooltip("the owner left: the host removes it (else the host takes it over)");
+    });
+    r.add<net::NetworkTransform>("NetworkTransform", [](TypeBuilder<net::NetworkTransform>& t) {
+        t.category("Network");
+        t.field("sendRate", &net::NetworkTransform::sendRate).range(1.0f, 60.0f);
+        t.field("interpolationDelay", &net::NetworkTransform::interpolationDelay).range(0.0f, 0.5f).speed(0.005f);
+        t.field("teleportDistance", &net::NetworkTransform::teleportDistance).range(0.5f, 100.0f);
+    });
 
     r.add<Camera>("Camera", [](TypeBuilder<Camera>& t) {
         t.category("Rendering");
@@ -114,7 +165,104 @@ void registerBuiltinTypes()
         t.field("path", &ModelInstance::path).assets(".gltf .glb");
         t.field("staticColliders", &ModelInstance::staticColliders).tooltip("Exact mesh colliders on every node");
         t.field("hiddenNodes", &ModelInstance::hiddenNodes).tooltip("Comma-separated node names to leave out, e.g. Door");
+        t.field("animation", &ModelInstance::animation).tooltip("Animated models: the clip to loop (empty = the first)");
         t.onChanged([](ModelInstance& m) { m.rebuild(); });
+    });
+    r.add<Interactable>("Interactable", [](TypeBuilder<Interactable>& t) {
+        t.category("Gameplay");
+        t.field("prompt", &Interactable::prompt).tooltip("shown while looked at (what using does is set from code: onUse)");
+        t.field("reach", &Interactable::reach).range(0.0f, 50.0f).speed(0.05f);
+        t.field("focusOffset", &Interactable::focusOffset).tooltip("local point aimed at when it has no collider");
+    });
+    r.add<Interactor>("Interactor", [](TypeBuilder<Interactor>& t) {
+        t.category("Gameplay");
+        t.field("action", &Interactor::action).tooltip("Input action that uses the focus");
+        t.field("maxReach", &Interactor::maxReach).range(0.0f, 50.0f);
+        t.field("coneDegrees", &Interactor::coneDegrees).range(0.0f, 90.0f);
+        t.field("useMainCamera", &Interactor::useMainCamera);
+    });
+    r.add<PrefabInstance>("PrefabInstance", [](TypeBuilder<PrefabInstance>& t) {
+        t.category("Scene");
+        t.field("prefab", &PrefabInstance::prefab).assets(".prefab").tooltip("the prefab this object was made from");
+        t.field("saveInGame", &PrefabInstance::saveInGame).tooltip("spawned while playing: save games recreate it");
+    });
+    r.add<SnapPoint>("SnapPoint", [](TypeBuilder<SnapPoint>& t) {
+        t.category("Gameplay");
+        t.field("offset", &SnapPoint::offset).tooltip("local position of the connection point");
+        t.field("type", &SnapPoint::type);
+        t.field("accepts", &SnapPoint::accepts).tooltip("types it connects to, comma-separated (* = any)");
+        t.field("alignRotation", &SnapPoint::alignRotation).tooltip("also turn the piece so its facing lines up with the target's (doors, windows)");
+        t.field("facing", &SnapPoint::facing).tooltip("local direction lined up with the target point's facing");
+    });
+    r.add<PlacementBox>("PlacementBox", [](TypeBuilder<PlacementBox>& t) {
+        t.category("Gameplay");
+        t.field("center", &PlacementBox::center);
+        t.field("halfExtents", &PlacementBox::halfExtents).tooltip("part of the solid volume checked when placing the piece");
+    });
+    r.add<NavMeshSurface>("NavMeshSurface", [](TypeBuilder<NavMeshSurface>& t) {
+        t.category("Navigation");
+        t.field("size", &NavMeshSurface::size).tooltip("box centred on the object that agents can use");
+        auto setting = [&t](const char* name, float NavMeshSettings::*m, float lo, float hi, const char* tip) {
+            t.property(name, FieldKind::Float, [m](const NavMeshSurface& s) { return Json(s.settings.*m); },
+                       [m, lo, hi](NavMeshSurface& s, const Json& j) {
+                           if (j.is_number()) s.settings.*m = std::clamp(j.get<float>(), lo, hi);
+                       })
+                .tooltip(tip);
+        };
+        setting("agentRadius", &NavMeshSettings::agentRadius, 0.05f, 5.0f, "the navmesh keeps this far from walls");
+        setting("agentHeight", &NavMeshSettings::agentHeight, 0.1f, 10.0f, "headroom needed");
+        setting("agentMaxClimb", &NavMeshSettings::agentMaxClimb, 0.0f, 5.0f, "highest step");
+        setting("maxSlopeDegrees", &NavMeshSettings::maxSlopeDegrees, 0.0f, 89.0f, "steeper ground is not walkable");
+        setting("cellSize", &NavMeshSettings::cellSize, 0.05f, 2.0f, "voxel size (about agentRadius / 2)");
+        setting("tileSize", &NavMeshSettings::tileSize, 4.0f, 256.0f, "m; changes rebuild whole tiles");
+        setting("maxWaterDepth", &NavMeshSettings::maxWaterDepth, -1.0f, 100.0f, "deeper water is not walkable (< 0: no limit)");
+        t.field("includeTerrain", &NavMeshSurface::includeTerrain);
+        t.field("includeStaticBodies", &NavMeshSurface::includeStaticBodies);
+        t.field("includeFoliage", &NavMeshSurface::includeFoliage);
+        t.field("streamRadius", &NavMeshSurface::streamRadius).range(0.0f, 4000.0f).tooltip("> 0: only tiles this close to the camera exist (whole terrain)");
+        t.field("showDebug", &NavMeshSurface::showDebug);
+    });
+    r.add<NavAgent>("NavAgent", [](TypeBuilder<NavAgent>& t) {
+        t.category("Navigation");
+        t.field("speed", &NavAgent::speed).range(0.0f, 50.0f).speed(0.01f);
+        t.field("acceleration", &NavAgent::acceleration).range(0.0f, 200.0f);
+        t.field("angularSpeed", &NavAgent::angularSpeed).range(0.0f, 2000.0f);
+        t.field("radius", &NavAgent::radius).range(0.05f, 5.0f).speed(0.01f);
+        t.field("height", &NavAgent::height).range(0.1f, 10.0f);
+        t.field("stoppingDistance", &NavAgent::stoppingDistance).range(0.0f, 20.0f);
+        t.field("updateRotation", &NavAgent::updateRotation);
+        t.field("avoidOthers", &NavAgent::avoidOthers);
+    });
+    r.add<Animator>("Animator", [](TypeBuilder<Animator>& t) {
+        t.category("Animation");
+        t.field("clip", &Animator::clip).tooltip("played on start (empty = the model's first clip)");
+        t.field("speed", &Animator::speed).range(0.0f, 10.0f).speed(0.01f);
+        t.field("playOnStart", &Animator::playOnStart);
+    });
+    r.add<FixedJoint>("FixedJoint", [](TypeBuilder<FixedJoint>& t) { jointFields(t, false, false, false, false); });
+    r.add<HingeJoint>("HingeJoint", [](TypeBuilder<HingeJoint>& t) { jointFields(t, true, true, true, false); });
+    r.add<SliderJoint>("SliderJoint", [](TypeBuilder<SliderJoint>& t) { jointFields(t, true, true, true, false); });
+    r.add<DistanceJoint>("DistanceJoint", [](TypeBuilder<DistanceJoint>& t) { jointFields(t, false, false, false, true); });
+    r.add<FootIK>("FootIK", [](TypeBuilder<FootIK>& t) {
+        t.category("Animation");
+        t.field("hipsJoint", &FootIK::hipsJoint);
+        t.field("leftUpper", &FootIK::leftUpper);
+        t.field("leftMiddle", &FootIK::leftMiddle);
+        t.field("leftFoot", &FootIK::leftFoot);
+        t.field("rightUpper", &FootIK::rightUpper);
+        t.field("rightMiddle", &FootIK::rightMiddle);
+        t.field("rightFoot", &FootIK::rightFoot);
+        t.field("maxStep", &FootIK::maxStep).range(0.0f, 2.0f).speed(0.01f);
+        t.field("weight", &FootIK::weight).range(0.0f, 1.0f).speed(0.01f);
+    });
+    r.add<TwoBoneIK>("TwoBoneIK", [](TypeBuilder<TwoBoneIK>& t) {
+        t.category("Animation");
+        t.field("upperJoint", &TwoBoneIK::upperJoint);
+        t.field("middleJoint", &TwoBoneIK::middleJoint);
+        t.field("endJoint", &TwoBoneIK::endJoint);
+        t.field("target", &TwoBoneIK::target);
+        t.field("pole", &TwoBoneIK::pole);
+        t.field("weight", &TwoBoneIK::weight).range(0.0f, 1.0f).speed(0.01f);
     });
     r.add<PrimitiveRenderer>("PrimitiveRenderer", [](TypeBuilder<PrimitiveRenderer>& t) {
         t.category("Rendering");
@@ -142,6 +290,8 @@ void registerBuiltinTypes()
         t.field("angularDamping", &Rigidbody::angularDamping).range(0.0f, 10.0f).speed(0.01f);
         t.field("continuousCollision", &Rigidbody::continuousCollision);
         t.field("isTrigger", &Rigidbody::isTrigger).tooltip("Trigger volume: no collision, sends onTriggerEnter/Exit");
+        t.field("layer", &Rigidbody::layer).tooltip("collision layer name (PhysicsWorld::addLayer); Default if empty");
+        t.field("surface", &Rigidbody::surface).tooltip("physics material surface: Wood, Stone... (hits, contacts, footsteps)");
         t.onChanged([](Rigidbody& rb) { rb.rebuild(); });
     });
 

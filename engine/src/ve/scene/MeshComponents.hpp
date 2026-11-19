@@ -29,6 +29,7 @@ public:
     std::string path;             // e.g. "models/rondavel.gltf"
     bool staticColliders = false; // exact mesh colliders on every node (buildings)
     std::string hiddenNodes;      // comma-separated node names to leave out (e.g. "Door")
+    std::string animation;        // animated models: the clip to loop (empty = the first)
 
     void start() override { rebuild(); }
     void onDestroy() override;

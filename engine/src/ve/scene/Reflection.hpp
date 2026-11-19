@@ -58,6 +58,7 @@ struct FieldInfo {
     std::string assetFilter;                     // Asset: extensions, e.g. ".wav .ogg"
     std::string tooltip;
     bool readOnly = false;
+    bool hidden = false; // saved and loaded, not shown in the inspector (e.g. bulk data)
 };
 
 struct TypeInfo {
@@ -97,6 +98,7 @@ public:
     FieldRef& tooltip(std::string t) { f().tooltip = std::move(t); return *this; }
     FieldRef& assets(std::string extensions) { f().assetFilter = std::move(extensions); return *this; }
     FieldRef& readOnly() { f().readOnly = true; return *this; }
+    FieldRef& hidden() { f().hidden = true; return *this; }
 
 private:
     FieldInfo& f() { return m_info->fields[m_index]; }
