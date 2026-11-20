@@ -24,16 +24,20 @@ namespace ve {
 // ModelInstance
 // -----------------------------------------------------------------------------
 
+GameObject* ModelInstance::instanceRoot() const
+{
+    return m_rootId ? gameObject().scene().findById(m_rootId) : nullptr;
+}
+
 void ModelInstance::rebuild()
 {
-    if (m_root) {
-        m_root->destroy();
-        m_root = nullptr;
-    }
+    if (GameObject* old = instanceRoot()) old->destroy();
+    m_rootId = 0;
     if (path.empty()) return;
     try {
         auto model = assets().loadModel(path);
-        m_root = &gameObject().scene().instantiate(*model, &gameObject(), staticColliders);
+        GameObject* root = &gameObject().scene().instantiate(*model, &gameObject(), staticColliders);
+        m_rootId = root->id();
         if (!hiddenNodes.empty()) {
             const std::vector<std::string> names = str::split(hiddenNodes, ',');
             // Destroyed before they start: no colliders or draws for hidden nodes.
@@ -43,9 +47,9 @@ void ModelInstance::rebuild()
                     else hide(*c);
                 }
             };
-            hide(m_root->transform());
+            hide(root->transform());
         }
-        if (auto* animator = m_root->getComponent<Animator>(); animator && !animation.empty()) animator->clip = animation;
+        if (auto* animator = root->getComponent<Animator>(); animator && !animation.empty()) animator->clip = animation;
     } catch (const std::exception& e) {
         log::warn("ModelInstance on '{}': {}", gameObject().name(), e.what());
     }
@@ -55,8 +59,8 @@ void ModelInstance::onDestroy()
 {
     // The instantiated nodes are children: they go with the owner. When only
     // this component is removed, remove them too.
-    if (m_root && !gameObject().isDestroyed()) m_root->destroy();
-    m_root = nullptr;
+    if (GameObject* root = instanceRoot(); root && !gameObject().isDestroyed()) root->destroy();
+    m_rootId = 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -70,9 +74,13 @@ void PrimitiveRenderer::rebuild()
     // Primitives of the same shape and size share one mesh (a crate pyramid is
     // one cube), kept alive by the renderers using it.
     static std::map<std::tuple<Shape, float, float, float>, std::weak_ptr<Mesh>> shared;
-    std::weak_ptr<Mesh>& slot = shared[{shape, s.x, s.y, s.z}];
-    std::shared_ptr<Mesh> mesh = slot.lock();
+    const std::tuple<Shape, float, float, float> key{shape, s.x, s.y, s.z};
+    auto found = shared.find(key);
+    std::shared_ptr<Mesh> mesh = found != shared.end() ? found->second.lock() : nullptr;
     if (!mesh) {
+        // About to add one: drop entries whose meshes are gone (sizes edited
+        // in the editor would otherwise pile up).
+        std::erase_if(shared, [](const auto& entry) { return entry.second.expired(); });
         MeshData md;
         switch (shape) {
         case Shape::Cube: md = primitives::cube(s); break;
@@ -81,7 +89,7 @@ void PrimitiveRenderer::rebuild()
         case Shape::Plane: md = primitives::plane(s.x, s.z); break;
         }
         mesh = Mesh::create(r, md, {}, "primitive");
-        slot = mesh;
+        shared[key] = mesh;
     }
     if (!m_material) m_material = r.createStandardMaterial();
     m_material->setBaseColor(color).setRoughness(roughness).setMetallic(metallic).setUvScale(uvScale);
@@ -94,15 +102,21 @@ void PrimitiveRenderer::rebuild()
         }
     }
     m_material->setAlbedoTexture(tex);
-    if (!m_renderer) m_renderer = &gameObject().addComponent<MeshRenderer>();
-    m_renderer->mesh = mesh;
-    m_renderer->materials = {m_material};
-    m_renderer->castShadows = castShadows;
+    MeshRenderer* mr = liveRenderer();
+    if (!mr) m_renderer = mr = &gameObject().addComponent<MeshRenderer>();
+    mr->mesh = mesh;
+    mr->materials = {m_material};
+    mr->castShadows = castShadows;
+}
+
+MeshRenderer* PrimitiveRenderer::liveRenderer() const
+{
+    return m_renderer && gameObject().hasComponent(m_renderer) ? m_renderer : nullptr;
 }
 
 void PrimitiveRenderer::onDestroy()
 {
-    if (m_renderer && !gameObject().isDestroyed()) gameObject().removeComponent(m_renderer);
+    if (MeshRenderer* mr = liveRenderer(); mr && !gameObject().isDestroyed()) gameObject().removeComponent(mr);
     m_renderer = nullptr;
 }
 

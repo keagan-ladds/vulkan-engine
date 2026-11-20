@@ -283,22 +283,27 @@ float Animator::samplePose(const Layer& layer, std::vector<Pose>& poses) const
     float total = 0.0f;
     for (const State& s : layer.states) total += s.weight;
     if (total <= 0.0f) return 0.0f;
+    std::vector<Rest>& local = m_sampled; // this clip's pose per node (scratch)
+    local.resize(m_rest.size());
+    auto masked = [&](size_t n) { return !layer.mask.empty() && !layer.mask[n]; };
     for (const State& st : layer.states) {
         if (st.weight <= 0.0f) continue;
         const float w = st.weight / total;
-        // This clip's pose of every animated node: rest, overridden by its channels.
+        // This clip's pose of every animated node: rest, overridden by its
+        // channels (one pass over the channels, not one per node).
+        for (int n : m_animated) local[size_t(n)] = m_rest[size_t(n)];
+        for (const AnimationChannel& ch : st.clip->channels) {
+            if (ch.node < 0 || size_t(ch.node) >= local.size() || masked(size_t(ch.node))) continue;
+            Rest& r = local[size_t(ch.node)];
+            const glm::vec4 v = ch.sample(st.time);
+            if (ch.path == AnimationChannel::Path::Translation) r.t = glm::vec3(v);
+            else if (ch.path == AnimationChannel::Path::Scale) r.s = glm::vec3(v);
+            else r.r = glm::quat(v.w, v.x, v.y, v.z);
+        }
         for (int n : m_animated) {
-            if (!layer.mask.empty() && !layer.mask[size_t(n)]) continue;
-            const Rest& r = m_rest[size_t(n)];
-            glm::vec3 t = r.t, sc = r.s;
-            glm::quat q = r.r;
-            for (const AnimationChannel& ch : st.clip->channels) {
-                if (ch.node != n) continue;
-                const glm::vec4 v = ch.sample(st.time);
-                if (ch.path == AnimationChannel::Path::Translation) t = glm::vec3(v);
-                else if (ch.path == AnimationChannel::Path::Scale) sc = glm::vec3(v);
-                else q = glm::quat(v.w, v.x, v.y, v.z);
-            }
+            if (masked(size_t(n))) continue;
+            const glm::vec3 t = local[size_t(n)].t, sc = local[size_t(n)].s;
+            const glm::quat q = local[size_t(n)].r;
             Pose& p = poses[size_t(n)];
             glm::vec4 qv(q.x, q.y, q.z, q.w);
             if (p.w > 0.0f && glm::dot(qv, p.r) < 0.0f) qv = -qv; // same hemisphere before averaging
@@ -495,10 +500,8 @@ void FootIK::lateUpdate(float dt)
 {
     Scene& scene = gameObject().scene();
     GameObject* hips = m_hipsId ? scene.findById(m_hipsId) : nullptr;
-    // (The legs are components on this object: still there?)
-    int present = 0;
-    for (const auto& c : gameObject().components()) present += c.get() == m_legs[0] || c.get() == m_legs[1];
-    if (present < 2 || !hips) return;
+    // (The legs are components on this object: still there, and not removed?)
+    if (!hips || !gameObject().hasComponent(m_legs[0]) || !gameObject().hasComponent(m_legs[1])) return;
     // Feet where the animation put them (relative to the model's ground plane), then onto the real ground.
     const glm::vec3 root = transform().position();
     QueryFilter filter;
@@ -569,7 +572,8 @@ void AimIK::solve(float dt)
     if (!resolve()) return;
     Scene& scene = gameObject().scene();
     // Joints no clip animates: from their rest pose (else last frame's turn would add up).
-    std::vector<GameObject*> joints;
+    std::vector<GameObject*>& joints = m_jointObjects; // (member: no allocation per frame)
+    joints.clear();
     for (size_t i = 0; i < m_joints.size(); ++i) {
         GameObject* j = scene.findById(m_joints[i]);
         if (!j) return;

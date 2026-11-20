@@ -22,7 +22,15 @@ void Scene::adopt(std::unique_ptr<GameObject> obj)
     obj->m_scene = this;
     m_byId[obj->id()] = obj.get();
     for (const auto& c : obj->m_components) registerComponent(c.get());
+    queueStart(obj.get());
     m_pending.push_back(std::move(obj));
+}
+
+void Scene::queueStart(GameObject* o)
+{
+    if (o->m_queuedStart) return;
+    o->m_queuedStart = true;
+    m_unstarted.push_back(o);
 }
 
 void Scene::registerComponent(Component* c)
@@ -31,13 +39,22 @@ void Scene::registerComponent(Component* c)
     if (!bucket) bucket = m_buckets.emplace_back(std::make_unique<Bucket>(Bucket{c->m_type, {}})).get();
     // Queries skip empty buckets (they can't test the type), so re-check them.
     if (bucket->items.empty()) ++m_generation;
+    c->m_bucketIndex = static_cast<uint32_t>(bucket->items.size());
     bucket->items.push_back(c);
 }
 
 void Scene::unregisterComponent(Component* c)
 {
+    // O(1): the last item takes the gap. Nothing relies on bucket order
+    // (forEach users that care sort, e.g. the renderer's lights).
     auto it = m_bucketByType.find(c->m_type);
-    if (it != m_bucketByType.end()) std::erase(it->second->items, c);
+    if (it == m_bucketByType.end()) return;
+    std::vector<Component*>& items = it->second->items;
+    const uint32_t i = c->m_bucketIndex;
+    if (i >= items.size() || items[i] != c) return; // not registered
+    items[i] = items.back();
+    items[i]->m_bucketIndex = i;
+    items.pop_back();
 }
 
 GameObject* Scene::find(const std::string& name) const
@@ -66,9 +83,7 @@ void Scene::reindex(GameObject* obj, uint64_t oldId)
 std::vector<GameObject*> Scene::findAllWithTag(const std::string& tag) const
 {
     std::vector<GameObject*> result;
-    for (const auto& o : m_objects) {
-        if (!o->m_destroyed && o->tag == tag) result.push_back(o.get());
-    }
+    forEachWithTag(tag, [&](GameObject& o) { result.push_back(&o); });
     return result;
 }
 
@@ -109,7 +124,10 @@ void Scene::callComponents(GameObject& o, uint8_t bit, Hook&& hook)
     if (o.m_componentsNoHook & bit) return;
     uint8_t none = bit;
     for (size_t i = 0; i < o.m_components.size(); ++i) {
+        // (Index loop + deferred removal: a hook may add components, or remove
+        // itself or a sibling, which then stays in place until the frame ends.)
         Component* c = o.m_components[i].get();
+        if (c->m_removed) continue;
         if (c->enabled && c->m_started) hook(*c);
         none &= c->m_noHook; // unknown (not run yet) counts as implemented
     }
@@ -125,8 +143,21 @@ void Scene::startPending()
     m_pending.clear();
     for (auto& o : fresh) m_objects.push_back(std::move(o));
 
-    for (auto& o : m_objects) {
-        if (o->m_destroyed || !o->activeInHierarchy()) continue;
+    // Only objects queued by adopt() / attachComponent() (or still waiting from
+    // earlier frames: inactive, or with a disabled component) are visited.
+    // Anything queued during this loop (start() adding components) lands in
+    // the fresh m_unstarted and is handled next frame.
+    std::vector<GameObject*>& work = m_startScratch;
+    work.clear();
+    work.swap(m_unstarted);
+    for (size_t w = 0; w < work.size(); ++w) {
+        GameObject* o = work[w];
+        o->m_queuedStart = false;
+        if (o->m_destroyed) continue;
+        if (!o->activeInHierarchy()) {
+            queueStart(o); // starts once it's active
+            continue;
+        }
         if (!o->m_started) {
             o->m_started = true;
             o->start();
@@ -134,12 +165,16 @@ void Scene::startPending()
         // Components added at any point get start() before their first update.
         for (size_t i = 0; i < o->m_components.size(); ++i) {
             Component* c = o->m_components[i].get();
-            if (!c->m_started && c->enabled) {
+            if (c->m_started || c->m_removed) continue;
+            if (c->enabled) {
                 c->m_started = true;
                 c->start();
+            } else {
+                queueStart(o); // starts when enabled
             }
         }
     }
+    work.clear();
 }
 
 void Scene::fixedUpdate(float dt)
@@ -176,22 +211,39 @@ void Scene::onGui()
 
 void Scene::destroyNow(GameObject* o)
 {
-    for (auto& c : o->m_components) {
-        unregisterComponent(c.get());
+    // Index loop: onDestroy() may add components. Removed ones were already
+    // unregistered and got their onDestroy() in removeComponent.
+    for (size_t i = 0; i < o->m_components.size(); ++i) {
+        Component* c = o->m_components[i].get();
+        if (c->m_removed) continue;
+        unregisterComponent(c);
         if (c->m_started) c->onDestroy();
     }
     if (o->m_started) o->onDestroy();
     o->m_transform.setParent(nullptr, false);
 }
 
+void Scene::flushRemovedComponents()
+{
+    // Removed components are freed here, when no hook can be running on them.
+    // (Before the object sweep: the objects in m_removals are still alive.)
+    std::vector<GameObject*> objects;
+    objects.swap(m_removals);
+    for (GameObject* o : objects) {
+        o->m_hasRemoved = false;
+        std::erase_if(o->m_components, [](const auto& c) { return c->m_removed; }); // (destructors run no hooks)
+    }
+}
+
 void Scene::flushDestroyed()
 {
+    if (!m_removals.empty()) flushRemovedComponents();
     if (!m_hasDestroyed) return;
     m_hasDestroyed = false;
-    auto sweep = [&](std::vector<std::unique_ptr<GameObject>>& list) {
-        // Index loop: onDestroy() may spawn (appends to m_pending) or destroy
-        // more objects. Only objects whose onDestroy() ran are freed; anything
-        // destroyed during the sweep sets m_hasDestroyed and goes next frame.
+    // Index loops: onDestroy() may spawn (appends to m_pending) or destroy
+    // more objects. Only objects whose onDestroy() ran are freed; anything
+    // destroyed during the sweep sets m_hasDestroyed and goes next frame.
+    auto tearDown = [&](std::vector<std::unique_ptr<GameObject>>& list) {
         for (size_t i = 0; i < list.size(); ++i) {
             GameObject* o = list[i].get();
             if (o->m_destroyed && !o->m_tornDown) {
@@ -199,14 +251,23 @@ void Scene::flushDestroyed()
                 destroyNow(o);
             }
         }
+    };
+    auto erase = [&](std::vector<std::unique_ptr<GameObject>>& list) {
         std::erase_if(list, [&](const auto& o) {
             if (!o->m_tornDown) return false;
             if (auto it = m_byId.find(o->id()); it != m_byId.end() && it->second == o.get()) m_byId.erase(it);
             return true;
         });
     };
-    sweep(m_objects);
-    sweep(m_pending);
+    tearDown(m_objects);
+    tearDown(m_pending);
+    // The side lists forget torn-down objects before they're freed (an
+    // onDestroy() above may also have removed components of live objects:
+    // those stay in m_removals for the next frame).
+    std::erase_if(m_unstarted, [](const GameObject* o) { return o->m_tornDown; });
+    std::erase_if(m_removals, [](const GameObject* o) { return o->m_tornDown; });
+    erase(m_objects);
+    erase(m_pending);
 }
 
 void Scene::clear()
@@ -220,6 +281,8 @@ void Scene::clear()
         flushDestroyed();
     }
     m_byId.clear();
+    m_unstarted.clear();
+    m_removals.clear();
     m_buckets.clear();
     m_bucketByType.clear();
     m_queries.clear();

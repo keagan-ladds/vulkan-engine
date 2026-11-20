@@ -4,6 +4,7 @@
 #include "ve/core/Log.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/Ids.hpp"
 #include "ve/scene/Prefab.hpp"
 #include "ve/scene/Scene.hpp"
 
@@ -24,22 +25,10 @@ namespace ve::save {
 
 namespace {
 
-std::string hexId(uint64_t id)
-{
-    char b[17];
-    std::snprintf(b, sizeof(b), "%016llx", static_cast<unsigned long long>(id));
-    return b;
-}
-
-uint64_t parseId(const std::string& s)
-{
-    return std::strtoull(s.c_str(), nullptr, 16);
-}
-
 // Level objects are found by persistent id, code-spawned ones by name.
 std::string objectKey(const GameObject& o)
 {
-    return o.persistent ? hexId(o.id()) : "name:" + o.name();
+    return o.persistent ? idToHex(o.id()) : "name:" + o.name();
 }
 
 std::string componentKey(const GameObject& o, const Component& c)
@@ -86,7 +75,7 @@ Json capture(Scene& scene)
             if (auto* rb = o.getComponent<Rigidbody>(); rb && rb->type == BodyType::Dynamic) {
                 const glm::vec3 p = o.transform().position();
                 const glm::quat q = o.transform().rotation();
-                moved[hexId(o.id())] = {p.x, p.y, p.z, q.x, q.y, q.z, q.w};
+                moved[idToHex(o.id())] = {p.x, p.y, p.z, q.x, q.y, q.z, q.w};
             }
         }
         if (const auto* s = dynamic_cast<const Saveable*>(&o)) {
@@ -105,7 +94,7 @@ Json capture(Scene& scene)
         }
     }
     for (uint64_t id : scene.levelObjects())
-        if (!scene.findById(id)) removed.push_back(hexId(id));
+        if (!scene.findById(id)) removed.push_back(idToHex(id));
     // Prefab instances spawned while playing (player buildings): recreated on load.
     Json spawned = Json::array();
     const std::unordered_set<uint64_t> level(scene.levelObjects().begin(), scene.levelObjects().end());
@@ -116,7 +105,7 @@ Json capture(Scene& scene)
         if (o.transform().parent()) continue; // saved with its root
         const glm::vec3 p = o.transform().position(), sc = o.transform().localScale();
         const glm::quat q = o.transform().rotation();
-        spawned.push_back({{"prefab", pi->prefab}, {"id", hexId(o.id())}, {"position", {p.x, p.y, p.z}},
+        spawned.push_back({{"prefab", pi->prefab}, {"id", idToHex(o.id())}, {"position", {p.x, p.y, p.z}},
                            {"rotation", {q.x, q.y, q.z, q.w}}, {"scale", {sc.x, sc.y, sc.z}}});
     }
     return Json{{"version", 1}, {"moved", moved}, {"removed", removed}, {"spawned", spawned}, {"state", state}};
@@ -129,10 +118,10 @@ void apply(Scene& scene, const Json& save)
         return;
     }
     for (const auto& id : save.value("removed", Json::array()))
-        if (GameObject* o = scene.findById(parseId(id.get<std::string>()))) o->destroy();
+        if (GameObject* o = scene.findById(idFromHex(id.get<std::string>()))) o->destroy();
     const Json moved = save.value("moved", Json::object());
     for (auto it = moved.begin(); it != moved.end(); ++it) {
-        GameObject* o = scene.findById(parseId(it.key()));
+        GameObject* o = scene.findById(idFromHex(it.key()));
         const Json& v = it.value();
         if (!o || !v.is_array() || v.size() != 7) continue;
         const glm::vec3 p{v[0].get<float>(), v[1].get<float>(), v[2].get<float>()};
@@ -159,7 +148,7 @@ void apply(Scene& scene, const Json& save)
         };
         const auto p = vec("position", 3), q = vec("rotation", 4), sc = vec("scale", 3);
         GameObject* o = prefab::instantiate(scene, sp.value("prefab", std::string()), {p[0], p[1], p[2]}, glm::quat(q[3], q[0], q[1], q[2]),
-                                            nullptr, parseId(sp.value("id", std::string("0"))));
+                                            nullptr, idFromHex(sp.value("id", std::string("0"))));
         if (!o) continue;
         if (sp.contains("scale")) o->transform().setLocalScale({sc[0], sc[1], sc[2]});
         created.push_back(o);
