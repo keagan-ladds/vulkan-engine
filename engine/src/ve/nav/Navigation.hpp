@@ -54,8 +54,8 @@ class dtCrowd;
 
 namespace ve {
 
-class DebugDraw;
 class FoliageSystem;
+class Rigidbody;
 
 struct NavMeshSettings {
     float cellSize = 0.25f;          // voxel size across (m): about agentRadius / 2
@@ -120,8 +120,7 @@ public:
     void onGui() override;
     void onDestroy() override;
     void inspectorGui();   // stats + rebuild button (F1 overlay, editor)
-    void drawDebug(DebugDraw& dd, const glm::vec3& eye, float maxDistance) const;
-    void drawDebugLines(const glm::vec3& eye, float maxDistance) const; // ve::debug ("Navmesh" channel)
+    void drawDebugLines(const glm::vec3& eye, float maxDistance) const; // ve::debug ("Navmesh" channel, showDebug)
 
     // Engine internal (NavAgent).
     dtCrowd* crowd() const { return m_crowd; }
@@ -144,6 +143,9 @@ private:
     };
     struct BodyCache {
         glm::mat4 transform;
+        uint64_t object = 0;                // the body's object id and shape (Collider::impl) when cached
+        std::shared_ptr<const void> shape;
+        uint32_t seen = 0;                  // m_gatherStamp of the last gather that met it
         std::vector<glm::vec3> tris;
         glm::vec3 lo, hi;
     };
@@ -173,7 +175,11 @@ private:
     std::unordered_map<uint64_t, uint32_t> m_tileVersion; // wanted tiles -> latest job version
     std::unordered_set<uint64_t> m_tilesBuilt;
     uint32_t m_nextVersion = 1;
-    std::unordered_map<uint64_t, BodyCache> m_bodies; // static Rigidbody object id -> world triangles
+    std::unordered_map<const Rigidbody*, BodyCache> m_bodies; // static Rigidbody -> world triangles
+    uint32_t m_gatherStamp = 0;
+    // Foliage collider shape -> its triangles, unplaced (kept alive, so the key can't be reused).
+    std::vector<std::pair<std::shared_ptr<const void>, std::vector<glm::vec3>>> m_foliageShapes;
+    uint64_t m_pumpedFrame = ~0ull;
     FoliageSystem* m_foliage = nullptr;
     uint64_t m_foliageId = 0;
     uint32_t m_foliageListener = 0;
@@ -222,7 +228,14 @@ private:
     NavMeshSurface* surface() const;
     bool attach();
     void detach();
-    void applyParams();
+    void applyParams(NavMeshSurface* s, bool force); // force: push even if nothing changed
+    bool arrivedOn(const NavMeshSurface* s) const;
+
+    struct PushedParams {
+        float radius, height, acceleration, speed;
+        bool avoidOthers;
+        bool operator==(const PushedParams&) const = default;
+    };
 
     uint64_t m_surface = 0;       // NavMeshSurface's object id
     uint32_t m_generation = 0;
@@ -233,6 +246,7 @@ private:
     bool m_pendingTarget = false; // set before the agent was on the navmesh
     float m_yaw = 0.0f;
     bool m_yawInit = false;
+    PushedParams m_pushed{};      // what applyParams last gave the crowd
 };
 
 } // namespace ve
