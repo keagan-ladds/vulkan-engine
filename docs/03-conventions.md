@@ -576,6 +576,19 @@ auto imp = ve::Impostor::bake(renderer, *mesh0, {material});   // load time, a f
 desc.lods.push_back(imp->lod());                                // last LOD
 ```
 
+Or let `ve::buildLodChain` (`ve/world/LodModel.hpp`) do the simplify / optimize /
+upload / impostor steps (FoliageType, Savanna's props and the template use it):
+
+```cpp
+ve::LodChainDesc chain;
+chain.name = "tree";
+chain.levels = {{tree, {}, {mat}}};                          // MeshData, submeshes (none: one), materials
+chain.simplify = {{.ratio = 0.35f, .faceted = true}, {.ratio = 0.10f, .sloppy = true, .faceted = true}};
+chain.switches = {{.screenSize = 0.10f}, {.screenSize = 0.035f}}; // per level; others keep defaults
+chain.impostor = true;                                        // last level
+desc.lods = ve::buildLodChain(renderer, std::move(chain));
+```
+
 Custom material shaders: forward `veInstanceLodFade()` in a `flat` varying and
 call `veLodDither(fade)` at the start of the fragment shader to get crossfades
 (see `standard.vert/frag`).
@@ -611,7 +624,7 @@ const uint32_t treeLayer = foliage.addLayer(trees);
 ve::FoliageLayer bushes = /* ... */;
 bushes.avoid = {{treeLayer, 2.5f}};            // keep clear of trunks
 foliage.addLayer(bushes);
-foliage.colliderFocus = &player;
+foliage.setColliderFocus(&player);
 foliage.preload(player.transform().position());
 ```
 Rules are deterministic, so the same world appears every run without saving

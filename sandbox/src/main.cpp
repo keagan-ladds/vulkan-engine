@@ -329,7 +329,10 @@ void buildLevel(ve::Engine& engine)
     for (ve::GameObject* o : level) {
         if (!terrainPtr) terrainPtr = dynamic_cast<ve::Terrain*>(o);
     }
-    if (!terrainPtr) terrainPtr = &scene.spawn<ve::Terrain>(); // a scene without terrain: default one
+    if (!terrainPtr) { // a scene without terrain: a default one, with the savanna's ground detail
+        terrainPtr = &scene.spawn<ve::Terrain>();
+        terrainPtr->detailTexture = "textures/ground_detail.png";
+    }
     ve::Terrain& terrain = *terrainPtr;
 
     // --- Collision layers: loose debris (thrown rocks) doesn't block the Use ray --------------

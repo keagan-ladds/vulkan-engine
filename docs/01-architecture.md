@@ -529,7 +529,8 @@ helpers (the instancing helpers are vertex-only).
 **`FoliageSystem`** (a GameObject) scatters `InstanceGroup` instances using
 `FoliageLayer` rules.
 - **Placement is a pure function.** Each layer has a jittered grid of
-  candidates, one per `spacing`² square, seeded from (layer seed, grid x, z).
+  candidates, one per `spacing`² square, seeded from (layer seed, grid x, z). A FoliageType without a seed uses
+  FNV-1a of its name, so placement is the same with every compiler / platform.
   A candidate is kept if it passes, cheapest first: probability, world bounds,
   exclusion circles, value-noise clustering, height/slope range, the
   `density(FoliageSample)` callback, and `avoid` rules. An avoid rule

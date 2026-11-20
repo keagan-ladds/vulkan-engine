@@ -131,7 +131,9 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
   vertex colour. Rock is projected from three sides, so cliffs don't stretch.
 - Distance tiling: beyond ~6 repeats a second copy of each texture, rotated
   and 3.7× larger, is blended in so the repeats stop lining up, and a large
-  scale noise (`detailTexture` at `detailScales.y`) varies the brightness.
+  scale noise (`detailTexture` at `detailScales.y`) varies the brightness
+  (empty by default: a neutral grey, no variation; Savanna's scene sets
+  `textures/ground_detail.png`).
 - Savanna: soil (savannah, camp), sand (desert), leaf litter (jungle) and rock
   (rocky, cliffs); the swamp keeps its colours. The textures come from
   `tools/generate_assets.py`.
