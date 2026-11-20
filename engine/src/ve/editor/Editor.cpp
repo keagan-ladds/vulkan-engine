@@ -1119,8 +1119,12 @@ void Editor::drawInspector()
     // --- Components ---
     Component* removeMe = nullptr;
     int index = 0;
-    for (const auto& cp : sel->components()) {
-        if (cp->isRemoved()) continue; // (freed at the end of the frame)
+    // A snapshot: editing a field can rebuild the object, which may remove
+    // sibling components (PrimitiveRenderer's MeshRenderer, Terrain colliders).
+    m_inspectScratch.clear();
+    for (const auto& cp : sel->components()) m_inspectScratch.push_back(cp.get());
+    for (Component* cp : m_inspectScratch) {
+        if (cp->isRemoved()) continue; // (removed this frame; still alive)
         Component& c = *cp;
         const TypeInfo* ct = TypeRegistry::get().of(c);
         ImGui::PushID(index++);

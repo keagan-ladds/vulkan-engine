@@ -118,15 +118,41 @@ void Scene::forActive(uint8_t hook, bool editorOnly, Fn&& fn)
 
 // Calls `hook` on o's started, enabled components, and remembers when none of
 // them implements it.
+namespace {
+
+// The object's components as raw pointers, taken before running hooks: a hook
+// may remove itself or a sibling (removeComponent takes it out of the list at
+// once, which shifts the vector) or add components (they start next frame).
+// Removed ones stay alive until the end of the frame, so the pointers stay
+// valid; skip those with isRemoved(). No heap allocation for <= 16 components.
+class ComponentSnapshot {
+public:
+    explicit ComponentSnapshot(const std::vector<std::unique_ptr<Component>>& list) : m_size(list.size())
+    {
+        Component** out = m_inline;
+        if (m_size > std::size(m_inline)) {
+            m_heap.resize(m_size);
+            out = m_heap.data();
+        }
+        for (size_t i = 0; i < m_size; ++i) out[i] = list[i].get();
+    }
+    Component* const* begin() const { return m_heap.empty() ? m_inline : m_heap.data(); }
+    Component* const* end() const { return begin() + m_size; }
+
+private:
+    Component* m_inline[16];
+    std::vector<Component*> m_heap;
+    size_t m_size;
+};
+
+} // namespace
+
 template <class Hook>
 void Scene::callComponents(GameObject& o, uint8_t bit, Hook&& hook)
 {
     if (o.m_componentsNoHook & bit) return;
     uint8_t none = bit;
-    for (size_t i = 0; i < o.m_components.size(); ++i) {
-        // (Index loop + deferred removal: a hook may add components, or remove
-        // itself or a sibling, which then stays in place until the frame ends.)
-        Component* c = o.m_components[i].get();
+    for (Component* c : ComponentSnapshot(o.m_components)) {
         if (c->m_removed) continue;
         if (c->enabled && c->m_started) hook(*c);
         none &= c->m_noHook; // unknown (not run yet) counts as implemented
@@ -163,8 +189,8 @@ void Scene::startPending()
             o->start();
         }
         // Components added at any point get start() before their first update.
-        for (size_t i = 0; i < o->m_components.size(); ++i) {
-            Component* c = o->m_components[i].get();
+        // (Ones added by these start() calls queue the object for next frame.)
+        for (Component* c : ComponentSnapshot(o->m_components)) {
             if (c->m_started || c->m_removed) continue;
             if (c->enabled) {
                 c->m_started = true;
@@ -211,13 +237,18 @@ void Scene::onGui()
 
 void Scene::destroyNow(GameObject* o)
 {
-    // Index loop: onDestroy() may add components. Removed ones were already
-    // unregistered and got their onDestroy() in removeComponent.
-    for (size_t i = 0; i < o->m_components.size(); ++i) {
-        Component* c = o->m_components[i].get();
-        if (c->m_removed) continue;
-        unregisterComponent(c);
-        if (c->m_started) c->onDestroy();
+    // onDestroy() may add components (repeat until none is left) or remove
+    // siblings (they got their onDestroy() in removeComponent). Marking each
+    // as removed means it's handled once.
+    for (bool again = true; again;) {
+        again = false;
+        for (Component* c : ComponentSnapshot(o->m_components)) {
+            if (c->m_removed) continue;
+            c->m_removed = true;
+            again = true;
+            unregisterComponent(c);
+            if (c->m_started) c->onDestroy();
+        }
     }
     if (o->m_started) o->onDestroy();
     o->m_transform.setParent(nullptr, false);
@@ -226,18 +257,16 @@ void Scene::destroyNow(GameObject* o)
 void Scene::flushRemovedComponents()
 {
     // Removed components are freed here, when no hook can be running on them.
-    // (Before the object sweep: the objects in m_removals are still alive.)
-    std::vector<GameObject*> objects;
-    objects.swap(m_removals);
-    for (GameObject* o : objects) {
-        o->m_hasRemoved = false;
-        std::erase_if(o->m_components, [](const auto& c) { return c->m_removed; }); // (destructors run no hooks)
-    }
+    // (Swap first: a destructor that removes another component appends to the
+    // fresh list, freed next frame.)
+    std::vector<std::unique_ptr<Component>> dead;
+    dead.swap(m_removedComponents);
+    dead.clear();
 }
 
 void Scene::flushDestroyed()
 {
-    if (!m_removals.empty()) flushRemovedComponents();
+    if (!m_removedComponents.empty()) flushRemovedComponents();
     if (!m_hasDestroyed) return;
     m_hasDestroyed = false;
     // Index loops: onDestroy() may spawn (appends to m_pending) or destroy
@@ -261,11 +290,12 @@ void Scene::flushDestroyed()
     };
     tearDown(m_objects);
     tearDown(m_pending);
-    // The side lists forget torn-down objects before they're freed (an
+    // The start queue forgets torn-down objects before they're freed (an
     // onDestroy() above may also have removed components of live objects:
-    // those stay in m_removals for the next frame).
+    // those wait in m_removedComponents until next frame).
     std::erase_if(m_unstarted, [](const GameObject* o) { return o->m_tornDown; });
-    std::erase_if(m_removals, [](const GameObject* o) { return o->m_tornDown; });
+    // Components removed by those onDestroy() calls go before their owners.
+    if (!m_removedComponents.empty()) flushRemovedComponents();
     erase(m_objects);
     erase(m_pending);
 }
@@ -282,7 +312,7 @@ void Scene::clear()
     }
     m_byId.clear();
     m_unstarted.clear();
-    m_removals.clear();
+    m_removedComponents.clear();
     m_buckets.clear();
     m_bucketByType.clear();
     m_queries.clear();

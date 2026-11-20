@@ -92,24 +92,19 @@ void GameObject::attachComponent(std::unique_ptr<Component> component, std::type
 
 void GameObject::removeComponent(Component* component)
 {
-    auto find = [&] {
-        return std::find_if(m_components.begin(), m_components.end(), [&](const auto& c) { return c.get() == component; });
-    };
-    if (find() == m_components.end() || component->m_removed) return;
+    auto it = std::find_if(m_components.begin(), m_components.end(), [&](const auto& c) { return c.get() == component; });
+    if (it == m_components.end() || component->m_removed) return;
     component->m_removed = true;
     if (m_scene) m_scene->unregisterComponent(component);
+    // Out of components() / getComponent() at once. A hook may be running on
+    // this (or a sibling) component right now, so the scene keeps it alive
+    // until the end of the frame (Scene::flushDestroyed).
+    std::unique_ptr<Component> owned = std::move(*it);
+    m_components.erase(it);
     // Like Scene::destroyNow: only a started component gets onDestroy().
     if (component->m_started) component->onDestroy(); // may add/remove other components
-    if (m_scene) {
-        // A hook may be running on this (or a sibling) component right now:
-        // free it at the end of the frame (Scene::flushDestroyed).
-        if (!m_hasRemoved) {
-            m_hasRemoved = true;
-            m_scene->m_removals.push_back(this);
-        }
-    } else if (auto it = find(); it != m_components.end()) {
-        m_components.erase(it); // not spawned yet: no hooks can be running
-    }
+    if (m_scene) m_scene->m_removedComponents.push_back(std::move(owned));
+    // (not spawned yet: no hooks can be running, `owned` frees it here)
 }
 
 } // namespace ve

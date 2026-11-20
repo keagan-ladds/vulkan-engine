@@ -102,8 +102,8 @@ public:
     bool isActive() const;
 
     bool enabled = true;
-    // removeComponent() was called: no more hooks, and the owner frees it at
-    // the end of the frame (until then it is still in components()).
+    // removeComponent() was called: it's out of components(), gets no more
+    // hooks, and the scene frees it at the end of the frame.
     bool isRemoved() const { return m_removed; }
     // Saved in scene files (set by the editor / scene loader). Components a
     // GameObject class creates for itself stay false.
@@ -193,10 +193,9 @@ public:
     bool hasComponent(const Component* component) const
     {
         for (const auto& c : m_components)
-            if (c.get() == component) return !c->m_removed;
+            if (c.get() == component) return true;
         return false;
     }
-    // Includes components removed this frame (Component::isRemoved()).
     const std::vector<std::unique_ptr<Component>>& components() const { return m_components; }
 
 private:
@@ -213,7 +212,6 @@ private:
     bool m_destroyed = false;
     bool m_tornDown = false;      // onDestroy() has run (Scene::flushDestroyed)
     bool m_queuedStart = false;   // in Scene::m_unstarted (it or a component still needs start())
-    bool m_hasRemoved = false;    // in Scene::m_removals (components to free at the end of the frame)
     uint8_t m_componentsNoHook = 0; // HookBits no component of this object overrides
 };
 

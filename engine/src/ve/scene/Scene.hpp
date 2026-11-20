@@ -159,7 +159,7 @@ private:
     // Objects that (or whose components) still need start(): startPending
     // walks only these instead of every object. Inactive ones stay queued.
     std::vector<GameObject*> m_unstarted, m_startScratch;
-    std::vector<GameObject*> m_removals; // objects with removed components to free
+    std::vector<std::unique_ptr<Component>> m_removedComponents; // removeComponent: freed at the end of the frame
     std::unordered_map<uint64_t, GameObject*> m_byId;
     std::vector<std::unique_ptr<Bucket>> m_buckets; // stable addresses (cached in queries)
     std::unordered_map<std::type_index, Bucket*> m_bucketByType;

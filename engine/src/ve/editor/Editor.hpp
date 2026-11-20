@@ -107,6 +107,7 @@ private:
     int m_frames = 0;
     // By id, not pointer: the game may clear the scene (back to its menu) and
     // take the camera object with it (docs/04-agent-handoff.md, gotchas).
+    std::vector<Component*> m_inspectScratch; // the selection's components while drawing the inspector
     uint64_t m_cameraId = 0;
     glm::vec3 m_camPosition{0.0f}; // where a re-spawned camera starts
     float m_camYaw = 0.0f, m_camPitch = -0.3f, m_camSpeed = 12.0f;
