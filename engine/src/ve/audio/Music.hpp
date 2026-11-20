@@ -23,6 +23,7 @@
 // they list it.
 // =============================================================================
 
+#include "ve/audio/Audio.hpp" // SoundPtr
 #include "ve/scene/GameObject.hpp"
 
 #include <glm/glm.hpp>
@@ -79,7 +80,7 @@ public:
 
 private:
     struct Voice {
-        ma_sound* sound = nullptr;
+        SoundPtr sound;
         std::string mood, track;
         float volume = 0.0f; // fade level 0..1
         float target = 1.0f;
@@ -101,7 +102,7 @@ private:
     void select(float fade);       // re-evaluates which mood should play
     void startTrack(float fade);   // starts the next track of m_current
     Voice* currentVoice();
-    ma_sound* openTrack(const std::string& path);
+    SoundPtr openTrack(const std::string& path);
     void freeVoice(Voice& v);
     float randomGap(const MusicMoodDesc& m);
 
@@ -110,7 +111,7 @@ private:
     std::map<std::string, MoodState> m_state;
     std::vector<Push> m_pushes;
     std::vector<Voice> m_voices;
-    std::vector<ma_sound*> m_stingers;
+    std::vector<SoundPtr> m_stingers;
     std::string m_base, m_current;
     float m_gapTimer = -1.0f; // >= 0: counting down to the next track
     float m_duck = 1.0f, m_duckTarget = 1.0f;

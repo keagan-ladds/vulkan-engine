@@ -50,7 +50,7 @@ float AmbientLayer::computeTarget()
     const AudioSystem& sys = audio();
     float t = std::max(volume, 0.0f) > 0.0f ? 1.0f : 0.0f;
 
-    if (sys.hasParameter("timeOfDay")) t *= hourWeight(sys.parameter("timeOfDay"), fromHour, toHour, hourFade);
+    if (sys.hasParameter(AudioSystem::kTimeOfDay)) t *= hourWeight(sys.parameter(AudioSystem::kTimeOfDay), fromHour, toHour, hourFade);
 
     if (!parameters.empty() && t > 0.0f) {
         float base = 1.0f, sum = 0.0f;
@@ -100,28 +100,30 @@ void AmbientLayer::update(float dt)
     static const std::string kNoLoop;
     const std::string& loopPath = loop ? loop->path() : kNoLoop;
     if (loopPath != m_loopPath) releaseLoop();
-    if (loop && m_level > 1e-3f && !m_loop) {
-        m_loop = new ma_sound();
-        if (ma_sound_init_from_file(sys.engine(), loop->path().c_str(), MA_SOUND_FLAG_STREAM, sys.bus(bus).group, nullptr,
-                                    m_loop) != MA_SUCCESS) {
-            log::warnOnce("AmbientLayer: failed to load " + loop->path());
-            delete m_loop;
-            m_loop = nullptr;
+    // (Opening is a synchronous file open: a file that failed isn't tried again
+    // every frame, only once `loop` names another one.)
+    if (loop && m_level > 1e-3f && !m_loop && loopPath != m_failedLoop) {
+        m_loop = openSound(sys.engine(), loopPath, MA_SOUND_FLAG_STREAM, sys.bus(bus).group.get());
+        if (!m_loop) {
+            log::warnOnce("AmbientLayer: failed to load " + loopPath);
+            m_failedLoop = loopPath;
         } else {
             m_loopPath = loopPath;
-            ma_sound_set_spatialization_enabled(m_loop, MA_FALSE);
-            ma_sound_set_looping(m_loop, MA_TRUE);
-            ma_sound_set_volume(m_loop, 0.0f);
+            m_failedLoop.clear();
+            ma_sound* s = m_loop.get();
+            ma_sound_set_spatialization_enabled(s, MA_FALSE);
+            ma_sound_set_looping(s, MA_TRUE);
+            ma_sound_set_volume(s, 0.0f);
             // Start somewhere in the loop so layers sharing a file don't phase.
             ma_uint64 frames = 0;
-            if (ma_sound_get_length_in_pcm_frames(m_loop, &frames) == MA_SUCCESS && frames > 0)
-                ma_sound_seek_to_pcm_frame(m_loop, std::uniform_int_distribution<ma_uint64>(0, frames - 1)(m_rng));
-            ma_sound_start(m_loop);
+            if (ma_sound_get_length_in_pcm_frames(s, &frames) == MA_SUCCESS && frames > 0)
+                ma_sound_seek_to_pcm_frame(s, std::uniform_int_distribution<ma_uint64>(0, frames - 1)(m_rng));
+            ma_sound_start(s);
         }
     }
     if (m_loop) {
         if (m_level <= 0.0f) releaseLoop();
-        else ma_sound_set_volume(m_loop, volume * m_level);
+        else ma_sound_set_volume(m_loop.get(), volume * m_level);
     }
 
     // ---- One-shots ----
@@ -162,11 +164,7 @@ void AmbientLayer::update(float dt)
 
 void AmbientLayer::releaseLoop()
 {
-    if (m_loop) {
-        ma_sound_uninit(m_loop);
-        delete m_loop;
-        m_loop = nullptr;
-    }
+    m_loop.reset();
     m_loopPath.clear();
 }
 

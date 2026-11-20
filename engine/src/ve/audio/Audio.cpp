@@ -20,37 +20,60 @@ struct AudioFilter {
     float cutoff = AudioSystem::kNoFilter;
 };
 
-namespace {
-
-constexpr ma_uint32 kFilterOrder = 2;
-
-AudioFilter* createFilter(ma_engine* engine)
+void SoundDeleter::operator()(ma_sound* s) const
 {
-    auto* f = new AudioFilter();
-    const ma_uint32 channels = ma_engine_get_channels(engine);
-    const ma_uint32 rate = ma_engine_get_sample_rate(engine);
-    const ma_lpf_node_config cfg = ma_lpf_node_config_init(channels, rate, std::min(AudioSystem::kNoFilter, rate * 0.45f), kFilterOrder);
-    if (ma_lpf_node_init(ma_engine_get_node_graph(engine), &cfg, nullptr, &f->node) != MA_SUCCESS) {
-        delete f;
-        return nullptr;
-    }
-    return f;
+    ma_sound_uninit(s); // (= ma_sound_group_uninit for groups)
+    delete s;
 }
 
-void destroyFilter(AudioFilter* f)
+void FilterDeleter::operator()(AudioFilter* f) const
 {
-    if (!f) return;
     ma_lpf_node_uninit(&f->node, nullptr);
     delete f;
 }
 
-// Changes the cutoff (skipped for tiny changes; reinit keeps the filter state).
+void EngineDeleter::operator()(ma_engine* e) const
+{
+    ma_engine_uninit(e);
+    delete e;
+}
+
+SoundPtr openSound(ma_engine* engine, const std::string& file, uint32_t flags, ma_sound* group)
+{
+    auto sound = std::make_unique<ma_sound>();
+    if (ma_sound_init_from_file(engine, file.c_str(), flags, group, nullptr, sound.get()) != MA_SUCCESS) return nullptr;
+    return SoundPtr(sound.release()); // initialized: from now on the deleter uninits it
+}
+
+namespace {
+
+constexpr ma_uint32 kFilterOrder = 2;
+
+FilterPtr createFilter(ma_engine* engine)
+{
+    auto f = std::make_unique<AudioFilter>();
+    const ma_uint32 channels = ma_engine_get_channels(engine);
+    const ma_uint32 rate = ma_engine_get_sample_rate(engine);
+    const ma_lpf_node_config cfg = ma_lpf_node_config_init(channels, rate, std::min(AudioSystem::kNoFilter, rate * 0.45f), kFilterOrder);
+    if (ma_lpf_node_init(ma_engine_get_node_graph(engine), &cfg, nullptr, &f->node) != MA_SUCCESS) return nullptr;
+    return FilterPtr(f.release());
+}
+
+// Changes the cutoff; reinit keeps the filter state.
+// The reinit runs here on the main thread while the audio thread may be
+// processing the node (miniaudio doesn't lock it), so it's kept rare: only
+// for steps of >= 4 % (a semitone is ~6 %: inaudible as steps), plus the
+// final step onto "no filter" so a fade-out ends fully open. Smooth fades
+// therefore reinit every few frames rather than every frame, and a settled
+// cutoff never does.
 void setCutoff(ma_engine* engine, AudioFilter* f, float hz)
 {
     if (!f) return;
     const float nyquistSafe = ma_engine_get_sample_rate(engine) * 0.45f;
-    hz = std::clamp(hz, 40.0f, std::min(AudioSystem::kNoFilter, nyquistSafe));
-    if (std::abs(hz - f->cutoff) < f->cutoff * 0.01f) return;
+    const float open = std::min(AudioSystem::kNoFilter, nyquistSafe);
+    hz = std::clamp(hz, 40.0f, open);
+    if (hz == f->cutoff) return;
+    if (std::abs(hz - f->cutoff) < f->cutoff * 0.04f && hz < open * 0.999f) return;
     f->cutoff = hz;
     const ma_lpf_config cfg = ma_lpf_config_init(ma_format_f32, ma_engine_get_channels(engine), ma_engine_get_sample_rate(engine), hz, kFilterOrder);
     ma_lpf_node_reinit(&cfg, &f->node);
@@ -83,38 +106,25 @@ AudioSystem::~AudioSystem()
 
 void AudioSystem::init()
 {
-    m_engine = new ma_engine();
+    auto e = std::make_unique<ma_engine>();
     ma_engine_config config = ma_engine_config_init();
-    if (ma_engine_init(&config, m_engine) != MA_SUCCESS) {
+    if (ma_engine_init(&config, e.get()) != MA_SUCCESS) {
         log::warn("Audio: no output device available; sound disabled");
-        delete m_engine;
-        m_engine = nullptr;
         return;
     }
+    m_engine.reset(e.release()); // initialized: the deleter uninits it
     for (const char* name : {"SFX", "Ambient", "Weather", "Music", "UI"}) bus(name);
-    log::info("Audio: {} Hz, {} channels", ma_engine_get_sample_rate(m_engine), ma_engine_get_channels(m_engine));
+    log::info("Audio: {} Hz, {} channels", ma_engine_get_sample_rate(engine()), ma_engine_get_channels(engine()));
 }
 
 void AudioSystem::shutdown()
 {
     if (!m_engine) return;
+    // Sounds, then the buses they play into, then the engine.
     m_music->release();
-    for (ma_sound* s : m_oneShots) {
-        ma_sound_uninit(s);
-        delete s;
-    }
     m_oneShots.clear();
-    for (auto& b : m_buses) {
-        if (b->group) {
-            ma_sound_group_uninit(b->group);
-            delete b->group;
-        }
-        destroyFilter(b->filter);
-    }
     m_buses.clear();
-    ma_engine_uninit(m_engine);
-    delete m_engine;
-    m_engine = nullptr;
+    m_engine.reset();
 }
 
 AudioBus& AudioSystem::bus(const std::string& name)
@@ -126,15 +136,12 @@ AudioBus& AudioSystem::bus(const std::string& name)
     b->name = name;
     if (m_engine) {
         // sounds -> group -> low-pass -> output
-        b->group = new ma_sound();
-        if (ma_sound_group_init(m_engine, 0, nullptr, b->group) != MA_SUCCESS) {
-            delete b->group;
-            b->group = nullptr;
-        }
-        b->filter = createFilter(m_engine);
+        auto group = std::make_unique<ma_sound>();
+        if (ma_sound_group_init(engine(), 0, nullptr, group.get()) == MA_SUCCESS) b->group.reset(group.release());
+        b->filter = createFilter(engine());
         if (b->group && b->filter) {
-            ma_node_attach_output_bus(b->group, 0, &b->filter->node, 0);
-            ma_node_attach_output_bus(&b->filter->node, 0, ma_engine_get_endpoint(m_engine), 0);
+            ma_node_attach_output_bus(b->group.get(), 0, &b->filter->node, 0);
+            ma_node_attach_output_bus(&b->filter->node, 0, ma_engine_get_endpoint(engine()), 0);
         }
     }
     m_buses.push_back(std::move(b));
@@ -145,15 +152,15 @@ void AudioSystem::setListener(const glm::vec3& p, const glm::vec3& f, const glm:
 {
     m_listener = p;
     if (!m_engine) return;
-    ma_engine_listener_set_position(m_engine, 0, p.x, p.y, p.z);
-    ma_engine_listener_set_direction(m_engine, 0, f.x, f.y, f.z);
-    ma_engine_listener_set_world_up(m_engine, 0, u.x, u.y, u.z);
+    ma_engine_listener_set_position(engine(), 0, p.x, p.y, p.z);
+    ma_engine_listener_set_direction(engine(), 0, f.x, f.y, f.z);
+    ma_engine_listener_set_world_up(engine(), 0, u.x, u.y, u.z);
 }
 
 void AudioSystem::setMasterVolume(float volume)
 {
     m_masterVolume = volume;
-    if (m_engine) ma_engine_set_volume(m_engine, volume);
+    if (m_engine) ma_engine_set_volume(engine(), volume);
 }
 
 void AudioSystem::playOneShot(const AudioClip& clip, float volume, std::optional<glm::vec3> position, float pitch,
@@ -170,13 +177,12 @@ void AudioSystem::playOneShot(const AudioClip& clip, float volume, std::optional
 void AudioSystem::playOneShot(const AudioClip& clip, const OneShotSettings& settings)
 {
     if (!m_engine) return;
-    auto* sound = new ma_sound();
-    const ma_uint32 flags = MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC;
-    if (ma_sound_init_from_file(m_engine, clip.path().c_str(), flags, bus(settings.bus).group, nullptr, sound) != MA_SUCCESS) {
+    SoundPtr owned = openSound(engine(), clip.path(), MA_SOUND_FLAG_DECODE | MA_SOUND_FLAG_ASYNC, bus(settings.bus).group.get());
+    if (!owned) {
         log::warn("Audio: failed to load {}", clip.path());
-        delete sound;
         return;
     }
+    ma_sound* sound = owned.get();
     ma_sound_set_volume(sound, settings.volume);
     ma_sound_set_pitch(sound, settings.pitch);
     if (const auto& position = settings.position) {
@@ -190,21 +196,14 @@ void AudioSystem::playOneShot(const AudioClip& clip, const OneShotSettings& sett
         ma_sound_set_spatialization_enabled(sound, MA_FALSE);
     }
     ma_sound_start(sound);
-    m_oneShots.push_back(sound);
+    m_oneShots.push_back(std::move(owned));
 }
 
 void AudioSystem::update(float dt)
 {
     if (!m_engine) return;
     m_music->update(dt);
-    std::erase_if(m_oneShots, [](ma_sound* s) {
-        if (ma_sound_at_end(s)) {
-            ma_sound_uninit(s);
-            delete s;
-            return true;
-        }
-        return false;
-    });
+    std::erase_if(m_oneShots, [](const SoundPtr& s) { return ma_sound_at_end(s.get()); });
 
     // Zones: which ones hold the listener, and the strongest effect per bus.
     for (AudioZone* z : m_zones) z->m_inside = z->isActive() && z->contains(m_listener);
@@ -223,8 +222,8 @@ void AudioSystem::update(float dt)
         const float k = 1.0f - std::exp(-3.0f * dt / std::max(fade, 0.01f));
         b->zoneVolume += (targetVolume - b->zoneVolume) * k;
         b->zoneLowpass = mixCutoff(b->zoneLowpass, targetLowpass, k);
-        if (b->group) ma_sound_group_set_volume(b->group, b->volume * b->zoneVolume);
-        setCutoff(m_engine, b->filter, std::min(b->lowpass, b->zoneLowpass));
+        if (b->group) ma_sound_group_set_volume(b->group.get(), b->volume * b->zoneVolume);
+        setCutoff(engine(), b->filter.get(), std::min(b->lowpass, b->zoneLowpass));
     }
 }
 
@@ -294,14 +293,8 @@ AudioSource::~AudioSource()
 
 void AudioSource::release()
 {
-    if (m_loaded) {
-        ma_sound_uninit(m_sound);
-        m_loaded = false;
-    }
-    delete m_sound;
-    m_sound = nullptr;
-    destroyFilter(m_filter);
-    m_filter = nullptr;
+    m_sound.reset(); // (the sound first: it feeds the filter)
+    m_filter.reset();
 }
 
 void AudioSource::start()
@@ -313,52 +306,49 @@ void AudioSource::play()
 {
     AudioSystem& sys = audio();
     if (!sys.available() || !clip) return;
-    if (!m_loaded) {
+    if (!m_sound) {
         AudioBus& b = sys.bus(bus);
         const bool filtered = occlusion && spatial;
-        m_sound = new ma_sound();
-        ma_uint32 flags = clip->stream() ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
+        const ma_uint32 flags = clip->stream() ? MA_SOUND_FLAG_STREAM : MA_SOUND_FLAG_DECODE;
         // Occluded sources get their own low-pass: sound -> filter -> bus.
-        if (ma_sound_init_from_file(sys.engine(), clip->path().c_str(), flags, filtered ? nullptr : b.group, nullptr,
-                                    m_sound) != MA_SUCCESS) {
+        m_sound = openSound(sys.engine(), clip->path(), flags, filtered ? nullptr : b.group.get());
+        if (!m_sound) {
             log::warn("Audio: failed to load {}", clip->path());
-            delete m_sound;
-            m_sound = nullptr;
             return;
         }
-        m_loaded = true;
         if (filtered && (m_filter = createFilter(sys.engine()))) {
-            ma_node_attach_output_bus(m_sound, 0, &m_filter->node, 0);
-            ma_node_attach_output_bus(&m_filter->node, 0, b.group ? static_cast<ma_node*>(b.group) : ma_engine_get_endpoint(sys.engine()), 0);
+            ma_node_attach_output_bus(m_sound.get(), 0, &m_filter->node, 0);
+            ma_node_attach_output_bus(&m_filter->node, 0, b.group ? static_cast<ma_node*>(b.group.get()) : ma_engine_get_endpoint(sys.engine()), 0);
         }
     }
     applySettings();
     const glm::vec3 p = transform().position();
-    ma_sound_set_position(m_sound, p.x, p.y, p.z);
-    ma_sound_seek_to_pcm_frame(m_sound, 0);
-    ma_sound_start(m_sound);
+    ma_sound_set_position(m_sound.get(), p.x, p.y, p.z);
+    ma_sound_seek_to_pcm_frame(m_sound.get(), 0);
+    ma_sound_start(m_sound.get());
 }
 
 void AudioSource::applySettings()
 {
-    if (!m_loaded) return;
-    ma_sound_set_volume(m_sound, volume * (1.0f + (occlusionVolume - 1.0f) * m_occluded));
-    ma_sound_set_pitch(m_sound, pitch);
-    ma_sound_set_looping(m_sound, loop ? MA_TRUE : MA_FALSE);
-    ma_sound_set_spatialization_enabled(m_sound, spatial ? MA_TRUE : MA_FALSE);
-    ma_sound_set_min_distance(m_sound, minDistance);
-    ma_sound_set_max_distance(m_sound, maxDistance);
-    ma_sound_set_attenuation_model(m_sound, ma_attenuation_model_linear);
+    ma_sound* s = m_sound.get();
+    if (!s) return;
+    ma_sound_set_volume(s, volume * (1.0f + (occlusionVolume - 1.0f) * m_occluded));
+    ma_sound_set_pitch(s, pitch);
+    ma_sound_set_looping(s, loop ? MA_TRUE : MA_FALSE);
+    ma_sound_set_spatialization_enabled(s, spatial ? MA_TRUE : MA_FALSE);
+    ma_sound_set_min_distance(s, minDistance);
+    ma_sound_set_max_distance(s, maxDistance);
+    ma_sound_set_attenuation_model(s, ma_attenuation_model_linear);
 }
 
 void AudioSource::stop()
 {
-    if (m_loaded) ma_sound_stop(m_sound);
+    if (m_sound) ma_sound_stop(m_sound.get());
 }
 
 bool AudioSource::isPlaying() const
 {
-    return m_loaded && ma_sound_is_playing(m_sound);
+    return m_sound && ma_sound_is_playing(m_sound.get());
 }
 
 void AudioSource::updateOcclusion(float dt)
@@ -392,15 +382,15 @@ void AudioSource::updateOcclusion(float dt)
     }
     m_occluded += (m_occlusionTarget - m_occluded) * (1.0f - std::exp(-dt * 8.0f));
 
-    ma_sound_set_volume(m_sound, volume * (1.0f + (occlusionVolume - 1.0f) * m_occluded));
-    setCutoff(audio().engine(), m_filter, mixCutoff(AudioSystem::kNoFilter, occlusionLowpass, m_occluded));
+    ma_sound_set_volume(m_sound.get(), volume * (1.0f + (occlusionVolume - 1.0f) * m_occluded));
+    setCutoff(audio().engine(), m_filter.get(), mixCutoff(AudioSystem::kNoFilter, occlusionLowpass, m_occluded));
 }
 
 void AudioSource::lateUpdate(float dt)
 {
-    if (!m_loaded || !spatial) return;
+    if (!m_sound || !spatial) return;
     const glm::vec3 p = transform().position();
-    ma_sound_set_position(m_sound, p.x, p.y, p.z);
+    ma_sound_set_position(m_sound.get(), p.x, p.y, p.z);
     if (occlusion && m_filter) updateOcclusion(dt);
 }
 
