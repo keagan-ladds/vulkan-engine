@@ -62,7 +62,7 @@ int main()
         auto& sun = scene.spawn<SunController>();
         sun.azimuthDegrees = 220.0f;
         sun.elevationDegrees = 20.0f;
-        fx.atmosphere->sun = &sun.light(); // the sky draws its sun disc (and sets ambient) from this light
+        fx.atmosphere->setSun(&sun.light()); // the sky draws its sun disc (and sets ambient) from this light
 
         // --- Ground: built-in PBR material with a texture from assets/ -----------------
         auto groundMat = renderer.createStandardMaterial();
