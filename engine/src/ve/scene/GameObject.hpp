@@ -102,6 +102,9 @@ public:
     bool isActive() const;
 
     bool enabled = true;
+    // removeComponent() was called: no more hooks, and the owner frees it at
+    // the end of the frame (until then it is still in components()).
+    bool isRemoved() const { return m_removed; }
     // Saved in scene files (set by the editor / scene loader). Components a
     // GameObject class creates for itself stay false.
     bool persistent = false;
@@ -111,6 +114,8 @@ private:
     friend class Scene;
     GameObject* m_owner = nullptr;
     bool m_started = false;
+    bool m_removed = false;
+    uint32_t m_bucketIndex = 0; // position in the Scene's registry bucket (O(1) unregister)
     std::type_index m_type = typeid(Component);
 };
 
@@ -162,6 +167,7 @@ public:
     T* getComponent() const
     {
         for (const auto& c : m_components) {
+            if (c->m_removed) continue;
             if (auto* t = dynamic_cast<T*>(c.get())) return t;
         }
         return nullptr;
@@ -177,7 +183,12 @@ public:
         return nullptr;
     }
 
+    // Deferred like destroy(): the component stops getting hooks and is gone
+    // from getComponent() / scene queries at once (onDestroy() runs now, if it
+    // started), and is freed at the end of the frame. So a component may remove
+    // itself or a sibling from inside a hook.
     void removeComponent(Component* component);
+    // Includes components removed this frame (Component::isRemoved()).
     const std::vector<std::unique_ptr<Component>>& components() const { return m_components; }
 
 private:
@@ -193,6 +204,8 @@ private:
     bool m_started = false;
     bool m_destroyed = false;
     bool m_tornDown = false;      // onDestroy() has run (Scene::flushDestroyed)
+    bool m_queuedStart = false;   // in Scene::m_unstarted (it or a component still needs start())
+    bool m_hasRemoved = false;    // in Scene::m_removals (components to free at the end of the frame)
     uint8_t m_componentsNoHook = 0; // HookBits no component of this object overrides
 };
 
