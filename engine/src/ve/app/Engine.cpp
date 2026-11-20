@@ -13,6 +13,7 @@
 #include "ve/editor/Editor.hpp"
 #include "ve/gameplay/Interaction.hpp"
 #include "ve/gameplay/Placement.hpp"
+#include "ve/gameplay/ProxySet.hpp"
 #include "ve/nav/Navigation.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/scene/Components.hpp"
@@ -51,6 +52,7 @@ void registerAllTypes()
     registerNetworkTypes(r);
     registerInteractionTypes(r);
     registerPlacementTypes(r);
+    registerProxyTypes(r);
     registerNavigationTypes(r);
     registerAnimationTypes(r);
     registerPhysicsTypes(r);
