@@ -93,7 +93,10 @@ float fwd = in.axisValue("MoveY");                       // strongest source win
   `in.startRebind(action)`; the next key, mouse button or pad button/trigger
   replaces that device's bindings (Escape cancels, `rebinding()` tells you it
   is waiting). Persist with `saveBindings()` / `loadBindings(json)`. The
-  savanna's F10 window does this and keeps `controls.json` in the save folder.
+  savanna's F10 window does this and keeps it with
+  `ve::save::writeConfig("controls", ...)` (`<save folder>/config/controls.json`,
+  so settings files never show up as save slots); `in.bindingText(action)` gives
+  the names joined for display.
 - Tests: `attachVirtualGamepad()` + `setVirtualGamepadAxis/Button` drive an SDL
   virtual controller (works headless).
 

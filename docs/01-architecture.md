@@ -601,6 +601,14 @@ stores nothing per blade.
   object name (+ component type); `save::apply` destroys, moves, then calls
   `loadState`. Slots are JSON files (tmp + rename). The game decides when
   to reload the level before applying (Savanna: behind the loading screen).
+  Settings files (`save::readConfig` / `writeConfig`) live in
+  `<save folder>/config/`, so they never appear in `save::slots()`.
+
+- **Inventory** (`ve/gameplay/Inventory.hpp`). `ve::Inventory`: a fixed number
+  of slots of `{item, count}` with stacking (per-item max stack from a
+  callback, `kDefaultMaxStack` otherwise), add / remove / count / move-or-swap
+  and JSON save / load. Item definitions, icons and the inventory screen are
+  the game's (Savanna's `Inventory.*`).
 
 - **Prefabs** (`ve/scene/Prefab.hpp`). A `.prefab` file is JSON holding an
   object (type, fields, persistent components, children) at the origin.
@@ -667,7 +675,8 @@ Backed by **Recast & Detour** (linked `PRIVATE`, only included by
   `remainingDistance()` for the game's AI.
 - Behaviour is game code: Savanna's `Villager` idles, wanders to random
   reachable spots and follows the player when asked ("walk with me").
-- `showDebug` draws the navmesh's polygons near the camera.
+- `showDebug` draws the navmesh's polygons near the camera as `ve::debug`
+  lines (the same as the "Navmesh" debug channel; nav has no editor dependency).
 
 ## 5.11b Debug drawing (`ve/debug/Debug.hpp`)
 
@@ -990,10 +999,13 @@ Optional add-ons built only on public engine APIs:
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Building.*` | Building kit on the engine's prefabs + placement: `BuildPiece` (14 kinds x materials, doors / windows as fittings snapping into wall openings, `DoorHinge` (Use, saved), mesh / colliders / snap points / placement boxes from code; the kit is `assets/prefabs/building/*.prefab` + `building/catalogue.json`), `Builder` (build mode B: ghost, snap, fit, place, remove, navmesh rebuild) |
-| `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, HUD (ve::ui canvas: health / stamina, hotbar, clock, prompts), `AutoTest` |
+| `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT |
+| `Hud.*` | HUD (ve::ui canvas: health / stamina, hotbar, clock, prompts), save / load of progress, controls file (`ve::save::readConfig` / `writeConfig`) |
+| `AutoTest.*` | The `SAVANNA_AUTOTEST` smoke test and its probe components |
+| `SceneLookup.hpp`, `Footsteps.hpp` | Cached by-id lookups (`localPlayer`, `findCached<T>`: no per-frame scene scans or name lookups), footstep sound by surface for the player and villagers |
 | `Villager.*` | Navmesh agents with animation: Idle / Walk crossfades, a "Wave" layer on the right arm (greeting the player), footstep events of the Walk clip (sounds by surface), FootIK on slopes, a "Villagers" debug-draw channel |
 | `Multiplayer.*` | On `ve/net`: host / join from `SAVANNA_NET`, player avatars (NetworkObject + NetworkTransform + replicated name), the host's world snapshot without its own player, clock / weather sync, `NetTest` (two-process test, `tools/nettest.sh`); building requests live in `Building.cpp` |
-| `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop) |
+| `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop; the container itself is the engine's `ve::Inventory`) |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 
