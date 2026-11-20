@@ -139,6 +139,11 @@ struct TerrainLook {
     TerrainMaterial rockMaterial;
 };
 
+// Tile coordinates <-> one hash-map key (z in the high 32 bits, x in the low):
+// shared by the edit tiles, the sample cache and the collider tiles.
+inline int64_t terrainTileKey(int tx, int tz) { return (int64_t(tz) << 32) | int64_t(uint32_t(tx)); }
+inline glm::ivec2 terrainTileCoords(int64_t key) { return {int(uint32_t(key)), int(key >> 32)}; }
+
 // Hand-made changes on top of the generator (the editor's sculpt and paint
 // brushes): a height offset and a painted biome per grid sample, stored
 // sparsely in tiles of 64 cells (only where something was edited). Sample
@@ -157,7 +162,7 @@ struct TerrainEdits {
     bool empty() const { return tiles.empty(); }
     float height(int gi, int gj) const;                         // offset at a sample
     void paint(int gi, int gj, int& biome, float& strength) const; // biome -1 = none
-    static int64_t key(int tx, int tz) { return (int64_t(tz) << 32) | int64_t(uint32_t(tx)); }
+    static int64_t key(int tx, int tz) { return terrainTileKey(tx, tz); }
 };
 
 // An immutable snapshot of a terrain: its generator inputs plus a cache of
@@ -270,7 +275,9 @@ public:
     float tileCacheMB = 96.0f;  // sample tiles kept in memory (regenerated on demand beyond that)
 
     // ---- Look (see TerrainLook for the colours) ----
-    std::string detailTexture = "textures/ground_detail.png";
+    // Greyscale noise that breaks up the ground colours (two scales below).
+    // Empty = none (a flat mid-grey stands in, leaving the colours as they are).
+    std::string detailTexture;
     glm::vec2 detailScales{0.31f, 0.043f};
     int wetnessSlot = 1; // frame.globalParams slot whose .x is wetness (effects' weather); -1 none
 
@@ -334,6 +341,7 @@ private:
     mutable std::shared_ptr<const TerrainData> m_data;
     std::unique_ptr<TerrainLod> m_lod;
     std::shared_ptr<Shader> m_shader;
+    std::shared_ptr<Texture> m_flatDetail; // 1x1 mid-grey: no detailTexture
     std::vector<std::shared_ptr<Material>> m_levelMaterials;
     std::shared_ptr<Texture> m_layerTable;                                     // splat layer parameters
     std::vector<float> m_layerTableData;
