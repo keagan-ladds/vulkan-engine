@@ -39,6 +39,8 @@ namespace ve {
 
 class Renderer;
 class MeshRenderer;
+class PointLight;
+class DirectionalLight;
 class Window;
 class Scene;
 class Texture;
@@ -302,6 +304,7 @@ private:
     };
     static constexpr uint32_t kMaxTimestamps = 128;
     float m_timestampPeriodNs = 0.0f;
+    std::vector<uint64_t> m_timestampScratch; // readback of one slot's queries (reused)
 
     void createGlobalLayout();
     void createFrameSlots();
@@ -393,8 +396,26 @@ private:
 
     std::unique_ptr<SkinningSystem> m_skinning;
     std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
-    std::unordered_map<const MeshRenderer*, glm::mat4> m_prevWorlds; // motion vectors
+    struct PrevWorld {
+        glm::mat4 world;
+        uint64_t stamp; // gatherScene() call that last saw the renderer
+    };
+    std::unordered_map<const MeshRenderer*, PrevWorld> m_prevWorlds; // motion vectors
+    uint64_t m_prevWorldStamp = 0;
+    std::vector<const MeshRenderer*> m_deforming; // this frame's skinned renderers, sorted
     uint32_t m_clusterWords = 0;          // used words of LightBuffer::clusterLights
+    // Per-frame scratch of gatherLights / buildLightClusters (reused, no allocations).
+    struct ClusterRange {
+        int x0, x1, y0, y1, z0, z1;
+    };
+    struct PointCandidate {
+        PointLight* light;
+        float distance;
+    };
+    std::vector<ClusterRange> m_clusterRanges;
+    std::vector<uint16_t> m_clusterCounts;
+    std::vector<DirectionalLight*> m_dirScratch;
+    std::vector<PointCandidate> m_pointScratch;
     TemporalAAPass* m_taaPass = nullptr;  // the camera only jitters while it runs
     FrameData m_frame;
     glm::mat4 m_prevViewProj{1.0f};

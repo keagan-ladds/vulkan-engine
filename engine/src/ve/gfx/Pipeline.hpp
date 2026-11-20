@@ -32,6 +32,10 @@ enum class CullMode { None, Back, Front };
 
 VkShaderModule loadShaderModule(VkDevice device, const std::filesystem::path& spirvPath);
 
+// The VkPipelineCache every pipeline below is created with (owned by Device,
+// which sets it at init and clears it at shutdown). VK_NULL_HANDLE = none.
+void setPipelineCache(VkPipelineCache cache);
+
 class PipelineBuilder {
 public:
     PipelineBuilder();

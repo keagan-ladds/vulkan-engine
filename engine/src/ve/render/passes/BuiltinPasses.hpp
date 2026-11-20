@@ -46,7 +46,13 @@ public:
     void onGui() override;
 
 private:
-    std::vector<uint32_t> m_scratch;
+    uint64_t materialHash(uint32_t gpuIndex); // of its GpuMaterial bytes, cached for this frame
+
+    std::vector<uint32_t> m_casters;      // this frame's shadow-casting items
+    std::vector<uint32_t> m_lightCasters; // the current point light's casters (in range)
+    std::vector<uint32_t> m_scratch;      // the current view's casters
+    std::vector<std::pair<uint64_t, uint64_t>> m_materialHashes; // per material: {frame stamp, hash}
+    uint64_t m_materialHashStamp = 0;
     std::vector<uint64_t> m_pointFaceHash; // per point-shadow layer: inputs of its last render (0 = none)
     uint32_t m_pointFacesRendered = 0, m_pointFacesCached = 0;
 };

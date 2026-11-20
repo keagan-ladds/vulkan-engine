@@ -202,6 +202,17 @@ vec4 veSampleOr(uint index, vec2 uv, vec4 fallback)
     return index == VE_INVALID ? fallback : veSample(index, uv);
 }
 
+#ifdef VE_FRAGMENT_STAGE
+// StandardMaterial alpha test (cutout shadow casters): discards when
+// params[0].a * albedo alpha is below the params[1].w cutoff (0 = off);
+// albedo UVs are scaled by params[3].xy.
+void veStandardCutout(VeMaterial m, vec2 uv)
+{
+    float alpha = m.params[0].a * veSampleOr(m.textures[0], uv * m.params[3].xy, vec4(1.0)).a;
+    if (m.params[1].w > 0.0 && alpha < m.params[1].w) discard;
+}
+#endif
+
 // World position from a screen UV (0..1, top-left origin) and a depth buffer value.
 vec3 veWorldFromDepth(vec2 uv, float depth)
 {

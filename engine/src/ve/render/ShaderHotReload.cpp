@@ -2,6 +2,7 @@
 
 #include "ve/core/Log.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -18,14 +19,7 @@
 
 namespace ve {
 
-namespace {
-
-struct CompileResult {
-    bool ok = false;
-    std::string output;
-};
-
-CompileResult runCommand(const std::vector<std::string>& args)
+ShaderHotReload::CompileResult ShaderHotReload::runCommand(const std::vector<std::string>& args)
 {
     std::string cmd;
     for (const std::string& a : args) {
@@ -47,8 +41,6 @@ CompileResult runCommand(const std::vector<std::string>& args)
     r.ok = VE_PCLOSE(pipe) == 0;
     return r;
 }
-
-} // namespace
 
 ShaderHotReload::ShaderHotReload(const std::vector<std::filesystem::path>& shaderDirectories)
 {
@@ -131,49 +123,67 @@ std::filesystem::file_time_type ShaderHotReload::newest(const Entry& e, StampCac
 
 std::vector<std::string> ShaderHotReload::poll()
 {
+    std::vector<std::string> ok = finishJobs(false);
     const auto now = std::chrono::steady_clock::now();
-    if (m_entries.empty() || now - m_lastPoll < std::chrono::milliseconds(500)) return {};
-    return pollNow();
+    if (!m_entries.empty() && now - m_lastPoll >= std::chrono::milliseconds(500)) {
+        m_lastPoll = now;
+        startChanged();
+    }
+    return ok;
 }
 
 std::vector<std::string> ShaderHotReload::pollNow()
 {
     m_lastPoll = std::chrono::steady_clock::now();
-    std::vector<Entry*> changed;
+    startChanged();
+    return finishJobs(true);
+}
+
+void ShaderHotReload::startChanged()
+{
     StampCache seen;
     for (Entry& e : m_entries) {
+        const bool busy = std::any_of(m_jobs.begin(), m_jobs.end(), [&](const Job& j) { return j.entry == &e; });
+        if (busy) continue; // picked up again after this compile finishes
         const auto t = newest(e, seen);
         if (t > e.stamp) {
             e.stamp = t; // also on failure: don't retry until the next save
-            changed.push_back(&e);
+            // An edited include (ve.glsl) can touch dozens of shaders: compile them in parallel.
+            m_jobs.push_back({&e, std::async(std::launch::async, runCommand, e.command)});
         }
     }
-    if (changed.empty()) return {};
+}
 
-    // An edited include (ve.glsl) can touch dozens of shaders: compile them in parallel.
-    std::vector<std::future<CompileResult>> jobs;
-    jobs.reserve(changed.size());
-    for (Entry* e : changed) jobs.push_back(std::async(std::launch::async, runCommand, e->command));
-
+std::vector<std::string> ShaderHotReload::finishJobs(bool wait)
+{
     std::vector<std::string> ok;
-    for (size_t i = 0; i < changed.size(); ++i) {
-        Entry& e = *changed[i];
-        const CompileResult r = jobs[i].get();
+    size_t failed = 0;
+    StampCache seen;
+    for (size_t i = 0; i < m_jobs.size();) {
+        Job& job = m_jobs[i];
+        if (!wait && job.result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++i;
+            continue;
+        }
+        Entry& e = *job.entry;
+        const CompileResult r = job.result.get();
         if (r.ok) {
             readDepfile(e); // includes may have changed (new ones aren't in `seen` yet)
             e.stamp = std::max(e.stamp, newest(e, seen));
             ok.push_back(e.name);
         } else {
+            ++failed;
             m_lastError = e.name + ":\n" + r.output;
             log::error("Shader hot-reload: {} failed to compile (keeping the old version):\n{}", e.name, r.output);
         }
+        m_jobs.erase(m_jobs.begin() + ptrdiff_t(i));
     }
     if (!ok.empty()) {
         ++m_reloads;
         std::string list;
         for (const auto& n : ok) list += (list.empty() ? "" : ", ") + n;
         log::info("Shader hot-reload: recompiled {}", list);
-        if (ok.size() == changed.size()) m_lastError.clear();
+        if (failed == 0 && m_jobs.empty()) m_lastError.clear();
     }
     return ok;
 }

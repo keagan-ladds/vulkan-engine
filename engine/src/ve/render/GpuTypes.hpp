@@ -84,11 +84,17 @@ struct LightBuffer {
 // set 0, binding 2 (storage buffer, array). 256 bytes per material.
 // The meaning of params/textures is defined by each shader; see
 // StandardMaterial for the built-in layout.
+constexpr uint32_t kMaterialParamCount = 12;   // vec4 parameters per material
+constexpr uint32_t kMaterialTextureCount = 16; // bindless texture slots per material
 struct GpuMaterial {
-    glm::vec4 params[12];
-    uint32_t textures[16];
+    glm::vec4 params[kMaterialParamCount];
+    uint32_t textures[kMaterialTextureCount];
 };
 static_assert(sizeof(GpuMaterial) == 256);
+
+// Size of the push-constant range of the shared pipeline layout: the minimum
+// every Vulkan device guarantees (maxPushConstantsSize >= 128).
+constexpr uint32_t kPushConstantBytes = 128;
 
 // Default push-constant block for mesh draws (96 of the 128 available bytes).
 struct DrawPush {
@@ -99,7 +105,7 @@ struct DrawPush {
     uint32_t flags;      // VE_DRAW_FLAG_* (see ve.glsl)
     glm::vec4 custom;    // free for custom shaders
 };
-static_assert(sizeof(DrawPush) <= 128);
+static_assert(sizeof(DrawPush) <= kPushConstantBytes);
 
 constexpr uint32_t kDrawFlagPointShadow = 1u << 0;
 constexpr uint32_t kDrawFlagInstanced = 1u << 1; // model matrix comes from the instance buffer

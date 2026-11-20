@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <span>
 
 namespace ve {
 
@@ -58,6 +59,9 @@ public:
     const VkPhysicalDeviceProperties& properties() const { return m_properties; }
     const DeviceFeatures& features() const { return m_features; }
     bool validationEnabled() const { return m_validation; }
+    // Shared by every pipeline (see setPipelineCache in Pipeline.hpp); loaded
+    // from / saved to "pipeline_cache.bin" next to the executable.
+    VkPipelineCache pipelineCache() const { return m_pipelineCache; }
 
     // --- Frame bookkeeping (called by the Renderer) ------------------------------
     // After the CPU waited for frame `frameNumber - kFramesInFlight`, call this
@@ -81,6 +85,15 @@ public:
 
     // Copies CPU data into a GPU-only buffer through a temporary staging buffer.
     void uploadBuffer(const Buffer& dst, const void* data, VkDeviceSize size, VkDeviceSize dstOffset = 0);
+    // Several regions (possibly into different buffers) through one staging
+    // buffer and one submit, e.g. a mesh's vertices and indices together.
+    struct BufferUpload {
+        const Buffer* dst = nullptr;
+        const void* data = nullptr;
+        VkDeviceSize size = 0;
+        VkDeviceSize dstOffset = 0;
+    };
+    void uploadBuffers(std::span<const BufferUpload> uploads);
     // Uploads pixel data into mip 0 of all layers (tightly packed, layer after
     // layer), optionally generates the remaining mips with linear blits, and
     // leaves the image in VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL.
@@ -99,6 +112,8 @@ private:
     void pickPhysicalDevice();
     void createLogicalDevice();
     void createAllocator();
+    void createPipelineCache();
+    void savePipelineCache();
 
     bool m_validation = false;
     VkInstance m_instance = VK_NULL_HANDLE;
@@ -114,6 +129,7 @@ private:
 
     VkCommandPool m_uploadPool = VK_NULL_HANDLE;
     VkFence m_uploadFence = VK_NULL_HANDLE;
+    VkPipelineCache m_pipelineCache = VK_NULL_HANDLE;
 
     struct PendingDeletion {
         uint64_t frame;

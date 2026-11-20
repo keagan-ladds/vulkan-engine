@@ -117,8 +117,9 @@ std::shared_ptr<Impostor> Impostor::bake(Renderer& renderer, const Mesh& mesh,
 
         VkRenderingAttachmentInfo colors[2]{};
         const VkImageView views[2] = {albedoView, normalView};
-        // Transparent texels keep a neutral colour so mip blending doesn't darken edges.
-        const VkClearColorValue clears[2] = {{{0.35f, 0.33f, 0.2f, 0.0f}}, {{0.5f, 1.0f, 0.5f, 0.0f}}};
+        // Transparent texels keep a plausible colour so mip blending doesn't darken edges.
+        const glm::vec3 bg = settings.backgroundAlbedo;
+        const VkClearColorValue clears[2] = {{{bg.r, bg.g, bg.b, 0.0f}}, {{0.5f, 1.0f, 0.5f, 0.0f}}};
         for (int i = 0; i < 2; ++i) {
             colors[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
             colors[i].imageView = views[i];
@@ -143,10 +144,7 @@ std::shared_ptr<Impostor> Impostor::bake(Renderer& renderer, const Mesh& mesh,
 
         renderer.bindGlobalSets(cmd);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        VkBuffer vb = mesh.vertexBuffer();
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
-        vkCmdBindIndexBuffer(cmd, mesh.indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        mesh.bind(cmd);
 
         for (uint32_t j = 0; j < N; ++j) {
             for (uint32_t i = 0; i < N; ++i) {

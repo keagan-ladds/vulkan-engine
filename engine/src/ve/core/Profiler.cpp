@@ -1,12 +1,15 @@
 #include "ve/core/Profiler.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <thread>
 
 namespace ve {
 
 namespace {
-std::thread::id g_mainThread = std::this_thread::get_id(); // the thread that loaded the engine
+// The thread that runs the frame loop (set by beginFrame). Atomic: worker
+// threads read it in enter()/leave() to skip their zones.
+std::atomic<std::thread::id> g_mainThread{std::this_thread::get_id()}; // the thread that loaded the engine
 }
 
 Profiler& Profiler::get()
@@ -17,7 +20,7 @@ Profiler& Profiler::get()
 
 void Profiler::beginFrame()
 {
-    g_mainThread = std::this_thread::get_id();
+    g_mainThread.store(std::this_thread::get_id(), std::memory_order_relaxed);
     m_stack.clear();
     for (Zone& z : m_zones) {
         z.frameMs = 0;
@@ -70,11 +73,14 @@ void Profiler::reset()
 
 int Profiler::enter(const char* name)
 {
-    if (!enabled || std::this_thread::get_id() != g_mainThread) return -1;
+    if (!enabled || std::this_thread::get_id() != g_mainThread.load(std::memory_order_relaxed)) return -1;
     const int parent = m_stack.empty() ? -1 : m_stack.back();
     int index = -1;
     for (size_t i = 0; i < m_zones.size(); ++i)
-        if (m_zones[i].parent == parent && m_zones[i].name == name) index = int(i);
+        if (m_zones[i].parent == parent && m_zones[i].name == name) {
+            index = int(i);
+            break;
+        }
     if (index < 0) {
         Zone z;
         z.name = name;

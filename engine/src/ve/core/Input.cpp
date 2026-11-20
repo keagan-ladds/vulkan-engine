@@ -228,7 +228,7 @@ bool Input::actionPressed(const std::string& action) const
 bool Input::actionReleased(const std::string& action) const
 {
     const auto it = m_actions.find(action);
-    if (it == m_actions.end()) return false;
+    if (it == m_actions.end() || !m_rebind.empty()) return false; // like actionDown/actionPressed
     for (Key k : it->second.keys) if (keyReleased(k)) return true;
     for (MouseButton b : it->second.buttons) if (mouseReleased(b)) return true;
     for (GamepadButton b : it->second.pad) if (!gamepadDown(b) && m_prevPadButtons[size_t(b)]) return true;

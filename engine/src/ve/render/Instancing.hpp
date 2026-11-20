@@ -196,6 +196,7 @@ private:
     uint32_t m_visiblePerView = 0;
     uint32_t m_activeViews = 1;
     uint32_t m_drawsThisFrame = 0;
+    std::vector<VkBufferCopy> m_copyRegions; // recordCulling scratch (reused every frame)
     float m_lodScale = 1.0f;
     std::array<uint32_t, kHiZLevels> m_hiz{};
     bool m_hizValid = false;
