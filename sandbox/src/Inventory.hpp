@@ -1,15 +1,15 @@
 #pragma once
 
-// The player's inventory (game side): stacks of items in slots, and its
-// screen (Tab / I): a grid of slots built from the engine's UI elements,
+// The player's inventory (game side): the items there are, and the
+// inventory screen (Tab / I): a grid of slots built from the engine's UI elements,
 // with drag & drop (or click a slot, then another) to move / merge stacks,
 // tooltips and a details panel. Item icons are baked from small meshes
 // (ve::ui::bakeIcon) when the screen is first built.
 
+#include <ve/gameplay/Inventory.hpp>
 #include <ve/scene/Reflection.hpp>
 #include <ve/ui/Gui.hpp>
 
-#include <array>
 #include <memory>
 #include <string>
 
@@ -27,22 +27,12 @@ struct ItemType {
 const ItemType* itemType(const std::string& id);
 void bakeItemIcons(); // all of them, once (needs the renderer)
 
-class Inventory {
+// The player's inventory: the engine's container (ve/gameplay/Inventory.hpp)
+// with Savanna's slot count and the item types' stack limits.
+class Inventory : public ve::Inventory {
 public:
     static constexpr int kSlots = 24;
-    struct Stack {
-        std::string item; // empty = free slot
-        int count = 0;
-    };
-    std::array<Stack, kSlots> slots;
-
-    int add(const std::string& item, int count);    // returns how many didn't fit
-    int remove(const std::string& item, int count); // returns how many were taken
-    int count(const std::string& item) const;
-    void move(int from, int to);                    // merge, or swap
-    void clear() { slots = {}; }
-    ve::Json save() const;
-    void load(const ve::Json& j);
+    Inventory();
 };
 
 // The screen. Lives on a GameObject with a ve::ui::Canvas.
