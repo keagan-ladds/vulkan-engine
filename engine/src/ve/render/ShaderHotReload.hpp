@@ -17,9 +17,11 @@
 // VE_SHADER_HOT_RELOAD=0 to turn it off.
 // =============================================================================
 
+#include "ve/core/Jobs.hpp"
+
 #include <chrono>
 #include <filesystem>
-#include <future>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -56,7 +58,8 @@ private:
     };
     struct Job {
         Entry* entry;
-        std::future<CompileResult> result;
+        jobs::Handle job; // a background pool job running glslc
+        std::shared_ptr<CompileResult> result;
     };
     static CompileResult runCommand(const std::vector<std::string>& args);
     void startChanged();                                  // launches compiles of changed, idle entries

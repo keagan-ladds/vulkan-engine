@@ -388,7 +388,7 @@ void PhysicsWorld::init()
 
     // Scratch memory for each step, and worker threads for the solver.
     m_impl->temp = std::make_unique<JPH::TempAllocatorImpl>(16 * 1024 * 1024);
-    const int threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 1, 4);
+    const int threads = static_cast<int>(jobs::physicsThreadCount()); // (Jolt keeps its own pool: see Jobs.hpp)
     m_impl->jobs = std::make_unique<JPH::JobSystemThreadPool>(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, threads);
 
     m_impl->objectPairs.table = &m_impl->layers;

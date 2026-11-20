@@ -61,12 +61,7 @@ FoliageSystem::FoliageSystem(FoliageWorld world, FoliageSettings settings)
 
 FoliageSystem::~FoliageSystem()
 {
-    {
-        std::lock_guard lock(m_mutex);
-        m_quit = true;
-    }
-    m_cv.notify_all();
-    for (std::thread& w : m_workers) w.join();
+    stopWorkers(); // they read this system: wait for the running ones (a cell each)
     for (auto& [key, cell] : m_cells) destroyBodies(cell);
 }
 
@@ -122,7 +117,6 @@ void FoliageSystem::setExclusions(std::vector<FoliageExclusionShape> shapes, glm
     stopWorkers(); // they read the exclusions
     m_exclusions = std::move(shapes);
     replaceCells(area);
-    startWorker();
 }
 
 void FoliageSystem::ensureGroups(LayerData& layer)
@@ -345,13 +339,13 @@ glm::vec3 FoliageSystem::focusPosition(const glm::vec3& viewer) const
 void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<float(const FoliageSample&)>>& densities,
                             glm::vec4 area)
 {
-    // The worker reads the world and the layers' callbacks: stop it while they change.
+    // The jobs read the world and the layers' callbacks: stop them while they change
+    // (update() starts new ones).
     stopWorkers();
     m_world = std::move(world);
     for (size_t i = 0; i < m_layers.size(); ++i)
         if (i < densities.size() && densities[i]) m_layers[i].desc.density = densities[i];
     replaceCells(area);
-    startWorker();
 }
 
 void FoliageSystem::stopWorkers()
@@ -360,9 +354,8 @@ void FoliageSystem::stopWorkers()
         std::lock_guard lock(m_mutex);
         m_quit = true;
     }
-    m_cv.notify_all();
-    for (std::thread& w : m_workers) w.join();
-    m_workers.clear();
+    // Queued drains never start; running ones see m_quit after their current cell.
+    m_drains.cancelAndWait();
     m_quit = false;
     m_jobs.clear();
     m_results.clear();
@@ -406,24 +399,13 @@ float FoliageSystem::streamProgress() const
     return total == 0 ? 1.0f : float(done) / float(total);
 }
 
-void FoliageSystem::startWorker()
-{
-    if (!m_workers.empty()) return;
-    // Placement is independent per cell: one worker per spare core.
-    // hardware_concurrency() may return 0 ("unknown"): count that as one core.
-    const unsigned cores = std::clamp(std::thread::hardware_concurrency(), 1u, 16u);
-    const unsigned n = std::max(1u, cores - 1u);
-    for (unsigned i = 0; i < n; ++i) m_workers.emplace_back([this] { workerLoop(); });
-}
-
-void FoliageSystem::workerLoop()
+void FoliageSystem::drain(const std::atomic<bool>& cancelled)
 {
     for (;;) {
         Job job;
         {
-            std::unique_lock lock(m_mutex);
-            m_cv.wait(lock, [&] { return m_quit || !m_jobs.empty(); });
-            if (m_quit) return;
+            std::lock_guard lock(m_mutex);
+            if (m_quit || cancelled || m_jobs.empty()) return;
             // Nearest job first: update() keeps m_jobs sorted farthest-first.
             job = m_jobs.back();
             m_jobs.pop_back();
@@ -431,8 +413,12 @@ void FoliageSystem::workerLoop()
         const auto t0 = std::chrono::steady_clock::now();
         std::vector<Instance> instances = generate(job.layer, job.cx, job.cz);
         const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        std::lock_guard lock(m_mutex);
-        m_results.push_back({job.key, job.ticket, std::move(instances), ms});
+        {
+            std::lock_guard lock(m_mutex);
+            m_results.push_back({job.key, job.ticket, std::move(instances), ms});
+        }
+        // Other systems' jobs are waiting: give the worker back (update() submits again).
+        if (jobs::yieldSuggested()) return;
     }
 }
 
@@ -528,6 +514,9 @@ void FoliageSystem::preload(const glm::vec3& viewer)
     const glm::vec3 focus = focusPosition(viewer);
     const auto t0 = std::chrono::steady_clock::now();
     size_t count = 0;
+    // The missing cells, in order; generated in parallel (placement is a pure
+    // function of the cell), then added here in that same order.
+    std::vector<Cell> cells;
     for (uint32_t li = 0; li < m_layers.size(); ++li) {
         const FoliageLayer& L = m_layers[li].desc;
         const float cs = m_settings.cellSize;
@@ -537,18 +526,21 @@ void FoliageSystem::preload(const glm::vec3& viewer)
         for (int cz = range.y; cz <= range.w; ++cz) {
             for (int cx = range.x; cx <= range.z; ++cx) {
                 if (cellDistance(cx, cz, v) > L.viewDistance || !cellInBounds(cx, cz)) continue;
-                const uint64_t key = cellKey(li, cx, cz);
-                if (m_cells.count(key)) continue;
-                Cell cell{li, cx, cz, m_nextTicket++};
-                cell.instances = generate(li, cx, cz);
-                applyInstances(cell, SIZE_MAX);
-                count += cell.instances.size();
-                if (cellDistance(cx, cz, glm::vec2(focus.x, focus.z)) < L.colliderDistance) {
-                    cell.wantBodies = true;
-                }
-                m_cells.emplace(key, std::move(cell));
+                if (m_cells.count(cellKey(li, cx, cz))) continue;
+                cells.push_back(Cell{li, cx, cz, m_nextTicket++});
             }
         }
+    }
+    jobs::parallelFor(cells.size(), [&](size_t i) { cells[i].instances = generate(cells[i].layer, cells[i].cx, cells[i].cz); });
+    for (Cell& cell : cells) {
+        const FoliageLayer& L = m_layers[cell.layer].desc;
+        applyInstances(cell, SIZE_MAX);
+        count += cell.instances.size();
+        if (cellDistance(cell.cx, cell.cz, glm::vec2(focus.x, focus.z)) < L.colliderDistance) {
+            cell.wantBodies = true;
+        }
+        const uint64_t key = cellKey(cell.layer, cell.cx, cell.cz);
+        m_cells.emplace(key, std::move(cell));
     }
     // Colliders without a budget too.
     for (auto& [key, cell] : m_cells) {
@@ -570,7 +562,6 @@ void FoliageSystem::preload(const glm::vec3& viewer)
 void FoliageSystem::update(float)
 {
     VE_PROFILE("Foliage streaming");
-    startWorker();
     const glm::vec3 viewer3 = viewerPosition();
     const glm::vec2 viewer(viewer3.x, viewer3.z);
     const glm::vec3 focus3 = focusPosition(viewer3);
@@ -637,7 +628,12 @@ void FoliageSystem::update(float)
         results.swap(m_results);
         m_stats.pending = static_cast<uint32_t>(m_jobs.size());
     }
-    if (!newJobs.empty()) m_cv.notify_all();
+    // Placement is independent per cell: up to one drain per pool worker.
+    // (A drain that just found the queue empty may still count as active:
+    // the next frame tops up again.)
+    if (m_stats.pending > 0) {
+        m_drains.topUp(std::min<size_t>(jobs::workerCount(), m_stats.pending), [this](const std::atomic<bool>& c) { drain(c); });
+    }
     for (Result& r : results) {
         m_stats.generateMs = m_stats.generateMs * 0.95f + r.ms * 0.05f;
         auto it = m_cells.find(r.key);
