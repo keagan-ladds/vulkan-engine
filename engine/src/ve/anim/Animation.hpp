@@ -147,6 +147,7 @@ private:
     std::vector<Layer> m_layers{Layer{"Base"}};
     std::vector<Event> m_events;
     std::vector<Pose> m_base, m_scratch; // per node, reused every frame
+    mutable std::vector<Rest> m_sampled;  // samplePose's per-clip pose, per node
 };
 
 // Two-bone inverse kinematics (legs, arms) after the animation: bends the
@@ -198,6 +199,8 @@ public:
     glm::vec3 footTarget(int side) const { return m_targets[side]; } // 0 left, 1 right
 
 private:
+    // The TwoBoneIKs start() added. Raw pointers, but only used after
+    // GameObject::hasComponent() confirmed they're still there.
     TwoBoneIK* m_legs[2] = {nullptr, nullptr};
     uint64_t m_hipsId = 0;
     float m_hips = 0.0f;
@@ -250,6 +253,7 @@ private:
     float m_error = 0.0f;
     glm::vec3 m_origin{0.0f}, m_direction{0.0f, 0.0f, 1.0f};
     bool m_resolved = false;
+    std::vector<GameObject*> m_jointObjects; // solve()'s scratch (found by id each call, never kept)
 };
 
 // Look-at: an AimIK on the spine, chest and head (most of the turn in the

@@ -34,10 +34,10 @@ public:
     void start() override { rebuild(); }
     void onDestroy() override;
     void rebuild();
-    GameObject* instanceRoot() const { return m_root; }
+    GameObject* instanceRoot() const; // null until started / if it was destroyed
 
 private:
-    GameObject* m_root = nullptr;
+    uint64_t m_rootId = 0; // by id: the editor or game may destroy the spawned nodes
 };
 
 class PrimitiveRenderer : public Component {
@@ -57,6 +57,9 @@ public:
     void rebuild();
 
 private:
+    MeshRenderer* liveRenderer() const; // m_renderer if it's still on this object
+    // The MeshRenderer this added next to itself. A raw pointer, but only used
+    // after hasComponent() confirmed it's still there (see liveRenderer).
     MeshRenderer* m_renderer = nullptr;
     std::shared_ptr<StandardMaterial> m_material;
 };

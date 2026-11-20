@@ -188,6 +188,14 @@ public:
     // started), and is freed at the end of the frame. So a component may remove
     // itself or a sibling from inside a hook.
     void removeComponent(Component* component);
+    // Is `component` (maybe a remembered pointer) still a live component of
+    // this object? Only compares addresses, so it's safe on a dangling one.
+    bool hasComponent(const Component* component) const
+    {
+        for (const auto& c : m_components)
+            if (c.get() == component) return !c->m_removed;
+        return false;
+    }
     // Includes components removed this frame (Component::isRemoved()).
     const std::vector<std::unique_ptr<Component>>& components() const { return m_components; }
 
