@@ -59,7 +59,8 @@ EXCEPTIONS = {
     ("scene/SaveGame.cpp", "physics"),
     # ve::debug drawing (collider and navmesh debug lines); in turn
     # debug::drawEngineChannels draws them (a .cpp-level cycle only).
-    ("physics/Physics.cpp", "debug"),
+    # (Physics: only its debug-drawing file.)
+    ("physics/PhysicsDebug.cpp", "debug"),
     ("nav/Navigation.cpp", "debug"),
     # Ambient layers weigh themselves by the terrain biomes / foliage around the listener.
     ("audio/Ambience.cpp", "world"),
