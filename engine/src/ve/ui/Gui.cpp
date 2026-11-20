@@ -4,7 +4,7 @@
 #include "ve/core/Engine.hpp"
 #include "ve/core/Input.hpp"
 #include "ve/core/Log.hpp"
-#include "ve/editor/Editor.hpp"
+#include "ve/editor/EditorState.hpp"
 #include "ve/gfx/Samplers.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/render/Texture.hpp"
@@ -720,7 +720,7 @@ void System::forget(const Element* e)
 bool System::shownNow(const Canvas& c, Engine& engine) const
 {
     if (!c.visible || c.fade <= 0.01f || !c.isActive()) return false;
-    if (c.hideInEditor && engine.editor() && engine.editor()->paused()) return false;
+    if (c.hideInEditor && editorPaused(engine)) return false;
     return true;
 }
 
