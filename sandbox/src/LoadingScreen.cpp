@@ -2,6 +2,7 @@
 
 #include <ve/core/Engine.hpp>
 #include <ve/core/Env.hpp>
+#include <ve/render/Renderer.hpp>
 #include <ve/scene/GameObject.hpp>
 
 #include <imgui.h>

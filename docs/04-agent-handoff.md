@@ -129,7 +129,8 @@ north (-Z), 90 looks west (-X).
   a game's CMakeLists (`ve_compile_shaders`, `ve_setup_game`) must use cache
   variables (`Vulkan_GLSLC_EXECUTABLE`, `VE_OUTPUT_DIR`, ...) instead. Re-run the
   template check above after touching `cmake/`.
-- **Jolt stays inside `ve/physics/Physics.cpp`.** Don't include Jolt headers
+- **Jolt stays inside `ve/physics/*.cpp`** (shared through the internal
+  `JoltInternal.hpp`; the layering check enforces it). Don't include Jolt headers
   anywhere else: its SIMD flags/defines are only set up for `ve_engine`, and
   keeping them private means games never depend on Jolt.
 - **Physics order per fixed step:** `Scene::fixedUpdate` (characters move,

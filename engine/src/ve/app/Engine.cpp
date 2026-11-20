@@ -1,4 +1,5 @@
 #include "ve/core/Engine.hpp"
+#include "ve/render/Renderer.hpp"
 #include "ve/net/Network.hpp"
 #include "ve/debug/Debug.hpp"
 

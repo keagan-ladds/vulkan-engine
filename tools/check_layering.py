@@ -9,8 +9,10 @@ depend on. Exit code 1 if there are any.
 
 The rule: core <- gfx <- render <- scene; the feature modules (physics, anim,
 gameplay, nav, net, world) build on the scene; assets, audio, ui and debug sit
-on top; the editor may use everything. A module never reaches sideways or
-upwards, except for the known exceptions listed below (each with its reason).
+on top; the editor may use everything, and app (the composition root that
+creates and wires every module) sits above it all. A module never reaches
+sideways or upwards, except for the known exceptions listed below (each with
+its reason). Also: Jolt stays private to the physics module (D13).
 """
 
 import pathlib
@@ -35,17 +37,19 @@ ALLOWED = {
     "debug": {"core", "gfx", "render", "scene", "physics", "nav"},
     "ui": {"core", "gfx", "render", "scene", "assets", "audio", "physics", "debug"},
     "editor": "*",  # the editor may depend on everything
+    "app": "*",  # the composition root (Engine.cpp): creates and wires every module
 }
 
 # Files that aren't part of any module's layering.
 EXEMPT = {
-    "core/Engine.hpp",  # the composition root: creates and wires every module
-    "core/Engine.cpp",
     "ve.hpp",  # the umbrella header games include
 }
 
 # Known exceptions: (file relative to engine/src/ve, module it may include).
 EXCEPTIONS = {
+    # The Engine header (the service locator every module may include) holds
+    # EngineConfig, whose renderer options are plain data; no GPU types.
+    ("core/Engine.hpp", "render"),
     # The renderer reads scene components (MeshRenderer, lights, Camera) as
     # plain data each frame; the doc's "the renderer reads the scene".
     ("render/SceneGatherer.cpp", "scene"),
@@ -71,6 +75,8 @@ EXCEPTIONS = {
 }
 
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]ve/([A-Za-z_]+)/')
+# Jolt (and the physics module's internal header) only in ve/physics/*.cpp.
+JOLT = re.compile(r'^\s*#\s*include\s*[<"](Jolt/|ve/physics/JoltInternal\.hpp|JoltInternal\.hpp)')
 
 
 def main() -> int:
@@ -88,6 +94,9 @@ def main() -> int:
             continue
         allowed = ALLOWED[module]
         for n, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if JOLT.match(line) and not (module == "physics" and (path.suffix == ".cpp" or path.name == "JoltInternal.hpp")):
+                violations.append(f"{rel}:{n}: Jolt outside ve/physics/*.cpp: {line.strip()}")
+                continue
             m = INCLUDE.match(line)
             if not m:
                 continue

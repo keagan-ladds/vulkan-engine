@@ -8,7 +8,8 @@ vulkan-engine/
 ├── cmake/                  CMake helpers: Dependencies, Shaders (ve_compile_shaders), Game (ve_setup_game)
 ├── docs/                   this planning folder
 ├── engine/                 ve_engine   – static library, the core engine (namespace ve)
-│   ├── src/ve/core/        Engine loop, Window, Input, Time, Log
+│   ├── src/ve/app/         Engine.cpp: the composition root (creates + wires every module, main loop)
+│   ├── src/ve/core/        Engine.hpp (service locator), Window, Input, Time, Log, Jobs
 │   ├── src/ve/gfx/         Thin Vulkan layer ("RHI"): Device, Swapchain, Buffer, Image,
 │   │                       Bindless descriptors, Pipelines, Samplers
 │   ├── src/ve/render/      Renderer, RenderGraph, RenderPass, Material, Shader, Mesh,
@@ -67,10 +68,14 @@ sandbox ──► ve_effects ──► ve_engine
   extension points instead of including the ones above them (D23):
   core ← gfx ← render ← scene; physics, anim, gameplay and net build on
   scene; world and nav on those; assets, audio, ui and debug on top; the
-  editor may use everything. `Engine` is the composition root: the only place
-  that wires modules together (each module's `registerXTypes(TypeRegistry&)`,
-  `SkinningSystem::addGatherer`, render's `DebugLineBuffer`,
-  `Engine::atShutdown`, `Engine::editorPaused`). `tools/check_layering.py`
+  editor may use everything; `app/Engine.cpp` sits above it all. It is the
+  composition root, the only place that creates the modules and wires them
+  together. `core/Engine.hpp` is the service locator every module may include
+  (`Engine::get().renderer()`...): it only forward-declares the subsystems,
+  so including it doesn't pull higher modules in. Lower modules offer
+  extension points that the root connects: each module's
+  `registerXTypes(TypeRegistry&)`, `SkinningSystem::addGatherer`, render's
+  `DebugLineBuffer`, `Engine::atShutdown`, `Engine::editorPaused`. `tools/check_layering.py`
   holds the allowed-dependency table and the few known exceptions (each with
   its reason) and fails on anything else; run it after changing includes.
 - **Threads:** one engine job pool (`ve/core/Jobs.hpp`, D24): hardware threads
@@ -777,7 +782,13 @@ GameObject / Component) is the session: offline by default, `host(port)` or
 ## 6. Physics
 
 Backed by **Jolt Physics**. Jolt is linked `PRIVATE` and only included by
-`ve/physics/Physics.cpp`, so engine headers and games never see Jolt types.
+`ve/physics/*.cpp`, which share its types through the internal
+`ve/physics/JoltInternal.hpp` (never included by a header or another
+module; `tools/check_layering.py` enforces it), so engine headers and games
+never see Jolt types. The module is split by concern: `PhysicsWorld.cpp`
+(world, step, contacts, layers), `Collider.cpp`, `Rigidbody.cpp`,
+`CharacterController.cpp`, `Joints.cpp`, `PhysicsQueries.cpp`,
+`PhysicsDebug.cpp`, `PhysicsReflection.cpp`.
 
 - **`Collider`** is an immutable, shared shape handle: `box`, `sphere`,
   `capsule`, `cylinder`, `convexHull(points|MeshData)`, `mesh(MeshData)`

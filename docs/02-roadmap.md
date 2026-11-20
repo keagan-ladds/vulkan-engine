@@ -503,7 +503,8 @@ and ask the host for everything else (decision D19).
 Done in the review: the items listed in the status snapshot. Found but left
 for later (bigger changes, or behaviour worth deciding deliberately):
 - [x] Split `Renderer` into `SceneGatherer`, `ShadowSetup`, `LightClusterer`, `FrameCapture`; `Editor` and `Physics.cpp` into one file per part
-- [ ] Layering: `Engine` (the composition root) lives in `core`; render → anim (`prepareSkinning`) and `DebugLinePass` → debug; `Reflection.cpp` registers every module's types; `Model` holds a mutable physics collider cache
+- [x] Layering (D23, D26): composition root in `app/Engine.cpp`, `core/Engine.hpp` a forward-declaring service locator; per-module type registration; skinning gatherers; render-side debug line buffer; mesh collider cache in physics; `tools/check_layering.py` enforces the table and Jolt's privacy
+- [ ] Shrink the layering exceptions listed in `tools/check_layering.py` (scene → assets / anim / physics in a few files, physics / nav ↔ debug, audio → world, world → gameplay / ui)
 - [x] Async uploads: a per-frame staging ring flushed at the start of the frame (`Device::flushUploads`); no GPU wait per streamed mesh
 - [x] Upload only changed material slots (`MaterialDirtySet`)
 - [ ] Motion vectors for skinned meshes

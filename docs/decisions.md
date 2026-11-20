@@ -252,3 +252,19 @@ started cores − 1 threads per system); a work-stealing scheduler with fibers
 - Low-pass cutoffs are handed to the audio thread through an atomic and
   applied in a custom miniaudio node's process callback (the main thread used
   to re-initialise a filter the audio thread was running).
+
+### D26. A composition root above the modules; big classes split by concern (2026-11)
+**Chosen:** `Engine`'s implementation, which creates every module, wires
+their extension points and runs the loop, lives in `ve/app/Engine.cpp`, the
+top layer. `ve/core/Engine.hpp` stays where every module can include it as
+the service locator, but only forward-declares the subsystems
+(`RendererSettings` moved to its own plain-data header for `EngineConfig`).
+**Alternatives:** moving the whole `Engine` (header included) to `app/`: every
+module that calls `Engine::get()` would then include upwards; replacing the
+locator with injected dependencies (a large API change for games).
+**Also:** classes that had grown past what one person can hold in mind are
+split by concern without API changes: `Renderer` owns `SceneGatherer`,
+`ShadowSetup`, `LightClusterer` and `FrameCapture`; the `Editor` is one class
+across `Editor*.cpp` files per panel (the panels share most state); physics is
+one file per component plus `JoltInternal.hpp`, which keeps D13's rule (Jolt
+only in `ve/physics/*.cpp`, now checked by `tools/check_layering.py`).

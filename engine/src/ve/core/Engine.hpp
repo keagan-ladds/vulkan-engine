@@ -14,12 +14,17 @@
 // Anywhere in game code: ve::Engine::get().input() etc., or the shortcuts on
 // GameObject/Component (input(), time(), renderer(), assets(), audio()).
 // See docs/01-architecture.md §3 for the exact order of a frame.
+//
+// This header is the engine-wide service locator, so every module may include
+// it: it only forward-declares the subsystems (include e.g. ve/render/
+// Renderer.hpp to use renderer()). The implementation, which creates and
+// wires every module, is the composition root in ve/app/Engine.cpp.
 // =============================================================================
 
 #include "ve/core/Jobs.hpp" // the worker pool the Engine shuts down (also sizes physics threads)
 #include "ve/core/Input.hpp"
 #include "ve/core/Time.hpp"
-#include "ve/render/Renderer.hpp"
+#include "ve/render/RendererSettings.hpp" // plain data held by EngineConfig
 
 #include <filesystem>
 #include <functional>
@@ -30,6 +35,7 @@
 namespace ve {
 
 class Window;
+class Renderer;
 class Scene;
 class AssetManager;
 class AudioSystem;
