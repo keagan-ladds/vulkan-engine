@@ -71,7 +71,8 @@ void Weather::start()
     }
     // Rain is a particle emitter that follows the camera around.
     auto& rainObj = scene().spawn("Rain");
-    m_rainObject = &rainObj;
+    rainObj.hideInHierarchy = true; // owned by this Weather: edit Weather, not its rain
+    m_rainId = rainObj.id();
     m_rain = &rainObj.addComponent<ParticleEmitter>();
     ParticleSettings& s = m_rain->settings;
     s.rate = 0.0f;
@@ -108,6 +109,26 @@ ve::AudioSource* Weather::addLoop(ve::GameObject& owner, const std::shared_ptr<v
     src.volume = 0.0f;
     src.playOnStart = true;
     return &src;
+}
+
+Weather::RainParts Weather::rainParts() const
+{
+    RainParts parts;
+    parts.object = m_rainId ? scene().findById(m_rainId) : nullptr;
+    if (!parts.object) return parts;
+    // A component pointer is only valid while the object still owns it. Compare
+    // addresses against the live list (never dereference a possibly stale one).
+    auto owned = [&](auto* ptr) -> decltype(ptr) {
+        if (!ptr) return nullptr;
+        for (const auto& c : parts.object->components())
+            if (c.get() == ptr) return ptr;
+        return nullptr;
+    };
+    parts.emitter = owned(m_rain);
+    parts.rain = owned(m_rainAudio);
+    parts.storm = owned(m_stormAudio);
+    parts.wind = owned(m_windAudio);
+    return parts;
 }
 
 void Weather::updateLightning(float dt)
@@ -163,17 +184,18 @@ void Weather::update(float dt)
     r.setGlobalParam(SlotWind, glm::vec4(dir, m_current.wind * gust, gust));
     r.setGlobalParam(SlotWeather, glm::vec4(m_wetness, m_current.rain, m_current.coverage, m_current.fog));
 
-    if (m_rain) m_rain->settings.rate = m_current.rain * 2500.0f;
+    const RainParts parts = rainParts();
+    if (parts.emitter) parts.emitter->settings.rate = m_current.rain * 2500.0f;
     // Crossfade the sound layers. With no storm sound, the rain loop covers storms too.
-    const float storm = m_stormAudio ? m_current.thunder : 0.0f;
+    const float storm = parts.storm ? m_current.thunder : 0.0f;
     auto setVolume = [](ve::AudioSource* src, float v) {
         if (!src) return;
         src->volume = v;
         src->applySettings();
     };
-    setVolume(m_rainAudio, m_current.rain * (1.0f - storm) * rainVolume);
-    setVolume(m_stormAudio, std::max(storm * stormVolume, stormBackground));
-    setVolume(m_windAudio, std::min(m_current.wind / std::max(windVolumeAt, 0.1f), 1.6f) * windVolume);
+    setVolume(parts.rain, m_current.rain * (1.0f - storm) * rainVolume);
+    setVolume(parts.storm, std::max(storm * stormVolume, stormBackground));
+    setVolume(parts.wind, std::min(m_current.wind / std::max(windVolumeAt, 0.1f), 1.6f) * windVolume);
 
     // For ambience (AmbientLayer parameters) and game code: 0..1 each.
     audio().setParameter("rain", std::clamp(m_current.rain, 0.0f, 1.0f));
@@ -184,21 +206,22 @@ void Weather::update(float dt)
 
 void Weather::onDestroy()
 {
-    if (m_rainObject) m_rainObject->destroy();
-    m_rainObject = nullptr;
+    if (ve::GameObject* o = m_rainId ? scene().findById(m_rainId) : nullptr) o->destroy();
+    m_rainId = 0;
     m_rain = nullptr;
     m_rainAudio = m_stormAudio = m_windAudio = nullptr;
 }
 
 void Weather::lateUpdate(float)
 {
-    if (!m_rainObject) return;
+    ve::GameObject* rainObject = m_rainId ? scene().findById(m_rainId) : nullptr;
+    if (!rainObject) return;
     if (ve::Camera* cam = scene().mainCamera()) {
         const glm::vec3 p = cam->transform().position();
         const glm::vec2 dir = glm::normalize(windDirection);
         // Spawn upwind so drops blow into view.
-        m_rainObject->transform().setPosition(p + glm::vec3(-dir.x, 0.0f, -dir.y) * m_current.wind * 0.6f +
-                                              glm::vec3(0.0f, 12.0f, 0.0f));
+        rainObject->transform().setPosition(p + glm::vec3(-dir.x, 0.0f, -dir.y) * m_current.wind * 0.6f +
+                                            glm::vec3(0.0f, 12.0f, 0.0f));
     }
 }
 
