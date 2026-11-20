@@ -246,4 +246,8 @@ private:
     float m_appliedLowpass = -1.0f;
 };
 
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerAudioTypes(TypeRegistry& r);
+
 } // namespace ve

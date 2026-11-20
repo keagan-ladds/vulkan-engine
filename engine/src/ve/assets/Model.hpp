@@ -7,7 +7,6 @@
 // animated models an Animator; see ve/anim/Animation.hpp).
 // =============================================================================
 
-#include "ve/physics/Physics.hpp"
 #include "ve/render/Mesh.hpp"
 
 #include <memory>
@@ -45,8 +44,6 @@ public:
     std::vector<std::shared_ptr<Texture>> textures;
     // CPU copy of each mesh's geometry (for colliders, picking, ...).
     std::vector<MeshData> meshData;
-    // Lazily built static mesh colliders, shared by every instance of the model.
-    mutable std::vector<Collider> meshColliders;
     std::vector<ModelNode> nodes;
     std::vector<int> roots;
     std::vector<ModelSkin> skins;

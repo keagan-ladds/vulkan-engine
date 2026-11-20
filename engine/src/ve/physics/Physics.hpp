@@ -49,6 +49,7 @@
 namespace ve {
 
 struct MeshData;
+class Mesh;
 class Scene;
 class Rigidbody;
 class CharacterController;
@@ -199,6 +200,11 @@ public:
     bool paused = false;
     float lastStepMs = 0.0f; // CPU time of the last step (shown in the F1 overlay)
 
+    // An exact static mesh collider (Collider::mesh(data)) for a shared mesh,
+    // built on first use and shared by every caller while the mesh lives (e.g.
+    // every instance of a model with staticColliders). `data` is its CPU copy.
+    Collider meshCollider(const std::shared_ptr<const Mesh>& mesh, const MeshData& data);
+
     // --- Engine internal ---------------------------------------------------------
     void step(Scene& scene, float dt);           // once per fixed update
     void interpolate(Scene& scene, float alpha); // after the fixed updates of a frame
@@ -208,6 +214,8 @@ public:
 
 private:
     std::unique_ptr<Impl> m_impl;
+    struct MeshColliderCache; // meshCollider()'s (Physics.cpp)
+    std::shared_ptr<MeshColliderCache> m_meshColliders;
 };
 
 // Simple collider shapes described by numbers (editable in the editor and
@@ -425,4 +433,9 @@ class DistanceJoint : public Joint {
 public:
     DistanceJoint() : Joint(Type::Distance) {}
 };
+
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerPhysicsTypes(TypeRegistry& r);
+
 } // namespace ve

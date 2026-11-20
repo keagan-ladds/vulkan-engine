@@ -147,6 +147,16 @@ std::shared_ptr<const FoliageMeshes> MeshLibrary::get(Renderer& renderer, const 
     auto it = library().find(name);
     if (it == library().end()) return nullptr;
     if (it->second.built) return it->second.built;
+    // The built meshes live in a static table: drop them at Engine shutdown,
+    // before the renderer goes (hooked once per Engine, when the first is built).
+    static bool releaseHooked = false;
+    if (!releaseHooked && Engine::exists()) {
+        releaseHooked = true;
+        Engine::get().atShutdown([] {
+            releaseMeshes();
+            releaseHooked = false;
+        });
+    }
     auto meshes = std::make_shared<const FoliageMeshes>(it->second.builder(renderer));
     it->second.built = meshes;
     return meshes;

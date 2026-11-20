@@ -292,4 +292,12 @@ private:
     SkinningSystem* m_system = nullptr;
 };
 
+// Hooks SkinnedMeshRenderers into the renderer's skinning pass (render can't
+// include anim). The Engine calls it once, after creating the renderer.
+void registerSkinnedMeshes(SkinningSystem& system);
+
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerAnimationTypes(TypeRegistry& r);
+
 } // namespace ve

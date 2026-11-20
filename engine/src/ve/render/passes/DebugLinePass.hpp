@@ -1,5 +1,6 @@
 #pragma once
-// Draws ve::debug lines (ve/debug/Debug.hpp) over the finished image: each
+// Draws DebugLineBuffer's lines (ve/render/DebugLines.hpp; ve::debug fills it)
+// over the finished image: each
 // segment is a screen-space quad (any thickness), depth-tested against
 // SceneDepth; the hidden parts are drawn faint.
 

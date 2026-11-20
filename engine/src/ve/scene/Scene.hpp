@@ -46,7 +46,8 @@ public:
     // Spawns the node hierarchy of an imported model (glTF) as GameObjects
     // with MeshRenderers. With staticColliders, every mesh node also gets a
     // static Rigidbody using the exact triangle mesh (buildings, ruins...).
-    // Returns the root.
+    // Returns the root. (Defined in assets/ModelInstantiate.cpp: it builds
+    // anim and physics components, which the scene module can't include.)
     GameObject& instantiate(const Model& model, GameObject* parent = nullptr, bool staticColliders = false);
 
     GameObject* find(const std::string& name) const;

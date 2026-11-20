@@ -178,4 +178,8 @@ private:
     std::shared_ptr<StandardMaterial> m_material;
 };
 
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerPlacementTypes(TypeRegistry& r);
+
 } // namespace ve

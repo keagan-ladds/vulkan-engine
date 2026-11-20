@@ -1,5 +1,4 @@
 #include "ve/editor/Editor.hpp"
-#include "ve/editor/EditorState.hpp"
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
@@ -104,11 +103,6 @@ glm::vec3 placementPoint(const Engine& engine, const ViewProjector& view)
 // -----------------------------------------------------------------------------
 // Setup / modes
 // -----------------------------------------------------------------------------
-
-bool editorPaused(Engine& engine)
-{
-    return engine.editor() && engine.editor()->paused();
-}
 
 void Editor::init(Engine& engine)
 {

@@ -76,4 +76,8 @@ private:
     Interactable* m_focus = nullptr;
 };
 
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerInteractionTypes(TypeRegistry& r);
+
 } // namespace ve

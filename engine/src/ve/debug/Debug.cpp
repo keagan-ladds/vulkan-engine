@@ -17,8 +17,8 @@ namespace ve::debug {
 
 namespace {
 struct State {
-    std::vector<Line> lines;
-    std::vector<double> lineExpiry; // < 0: this frame
+    std::vector<Line>& lines = DebugLineBuffer::get().lines; // what DebugLinePass draws
+    std::vector<double> lineExpiry; // per line; < 0: this frame
     std::vector<Label> labels;
     std::vector<double> labelExpiry;
     ChannelMap channels{

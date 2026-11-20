@@ -2,7 +2,8 @@
 
 // =============================================================================
 // SkinningSystem - GPU skinning for every SkinnedMeshRenderer (engine
-// internal; see ve/anim/Animation.hpp for the components).
+// internal; see ve/anim/Animation.hpp for the components, which register
+// themselves through addGatherer).
 //
 // Shared buffers, like InstanceSystem's (set 0, bindings 10-13 in ve.glsl):
 //   rest     rest-pose vertices of every skinned mesh source (Vertex layout)
@@ -22,6 +23,7 @@
 
 #include <glm/glm.hpp>
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -30,6 +32,8 @@
 namespace ve {
 
 class Renderer;
+class Scene;
+class MeshRenderer;
 
 // A skinned mesh as loaded (shared by every instance of the model).
 struct SkinnedMeshSource {
@@ -54,6 +58,15 @@ public:
 
     Instance create(const std::shared_ptr<const SkinnedMeshSource>& source);
     void destroy(Instance& instance);
+
+    // What to skin comes from gatherers: render can't see the animation module
+    // (whose SkinnedMeshRenderer does the work), so anim adds one at startup
+    // (registerSkinnedMeshes, called by the Engine). Each frame Renderer::gatherScene
+    // runs them in order: each add()s the joint matrices of `scene`'s visible
+    // skinned renderers and lists them in `deformed`.
+    using Gatherer = std::function<void(Scene& scene, SkinningSystem& system, std::vector<const MeshRenderer*>& deformed)>;
+    void addGatherer(Gatherer gatherer) { m_gatherers.push_back(std::move(gatherer)); }
+    const std::vector<Gatherer>& gatherers() const { return m_gatherers; }
 
     // Per frame: collect what to skin (Renderer::gatherScene), then record (SkinningPass).
     void beginFrame(uint32_t slot);
@@ -87,6 +100,7 @@ private:
     std::map<const SkinnedMeshSource*, SourceEntry> m_sources;
     std::vector<std::shared_ptr<const SkinnedMeshSource>> m_keepAlive;
     std::vector<Job> m_jobs;
+    std::vector<Gatherer> m_gatherers;
     uint32_t m_slot = 0, m_matrixCount = 0;
     PipelineHandle m_pipeline;
 };

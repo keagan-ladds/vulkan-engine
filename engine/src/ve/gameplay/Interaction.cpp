@@ -93,3 +93,30 @@ bool Interactor::interact()
 }
 
 } // namespace ve
+
+// -----------------------------------------------------------------------------
+// Reflection
+// -----------------------------------------------------------------------------
+
+#include "ve/scene/Reflection.hpp"
+
+namespace ve {
+
+void registerInteractionTypes(TypeRegistry& r)
+{
+    r.add<Interactable>("Interactable", [](TypeBuilder<Interactable>& t) {
+        t.category("Gameplay");
+        t.field("prompt", &Interactable::prompt).tooltip("shown while looked at (what using does is set from code: onUse)");
+        t.field("reach", &Interactable::reach).range(0.0f, 50.0f).speed(0.05f);
+        t.field("focusOffset", &Interactable::focusOffset).tooltip("local point aimed at when it has no collider");
+    });
+    r.add<Interactor>("Interactor", [](TypeBuilder<Interactor>& t) {
+        t.category("Gameplay");
+        t.field("action", &Interactor::action).tooltip("Input action that uses the focus");
+        t.field("maxReach", &Interactor::maxReach).range(0.0f, 50.0f);
+        t.field("coneDegrees", &Interactor::coneDegrees).range(0.0f, 90.0f);
+        t.field("useMainCamera", &Interactor::useMainCamera);
+    });
+}
+
+} // namespace ve

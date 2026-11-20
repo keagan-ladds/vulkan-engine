@@ -229,3 +229,9 @@ private:
 };
 
 } // namespace ve::net
+
+namespace ve {
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerNetworkTypes(TypeRegistry& r);
+} // namespace ve

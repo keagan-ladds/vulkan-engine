@@ -369,4 +369,8 @@ private:
     float m_sinceCheck = 0.0f; // edit-state checks are throttled (they serialize the fields)
 };
 
+class TypeRegistry;
+// Reflection (scene files, editor): this file's components. The Engine calls it at startup.
+void registerTerrainTypes(TypeRegistry& r);
+
 } // namespace ve

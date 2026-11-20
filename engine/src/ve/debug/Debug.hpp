@@ -22,6 +22,8 @@
 // controllers", "Navmesh", "Nav agents" (paths, destinations).
 // =============================================================================
 
+#include "ve/render/DebugLines.hpp"
+
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -75,11 +77,7 @@ void setChannel(const std::string& channel, bool on);
 const ChannelMap& channels();
 
 // --- Engine internal -----------------------------------------------------------------------
-struct Line {
-    glm::vec4 a;     // xyz, w = thickness
-    glm::vec4 b;     // xyz, w = 1: depth tested
-    glm::vec4 color; // sRGB
-};
+using Line = DebugLine; // kept in render's DebugLineBuffer, which DebugLinePass draws
 struct Label {
     glm::vec3 position;
     std::string text;

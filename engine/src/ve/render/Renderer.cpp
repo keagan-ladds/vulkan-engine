@@ -1,5 +1,4 @@
 #include "ve/render/Renderer.hpp"
-#include "ve/anim/Animation.hpp"
 #include "ve/render/ShaderHotReload.hpp"
 
 #include "ve/core/Log.hpp"
@@ -726,11 +725,7 @@ void Renderer::gatherScene(Scene& scene)
     // Their vertices are rewritten on the GPU every frame, so their draw items
     // are flagged `deforming` (the point-shadow face cache must not trust them).
     m_deforming.clear();
-    scene.forEach<SkinnedMeshRenderer>([&](SkinnedMeshRenderer& s) {
-        if (!s.isActive() || !s.visible) return;
-        s.prepareSkinning(*m_skinning);
-        m_deforming.push_back(&s);
-    });
+    for (const auto& gather : m_skinning->gatherers()) gather(scene, *m_skinning, m_deforming);
     std::sort(m_deforming.begin(), m_deforming.end());
     // Last frame's world matrices (motion vectors for moving objects). One
     // persistent map, stamped with the frame that last saw each renderer:

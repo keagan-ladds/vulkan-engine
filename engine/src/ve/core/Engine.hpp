@@ -90,6 +90,9 @@ public:
     PhysicsWorld& physics() { return *m_physics; }
     UiLayer& ui() { return *m_ui; }
     Editor* editor() { return m_editor.get(); } // null if EngineConfig::enableEditor is false
+    // The editor is in Edit mode (game paused); false without an editor. For
+    // modules that may not include the editor (ui, gameplay, ...).
+    bool editorPaused() const;
     const EngineConfig& config() const { return m_config; }
 
     // Pauses gameplay like the editor's Edit mode: no fixed steps or physics,

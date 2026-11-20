@@ -61,7 +61,7 @@ public:
     static void add(const std::string& name, Builder builder);
     // Built on first use, then cached until releaseMeshes(); null if unknown.
     static std::shared_ptr<const FoliageMeshes> get(Renderer& renderer, const std::string& name);
-    static void releaseMeshes(); // GPU meshes go (the Engine calls this at shutdown); builders stay
+    static void releaseMeshes(); // GPU meshes go (done at Engine shutdown); builders stay
 
     static std::vector<std::string> names();
 };
@@ -267,5 +267,9 @@ private:
     float m_sinceBuild = 1e6f;
     float m_sinceCheck = 1e6f; // since state() / exclusions were last compared
 };
+
+class TypeRegistry;
+// Reflection (scene files, editor): this file's components. The Engine calls it at startup.
+void registerVegetationTypes(TypeRegistry& r);
 
 } // namespace ve

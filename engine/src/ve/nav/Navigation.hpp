@@ -249,4 +249,8 @@ private:
     PushedParams m_pushed{};      // what applyParams last gave the crowd
 };
 
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerNavigationTypes(TypeRegistry& r);
+
 } // namespace ve
