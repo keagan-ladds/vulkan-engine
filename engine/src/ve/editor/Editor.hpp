@@ -83,6 +83,8 @@ private:
     void endEdit(const std::string& label);
     void afterTransformEdit(GameObject& object);
 
+    GameObject* camera() const; // the editor camera, null if gone (e.g. the scene was cleared)
+    GameObject& ensureCamera(); // spawns it if needed
     void updateCamera(float dt);
     void handleShortcuts();
     void drawMenuBar();
@@ -103,7 +105,10 @@ private:
     Mode m_pendingMode = Mode::Off;
     bool m_hasPending = false;
     int m_frames = 0;
-    GameObject* m_camera = nullptr;
+    // By id, not pointer: the game may clear the scene (back to its menu) and
+    // take the camera object with it (docs/04-agent-handoff.md, gotchas).
+    uint64_t m_cameraId = 0;
+    glm::vec3 m_camPosition{0.0f}; // where a re-spawned camera starts
     float m_camYaw = 0.0f, m_camPitch = -0.3f, m_camSpeed = 12.0f;
     bool m_looking = false;
     uint64_t m_selected = 0;
@@ -119,11 +124,30 @@ private:
     Gizmo::Options m_gizmoOptions;
     bool m_showCodeObjects = true;
     bool m_showIcons = true;
+    // Viewport icons, kept between frames to reuse their memory.
+    struct IconCandidate {
+        GameObject* object;
+        int rank; // lower wins when an object has several
+        const char* letter;
+        uint32_t color;
+    };
+    struct Icon {
+        glm::vec2 pos;
+        uint64_t id;
+    };
+    std::vector<IconCandidate> m_iconCandidates;
+    std::vector<Icon> m_icons;
     char m_filter[64] = {};
 
     Json m_playSnapshot;
     std::vector<UndoEntry> m_undo, m_redo;
+    // The selection's "before" state for one-frame edits (checkbox / combo,
+    // see drawField). Serializing the subtree is costly, so it's cached and
+    // re-taken only when stale: another selection, any undo-able change, undo /
+    // redo, or older than a second (runInEditor objects may change themselves).
     ObjectState m_editBefore;
+    bool m_editBeforeValid = false;
+    float m_editBeforeAge = 0.0f;
     bool m_editing = false;
     glm::vec3 m_eulerCache{0.0f};
     glm::quat m_eulerFor{0, 0, 0, 0};

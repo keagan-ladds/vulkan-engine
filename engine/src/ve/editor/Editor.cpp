@@ -112,8 +112,27 @@ void Editor::init(Engine& engine)
 
 void Editor::shutdown()
 {
-    m_camera = nullptr;
+    m_cameraId = 0;
     m_picking = nullptr;
+}
+
+GameObject* Editor::camera() const
+{
+    return m_cameraId ? m_engine->scene().findById(m_cameraId) : nullptr;
+}
+
+GameObject& Editor::ensureCamera()
+{
+    if (GameObject* existing = camera()) return *existing;
+    GameObject& cam = m_engine->scene().spawn("Editor Camera");
+    cam.hideInHierarchy = true;
+    cam.runInEditor = true;
+    auto& c = cam.addComponent<Camera>();
+    c.priority = 1000000;
+    c.farPlane = 6000.0f;
+    cam.transform().setPosition(m_camPosition);
+    m_cameraId = cam.id();
+    return cam;
 }
 
 void Editor::setMode(Mode mode)
@@ -143,29 +162,23 @@ void Editor::setMode(Mode mode)
         // The game's camera (highest priority active Camera that isn't ours).
         Camera* game = nullptr;
         scene.forEach<Camera>([&](Camera& c) {
-            if (c.isActive() && &c.gameObject() != m_camera && (!game || c.priority > game->priority)) game = &c;
+            if (c.isActive() && c.gameObject().id() != m_cameraId && (!game || c.priority > game->priority)) game = &c;
         });
-        if (!m_camera) {
-            m_camera = &scene.spawn("Editor Camera");
-            m_camera->hideInHierarchy = true;
-            m_camera->runInEditor = true;
-            auto& cam = m_camera->addComponent<Camera>();
-            cam.priority = 1000000;
-            cam.farPlane = 6000.0f;
-        }
+        GameObject& cam = ensureCamera();
         if (m_mode == Mode::Off && game) {
             // Start where the game camera is.
             const glm::vec3 f = game->transform().forward();
-            m_camera->transform().setPosition(game->transform().position());
+            cam.transform().setPosition(game->transform().position());
             m_camYaw = std::atan2(-f.x, -f.z);
             m_camPitch = std::asin(glm::clamp(f.y, -1.0f, 1.0f));
         }
-        m_camera->setActive(true);
-    } else if (m_camera) {
-        m_camera->setActive(false);
+        cam.setActive(true);
+    } else if (GameObject* cam = camera()) {
+        cam->setActive(false);
         m_looking = false;
     }
     m_mode = mode;
+    m_editBeforeValid = false;
 }
 
 void Editor::restoreSnapshot(const Json& snapshot)
@@ -178,7 +191,8 @@ void Editor::restoreSnapshot(const Json& snapshot)
     std::set<uint64_t> keep;
     std::function<void(const Json&)> collectIds = [&](const Json& j) {
         keep.insert(SceneSerializer::idFromString(j.value("id", std::string())));
-        for (const Json& c : j.value("children", Json::array())) collectIds(c);
+        if (auto ch = j.find("children"); ch != j.end())
+            for (const Json& c : *ch) collectIds(c);
     };
     std::function<void(const Json&, GameObject*)> apply = [&](const Json& j, GameObject* parent) {
         const uint64_t id = SceneSerializer::idFromString(j.value("id", std::string()));
@@ -188,14 +202,17 @@ void Editor::restoreSnapshot(const Json& snapshot)
             const Transform* want = parent ? &parent->transform() : o->transform().parent();
             if (o->transform().parent() != want) o->setParent(parent, false);
             afterTransformEdit(*o);
-            for (const Json& c : j.value("children", Json::array())) apply(c, o);
+            if (auto ch = j.find("children"); ch != j.end())
+                for (const Json& c : *ch) apply(c, o);
         } else {
             if (o && !o->isDestroyed()) o->destroy();
             SceneSerializer::createObject(scene, j, parent, false);
             collectIds(j);
         }
     };
-    for (const Json& oj : snapshot.value("objects", Json::array())) apply(oj, nullptr);
+    m_editBeforeValid = false;
+    if (auto objects = snapshot.find("objects"); objects != snapshot.end())
+        for (const Json& oj : *objects) apply(oj, nullptr);
     std::vector<GameObject*> extra;
     for (const auto& o : scene.objects()) {
         if (o->persistent && !o->isDestroyed() && !keep.count(o->id())) extra.push_back(o.get());
@@ -213,6 +230,7 @@ GameObject* Editor::selected() const
 void Editor::select(GameObject* object)
 {
     m_selected = object ? object->id() : 0;
+    m_editBeforeValid = false;
 }
 
 void Editor::requestPick(glm::ivec2 pixel)
@@ -249,7 +267,11 @@ void Editor::beginFrame(float dt)
 
 void Editor::updateCamera(float dt)
 {
-    if (!m_camera) return;
+    GameObject* cam = camera();
+    if (!cam) { // the game cleared the scene (e.g. back to its menu): a new one
+        cam = &ensureCamera();
+        cam->setActive(true);
+    }
     Input& in = m_engine->input();
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -268,7 +290,7 @@ void Editor::updateCamera(float dt)
         m_camPitch = glm::clamp(m_camPitch - d.y, -1.55f, 1.55f);
         m_camSpeed = glm::clamp(m_camSpeed * std::pow(1.15f, in.wheel()), 0.5f, 500.0f);
     }
-    Transform& t = m_camera->transform();
+    Transform& t = cam->transform();
     t.setRotation(glm::quat(glm::vec3(m_camPitch, m_camYaw, 0.0f)));
     if (m_looking) {
         glm::vec3 move = t.forward() * in.axis(Key::S, Key::W) + t.right() * in.axis(Key::A, Key::D);
@@ -277,6 +299,7 @@ void Editor::updateCamera(float dt)
     } else if (!io.WantCaptureMouse && in.wheel() != 0.0f) {
         t.translate(t.forward() * in.wheel() * m_camSpeed * 0.25f); // dolly
     }
+    m_camPosition = t.position();
 }
 
 void Editor::handleShortcuts()
@@ -298,7 +321,8 @@ void Editor::handleShortcuts()
         if (ImGui::IsKeyPressed(ImGuiKey_R)) m_gizmoOptions.mode = GizmoMode::Scale;
         if (ImGui::IsKeyPressed(ImGuiKey_Escape)) select(nullptr);
         if (ImGui::IsKeyPressed(ImGuiKey_Delete) && sel) deleteObject(*sel);
-        if (ImGui::IsKeyPressed(ImGuiKey_F) && sel && m_camera) {
+        GameObject* cam = camera();
+        if (ImGui::IsKeyPressed(ImGuiKey_F) && sel && cam) {
             AABB b;
             glm::vec3 c = sel->transform().position();
             float r = 2.0f;
@@ -306,7 +330,7 @@ void Editor::handleShortcuts()
                 c = b.center();
                 r = std::max(glm::length(b.extents()), 0.5f);
             }
-            m_camera->transform().setPosition(c - m_camera->transform().forward() * (r * 2.5f + 1.0f));
+            cam->transform().setPosition(c - cam->transform().forward() * (r * 2.5f + 1.0f));
         }
     }
 }
@@ -382,6 +406,7 @@ Editor::ObjectState Editor::snapshot(uint64_t id) const
 void Editor::applyStates(const std::vector<ObjectState>& states)
 {
     Scene& scene = m_engine->scene();
+    m_editBeforeValid = false;
     for (const ObjectState& st : states) {
         GameObject* o = scene.findById(st.id);
         if (o && o->isDestroyed()) o = nullptr;
@@ -403,6 +428,7 @@ void Editor::applyStates(const std::vector<ObjectState>& states)
 
 void Editor::pushUndo(UndoEntry entry)
 {
+    m_editBeforeValid = false; // something changed
     m_undo.push_back(std::move(entry));
     if (m_undo.size() > 200) m_undo.erase(m_undo.begin());
     m_redo.clear();
@@ -441,6 +467,7 @@ void Editor::endEdit(const std::string& label)
 {
     if (!m_editing) return;
     m_editing = false;
+    m_editBeforeValid = false; // (even with no change: the edit may have been reverted in place)
     ObjectState after = snapshot(m_editBefore.id);
     if (after.json == m_editBefore.json && after.parent == m_editBefore.parent) return;
     pushUndo({label, {m_editBefore}, {after}});
@@ -451,7 +478,7 @@ void Editor::afterTransformEdit(GameObject& object)
     // Physics bodies don't follow Transform edits by themselves (static ones never move).
     forSubtree(object, [](GameObject& g) {
         for (const auto& c : g.components()) {
-            if (auto* rb = dynamic_cast<Rigidbody*>(c.get())) rb->rebuild();
+            if (auto* rb = dynamic_cast<Rigidbody*>(c.get()); rb && !rb->isRemoved()) rb->rebuild();
         }
     });
 }
@@ -469,7 +496,7 @@ GameObject* Editor::createObject(const Json& json, GameObject* parent, const std
 
 void Editor::deleteObject(GameObject& object)
 {
-    if (&object == m_camera) return;
+    if (object.id() == m_cameraId) return;
     if (!object.persistent) {
         // Game code may hold pointers to its own objects (and worker threads may
         // use them): deleting those could crash the game.
@@ -684,12 +711,13 @@ void Editor::drawMenuBar()
                 if (!ImGui::MenuItem(path.c_str())) continue;
                 if (const Json* pj = prefab::load(path)) {
                     // A copy of the prefab's object, linked back to it, in front of the camera.
-                    Json j = pj->value("object", Json::object());
+                    const auto obj = pj->find("object");
+                    Json j = obj != pj->end() ? *obj : Json::object(); // (copied once: it's edited below)
                     const glm::vec3 p = placementPoint(*m_engine, view);
                     j["position"] = {p.x, p.y, p.z};
-                    Json comps = j.value("components", Json::array());
+                    Json& comps = j["components"];
+                    if (!comps.is_array()) comps = Json::array();
                     comps.push_back({{"type", "PrefabInstance"}, {"fields", {{"prefab", path}}}});
-                    j["components"] = std::move(comps);
                     createObject(j, nullptr, "Create " + std::filesystem::path(path).stem().string());
                 }
             }
@@ -870,7 +898,7 @@ void Editor::drawHierarchyNode(GameObject& o)
             o.persistent = true;
             const bool plain = typeid(o) == typeid(GameObject);
             for (const auto& c : o.components()) {
-                if (plain && TypeRegistry::get().of(*c)) c->persistent = true;
+                if (plain && !c->isRemoved() && TypeRegistry::get().of(*c)) c->persistent = true;
             }
             endEdit("Make persistent");
         }
@@ -1007,7 +1035,13 @@ void Editor::drawInspector()
         return;
     }
     // "Before" state for one-frame edits (checkbox / combo), see drawField.
-    if (!m_editing) m_editBefore = snapshot(sel->id());
+    // Cached (see m_editBefore): re-serializing the subtree every frame is costly.
+    m_editBeforeAge += io.DeltaTime;
+    if (!m_editing && (!m_editBeforeValid || m_editBefore.id != sel->id() || m_editBeforeAge > 1.0f)) {
+        m_editBefore = snapshot(sel->id());
+        m_editBeforeValid = true;
+        m_editBeforeAge = 0.0f;
+    }
     ImGui::PushItemWidth(-130.0f);
 
     // --- Object ---
@@ -1080,6 +1114,7 @@ void Editor::drawInspector()
     Component* removeMe = nullptr;
     int index = 0;
     for (const auto& cp : sel->components()) {
+        if (cp->isRemoved()) continue; // (freed at the end of the frame)
         Component& c = *cp;
         const TypeInfo* ct = TypeRegistry::get().of(c);
         ImGui::PushID(index++);
@@ -1155,24 +1190,32 @@ void Editor::drawViewport()
     const glm::vec2 mouse(io.MousePos.x, io.MousePos.y);
 
     // --- Icons for things you can't otherwise see or click ---
-    struct Icon {
-        glm::vec2 pos;
-        uint64_t id;
-    };
-    std::vector<Icon> icons;
+    // From the component registry (no per-object getComponent calls); an
+    // object with several gets the first kind in this list.
+    std::vector<Icon>& icons = m_icons;
+    icons.clear();
     if (m_showIcons) {
-        for (const auto& o : scene.objects()) {
+        std::vector<IconCandidate>& cands = m_iconCandidates;
+        cands.clear();
+        auto add = [&](Component& c, int rank, const char* letter, uint32_t color) { cands.push_back({&c.gameObject(), rank, letter, color}); };
+        scene.forEach<PointLight>([&](PointLight& c) { add(c, 0, "L", IM_COL32(255, 210, 80, 230)); });
+        scene.forEach<DirectionalLight>([&](DirectionalLight& c) { add(c, 1, "S", IM_COL32(255, 240, 150, 230)); });
+        scene.forEach<AudioZone>([&](AudioZone& c) { add(c, 2, "Z", IM_COL32(80, 200, 255, 230)); });
+        scene.forEach<AudioSource>([&](AudioSource& c) { add(c, 3, "A", IM_COL32(230, 120, 255, 230)); });
+        scene.forEach<Camera>([&](Camera& c) { add(c, 4, "C", IM_COL32(220, 220, 220, 230)); });
+        for (const auto& o : scene.objects()) // empty markers: cheap checks only
+            if (o->persistent && o->components().empty() && o->transform().children().empty())
+                cands.push_back({o.get(), 5, "o", IM_COL32(200, 200, 200, 200)});
+        std::sort(cands.begin(), cands.end(), [](const IconCandidate& a, const IconCandidate& b) {
+            return a.object != b.object ? std::less<>()(a.object, b.object) : a.rank < b.rank;
+        });
+        for (size_t i = 0; i < cands.size(); ++i) {
+            if (i > 0 && cands[i].object == cands[i - 1].object) continue; // a better icon was taken
+            GameObject* o = cands[i].object;
+            const char* letter = cands[i].letter;
+            const uint32_t color = cands[i].color;
             if (o->isDestroyed() || o->hideInHierarchy || !o->activeInHierarchy()) continue;
             if (!m_showCodeObjects && !o->persistent) continue;
-            const char* letter = nullptr;
-            uint32_t color = 0;
-            if (o->getComponent<PointLight>()) { letter = "L"; color = IM_COL32(255, 210, 80, 230); }
-            else if (o->getComponent<DirectionalLight>()) { letter = "S"; color = IM_COL32(255, 240, 150, 230); }
-            else if (o->getComponent<AudioZone>()) { letter = "Z"; color = IM_COL32(80, 200, 255, 230); }
-            else if (o->getComponent<AudioSource>()) { letter = "A"; color = IM_COL32(230, 120, 255, 230); }
-            else if (o->getComponent<Camera>()) { letter = "C"; color = IM_COL32(220, 220, 220, 230); }
-            else if (o->persistent && o->components().empty() && o->transform().children().empty()) { letter = "o"; color = IM_COL32(200, 200, 200, 200); }
-            if (!letter) continue;
             const glm::vec3 p = o->transform().position();
             if (glm::length(p - view.eye) > 120.0f) continue;
             const auto s = view.project(p);
@@ -1240,7 +1283,7 @@ void Editor::drawViewport()
         // Its snap points, so you can see what will connect.
         std::function<void(GameObject&)> drawSnaps = [&](GameObject& g) {
             for (const auto& c : g.components())
-                if (auto* sp = dynamic_cast<SnapPoint*>(c.get()))
+                if (auto* sp = dynamic_cast<SnapPoint*>(c.get()); sp && !sp->isRemoved())
                     dd.sphere(sp->worldPosition(), view.worldSize(sp->worldPosition(), 5.0f), IM_COL32(120, 255, 160, 220));
             for (Transform* ch : g.transform().children()) drawSnaps(ch->gameObject());
         };
