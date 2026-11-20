@@ -3,7 +3,6 @@
 #include "ve/core/Engine.hpp"
 #include "ve/core/Input.hpp"
 #include "ve/physics/Physics.hpp"
-#include "ve/scene/Reflection.hpp"
 #include "ve/scene/Scene.hpp"
 
 #include <cmath>
@@ -68,10 +67,15 @@ void Interactor::update(float)
 
 Interactable* Interactor::focus() const
 {
-    // The focus may have been destroyed since update(): check it still exists.
+    // The focus may have been destroyed since update(), or just its component
+    // removed: check it still exists without touching m_focus (it may dangle) -
+    // the object by id, then the component by address among the object's.
     if (!m_focus || !m_focusObject) return nullptr;
     GameObject* o = gameObject().scene().findById(m_focusObject);
-    return o && !o->isDestroyed() && &m_focus->gameObject() == o ? m_focus : nullptr;
+    if (!o || o->isDestroyed()) return nullptr;
+    for (const auto& c : o->components())
+        if (c.get() == m_focus) return m_focus;
+    return nullptr;
 }
 
 std::string Interactor::prompt() const
