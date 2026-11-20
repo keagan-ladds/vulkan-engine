@@ -93,7 +93,10 @@ float fwd = in.axisValue("MoveY");                       // strongest source win
   `in.startRebind(action)`; the next key, mouse button or pad button/trigger
   replaces that device's bindings (Escape cancels, `rebinding()` tells you it
   is waiting). Persist with `saveBindings()` / `loadBindings(json)`. The
-  savanna's F10 window does this and keeps `controls.json` in the save folder.
+  savanna's F10 window does this and keeps it with
+  `ve::save::writeConfig("controls", ...)` (`<save folder>/config/controls.json`,
+  so settings files never show up as save slots); `in.bindingText(action)` gives
+  the names joined for display.
 - Tests: `attachVirtualGamepad()` + `setVirtualGamepadAxis/Button` drive an SDL
   virtual controller (works headless).
 
@@ -573,6 +576,19 @@ auto imp = ve::Impostor::bake(renderer, *mesh0, {material});   // load time, a f
 desc.lods.push_back(imp->lod());                                // last LOD
 ```
 
+Or let `ve::buildLodChain` (`ve/world/LodModel.hpp`) do the simplify / optimize /
+upload / impostor steps (FoliageType, Savanna's props and the template use it):
+
+```cpp
+ve::LodChainDesc chain;
+chain.name = "tree";
+chain.levels = {{tree, {}, {mat}}};                          // MeshData, submeshes (none: one), materials
+chain.simplify = {{.ratio = 0.35f, .faceted = true}, {.ratio = 0.10f, .sloppy = true, .faceted = true}};
+chain.switches = {{.screenSize = 0.10f}, {.screenSize = 0.035f}}; // per level; others keep defaults
+chain.impostor = true;                                        // last level
+desc.lods = ve::buildLodChain(renderer, std::move(chain));
+```
+
 Custom material shaders: forward `veInstanceLodFade()` in a `flat` varying and
 call `veLodDither(fade)` at the start of the fragment shader to get crossfades
 (see `standard.vert/frag`).
@@ -590,7 +606,8 @@ For anything scattered by rules rather than placed by hand, use
 ```cpp
 ve::FoliageWorld world;
 world.boundsMin = {-2000, -2000}; world.boundsMax = {2000, 2000};
-world.height = [&](glm::vec2 p) { return terrain.height(p.x, p.y); }; // called on a worker thread
+auto td = terrain.data(); // an immutable snapshot the jobs can keep alive
+world.height = [td](glm::vec2 p) { return td->height(p.x, p.y); }; // runs on pool jobs, several at once
 auto& foliage = scene.spawn<ve::FoliageSystem>(world);
 foliage.addExclusion(campCentre, 25.0f);
 
@@ -608,7 +625,7 @@ const uint32_t treeLayer = foliage.addLayer(trees);
 ve::FoliageLayer bushes = /* ... */;
 bushes.avoid = {{treeLayer, 2.5f}};            // keep clear of trunks
 foliage.addLayer(bushes);
-foliage.colliderFocus = &player;
+foliage.setColliderFocus(&player);
 foliage.preload(player.transform().position());
 ```
 Rules are deterministic, so the same world appears every run without saving
@@ -705,7 +722,7 @@ Set `bus` and `occlusion` before the sound first plays.
 #include <vfx/ColorGrading.hpp>
 auto& grade = renderer.graph().addPass<vfx::ColorGradingPass>();
 grade.settings.tonemapper = vfx::ColorGradingSettings::Tonemapper::AgX;
-grade.settings.temperature = 10.0f; grade.settings.contrast = 1.15f;   // or a preset: ...::farCry2()
+grade.settings.temperature = 10.0f; grade.settings.contrast = 1.15f;   // or a preset: ...::sunBleached()
 grade.settings.lut = assets.loadTexture("textures/my_lut.png", /*srgb*/ false); // optional strip LUT
 ```
 Tweak everything live in F1 > Render passes > Color grading. Night brightness

@@ -20,7 +20,8 @@
 //
 // Types must be default constructible to be created by the editor or a scene
 // file (otherwise they're inspect-only). Engine types are registered by
-// ve::registerBuiltinTypes() (called by the Engine).
+// ve::registerBuiltinTypes() and each module's registerXTypes() (the Engine
+// calls them all at startup).
 // =============================================================================
 
 #include <glm/glm.hpp>
@@ -260,7 +261,9 @@ private:
     std::unordered_map<std::type_index, Entry*> m_byType;
 };
 
-// Engine types (Camera, lights, AudioSource, AudioZone, Rigidbody, ModelInstance, ...).
+// The scene module's own types (GameObject, Camera, lights, ModelInstance,
+// PrimitiveRenderer, PrefabInstance). Other modules register theirs with their
+// own registerXTypes(TypeRegistry&) (e.g. registerPhysicsTypes in Physics.hpp).
 void registerBuiltinTypes();
 
 } // namespace ve

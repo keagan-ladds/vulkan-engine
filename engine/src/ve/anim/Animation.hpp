@@ -19,6 +19,7 @@
 
 #include "ve/render/Skinning.hpp"
 #include "ve/scene/Components.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -139,7 +140,7 @@ private:
     std::shared_ptr<const AnimationClip> find(const std::string& name) const;
 
     std::vector<std::shared_ptr<const AnimationClip>> m_clips;
-    std::vector<uint64_t> m_nodes;   // object ids per model node (0 = none)
+    std::vector<ObjectRef<>> m_nodes; // per model node (empty = none)
     std::vector<std::string> m_nodeNames;
     std::vector<int> m_parents;      // per model node (-1 = root)
     std::vector<Rest> m_rest;        // per model node
@@ -147,6 +148,7 @@ private:
     std::vector<Layer> m_layers{Layer{"Base"}};
     std::vector<Event> m_events;
     std::vector<Pose> m_base, m_scratch; // per node, reused every frame
+    mutable std::vector<Rest> m_sampled;  // samplePose's per-clip pose, per node
 };
 
 // Two-bone inverse kinematics (legs, arms) after the animation: bends the
@@ -173,7 +175,7 @@ public:
 
 private:
     bool resolve();
-    uint64_t m_upper = 0, m_middle = 0, m_end = 0;
+    ObjectRef<> m_upper, m_middle, m_end;
     glm::quat m_restUpper{1, 0, 0, 0}, m_restMiddle{1, 0, 0, 0}; // for joints no clip animates (no accumulation)
     bool m_resetUpper = false, m_resetMiddle = false;
     glm::vec3 m_animatedEnd{0.0f};
@@ -198,8 +200,9 @@ public:
     glm::vec3 footTarget(int side) const { return m_targets[side]; } // 0 left, 1 right
 
 private:
-    TwoBoneIK* m_legs[2] = {nullptr, nullptr};
-    uint64_t m_hipsId = 0;
+    // The TwoBoneIKs start() added (the editor may remove them).
+    ComponentRef<TwoBoneIK> m_legs[2];
+    ObjectRef<> m_hipsJoint;
     float m_hips = 0.0f;
     float m_offset[2] = {0.0f, 0.0f};
     glm::vec3 m_targets[2]{};
@@ -240,16 +243,17 @@ public:
 
 private:
     bool resolve();
-    std::vector<uint64_t> m_joints;      // per chain bone
+    std::vector<ObjectRef<>> m_joints;   // per chain bone
     std::vector<glm::quat> m_rest;
     std::vector<char> m_reset;           // not animated: back to rest first
-    uint64_t m_effector = 0;
+    ObjectRef<> m_effector;
     glm::vec3 m_target{0.0f};
     bool m_hasTarget = false;
     float m_blend = 0.0f;
     float m_error = 0.0f;
     glm::vec3 m_origin{0.0f}, m_direction{0.0f, 0.0f, 1.0f};
     bool m_resolved = false;
+    std::vector<GameObject*> m_jointObjects; // solve()'s scratch (found by id each call, never kept)
 };
 
 // Look-at: an AimIK on the spine, chest and head (most of the turn in the
@@ -281,11 +285,19 @@ public:
 private:
     void release();
     std::shared_ptr<const SkinnedMeshSource> m_source;
-    std::vector<uint64_t> m_joints; // object ids
+    std::vector<ObjectRef<>> m_joints;
     std::vector<glm::mat4> m_inverseBind;
     std::vector<glm::mat4> m_matrices; // scratch
     SkinningSystem::Instance m_instance;
     SkinningSystem* m_system = nullptr;
 };
+
+// Hooks SkinnedMeshRenderers into the renderer's skinning pass (render can't
+// include anim). The Engine calls it once, after creating the renderer.
+void registerSkinnedMeshes(SkinningSystem& system);
+
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerAnimationTypes(TypeRegistry& r);
 
 } // namespace ve

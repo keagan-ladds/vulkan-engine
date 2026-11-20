@@ -57,13 +57,13 @@ glm::vec4 AnimationChannel::sample(float t) const
 void Animator::bind(std::vector<std::shared_ptr<const AnimationClip>> clips, const std::vector<GameObject*>& nodes)
 {
     m_clips = std::move(clips);
-    m_nodes.assign(nodes.size(), 0);
+    m_nodes.assign(nodes.size(), {});
     m_nodeNames.assign(nodes.size(), {});
     m_parents.assign(nodes.size(), -1);
     m_rest.assign(nodes.size(), Rest{glm::vec3(0.0f), glm::quat(1, 0, 0, 0), glm::vec3(1.0f)});
     for (size_t i = 0; i < nodes.size(); ++i) {
         if (!nodes[i]) continue;
-        m_nodes[i] = nodes[i]->id();
+        m_nodes[i] = nodes[i];
         m_nodeNames[i] = nodes[i]->name();
         const Transform& t = nodes[i]->transform();
         m_rest[i] = {t.localPosition(), t.localRotation(), t.localScale()};
@@ -229,7 +229,7 @@ void Animator::addEvent(const std::string& clipName, float t, const std::string&
 bool Animator::animates(const GameObject& node) const
 {
     for (int n : m_animated)
-        if (m_nodes[size_t(n)] == node.id()) return true;
+        if (m_nodes[size_t(n)].id() == node.id()) return true;
     return false;
 }
 
@@ -283,22 +283,27 @@ float Animator::samplePose(const Layer& layer, std::vector<Pose>& poses) const
     float total = 0.0f;
     for (const State& s : layer.states) total += s.weight;
     if (total <= 0.0f) return 0.0f;
+    std::vector<Rest>& local = m_sampled; // this clip's pose per node (scratch)
+    local.resize(m_rest.size());
+    auto masked = [&](size_t n) { return !layer.mask.empty() && !layer.mask[n]; };
     for (const State& st : layer.states) {
         if (st.weight <= 0.0f) continue;
         const float w = st.weight / total;
-        // This clip's pose of every animated node: rest, overridden by its channels.
+        // This clip's pose of every animated node: rest, overridden by its
+        // channels (one pass over the channels, not one per node).
+        for (int n : m_animated) local[size_t(n)] = m_rest[size_t(n)];
+        for (const AnimationChannel& ch : st.clip->channels) {
+            if (ch.node < 0 || size_t(ch.node) >= local.size() || masked(size_t(ch.node))) continue;
+            Rest& r = local[size_t(ch.node)];
+            const glm::vec4 v = ch.sample(st.time);
+            if (ch.path == AnimationChannel::Path::Translation) r.t = glm::vec3(v);
+            else if (ch.path == AnimationChannel::Path::Scale) r.s = glm::vec3(v);
+            else r.r = glm::quat(v.w, v.x, v.y, v.z);
+        }
         for (int n : m_animated) {
-            if (!layer.mask.empty() && !layer.mask[size_t(n)]) continue;
-            const Rest& r = m_rest[size_t(n)];
-            glm::vec3 t = r.t, sc = r.s;
-            glm::quat q = r.r;
-            for (const AnimationChannel& ch : st.clip->channels) {
-                if (ch.node != n) continue;
-                const glm::vec4 v = ch.sample(st.time);
-                if (ch.path == AnimationChannel::Path::Translation) t = glm::vec3(v);
-                else if (ch.path == AnimationChannel::Path::Scale) sc = glm::vec3(v);
-                else q = glm::quat(v.w, v.x, v.y, v.z);
-            }
+            if (masked(size_t(n))) continue;
+            const glm::vec3 t = local[size_t(n)].t, sc = local[size_t(n)].s;
+            const glm::quat q = local[size_t(n)].r;
             Pose& p = poses[size_t(n)];
             glm::vec4 qv(q.x, q.y, q.z, q.w);
             if (p.w > 0.0f && glm::dot(qv, p.r) < 0.0f) qv = -qv; // same hemisphere before averaging
@@ -363,7 +368,7 @@ void Animator::apply()
     Scene& scene = gameObject().scene();
     for (int n : m_animated) {
         const Pose& p = m_base[size_t(n)];
-        GameObject* o = m_nodes[size_t(n)] ? scene.findById(m_nodes[size_t(n)]) : nullptr;
+        GameObject* o = m_nodes[size_t(n)].get(scene);
         if (!o || p.w <= 0.0f) continue;
         glm::vec3 t, s;
         glm::quat r;
@@ -390,7 +395,7 @@ GameObject* findBelow(GameObject& root, const std::string& name)
 
 bool TwoBoneIK::resolve()
 {
-    if (m_upper && m_middle && m_end) return true;
+    if (!m_upper.empty() && !m_middle.empty() && !m_end.empty()) return true;
     GameObject* u = findBelow(gameObject(), upperJoint);
     GameObject* m = findBelow(gameObject(), middleJoint);
     GameObject* e = findBelow(gameObject(), endJoint);
@@ -399,9 +404,9 @@ bool TwoBoneIK::resolve()
                       "' not all found");
         return false;
     }
-    m_upper = u->id();
-    m_middle = m->id();
-    m_end = e->id();
+    m_upper = u;
+    m_middle = m;
+    m_end = e;
     m_restUpper = u->transform().localRotation();
     m_restMiddle = m->transform().localRotation();
     const Animator* anim = gameObject().getComponent<Animator>();
@@ -419,9 +424,9 @@ bool TwoBoneIK::solve()
 {
     if (!resolve()) return false;
     Scene& scene = gameObject().scene();
-    GameObject* uo = scene.findById(m_upper);
-    GameObject* mo = scene.findById(m_middle);
-    GameObject* eo = scene.findById(m_end);
+    GameObject* uo = m_upper.get(scene);
+    GameObject* mo = m_middle.get(scene);
+    GameObject* eo = m_end.get(scene);
     if (!uo || !mo || !eo) return false;
     Transform& ut = uo->transform();
     Transform& mt = mo->transform();
@@ -488,17 +493,16 @@ void FootIK::start()
     };
     m_legs[0] = leg(leftUpper, leftMiddle, leftFoot);
     m_legs[1] = leg(rightUpper, rightMiddle, rightFoot);
-    if (GameObject* h = findBelow(gameObject(), hipsJoint)) m_hipsId = h->id();
+    m_hipsJoint = findBelow(gameObject(), hipsJoint);
 }
 
 void FootIK::lateUpdate(float dt)
 {
     Scene& scene = gameObject().scene();
-    GameObject* hips = m_hipsId ? scene.findById(m_hipsId) : nullptr;
-    // (The legs are components on this object: still there?)
-    int present = 0;
-    for (const auto& c : gameObject().components()) present += c.get() == m_legs[0] || c.get() == m_legs[1];
-    if (present < 2 || !hips) return;
+    GameObject* hips = m_hipsJoint.get(scene);
+    // (The legs are components on this object: still there, and not removed?)
+    TwoBoneIK* legs[2] = {m_legs[0].get(scene), m_legs[1].get(scene)};
+    if (!hips || !legs[0] || !legs[1]) return;
     // Feet where the animation put them (relative to the model's ground plane), then onto the real ground.
     const glm::vec3 root = transform().position();
     QueryFilter filter;
@@ -508,9 +512,9 @@ void FootIK::lateUpdate(float dt)
     const float k = 1.0f - std::exp(-smoothing * dt);
     glm::vec3 feet[2];
     for (int side = 0; side < 2; ++side) {
-        m_legs[side]->weight = 0.0f;
-        m_legs[side]->solve(); // (resets joints no clip animates; records the animated foot)
-        feet[side] = m_legs[side]->animatedEnd();
+        legs[side]->weight = 0.0f;
+        legs[side]->solve(); // (resets joints no clip animates; records the animated foot)
+        feet[side] = legs[side]->animatedEnd();
         float want = 0.0f;
         const glm::vec3 from(feet[side].x, root.y + maxStep, feet[side].z);
         if (auto hit = physics().raycast(from, {0, -1, 0}, maxStep * 2.0f, filter))
@@ -523,9 +527,9 @@ void FootIK::lateUpdate(float dt)
     hips->transform().setPosition(hips->transform().position() + glm::vec3(0.0f, m_hips, 0.0f));
     for (int side = 0; side < 2; ++side) {
         m_targets[side] = feet[side] + glm::vec3(0.0f, m_offset[side], 0.0f);
-        m_legs[side]->target = m_targets[side];
-        m_legs[side]->weight = weight;
-        m_legs[side]->solve();
+        legs[side]->target = m_targets[side];
+        legs[side]->weight = weight;
+        legs[side]->solve();
     }
 }
 
@@ -545,7 +549,7 @@ bool AimIK::resolve()
             m_joints.clear();
             return false;
         }
-        m_joints.push_back(j->id());
+        m_joints.push_back(j);
         m_rest.push_back(j->transform().localRotation());
         m_reset.push_back(!anim || !anim->animates(*j));
     }
@@ -555,7 +559,7 @@ bool AimIK::resolve()
         m_joints.clear();
         return false;
     }
-    m_effector = e->id();
+    m_effector = e;
     return !m_joints.empty();
 }
 
@@ -569,14 +573,15 @@ void AimIK::solve(float dt)
     if (!resolve()) return;
     Scene& scene = gameObject().scene();
     // Joints no clip animates: from their rest pose (else last frame's turn would add up).
-    std::vector<GameObject*> joints;
+    std::vector<GameObject*>& joints = m_jointObjects; // (member: no allocation per frame)
+    joints.clear();
     for (size_t i = 0; i < m_joints.size(); ++i) {
-        GameObject* j = scene.findById(m_joints[i]);
+        GameObject* j = m_joints[i].get(scene);
         if (!j) return;
         if (m_reset[i]) j->transform().setLocalRotation(m_rest[i]);
         joints.push_back(j);
     }
-    GameObject* eff = scene.findById(m_effector);
+    GameObject* eff = m_effector.get(scene);
     if (!eff) return;
     const float goal = m_hasTarget ? 1.0f : 0.0f;
     const float step = blendTime > 0.0f ? dt / blendTime : 1.0f;
@@ -639,7 +644,7 @@ void SkinnedMeshRenderer::bind(std::shared_ptr<const SkinnedMeshSource> source, 
     release();
     m_source = std::move(source);
     m_joints.clear();
-    for (GameObject* j : joints) m_joints.push_back(j ? j->id() : 0);
+    m_joints.assign(joints.begin(), joints.end()); // (null -> empty: the joint stays at the mesh's origin)
     m_inverseBind = std::move(inverseBind);
     m_inverseBind.resize(m_joints.size(), glm::mat4(1.0f));
     m_system = &gameObject().renderer().skinning();
@@ -672,7 +677,7 @@ void SkinnedMeshRenderer::prepareSkinning(SkinningSystem& system)
     m_matrices.resize(m_joints.size());
     AABB bounds;
     for (size_t j = 0; j < m_joints.size(); ++j) {
-        const GameObject* o = m_joints[j] ? scene.findById(m_joints[j]) : nullptr;
+        const GameObject* o = m_joints[j].get(scene);
         const glm::mat4 world = o ? o->transform().worldMatrix() : transform().worldMatrix();
         m_matrices[j] = toLocal * world * m_inverseBind[j];
         // Bounds: every joint's position, padded by how far its vertices reach.
@@ -684,6 +689,58 @@ void SkinnedMeshRenderer::prepareSkinning(SkinningSystem& system)
     if (bounds.valid()) m_instance.mesh->setBounds(bounds);
     if (!system.add(m_instance, m_matrices.data(), uint32_t(m_matrices.size())))
         log::warnOnce("Skinning: more joints this frame than RendererSettings::maxSkinJoints");
+}
+
+void registerSkinnedMeshes(SkinningSystem& system)
+{
+    system.addGatherer([](Scene& scene, SkinningSystem& sys, std::vector<const MeshRenderer*>& deformed) {
+        scene.forEach<SkinnedMeshRenderer>([&](SkinnedMeshRenderer& s) {
+            if (!s.isActive() || !s.visible) return;
+            s.prepareSkinning(sys);
+            deformed.push_back(&s);
+        });
+    });
+}
+
+} // namespace ve
+
+// -----------------------------------------------------------------------------
+// Reflection
+// -----------------------------------------------------------------------------
+
+#include "ve/scene/Reflection.hpp"
+
+namespace ve {
+
+void registerAnimationTypes(TypeRegistry& r)
+{
+    r.add<Animator>("Animator", [](TypeBuilder<Animator>& t) {
+        t.category("Animation");
+        t.field("clip", &Animator::clip).tooltip("played on start (empty = the model's first clip)");
+        t.field("speed", &Animator::speed).range(0.0f, 10.0f).speed(0.01f);
+        t.field("playOnStart", &Animator::playOnStart);
+    });
+    r.add<FootIK>("FootIK", [](TypeBuilder<FootIK>& t) {
+        t.category("Animation");
+        t.field("hipsJoint", &FootIK::hipsJoint);
+        t.field("leftUpper", &FootIK::leftUpper);
+        t.field("leftMiddle", &FootIK::leftMiddle);
+        t.field("leftFoot", &FootIK::leftFoot);
+        t.field("rightUpper", &FootIK::rightUpper);
+        t.field("rightMiddle", &FootIK::rightMiddle);
+        t.field("rightFoot", &FootIK::rightFoot);
+        t.field("maxStep", &FootIK::maxStep).range(0.0f, 2.0f).speed(0.01f);
+        t.field("weight", &FootIK::weight).range(0.0f, 1.0f).speed(0.01f);
+    });
+    r.add<TwoBoneIK>("TwoBoneIK", [](TypeBuilder<TwoBoneIK>& t) {
+        t.category("Animation");
+        t.field("upperJoint", &TwoBoneIK::upperJoint);
+        t.field("middleJoint", &TwoBoneIK::middleJoint);
+        t.field("endJoint", &TwoBoneIK::endJoint);
+        t.field("target", &TwoBoneIK::target);
+        t.field("pole", &TwoBoneIK::pole);
+        t.field("weight", &TwoBoneIK::weight).range(0.0f, 1.0f).speed(0.01f);
+    });
 }
 
 } // namespace ve

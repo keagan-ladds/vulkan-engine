@@ -29,6 +29,7 @@
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Instancing.hpp"
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 #include "ve/scene/SaveGame.hpp"
 #include "ve/world/Foliage.hpp"
 
@@ -45,7 +46,7 @@ namespace ve {
 class GrassPass;
 class Renderer;
 class Terrain;
-struct TerrainData;
+class TerrainData;
 
 // Ready-to-draw meshes of one kind of prop.
 struct FoliageMeshes {
@@ -61,7 +62,7 @@ public:
     static void add(const std::string& name, Builder builder);
     // Built on first use, then cached until releaseMeshes(); null if unknown.
     static std::shared_ptr<const FoliageMeshes> get(Renderer& renderer, const std::string& name);
-    static void releaseMeshes(); // GPU meshes go (the Engine calls this at shutdown); builders stay
+    static void releaseMeshes(); // GPU meshes go (done at Engine shutdown); builders stay
 
     static std::vector<std::string> names();
 };
@@ -157,11 +158,14 @@ public:
     float cellSize = 64.0f;
     int instancesPerFrame = 6000;
     int bodiesPerFrame = 300;
-    std::string colliderFocus = "Player"; // colliders stream around this object (else the camera)
+    // Colliders stream around the object with this name (else the camera).
+    // "Player" is only a naming convention (the sandbox's player object is
+    // called that); set your own player's name, or "" for the camera.
+    std::string colliderFocus = "Player";
     bool preload = true;                 // load what's visible synchronously on the first build
 
     void markDirty() { m_dirty = true; }
-    FoliageSystem* system() const { return m_system; }
+    FoliageSystem* system() const { return m_system.get(scene()); } // null before the first build
     // Layer index of a FoliageType by its object's name (for FoliageSystem::query), -1 if none.
     int layerIndex(const std::string& name) const;
 
@@ -176,7 +180,7 @@ private:
     FoliageWorld makeWorld(const std::shared_ptr<const TerrainData>& td) const;
     static std::function<float(const FoliageSample&)> makeDensity(const std::shared_ptr<const TerrainData>& td, const LayerDensity& d);
 
-    FoliageSystem* m_system = nullptr;
+    ObjectRef<FoliageSystem> m_system; // a hidden child (the editor could still delete it)
     std::vector<std::pair<uint64_t, uint32_t>> m_pendingOverrides; // loaded before the system existed
     bool m_hasPendingOverrides = false;
     std::vector<std::string> m_layerNames;
@@ -184,10 +188,11 @@ private:
     std::string m_state;
     std::vector<FoliageExclusionShape> m_exclusions; // as last applied
     uint64_t m_terrainVersion = 0;
-    const Terrain* m_terrain = nullptr;
+    ObjectRef<const Terrain> m_terrain; // built against (compared by id: it may be deleted)
     bool m_dirty = true;
     bool m_built = false;
     float m_sinceBuild = 1e6f;
+    float m_sinceCheck = 1e6f; // since state() / exclusions / focus were last compared
 };
 
 // GPU grass over the terrain (one ve::GrassPass).
@@ -245,16 +250,27 @@ private:
     std::string state() const; // what needs a rebuild (exclusions are handled incrementally)
     void rebuild();
     void removePass();
-    std::function<glm::vec4(glm::vec2)> makeMask(const std::shared_ptr<const TerrainData>& td) const;
+    struct Exclusion {
+        FoliageExclusionShape shape;
+        float falloff; // grass fades in over this distance from the edge
+        bool operator==(const Exclusion&) const = default;
+    };
+    std::vector<Exclusion> exclusions() const; // the scene's active grass exclusions
+    std::function<glm::vec4(glm::vec2)> makeMask(const std::shared_ptr<const TerrainData>& td, std::vector<Exclusion> exclusions) const;
 
     GrassPass* m_pass = nullptr;
     std::string m_passName;
     std::string m_state;
-    std::vector<FoliageExclusionShape> m_exclusions; // as last applied
+    std::vector<Exclusion> m_exclusions; // as last applied
     uint64_t m_terrainVersion = 0;
-    const Terrain* m_terrain = nullptr;
+    ObjectRef<const Terrain> m_terrain; // built against (compared by id: it may be deleted)
     bool m_dirty = true;
     float m_sinceBuild = 1e6f;
+    float m_sinceCheck = 1e6f; // since state() / exclusions were last compared
 };
+
+class TypeRegistry;
+// Reflection (scene files, editor): this file's components. The Engine calls it at startup.
+void registerVegetationTypes(TypeRegistry& r);
 
 } // namespace ve

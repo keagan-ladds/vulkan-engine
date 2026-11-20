@@ -1,5 +1,4 @@
 #include "ve/render/Renderer.hpp"
-#include "ve/anim/Animation.hpp"
 #include "ve/render/ShaderHotReload.hpp"
 
 #include "ve/core/Log.hpp"
@@ -199,9 +198,9 @@ void Renderer::createGlobalLayout()
     VK_CHECK(vkCreateDescriptorPool(dev, &poolInfo, nullptr, &m_globalPool));
 
     // The single pipeline layout used by every pipeline in the engine:
-    // set 0 = globals, set 1 = bindless, 128 bytes of push constants.
+    // set 0 = globals, set 1 = bindless, kPushConstantBytes (128) of push constants.
     VkDescriptorSetLayout sets[2] = {m_globalSetLayout, m_bindless.layout()};
-    VkPushConstantRange push{VK_SHADER_STAGE_ALL, 0, 128};
+    VkPushConstantRange push{VK_SHADER_STAGE_ALL, 0, kPushConstantBytes};
     VkPipelineLayoutCreateInfo plInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     plInfo.setLayoutCount = 2;
     plInfo.pSetLayouts = sets;
@@ -654,10 +653,7 @@ void Renderer::drawItems(RenderContext& ctx, const std::vector<uint32_t>& indice
             boundPipeline = p;
         }
         if (item.mesh != boundMesh) {
-            VkBuffer vb = item.mesh->vertexBuffer();
-            VkDeviceSize offset = item.mesh->vertexOffset();
-            vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
-            vkCmdBindIndexBuffer(cmd, item.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+            item.mesh->bind(cmd);
             boundMesh = item.mesh;
         }
         DrawPush push{};
@@ -726,18 +722,24 @@ void Renderer::gatherScene(Scene& scene)
     const CameraData& cam = m_frame.camera;
 
     // Skinned meshes: joint matrices for this frame's skinning pass (and their bounds).
-    scene.forEach<SkinnedMeshRenderer>([&](SkinnedMeshRenderer& s) {
-        if (s.isActive() && s.visible) s.prepareSkinning(*m_skinning);
-    });
-    // Last frame's world matrices (motion vectors for moving objects).
-    std::unordered_map<const MeshRenderer*, glm::mat4> worlds;
-    worlds.reserve(m_prevWorlds.size());
+    // Their vertices are rewritten on the GPU every frame, so their draw items
+    // are flagged `deforming` (the point-shadow face cache must not trust them).
+    m_deforming.clear();
+    for (const auto& gather : m_skinning->gatherers()) gather(scene, *m_skinning, m_deforming);
+    std::sort(m_deforming.begin(), m_deforming.end());
+    // Last frame's world matrices (motion vectors for moving objects). One
+    // persistent map, stamped with the frame that last saw each renderer:
+    // no per-frame rebuild, only new renderers allocate.
+    const uint64_t stamp = ++m_prevWorldStamp;
+    size_t seen = 0;
     scene.forEach<MeshRenderer>([&](MeshRenderer& mr) {
         if (!mr.isActive() || !mr.visible || !mr.mesh) return;
         const glm::mat4& world = mr.transform().worldMatrix();
-        const auto prev = m_prevWorlds.find(&mr);
-        const glm::mat4 prevWorld = prev != m_prevWorlds.end() ? prev->second : world;
-        worlds.emplace(&mr, world);
+        const auto prev = m_prevWorlds.try_emplace(&mr, PrevWorld{world, stamp}).first; // new: prev = world
+        const glm::mat4 prevWorld = prev->second.world;
+        prev->second = {world, stamp};
+        ++seen;
+        const bool deforming = !m_deforming.empty() && std::binary_search(m_deforming.begin(), m_deforming.end(), &mr);
         for (const Submesh& sm : mr.mesh->submeshes()) {
             Material* mat = mr.material(sm.materialSlot);
             if (!mat) mat = m_fallbackMaterial.get();
@@ -750,12 +752,15 @@ void Renderer::gatherScene(Scene& scene)
             item.bounds = sm.bounds.transformed(world);
             item.distance = glm::length(item.bounds.center() - cam.position);
             item.castShadows = mr.castShadows;
+            item.deforming = deforming;
             item.owner = &mr.gameObject();
             m_sceneTop = std::max(m_sceneTop, item.bounds.max.y);
             m_frame.items.push_back(item);
         }
     });
-    m_prevWorlds.swap(worlds);
+    // Forget renderers not drawn this frame (destroyed or hidden): a new
+    // renderer at a recycled address must not inherit a stale matrix.
+    if (m_prevWorlds.size() != seen) std::erase_if(m_prevWorlds, [&](const auto& kv) { return kv.second.stamp != stamp; });
     m_frame.stats.totalObjects = static_cast<uint32_t>(m_frame.items.size());
 
     for (uint32_t i = 0; i < m_frame.items.size(); ++i) {
@@ -921,12 +926,12 @@ void Renderer::buildLightClusters(uint32_t count)
     }
     auto slice = [&](float z) { return std::clamp(int(std::floor(std::log(std::max(z, 1e-3f)) * lb.clusterParams.x + lb.clusterParams.y)), 0, int(kClusterZ) - 1); };
 
-    // Per light: its cluster box (tile and slice ranges).
-    struct Range {
-        int x0, x1, y0, y1, z0, z1;
-    };
-    std::vector<Range> ranges(count);
-    std::vector<uint16_t> perCluster(kClusterCount, 0);
+    // Per light: its cluster box (tile and slice ranges). Scratch reused every frame.
+    using Range = ClusterRange;
+    std::vector<Range>& ranges = m_clusterRanges;
+    ranges.resize(count);
+    std::vector<uint16_t>& perCluster = m_clusterCounts;
+    perCluster.assign(kClusterCount, 0);
     for (uint32_t i = 0; i < count; ++i) {
         const glm::vec4 pr = lb.point[i].positionRange;
         const glm::vec3 vc = glm::vec3(cam.view * glm::vec4(glm::vec3(pr), 1.0f));
@@ -985,7 +990,8 @@ void Renderer::gatherLights(Scene& scene)
     const CameraData& cam = m_frame.camera;
 
     // --- Directional lights ---------------------------------------------------
-    std::vector<DirectionalLight*> dirs;
+    std::vector<DirectionalLight*>& dirs = m_dirScratch;
+    dirs.clear();
     scene.forEach<DirectionalLight>([&](DirectionalLight& l) {
         if (l.isActive() && l.intensity > 0.0f && dirs.size() < kMaxDirectionalLights) dirs.push_back(&l);
     });
@@ -1007,11 +1013,8 @@ void Renderer::gatherLights(Scene& scene)
     }
 
     // --- Point lights ---------------------------------------------------------
-    struct Candidate {
-        PointLight* light;
-        float distance;
-    };
-    std::vector<Candidate> points;
+    std::vector<PointCandidate>& points = m_pointScratch;
+    points.clear();
     scene.forEach<PointLight>([&](PointLight& l) {
         if (!l.isActive() || l.intensity <= 0.0f) return;
         const glm::vec3 p = l.transform().position();
@@ -1247,7 +1250,8 @@ bool Renderer::render(Scene& scene, const Time& time)
 
     // This slot's previous frame is finished: read back its pass timings.
     if (slot.timestamps && slot.timestampsWritten && !slot.timedPasses.empty()) {
-        std::vector<uint64_t> ts(slot.timedPasses.size() * 2);
+        std::vector<uint64_t>& ts = m_timestampScratch;
+        ts.resize(std::min<size_t>(slot.timedPasses.size() * 2, kMaxTimestamps));
         if (vkGetQueryPoolResults(dev, slot.timestamps, 0, static_cast<uint32_t>(ts.size()), ts.size() * sizeof(uint64_t),
                                   ts.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
             m_graph->applyTimings(ts, slot.timedPasses, m_timestampPeriodNs);
@@ -1314,13 +1318,20 @@ bool Renderer::render(Scene& scene, const Time& time)
     std::memcpy(slot.globals.mapped, &m_frame.globals, sizeof(FrameGlobals));
     // The light buffer up to the used part of the cluster light lists.
     std::memcpy(slot.lights.mapped, m_lights.get(), offsetof(LightBuffer, clusterLights) + m_clusterWords * sizeof(uint32_t));
-    std::memcpy(slot.materials.mapped, m_materials.data(), sizeof(GpuMaterial) * m_materialHighWater);
+    // Only the materials that changed since this slot's buffer last got them.
+    std::vector<std::pair<uint32_t, uint32_t>> materialRuns; // usually empty: no allocation
+    m_materialDirty.take(slotIndex, materialRuns);
+    for (const auto& [first, count] : materialRuns) {
+        std::memcpy(static_cast<GpuMaterial*>(slot.materials.mapped) + first, &m_materials[first], sizeof(GpuMaterial) * count);
+    }
 
     // --- Record -------------------------------------------------------------------
     VK_CHECK(vkResetCommandPool(dev, slot.pool, 0));
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(slot.cmd, &begin));
+    // Buffer uploads queued since the last flush (meshes, terrain nodes, skinning...) land first.
+    m_device.flushUploads(slot.cmd);
 
     // The swapchain image's previous contents are irrelevant (UNDEFINED). Its
     // first use must wait for the acquire semaphore, which the submit below
@@ -1352,7 +1363,7 @@ bool Renderer::render(Scene& scene, const Time& time)
         VE_PROFILE("Record commands");
         m_graph->execute(ctx);
     }
-    slot.timedPasses = m_graph->lastExecuted();
+    slot.timedPasses = m_graph->lastTimed();
     m_instances->recordReadback(slot.cmd, slotIndex);
     slot.timestampsWritten = slot.timestamps != VK_NULL_HANDLE;
     m_graph->transition(slot.cmd, m_backbuffer, offscreen ? Access::TransferSrc : Access::Present);

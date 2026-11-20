@@ -52,7 +52,9 @@ public:
     std::shared_ptr<AudioClip> loadAudio(const std::filesystem::path& path, bool stream = false);
 
 private:
+    const std::filesystem::path& resolveCached(const std::filesystem::path& path); // resolve(), remembered
     Renderer* m_renderer = nullptr;
+    std::unordered_map<std::string, std::filesystem::path> m_resolved; // requested -> resolved
     std::vector<std::filesystem::path> m_searchPaths;
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_textures;
     std::unordered_map<std::string, std::shared_ptr<Model>> m_models;

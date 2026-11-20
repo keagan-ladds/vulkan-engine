@@ -2,6 +2,7 @@
 #include "ve/net/Network.hpp"
 #include "ve/debug/Debug.hpp"
 
+#include "ve/anim/Animation.hpp"
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Log.hpp"
@@ -9,11 +10,15 @@
 #include "ve/ui/Gui.hpp"
 #include "ve/core/Window.hpp"
 #include "ve/editor/Editor.hpp"
+#include "ve/gameplay/Interaction.hpp"
+#include "ve/gameplay/Placement.hpp"
+#include "ve/nav/Navigation.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Reflection.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/ui/UiLayer.hpp"
+#include "ve/world/Terrain.hpp"
 #include "ve/world/Vegetation.hpp"
 
 #include <SDL.h>
@@ -30,7 +35,29 @@ namespace ve {
 
 namespace {
 Engine* g_engine = nullptr;
+
+// Reflection: every module's components (scene files, editor). Each module
+// registers its own types, so the scene module doesn't include the modules
+// above it; this is the one place that knows them all. Once per process (the
+// registry is global and outlives an Engine).
+void registerAllTypes()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+    registerBuiltinTypes(); // scene: GameObject, Camera, lights, ModelInstance, ...
+    TypeRegistry& r = TypeRegistry::get();
+    registerNetworkTypes(r);
+    registerInteractionTypes(r);
+    registerPlacementTypes(r);
+    registerNavigationTypes(r);
+    registerAnimationTypes(r);
+    registerPhysicsTypes(r);
+    registerAudioTypes(r);
+    registerTerrainTypes(r);
+    registerVegetationTypes(r);
 }
+} // namespace
 
 // Benchmark mode (VE_BENCH=<frames>[,<warmup>], usually with VE_HEADLESS=1):
 // skips `warmup` frames (default 30: streaming, pipeline creation), then
@@ -110,6 +137,7 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_window = std::make_unique<Window>(config.title, config.width, config.height, rs.headless);
     m_renderer = std::make_unique<Renderer>();
     m_renderer->init(*m_window, rs, config.validation, shaderDirs);
+    registerSkinnedMeshes(m_renderer->skinning()); // the renderer's skinning pass finds anim's SkinnedMeshRenderers
     m_audio = std::make_unique<AudioSystem>();
     if (config.enableAudio) m_audio->init();
     m_physics = std::make_unique<PhysicsWorld>();
@@ -120,7 +148,7 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_ui = std::make_unique<UiLayer>();
     m_ui->init(*this);
     m_scene = std::make_unique<Scene>();
-    registerBuiltinTypes(); // reflection: scene files + editor
+    registerAllTypes(); // reflection: scene files + editor
     if (config.enableEditor) {
         m_editor = std::make_unique<Editor>();
         m_editor->init(*this);
@@ -176,8 +204,7 @@ Engine::~Engine()
     if (m_editor) m_editor->shutdown();
     m_editor.reset();
     m_scene.reset();
-    MeshLibrary::releaseMeshes();
-    for (auto& fn : m_atShutdown) fn();
+    for (auto& fn : m_atShutdown) fn(); // modules' static GPU caches (e.g. world's MeshLibrary)
     m_atShutdown.clear();
     m_assets.reset();
     if (m_ui) m_ui->shutdown(); // no-op if run() already did it
@@ -187,6 +214,9 @@ Engine::~Engine()
     m_physics.reset(); // after the scene: Rigidbodies remove themselves from the world
     m_renderer.reset();
     m_window.reset();
+    // Last: everything that submits jobs (world systems, grass passes, shader
+    // hot-reload) is gone. Queued jobs are dropped, running ones finish.
+    jobs::shutdown();
     g_engine = nullptr;
 }
 
@@ -326,6 +356,11 @@ bool Engine::pollLoadTasks()
     return tasksDone && m_loadSteps.empty();
 }
 
+bool Engine::editorPaused() const
+{
+    return m_editor && m_editor->paused();
+}
+
 bool Engine::loadingInEditor() const
 {
     return m_loadingScene && m_editor && m_editor->editing();
@@ -385,7 +420,7 @@ void Engine::tickFrame()
 
     if (m_editor) m_editor->beginFrame(m_time.unscaledDeltaTime);
     // Editor "Edit" mode: the game is paused; only runInEditor objects update.
-    const bool paused = (m_editor && m_editor->paused()) || gamePaused || editorLoading;
+    const bool paused = editorPaused() || gamePaused || editorLoading;
 
     m_scene->startPending();
 

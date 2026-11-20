@@ -63,6 +63,23 @@ sandbox ──► ve_effects ──► ve_engine
 - Inside the engine: `core` ← `gfx` ← `render` ← `scene`. `assets`, `audio` and
   `ui` sit on top. `scene` components (MeshRenderer, Light, Camera) are plain
   data that the renderer *reads*. The renderer does not own scene objects.
+- **Inside the engine** the modules are layered, and lower modules expose
+  extension points instead of including the ones above them (D23):
+  core ← gfx ← render ← scene; physics, anim, gameplay and net build on
+  scene; world and nav on those; assets, audio, ui and debug on top; the
+  editor may use everything. `Engine` is the composition root: the only place
+  that wires modules together (each module's `registerXTypes(TypeRegistry&)`,
+  `SkinningSystem::addGatherer`, render's `DebugLineBuffer`,
+  `Engine::atShutdown`, `Engine::editorPaused`). `tools/check_layering.py`
+  holds the allowed-dependency table and the few known exceptions (each with
+  its reason) and fails on anything else; run it after changing includes.
+- **Threads:** one engine job pool (`ve/core/Jobs.hpp`, D24): hardware threads
+  − 1 workers (max 15). Foliage, terrain LOD, grass bakes, navmesh tiles and
+  shader compiles submit jobs instead of owning threads. Jobs own their
+  inputs and results (`shared_ptr`), so owners cancel and drop them without
+  waiting; workers never touch the scene, renderer, device, physics world,
+  audio or ImGui. Jolt keeps its own small pool (`jobs::physicsThreadCount()`),
+  which only runs during a physics step.
 
 ## 3. The frame
 
@@ -92,7 +109,7 @@ work such as loading the scene file), updates the world like the editor's
 Edit mode (only `runInEditor` objects: terrain, foliage and grass keep
 streaming; no fixed steps / physics, gameplay waits), polls the load tasks
 (`addLoadTask`, progress 0..1 of work spread over frames, e.g. foliage
-filling its cells on worker threads) and updates + draws the loading scene,
+filling its cells on the job pool) and updates + draws the loading scene,
 a small scene of the game's (usually one object drawing UI in `onGui`).
 Those frames draw only the passes with `RenderPass::runsWhileLoading`
 (instance uploads, skinning, the UI over a cleared screen). Loading ends
@@ -104,7 +121,7 @@ What a loading screen waits for is "ready to play here", not the whole
 world: foliage counts only the cells within `FoliageSettings::readyDistance`
 (300 m) of the viewer (big trees drawn kilometres away keep streaming in,
 nearest first, after play starts), and the terrain's first LOD view is
-built on a small worker pool with no per-frame upload budget while loading
+built on the job pool with no per-frame upload budget while loading
 (Savanna: about 0.9 s to play in Release, was 2.4 s).
 
 **In the editor** (Edit mode, or a game started in it): `beginLoading`
@@ -139,11 +156,21 @@ vegetation and navmesh progress.
   nodes, static props).
 - Spawning during an update is safe: new objects get `start()` at the start of the next frame.
   `destroy()` is deferred to end of frame and also destroys children.
-- **Ids, not pointers, across frames.** Every GameObject has a random 64-bit
-  `id()`; `scene.findById(id)` is O(1) and returns null once the object is
-  destroyed, so remembering an id (not a raw pointer) can't dangle when the
-  editor deletes or replaces objects. `scene.findFirst<T>()` finds the first
-  object of a class (e.g. the scene's `vfx::Weather`).
+  `removeComponent()` takes the component out of `components()` and the
+  registry at once (its `onDestroy()` runs then, if it started) but the scene
+  frees it at the end of the frame, so a hook may remove itself or a sibling.
+  Bucket order is not stable (removal swaps the last item into the gap).
+- **Handles, not pointers, across frames** (`ve/scene/ObjectRef.hpp`, D22).
+  Every GameObject has a random 64-bit `id()`; `scene.findById(id)` is O(1)
+  and returns null once the object is destroyed. `ObjectRef<T>` stores just
+  the id and resolves it on each `get(scene)` (with a checked cast), so it
+  can't dangle when the editor deletes or replaces objects. `ComponentRef<T>`
+  does the same for components: owner id + address + `Component::serial()`
+  (never reused), checked against the owner's live components before the
+  address is trusted. Members that outlive a frame use these, never a raw
+  `GameObject*` / `Component*` (components an object adds to itself and
+  that die with it are the exception). `scene.findFirst<T>()` finds the
+  first object of a class (e.g. the scene's `vfx::Weather`).
 - Global access: `ve::Engine::get()` and helper accessors on GameObject
   (`input()`, `time()`, `assets()`, `audio()`, `renderer()`, `scene()`).
 
@@ -341,6 +368,8 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
   caster's mesh, submesh, shader, world matrix and material data, plus
   `Renderer::contentEpoch()`, which bumps when shadow maps are recreated or
   shaders hot-reload) and skips faces whose hash matches their last render.
+  A face with a deforming caster (a `SkinnedMeshRenderer`, `DrawItem::deforming`)
+  is never cached: its vertices change while its mesh and matrix don't.
   Static torches and campfires re-render only when something in range moves.
   The shadow maps persist across frames, so a skipped face keeps its depth.
 - Directional shadows sample a 3×3 PCF kernel as 4 bilinear taps with the
@@ -475,8 +504,17 @@ helpers (the instancing helpers are vertex-only).
 - `Device`: instance, debug messenger, surface, physical-device selection
   (requires Vulkan 1.3 dynamic rendering + synchronization2 + descriptor
   indexing features), logical device, graphics queue, VMA allocator, an
-  immediate-submit helper for uploads, and a **deferred deletion queue** that
-  destroys GPU objects after `kFramesInFlight` frames.
+  **asynchronous buffer uploads** (`uploadBuffers` copies the data into a
+  per-frame staging ring and queues the copy; `flushUploads` records the
+  queued copies at the start of the next frame's command buffer, between a
+  write-after-read barrier and a transfer → read barrier, and
+  `immediateSubmit` flushes them first, so bakes see their meshes;
+  `uploadBuffersNow` blocks; staging blocks are reused after the same
+  `kFramesInFlight` rule as deferred deletion), an immediate-submit helper, a
+  **deferred deletion queue** that destroys GPU objects after
+  `kFramesInFlight` frames, and a `VkPipelineCache` saved to
+  `pipeline_cache.bin` next to the executable (checked against the GPU's
+  vendor / device / UUID on load), so pipelines compile fast after the first run.
 - `Swapchain`: as in tinyvulkan (FIFO, per-image present semaphores).
 - `Buffer`/`Image`: VMA-backed, created from small desc structs.
 - `Bindless`: allocates/frees slots in the texture and storage-image arrays (deferred free).
@@ -500,7 +538,7 @@ helpers (the instancing helpers are vertex-only).
   level always covers the ground. Vertices carry their parent-grid height and
   normal (`tangent`), and `ve_terrain.glsl` morphs them with camera distance,
   reaching the parent shape exactly where a node hands over: no popping.
-  Skirts hide the cracks between levels. Meshes are built on a worker thread
+  Skirts hide the cracks between levels. Meshes are built as jobs on the engine pool
   (tiles for the finest levels, the pure generator for coarse ones), uploaded
   under a per-frame budget, cached LRU, and drawn through pooled
   MeshRenderers on one hidden child, so culling, picking and every shadow pass
@@ -529,7 +567,8 @@ helpers (the instancing helpers are vertex-only).
 **`FoliageSystem`** (a GameObject) scatters `InstanceGroup` instances using
 `FoliageLayer` rules.
 - **Placement is a pure function.** Each layer has a jittered grid of
-  candidates, one per `spacing`² square, seeded from (layer seed, grid x, z).
+  candidates, one per `spacing`² square, seeded from (layer seed, grid x, z). A FoliageType without a seed uses
+  FNV-1a of its name, so placement is the same with every compiler / platform.
   A candidate is kept if it passes, cheapest first: probability, world bounds,
   exclusion circles, value-noise clustering, height/slope range, the
   `density(FoliageSample)` callback, and `avoid` rules. An avoid rule
@@ -539,7 +578,8 @@ helpers (the instancing helpers are vertex-only).
   here" even for unloaded cells.
 - **Streaming.** The world is split into `cellSize` cells (64 m). Each
   (cell, layer) pair within the layer's `viewDistance` is generated
-  nearest-first on one worker thread. The main thread adds results to the
+  nearest-first by jobs on the engine pool (the system keeps its own
+  distance-sorted queue, drained by up to `jobs::workerCount()` jobs). The main thread adds results to the
   layer's groups (one per variant) under `instancesPerFrame`, and unloads
   pairs beyond `viewDistance × unloadMargin`. Stale results are dropped by
   ticket. Static colliders are created (`bodiesPerFrame`) only for cells
@@ -601,6 +641,14 @@ stores nothing per blade.
   object name (+ component type); `save::apply` destroys, moves, then calls
   `loadState`. Slots are JSON files (tmp + rename). The game decides when
   to reload the level before applying (Savanna: behind the loading screen).
+  Settings files (`save::readConfig` / `writeConfig`) live in
+  `<save folder>/config/`, so they never appear in `save::slots()`.
+
+- **Inventory** (`ve/gameplay/Inventory.hpp`). `ve::Inventory`: a fixed number
+  of slots of `{item, count}` with stacking (per-item max stack from a
+  callback, `kDefaultMaxStack` otherwise), add / remove / count / move-or-swap
+  and JSON save / load. Item definitions, icons and the inventory screen are
+  the game's (Savanna's `Inventory.*`).
 
 - **Prefabs** (`ve/scene/Prefab.hpp`). A `.prefab` file is JSON holding an
   object (type, fields, persistent components, children) at the origin.
@@ -655,7 +703,7 @@ Backed by **Recast & Detour** (linked `PRIVATE`, only included by
   triangulation; the terrain's own heightfield bodies are skipped) and
   foliage colliders (`FoliageSystem::forEachCollider`, deterministic, so
   unloaded cells count too). Tiles are voxelized and turned into Detour tiles
-  on worker threads and swapped in on the main thread; while a loading screen
+  as jobs on the engine pool and swapped in on the main thread; while a loading screen
   is up the surface registers a "Finding paths" load task that drives the
   build. `FoliageSystem` state listeners rebuild the tiles around a chopped
   tree; `rebuild(area)` is there for other changes. Queries: `findPath`
@@ -667,7 +715,8 @@ Backed by **Recast & Detour** (linked `PRIVATE`, only included by
   `remainingDistance()` for the game's AI.
 - Behaviour is game code: Savanna's `Villager` idles, wanders to random
   reachable spots and follows the player when asked ("walk with me").
-- `showDebug` draws the navmesh's polygons near the camera.
+- `showDebug` draws the navmesh's polygons near the camera as `ve::debug`
+  lines (the same as the "Navmesh" debug channel; nav has no editor dependency).
 
 ## 5.11b Debug drawing (`ve/debug/Debug.hpp`)
 
@@ -965,7 +1014,7 @@ Optional add-ons built only on public engine APIs:
   - It writes `GradedColor` and calls `CompositePass::useGradedInput()` each
     frame, so the composite only adds vignette and dither. Disabling the pass
     restores the built-in tonemapping.
-  - Presets: `neutral()`, `farCry2()` (a starting point).
+  - Presets: `neutral()`, `sunBleached()` (a starting point).
   - `tools/generate_assets.py` writes `lut_neutral_32.png` for authoring LUTs.
 - `Weather`: a GameObject that blends presets (clear/hazy/overcast/rain/thunderstorm)
   by driving the atmosphere, fog, light intensity and a rain emitter that follows
@@ -990,10 +1039,13 @@ Optional add-ons built only on public engine APIs:
 | `Player.*` | `update` vs `fixedUpdate` split, input actions, `CharacterController`, throwing dynamic rocks, child camera |
 | `DayNight.*` | Two shadowed directional lights, sunlight coloured by `AtmospherePass::sunTransmittance` |
 | `Building.*` | Building kit on the engine's prefabs + placement: `BuildPiece` (14 kinds x materials, doors / windows as fittings snapping into wall openings, `DoorHinge` (Use, saved), mesh / colliders / snap points / placement boxes from code; the kit is `assets/prefabs/building/*.prefab` + `building/catalogue.json`), `Builder` (build mode B: ghost, snap, fit, place, remove, navmesh rebuild) |
-| `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT, HUD (ve::ui canvas: health / stamina, hotbar, clock, prompts), `AutoTest` |
+| `Props.*` | Campfire/torches (`vfx::Fire` flames driving flickering point shadows, smoke/spark particles, 3D audio), collectibles (`destroy()`, one-shot audio), water shader reading SceneDepth + the sky LUT |
+| `Hud.*` | HUD (ve::ui canvas: health / stamina, hotbar, clock, prompts), save / load of progress, controls file (`ve::save::readConfig` / `writeConfig`) |
+| `AutoTest.*` | The `SAVANNA_AUTOTEST` smoke test and its probe components |
+| `SceneLookup.hpp`, `Footsteps.hpp` | Cached by-id lookups (`localPlayer`, `findCached<T>`: no per-frame scene scans or name lookups), footstep sound by surface for the player and villagers |
 | `Villager.*` | Navmesh agents with animation: Idle / Walk crossfades, a "Wave" layer on the right arm (greeting the player), footstep events of the Walk clip (sounds by surface), FootIK on slopes, a "Villagers" debug-draw channel |
 | `Multiplayer.*` | On `ve/net`: host / join from `SAVANNA_NET`, player avatars (NetworkObject + NetworkTransform + replicated name), the host's world snapshot without its own player, clock / weather sync, `NetTest` (two-process test, `tools/nettest.sh`); building requests live in `Building.cpp` |
-| `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop) |
+| `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop; the container itself is the engine's `ve::Inventory`) |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 

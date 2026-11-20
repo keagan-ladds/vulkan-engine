@@ -102,15 +102,25 @@ public:
     bool isActive() const;
 
     bool enabled = true;
+    // removeComponent() was called: it's out of components(), gets no more
+    // hooks, and the scene frees it at the end of the frame.
+    bool isRemoved() const { return m_removed; }
     // Saved in scene files (set by the editor / scene loader). Components a
     // GameObject class creates for itself stay false.
     bool persistent = false;
+    // Unique for this run and never reused (0 until attached to an object).
+    // ComponentRef (ve/scene/ObjectRef.hpp) uses it to tell a remembered
+    // component apart from a new one the allocator put at the same address.
+    uint64_t serial() const { return m_serial; }
 
 private:
     friend class GameObject;
     friend class Scene;
     GameObject* m_owner = nullptr;
+    uint64_t m_serial = 0;
     bool m_started = false;
+    bool m_removed = false;
+    uint32_t m_bucketIndex = 0; // position in the Scene's registry bucket (O(1) unregister)
     std::type_index m_type = typeid(Component);
 };
 
@@ -162,6 +172,7 @@ public:
     T* getComponent() const
     {
         for (const auto& c : m_components) {
+            if (c->m_removed) continue;
             if (auto* t = dynamic_cast<T*>(c.get())) return t;
         }
         return nullptr;
@@ -177,7 +188,21 @@ public:
         return nullptr;
     }
 
+    // Deferred like destroy(): the component stops getting hooks and is gone
+    // from getComponent() / scene queries at once (onDestroy() runs now, if it
+    // started), and is freed at the end of the frame. So a component may remove
+    // itself or a sibling from inside a hook.
     void removeComponent(Component* component);
+    // Is `component` (maybe a remembered pointer) still a live component of
+    // this object? Only compares addresses, so it's safe on a dangling one;
+    // but a new component may have reused the address: to remember a
+    // component across frames use ComponentRef (ve/scene/ObjectRef.hpp).
+    bool hasComponent(const Component* component) const
+    {
+        for (const auto& c : m_components)
+            if (c.get() == component) return true;
+        return false;
+    }
     const std::vector<std::unique_ptr<Component>>& components() const { return m_components; }
 
 private:
@@ -193,6 +218,7 @@ private:
     bool m_started = false;
     bool m_destroyed = false;
     bool m_tornDown = false;      // onDestroy() has run (Scene::flushDestroyed)
+    bool m_queuedStart = false;   // in Scene::m_unstarted (it or a component still needs start())
     uint8_t m_componentsNoHook = 0; // HookBits no component of this object overrides
 };
 

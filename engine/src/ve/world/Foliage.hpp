@@ -30,32 +30,32 @@
 // and nothing needs to be stored or saved.
 //
 // Streaming: the world is split into square cells (FoliageSettings::cellSize).
-// A worker thread generates (cell, layer) pairs nearest-first around the camera
-// out to each layer's viewDistance. The main thread adds the results to the
+// Jobs on the engine's worker pool (ve/core/Jobs.hpp) generate (cell, layer)
+// pairs nearest-first around the camera out to each layer's viewDistance. The main thread adds the results to the
 // layer's InstanceGroups under a per-frame budget, and removes cells that fall
 // behind. Static colliders are created only for cells within
-// colliderDistance of `colliderFocus` (the player), also budgeted.
+// colliderDistance of the collider focus (the player), also budgeted.
 //
-// Thread safety: the FoliageWorld and layer callbacks run on the worker
-// thread. They must only read data that doesn't change while the system is
-// alive. Add layers and exclusions before the first update/preload.
+// Thread safety: the FoliageWorld and layer callbacks run on worker threads
+// (several at once). They must only read data that doesn't change while the
+// system is alive. Add layers and exclusions before the first update/preload.
 // =============================================================================
 
+#include "ve/core/Jobs.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Instancing.hpp"
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <cfloat>
-#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -137,7 +137,7 @@ struct FoliageRules {
     float viewDistance = 500.0f;     // generated, loaded and drawn within this distance of the camera
     float shadowDistance = FLT_MAX;
     bool castShadows = true;
-    float colliderDistance = 60.0f;  // colliders exist within this distance of colliderFocus
+    float colliderDistance = 60.0f;  // colliders exist within this distance of the collider focus
     uint32_t maxInstances = 0;       // loaded at once; 0 = estimate from viewDistance/spacing
     uint32_t seed = 0;
 };
@@ -163,7 +163,7 @@ struct FoliageLayer : FoliageRules {
 
     // ---- Interaction (see FoliageSystem::setState / FoliageLink) ----
     std::vector<FoliageState> states; // extra looks, states 1..n
-    // > 0: instances this close to FoliageSystem::colliderFocus become
+    // > 0: instances this close to the FoliageSystem's collider focus become
     // GameObjects (with a FoliageLink) so gameplay code can live on them; they
     // turn back into instances further away.
     float promoteDistance = 0.0f;
@@ -248,8 +248,10 @@ public:
     // again. Everything else, and instance states, stay as they are.
     void refresh(FoliageWorld world, const std::vector<std::function<float(const FoliageSample&)>>& densities, glm::vec4 area);
 
-    // Colliders are streamed around this object (e.g. the player); null = the camera.
-    GameObject* colliderFocus = nullptr;
+    // Colliders are streamed around this object (e.g. the player); 0 / not
+    // found = the camera. An ObjectRef: the object may be deleted at any time.
+    ObjectRef<> colliderFocus;
+    void setColliderFocus(const GameObject* object) { colliderFocus = object; }
 
     void update(float dt) override;
     void onGui() override;
@@ -335,6 +337,7 @@ private:
         uint32_t ticket;
         uint32_t layer;
         int cx, cz;
+        float distance; // to the viewer when the queue was last sorted
     };
     struct Result {
         uint64_t key;
@@ -362,10 +365,9 @@ private:
     bool cellInBounds(int cx, int cz) const;
     glm::ivec4 cellRange(int x0, int z0, int x1, int z1) const;
     void ensureGroups(LayerData& layer);
-    void startWorker();
     void stopWorkers();
     void replaceCells(glm::vec4 area); // unload the cells near area (and queued ones) to be placed again
-    void workerLoop();
+    void drain(const std::atomic<bool>& cancelled); // a pool job: generates queued cells, nearest first
     size_t applyInstances(Cell& cell, size_t budget);
     void unload(Cell& cell);
     void destroyBodies(Cell& cell);
@@ -390,12 +392,13 @@ private:
     bool m_bodiesWaiting = false; // colliders not all created (body budget)
     FoliageStats m_stats;
 
-    std::vector<std::thread> m_workers; // placement workers (cores - 1, at least 1)
+    // Placement jobs (up to one per pool worker). They call generate() on this
+    // system, so the destructor and refresh() cancel *and wait* for them (a
+    // cell at most). m_jobs, m_results and m_quit are shared with them.
+    jobs::DrainGroup m_drains;
     std::mutex m_mutex;
-    std::condition_variable m_cv;
-    std::vector<Job> m_jobs;
+    std::vector<Job> m_jobs; // sorted farthest-first: drains pop the nearest from the back
     std::vector<Result> m_results;
-    glm::vec2 m_workerViewer{0.0f};
     bool m_quit = false;
 };
 

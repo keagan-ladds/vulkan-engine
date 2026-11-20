@@ -370,22 +370,28 @@ void RenderGraph::prepare(FrameData& frame)
 
 void RenderGraph::execute(RenderContext& ctx)
 {
-    m_executed.clear();
+    m_timed.clear();
+    PassBuilder builder(*this);
     for (auto& pass : m_passes) {
         if (!pass->enabled || int(pass->stage()) >= maxStage || (loadingFrame && !pass->runsWhileLoading)) continue;
-        PassBuilder builder(*this);
+        builder.usages.clear(); // one builder for all passes: its vector keeps its capacity
         pass->declare(builder);
         for (const auto& u : builder.usages) {
             appendTransition(m_textures[u.texture], u.access, m_barriers);
         }
         flushBarriers(ctx.cmd, m_barriers);
         m_renderer.bindGlobalSets(ctx.cmd);
-        const auto q = static_cast<uint32_t>(m_executed.size() * 2);
+        // Only passes that fit in the query pool get a timestamp pair; the
+        // rest run untimed (and aren't listed, so the readback never asks
+        // for queries that were not written).
+        const auto q = static_cast<uint32_t>(m_timed.size() * 2);
         const bool timed = m_queryPool && q + 1 < m_queryCapacity;
         if (timed) vkCmdWriteTimestamp2(ctx.cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, m_queryPool, q);
         pass->execute(ctx);
-        if (timed) vkCmdWriteTimestamp2(ctx.cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, m_queryPool, q + 1);
-        m_executed.push_back(pass.get());
+        if (timed) {
+            vkCmdWriteTimestamp2(ctx.cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, m_queryPool, q + 1);
+            m_timed.push_back(pass.get());
+        }
     }
 }
 

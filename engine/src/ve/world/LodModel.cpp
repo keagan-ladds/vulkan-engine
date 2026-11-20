@@ -3,7 +3,9 @@
 #include "ve/assets/AssetManager.hpp"
 #include "ve/assets/Model.hpp"
 #include "ve/core/Strings.hpp"
+#include "ve/render/Impostor.hpp"
 #include "ve/render/Material.hpp"
+#include "ve/render/Renderer.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -243,6 +245,41 @@ LodModel loadLodModel(AssetManager& assets, const std::string& paths)
         }
     }
     return result;
+}
+
+std::vector<InstanceLod> buildLodChain(Renderer& renderer, LodChainDesc desc)
+{
+    std::vector<InstanceLod> chain;
+    if (desc.levels.empty()) return chain;
+    // Simplify from the unoptimized level 0 (before optimize() reorders it).
+    if (!desc.simplify.empty()) {
+        const LodGeometry base = desc.levels.front(); // a copy: push_back below may reallocate
+        for (const SimplifyOptions& options : desc.simplify) {
+            if (desc.levels.size() >= desc.maxLevels) break;
+            LodGeometry g;
+            g.data = base.data.simplified(options);
+            g.materials = base.materials;
+            desc.levels.push_back(std::move(g));
+        }
+    }
+    auto withSwitch = [&](InstanceLod l) {
+        if (chain.size() < desc.switches.size()) {
+            l.screenSize = desc.switches[chain.size()].screenSize;
+            l.maxDistance = desc.switches[chain.size()].maxDistance;
+        }
+        return l;
+    };
+    for (size_t i = 0; i < desc.levels.size() && i < desc.maxLevels; ++i) {
+        LodGeometry& g = desc.levels[i];
+        g.data.optimize(); // vertex cache / fetch order: faster to draw, same shape
+        InstanceLod l;
+        l.mesh = Mesh::create(renderer, g.data, g.submeshes.size() > 1 ? g.submeshes : std::vector<Submesh>{},
+                              desc.name + " LOD" + std::to_string(i));
+        l.materials = g.materials;
+        chain.push_back(withSwitch(std::move(l)));
+    }
+    if (desc.impostor) chain.push_back(withSwitch(Impostor::bake(renderer, *chain.front().mesh, chain.front().materials, desc.impostorSettings)->lod()));
+    return chain;
 }
 
 } // namespace ve

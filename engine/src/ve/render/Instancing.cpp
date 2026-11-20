@@ -432,8 +432,8 @@ void InstanceSystem::recordCulling(VkCommandBuffer cmd, uint32_t slotIndex)
 
     // 1. Upload changed instances.
     if (!s.uploads.empty()) {
-        std::vector<VkBufferCopy> regions;
-        regions.reserve(s.uploads.size());
+        std::vector<VkBufferCopy>& regions = m_copyRegions;
+        regions.clear();
         for (const auto& u : s.uploads) regions.push_back({u.src, u.dst, u.size});
         vkCmdCopyBuffer(cmd, s.staging.handle, m_instances.handle, static_cast<uint32_t>(regions.size()), regions.data());
     }
@@ -482,10 +482,7 @@ void InstanceSystem::draw(RenderContext& ctx, uint32_t cullView, PassKind kind, 
             bound = p;
         }
         if (bt.mesh != boundMesh) {
-            VkBuffer vb = bt.mesh->vertexBuffer();
-            VkDeviceSize off = 0;
-            vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &off);
-            vkCmdBindIndexBuffer(ctx.cmd, bt.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+            bt.mesh->bind(ctx.cmd);
             boundMesh = bt.mesh;
         }
         DrawPush push{};

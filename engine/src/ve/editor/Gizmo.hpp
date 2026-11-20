@@ -2,10 +2,12 @@
 
 // =============================================================================
 // Editor viewport helpers, drawn with ImGui over the 3D view:
-//   ViewProjector  world <-> screen (pixels in ImGui display coordinates)
+//   ViewProjector  world <-> screen (ve/render/ViewProjector.hpp, included here)
 //   DebugDraw      3D lines, boxes, spheres, circles (no depth test)
 //   Gizmo          translate / rotate / scale handles for one Transform
 // =============================================================================
+
+#include "ve/render/ViewProjector.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -17,22 +19,6 @@ struct ImDrawList;
 namespace ve {
 
 class Transform;
-struct CameraData;
-
-struct ViewProjector {
-    glm::mat4 viewProj{1.0f}, invViewProj{1.0f};
-    glm::vec3 eye{0.0f};
-    glm::vec2 size{1.0f}; // display size (pixels)
-    float tanHalfFov = 0.6f;
-
-    static ViewProjector from(const CameraData& cam, glm::vec2 displaySize);
-    // Screen position, or nothing when behind the camera.
-    std::optional<glm::vec2> project(const glm::vec3& p) const;
-    // World-space ray through a screen point.
-    void ray(glm::vec2 screen, glm::vec3& origin, glm::vec3& dir) const;
-    // World length that covers `pixels` on screen at point p.
-    float worldSize(const glm::vec3& p, float pixels) const;
-};
 
 class DebugDraw {
 public:

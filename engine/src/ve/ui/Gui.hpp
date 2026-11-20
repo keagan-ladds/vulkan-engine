@@ -45,6 +45,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct ImDrawList;
@@ -460,7 +461,14 @@ private:
         std::vector<float> sizes;
     };
     std::vector<PendingFont> m_pending;
-    std::vector<std::pair<std::shared_ptr<Texture>, void*>> m_textures;
+    // ImGui descriptor sets for textures drawn by Image elements (evictTextures drops unused ones).
+    struct TextureEntry {
+        std::shared_ptr<Texture> texture;
+        void* id = nullptr;
+        uint64_t lastUsed = 0; // renderer frame number
+    };
+    std::unordered_map<const Texture*, TextureEntry> m_textures;
+    void evictTextures();
     bool m_wantsMouse = false, m_block = false;
     // Pointer state.
     Element* m_down = nullptr;
@@ -471,6 +479,7 @@ private:
     float m_hoverTime = 0.0f;
     float m_navRepeat = 0.0f;
     glm::vec2 m_pointer{0.0f};
+    uint64_t m_forgotten = 0;       // counts destroyed elements (handlers that rebuild the UI)
     TextInput* m_editing = nullptr; // the text field being typed into
     Canvas* m_editingCanvas = nullptr;
 public:

@@ -22,12 +22,16 @@
 // controllers", "Navmesh", "Nav agents" (paths, destinations).
 // =============================================================================
 
+#include "ve/render/DebugLines.hpp"
+
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <functional>
 #include <map>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ve::debug {
@@ -66,16 +70,14 @@ void text(const glm::vec3& position, const std::string& text, const glm::vec4& c
 void clear(); // everything, including lines that would have lasted
 
 // --- Channels ----------------------------------------------------------------------------
-bool enabled(const std::string& channel); // registers the channel (off) the first time it's asked about
+// (std::less<>: looked up by string_view, so enabled("literal") doesn't build a std::string each call.)
+using ChannelMap = std::map<std::string, bool, std::less<>>;
+bool enabled(std::string_view channel); // registers the channel (off) the first time it's asked about
 void setChannel(const std::string& channel, bool on);
-const std::map<std::string, bool>& channels();
+const ChannelMap& channels();
 
 // --- Engine internal -----------------------------------------------------------------------
-struct Line {
-    glm::vec4 a;     // xyz, w = thickness
-    glm::vec4 b;     // xyz, w = 1: depth tested
-    glm::vec4 color; // sRGB
-};
+using Line = DebugLine; // kept in render's DebugLineBuffer, which DebugLinePass draws
 struct Label {
     glm::vec3 position;
     std::string text;

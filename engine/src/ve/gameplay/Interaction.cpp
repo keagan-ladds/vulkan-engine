@@ -3,7 +3,6 @@
 #include "ve/core/Engine.hpp"
 #include "ve/core/Input.hpp"
 #include "ve/physics/Physics.hpp"
-#include "ve/scene/Reflection.hpp"
 #include "ve/scene/Scene.hpp"
 
 #include <cmath>
@@ -62,16 +61,14 @@ void Interactor::update(float)
         if (now) now->focusChanged(true);
     }
     m_focus = now;
-    m_focusObject = now ? now->gameObject().id() : 0;
     if (!action.empty() && input().actionPressed(action)) interact();
 }
 
 Interactable* Interactor::focus() const
 {
-    // The focus may have been destroyed since update(): check it still exists.
-    if (!m_focus || !m_focusObject) return nullptr;
-    GameObject* o = gameObject().scene().findById(m_focusObject);
-    return o && !o->isDestroyed() && &m_focus->gameObject() == o ? m_focus : nullptr;
+    // The focus may have been destroyed since update(), or just its component
+    // removed: ComponentRef checks both without touching freed memory.
+    return m_focus.get(gameObject().scene());
 }
 
 std::string Interactor::prompt() const
@@ -86,6 +83,33 @@ bool Interactor::interact()
     if (!i || i->currentPrompt().empty()) return false;
     i->use(gameObject());
     return true;
+}
+
+} // namespace ve
+
+// -----------------------------------------------------------------------------
+// Reflection
+// -----------------------------------------------------------------------------
+
+#include "ve/scene/Reflection.hpp"
+
+namespace ve {
+
+void registerInteractionTypes(TypeRegistry& r)
+{
+    r.add<Interactable>("Interactable", [](TypeBuilder<Interactable>& t) {
+        t.category("Gameplay");
+        t.field("prompt", &Interactable::prompt).tooltip("shown while looked at (what using does is set from code: onUse)");
+        t.field("reach", &Interactable::reach).range(0.0f, 50.0f).speed(0.05f);
+        t.field("focusOffset", &Interactable::focusOffset).tooltip("local point aimed at when it has no collider");
+    });
+    r.add<Interactor>("Interactor", [](TypeBuilder<Interactor>& t) {
+        t.category("Gameplay");
+        t.field("action", &Interactor::action).tooltip("Input action that uses the focus");
+        t.field("maxReach", &Interactor::maxReach).range(0.0f, 50.0f);
+        t.field("coneDegrees", &Interactor::coneDegrees).range(0.0f, 90.0f);
+        t.field("useMainCamera", &Interactor::useMainCamera);
+    });
 }
 
 } // namespace ve

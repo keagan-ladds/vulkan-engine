@@ -125,13 +125,13 @@ void MusicPlayer::select(float fade)
         }
         resume->target = 1.0f;
         resume->idle = 0.0f;
-        if (!ma_sound_is_playing(resume->sound)) ma_sound_start(resume->sound);
+        if (!ma_sound_is_playing(resume->sound.get())) ma_sound_start(resume->sound.get());
         return;
     }
     startTrack(f);
 }
 
-ma_sound* MusicPlayer::openTrack(const std::string& path)
+SoundPtr MusicPlayer::openTrack(const std::string& path)
 {
     if (!m_audio.available()) return nullptr;
     std::string file;
@@ -141,14 +141,12 @@ ma_sound* MusicPlayer::openTrack(const std::string& path)
         log::warnOnce("Music: track not found: " + path);
         return nullptr;
     }
-    auto* sound = new ma_sound();
-    if (ma_sound_init_from_file(m_audio.engine(), file.c_str(), MA_SOUND_FLAG_STREAM, m_audio.bus("Music").group,
-                                nullptr, sound) != MA_SUCCESS) {
+    SoundPtr sound = openSound(m_audio.engine(), file, MA_SOUND_FLAG_STREAM, m_audio.bus("Music").group.get());
+    if (!sound) {
         log::warnOnce("Music: failed to load " + path);
-        delete sound;
         return nullptr;
     }
-    ma_sound_set_spatialization_enabled(sound, MA_FALSE);
+    ma_sound_set_spatialization_enabled(sound.get(), MA_FALSE);
     return sound;
 }
 
@@ -174,20 +172,20 @@ void MusicPlayer::startTrack(float fade)
     }
     st.last = index;
 
-    ma_sound* sound = openTrack(m->tracks[index]);
+    SoundPtr sound = openTrack(m->tracks[index]);
     if (!sound) {
         m_gapTimer = randomGap(*m); // try the next one later
         return;
     }
+    ma_sound_set_volume(sound.get(), 0.0f);
+    ma_sound_start(sound.get());
     Voice v;
-    v.sound = sound;
+    v.sound = std::move(sound);
     v.mood = m->name;
     v.track = m->tracks[index];
     v.volume = fade > 0.0f ? 0.0f : 1.0f;
     v.target = 1.0f;
     v.rate = 1.0f / std::max(fade, 0.01f);
-    ma_sound_set_volume(sound, 0.0f);
-    ma_sound_start(sound);
     m_voices.push_back(std::move(v));
 }
 
@@ -219,38 +217,27 @@ void MusicPlayer::stinger(const std::string& path, float volume, float duck)
         log::warnOnce("Music: stinger not found: " + path);
         return;
     }
-    auto* sound = new ma_sound();
-    if (ma_sound_init_from_file(m_audio.engine(), file.c_str(), MA_SOUND_FLAG_DECODE, m_audio.bus("Music").group,
-                                nullptr, sound) != MA_SUCCESS) {
+    SoundPtr sound = openSound(m_audio.engine(), file, MA_SOUND_FLAG_DECODE, m_audio.bus("Music").group.get());
+    if (!sound) {
         log::warnOnce("Music: failed to load " + path);
-        delete sound;
         return;
     }
-    ma_sound_set_spatialization_enabled(sound, MA_FALSE);
-    ma_sound_set_volume(sound, volume * m_volume);
-    ma_sound_start(sound);
-    m_stingers.push_back(sound);
+    ma_sound_set_spatialization_enabled(sound.get(), MA_FALSE);
+    ma_sound_set_volume(sound.get(), volume * m_volume);
+    ma_sound_start(sound.get());
+    m_stingers.push_back(std::move(sound));
     m_duckTarget = std::min(m_duckTarget, duck);
 }
 
 void MusicPlayer::freeVoice(Voice& v)
 {
-    if (v.sound) {
-        ma_sound_uninit(v.sound);
-        delete v.sound;
-        v.sound = nullptr;
-    }
+    v.sound.reset();
 }
 
 void MusicPlayer::update(float dt)
 {
     // Stingers: free finished ones; the music comes back up once they're done.
-    std::erase_if(m_stingers, [](ma_sound* s) {
-        if (!ma_sound_at_end(s)) return false;
-        ma_sound_uninit(s);
-        delete s;
-        return true;
-    });
+    std::erase_if(m_stingers, [](const SoundPtr& s) { return ma_sound_at_end(s.get()); });
     if (m_stingers.empty()) m_duckTarget = 1.0f;
     m_duck += (m_duckTarget - m_duck) * (1.0f - std::exp(-dt * (m_duckTarget < m_duck ? 12.0f : 1.5f)));
 
@@ -261,12 +248,12 @@ void MusicPlayer::update(float dt)
         const MusicMoodDesc* m = mood(v.mood);
         // Equal-power-ish curve: crossfades don't dip in the middle.
         const float curve = std::sin(v.volume * 1.5707963f);
-        ma_sound_set_volume(v.sound, curve * (m ? m->volume : 1.0f) * m_duck * m_volume);
+        ma_sound_set_volume(v.sound.get(), curve * (m ? m->volume : 1.0f) * m_duck * m_volume);
         if (v.target <= 0.0f && v.volume <= 0.0f) {
-            if (ma_sound_is_playing(v.sound)) ma_sound_stop(v.sound); // paused: can resume
+            if (ma_sound_is_playing(v.sound.get())) ma_sound_stop(v.sound.get()); // paused: can resume
             v.idle += dt;
             if (v.idle > kResumeWindow || v.mood.empty()) freeVoice(v);
-        } else if (ma_sound_at_end(v.sound)) {
+        } else if (ma_sound_at_end(v.sound.get())) {
             if (v.mood == m_current && v.target > 0.0f) trackEnded = true;
             freeVoice(v);
         }
@@ -286,10 +273,6 @@ void MusicPlayer::release()
 {
     for (Voice& v : m_voices) freeVoice(v);
     m_voices.clear();
-    for (ma_sound* s : m_stingers) {
-        ma_sound_uninit(s);
-        delete s;
-    }
     m_stingers.clear();
 }
 

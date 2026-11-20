@@ -19,21 +19,20 @@
 //   - Skirts: a short wall hangs down from every node edge and hides the
 //     small cracks between neighbours of different levels.
 //
-// Meshes are built on worker threads (from the pure terrain generator, or the
-// tile cache for the finest levels) and uploaded under a per-frame budget.
+// Meshes are built by jobs on the engine's worker pool (from the pure terrain
+// generator, or the tile cache for the finest levels) and uploaded under a per-frame budget.
 // After a terrain edit, nodes keep their old mesh until the new one is ready.
 // =============================================================================
 
+#include "ve/core/Jobs.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/world/Terrain.hpp"
 
 #include <glm/glm.hpp>
 
-#include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -54,9 +53,8 @@ public:
         int level;
     };
     struct Stats {
-        uint32_t drawn = 0, cached = 0, pending = 0, built = 0;
+        uint32_t drawn = 0, pending = 0;
         uint32_t missing = 0; // nodes the view wants that have no mesh yet (a coarser one stands in)
-        float buildMs = 0.0f; // worker time per node, smoothed
     };
 
     explicit TerrainLod(Renderer& renderer);
@@ -99,7 +97,7 @@ private:
         uint64_t version;
         int nodeCells;
         std::shared_ptr<const TerrainData> data;
-        TerrainLook look;
+        std::shared_ptr<const TerrainLook> look; // shared: jobs are queued every frame
     };
     struct Result {
         Key key;
@@ -112,14 +110,23 @@ private:
     bool exists(const Key& k) const;  // overlaps the world
     void select(const Key& k, const glm::vec3& camera, std::vector<Key>& want);
     void request(const Key& k, float priority);
-    MeshData build(const Job& job, float& minY, float& maxY) const;
-    void workerLoop();
+    static MeshData build(const Job& job, float& minY, float& maxY);
+    // What the build jobs share with the main thread. Owned jointly, so this
+    // object can die without waiting for a build in flight.
+    struct Queue {
+        std::mutex mutex;
+        std::deque<Job> jobs; // nearest / coarsest first
+        std::vector<Result> results;
+        int busy = 0;         // jobs being built
+        bool quit = false;
+    };
+    static void drain(Queue& q, const std::atomic<bool>& cancelled); // a pool job
     void upload(Result& r);
     void evict();
 
     Renderer* m_renderer;
     std::shared_ptr<const TerrainData> m_data;
-    TerrainLook m_look;
+    std::shared_ptr<const TerrainLook> m_look;
     Settings m_settings;
     uint64_t m_version = 0;
     int m_levels = 1;
@@ -129,14 +136,8 @@ private:
     std::vector<std::pair<float, Key>> m_requests; // this frame's missing meshes, by priority
     Stats m_stats;
 
-    // Worker
-    std::mutex m_mutex;
-    std::condition_variable m_wake;
-    std::deque<Job> m_jobs;       // nearest / coarsest first
-    std::vector<Result> m_results;
-    int m_busy = 0;
-    bool m_quit = false;
-    std::vector<std::thread> m_workers;
+    std::shared_ptr<Queue> m_queue = std::make_shared<Queue>();
+    jobs::DrainGroup m_drains;
 };
 
 } // namespace ve

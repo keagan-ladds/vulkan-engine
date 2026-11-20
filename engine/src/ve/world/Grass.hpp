@@ -21,7 +21,8 @@
 // frame.globalParams[windSlot] (xy direction, z strength; the vfx convention).
 //
 // Runs in RenderStage::Opaque after OpaquePass (writes colour, the thin
-// G-buffer and depth; casts no shadows). For a custom look, keep
+// G-buffer and depth). It is also a ShadowCaster: with castShadows, clumps
+// within shadowDistance go into the sun's cascades. For a custom look, keep
 // grass_field.vert and write your own fragment shader with the same inputs
 // (see grass_field.frag), or start your vertex shader from ve_grass.glsl.
 // Alpha-clipped grass cards: set GrassDesc::cardMesh + cardTexture.
@@ -34,6 +35,7 @@
 // with *_LOD0, *_LOD1... nodes.
 // =============================================================================
 
+#include "ve/core/Jobs.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/render/RenderGraph.hpp"
 #include "ve/render/Renderer.hpp"
@@ -41,8 +43,8 @@
 
 #include <glm/glm.hpp>
 
+#include <atomic>
 #include <functional>
-#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -72,7 +74,9 @@ struct GrassDesc {
     float window = 0.0f;
     // Sampled into the textures (whole bounds: once in setup(), then released
     // with whatever they capture; windowed: on a worker thread whenever the
-    // window moves, so they must be thread-safe).
+    // window moves, so they must be thread-safe, and own what they capture
+    // (by value / shared_ptr): a bake in flight when the pass is destroyed
+    // isn't waited for, it stops at its next row).
     std::function<float(glm::vec2)> height;   // required; must match the rendered ground
     std::function<glm::vec4(glm::vec2)> mask; // x density 0..1, y colour mix A->B, z height scale, w free; null = full
     glm::vec3 colorA{0.55f, 0.6f, 0.25f};
@@ -117,6 +121,7 @@ struct GrassDesc {
 
     // LOD chain, nearest first. Empty = one LOD from cardMesh / cardTexture /
     // fragmentShader above (procedural blades if cardMesh is empty).
+    // GrassPass uploads the meshes in setup() and then frees these CPU copies.
     std::vector<GrassLod> lods;
     float lodBlend = 4.0f; // m over which neighbouring LODs are dithered
 };
@@ -163,7 +168,19 @@ private:
         std::vector<glm::vec2> tileHeights; // min/max ground height per tile
         int tilesX = 0, tilesZ = 0;
     };
-    static Baked bake(const GrassDesc& d, glm::vec2 lo, glm::vec2 size, uint32_t res, uint32_t maskRes);
+    // What a bake reads: only this is copied to the worker (not the whole
+    // GrassDesc with its LOD meshes).
+    struct BakeInput {
+        std::function<float(glm::vec2)> height;
+        std::function<glm::vec4(glm::vec2)> mask;
+        float tileSize;
+    };
+    BakeInput bakeInput() const { return {m_desc.height, m_desc.mask, m_desc.tileSize}; }
+    // `cancel` (optional) is polled per row: an abandoned bake returns early.
+    static Baked bake(const BakeInput& in, glm::vec2 lo, glm::vec2 size, uint32_t res, uint32_t maskRes,
+                      const std::atomic<bool>* cancel = nullptr);
+    void startBake(glm::vec2 lo); // m_pending = bake of `lo` (m_area's size and resolutions) as a pool job
+    void bakeFinished(); // if m_pending is done: applies it (unless cancelled) and clears it
     void apply(Baked&& baked); // upload the textures, switch to the new area
     glm::vec2 windowFor(glm::vec2 eye) const; // window origin for a camera position
 
@@ -185,7 +202,14 @@ private:
     std::vector<Lod> m_lods;
     Baked m_area;                      // what the textures hold now (samples freed after upload)
     float m_windowSize = 0.0f;         // 0 = whole bounds
-    std::future<Baked> m_pending;      // a window being re-baked
+    // A window being re-baked. The job owns its inputs (a copy of the
+    // callbacks) and its output, so the pass can go away without waiting:
+    // it cancels the job (which stops at its next row) and drops it.
+    struct PendingBake {
+        jobs::Handle job;
+        std::shared_ptr<Baked> result;
+    };
+    PendingBake m_pending;
     uint32_t m_lastTiles = 0, m_lastClumps = 0, m_shadowClumps = 0, m_lastShadowClumps = 0;
     bool m_registered = false;
 };

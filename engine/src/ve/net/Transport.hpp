@@ -51,7 +51,8 @@ public:
 
     void poll(const std::function<void(const Event&)>& onEvent); // receive; also keeps connections alive
     void send(ConnectionId c, Channel channel, std::span<const uint8_t> bytes);
-    void broadcast(Channel channel, std::span<const uint8_t> bytes, ConnectionId except = 0);
+    // The same bytes to several connections, as one shared packet (not a copy per peer).
+    void broadcast(std::span<const ConnectionId> to, Channel channel, std::span<const uint8_t> bytes);
     void flush(); // push queued packets out now (they also go on the next poll)
     Stats stats(ConnectionId c) const;
 

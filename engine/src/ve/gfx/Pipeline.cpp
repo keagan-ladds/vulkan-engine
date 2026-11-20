@@ -4,6 +4,15 @@
 
 namespace ve {
 
+namespace {
+VkPipelineCache g_pipelineCache = VK_NULL_HANDLE; // Device's (pipeline caches are internally synchronized)
+} // namespace
+
+void setPipelineCache(VkPipelineCache cache)
+{
+    g_pipelineCache = cache;
+}
+
 VkShaderModule loadShaderModule(VkDevice device, const std::filesystem::path& path)
 {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -215,7 +224,7 @@ VkPipeline PipelineBuilder::build(VkDevice device) const
     info.layout = m_layout;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline));
+    VK_CHECK(vkCreateGraphicsPipelines(device, g_pipelineCache, 1, &info, nullptr, &pipeline));
     return pipeline;
 }
 
@@ -228,7 +237,7 @@ VkPipeline createComputePipeline(VkDevice device, VkShaderModule shader, VkPipel
     info.stage.pName = "main";
     info.layout = layout;
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VK_CHECK(vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline));
+    VK_CHECK(vkCreateComputePipelines(device, g_pipelineCache, 1, &info, nullptr, &pipeline));
     return pipeline;
 }
 

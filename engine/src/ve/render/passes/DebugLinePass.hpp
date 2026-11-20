@@ -1,8 +1,10 @@
 #pragma once
-// Draws ve::debug lines (ve/debug/Debug.hpp) over the finished image: each
+// Draws DebugLineBuffer's lines (ve/render/DebugLines.hpp; ve::debug fills it)
+// over the finished image: each
 // segment is a screen-space quad (any thickness), depth-tested against
 // SceneDepth; the hidden parts are drawn faint.
 
+#include "ve/gfx/Device.hpp"
 #include "ve/gfx/Resources.hpp"
 #include "ve/render/RenderGraph.hpp"
 
@@ -26,7 +28,7 @@ private:
     VkPipeline m_visible = VK_NULL_HANDLE; // depth-tested, in front
     VkPipeline m_hidden = VK_NULL_HANDLE;  // depth-tested, behind something: faint
     VkPipeline m_onTop = VK_NULL_HANDLE;   // no depth test
-    std::array<Buffer, 2> m_buffers{};
+    std::array<Buffer, Device::kFramesInFlight> m_buffers{}; // one per frame in flight
     uint32_t m_slot = 0;
     uint32_t m_tested = 0, m_untested = 0; // this frame's counts (tested first in the buffer)
 };

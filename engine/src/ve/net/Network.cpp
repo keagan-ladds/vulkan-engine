@@ -38,6 +38,39 @@ std::span<const uint8_t> bytesOf(const Writer& w)
     return {w.data().data(), w.data().size()};
 }
 
+// kTransform entries, cut into messages that fit one UDP datagram: an
+// unreliable packet over the MTU gets fragmented, and ENet sends the fragments
+// of an unreliable packet reliably (resends, head-of-line waits) - the opposite
+// of what movement wants. ~1200 bytes stays under any real-world path MTU.
+class TransformBatch {
+public:
+    static constexpr size_t kMaxBytes = 1200;
+
+    void add(uint64_t id, const glm::vec3& p, const glm::quat& q)
+    {
+        m_entries.write(id);
+        m_entries.write(p);
+        m_entries.writeRotation(q);
+        ++m_count;
+    }
+    bool empty() const { return m_count == 0; }
+    bool full() const { return m_entries.size() >= kMaxBytes; }
+    // The message (count, then the entries); the batch starts over.
+    Writer take()
+    {
+        Writer w = message(kTransform);
+        w.writeVarint(m_count);
+        w.append(m_entries);
+        m_entries.clear();
+        m_count = 0;
+        return w;
+    }
+
+private:
+    Writer m_entries;
+    uint64_t m_count = 0;
+};
+
 // The parts of an object that replicate state: the object itself, then its components, in order.
 std::vector<NetReplicated*> replicatedParts(GameObject& o)
 {
@@ -192,8 +225,11 @@ void Network::sendTo(PeerId peer, Channel ch, const Writer& w)
 void Network::sendToClients(Channel ch, const Writer& w, PeerId except)
 {
     if (m_role != Role::Host) return;
+    // One shared packet for everyone in the session (not still in the handshake).
+    m_sendList.clear();
     for (const Peer& p : m_peers)
-        if (p.welcomed && p.id != except) m_transport.send(p.connection, ch, bytesOf(w));
+        if (p.welcomed && p.id != except) m_sendList.push_back(p.connection);
+    if (!m_sendList.empty()) m_transport.broadcast(m_sendList, ch, bytesOf(w));
 }
 
 // --- Messages ---------------------------------------------------------------------------
@@ -331,22 +367,23 @@ void Network::readState(GameObject& o, Reader& r)
     }
 }
 
-void Network::applyTransform(uint64_t id, const glm::vec3& p, const glm::quat& q, PeerId sender)
+bool Network::applyTransform(uint64_t id, const glm::vec3& p, const glm::quat& q, PeerId sender)
 {
     GameObject* o = scene().findById(id);
-    if (!o) return;
+    if (!o) return false;
     const auto* no = o->getComponent<NetworkObject>();
-    if (no && no->isOwner()) return; // ours: we're the source
-    if (isServer() && (!no || no->owner() != sender)) return; // only the owner moves it
+    if (no && no->isOwner()) return false; // ours: we're the source
+    if (isServer() && (!no || no->owner() != sender)) return false; // only the owner moves it
     auto* nt = o->getComponent<NetworkTransform>();
     if (!nt) {
         o->transform().setPosition(p);
         o->transform().setRotation(q);
-        return;
+        return true;
     }
     if (!nt->m_samples.empty() && glm::distance(nt->m_samples.back().position, p) > nt->teleportDistance) nt->m_samples.clear();
     nt->m_samples.push_back({now(), p, q});
     while (nt->m_samples.size() > 32) nt->m_samples.pop_front();
+    return true;
 }
 
 // --- Receiving ------------------------------------------------------------------------------
@@ -439,20 +476,20 @@ void Network::handleServer(Peer& peer, uint8_t type, Reader& r, std::span<const 
     }
     case kTransform: {
         // Moves of what this player owns: apply here, pass on to the others.
+        // Only the moves the host accepted are relayed: a client can't move
+        // what it doesn't own on everyone else's screen either.
         const uint64_t n = r.readVarint();
-        Writer relay = message(kTransform);
-        relay.writeVarint(n);
+        TransformBatch relay;
         for (uint64_t i = 0; i < n && !r.failed(); ++i) {
             const auto id = r.read<uint64_t>();
             const auto p = r.read<glm::vec3>();
             const glm::quat q = r.readRotation();
             if (r.failed()) break;
-            applyTransform(id, p, q, peer.id);
-            relay.write(id);
-            relay.write(p);
-            relay.writeRotation(q);
+            if (!applyTransform(id, p, q, peer.id)) continue;
+            relay.add(id, p, q);
+            if (relay.full()) sendToClients(Channel::Unreliable, relay.take(), peer.id);
         }
-        if (!r.failed()) sendToClients(Channel::Unreliable, relay, peer.id);
+        if (!relay.empty()) sendToClients(Channel::Unreliable, relay.take(), peer.id);
         break;
     }
     case kState: {
@@ -486,29 +523,28 @@ void Network::welcome(Peer& peer)
     m_transport.send(peer.connection, Channel::Reliable, bytesOf(w));
     peer.welcomed = true;
     // 2. Spawned objects saves don't cover (avatars...), owners, replicated state, where things are.
-    for (const auto& obj : scene().objects()) {
-        if (obj->isDestroyed()) continue;
-        const auto* no = obj->getComponent<NetworkObject>();
-        if (!no) continue;
-        const auto* pi = obj->getComponent<PrefabInstance>();
-        if (no->m_spawned && !(pi && pi->saveInGame)) m_transport.send(peer.connection, Channel::Reliable, bytesOf(spawnMessage(*no)));
-        if (no->m_owner != kServer) {
+    scene().forEach<NetworkObject>([&](NetworkObject& no) {
+        GameObject& obj = no.gameObject();
+        if (obj.isDestroyed()) return;
+        const auto* pi = obj.getComponent<PrefabInstance>();
+        if (no.m_spawned && !(pi && pi->saveInGame)) m_transport.send(peer.connection, Channel::Reliable, bytesOf(spawnMessage(no)));
+        if (no.m_owner != kServer) {
             Writer o = message(kOwner);
-            o.write(obj->id());
-            o.writeVarint(no->m_owner);
+            o.write(obj.id());
+            o.writeVarint(no.m_owner);
             m_transport.send(peer.connection, Channel::Reliable, bytesOf(o));
         }
         Writer s = message(kState);
-        if (writeState(*obj, s)) m_transport.send(peer.connection, Channel::Reliable, bytesOf(s));
-        if (obj->getComponent<NetworkTransform>()) {
+        if (writeState(obj, s)) m_transport.send(peer.connection, Channel::Reliable, bytesOf(s));
+        if (obj.getComponent<NetworkTransform>()) {
             Writer t = message(kTransform);
             t.writeVarint(1);
-            t.write(obj->id());
-            t.write(obj->transform().position());
-            t.writeRotation(obj->transform().rotation());
+            t.write(obj.id());
+            t.write(obj.transform().position());
+            t.writeRotation(obj.transform().rotation());
             m_transport.send(peer.connection, Channel::Reliable, bytesOf(t));
         }
-    }
+    });
     log::info("Network: '{}' joined (peer {})", peer.name, peer.id);
     refreshPeerList();
     if (onPeerJoined) onPeerJoined(peer.id);
@@ -525,8 +561,9 @@ void Network::dropPeer(PeerId id, const std::string& why)
     log::info("Network: '{}' left ({})", name, why);
     // What they owned: gone with them, or back to the host.
     std::vector<GameObject*> owned;
-    for (const auto& obj : scene().objects())
-        if (auto* no = obj->getComponent<NetworkObject>(); no && !obj->isDestroyed() && no->m_owner == id) owned.push_back(obj.get());
+    scene().forEach<NetworkObject>([&](NetworkObject& no) {
+        if (!no.gameObject().isDestroyed() && no.m_owner == id) owned.push_back(&no.gameObject());
+    });
     for (GameObject* o : owned) {
         if (o->getComponent<NetworkObject>()->despawnWithOwner) despawn(*o);
         else setOwner(*o, kServer);
@@ -638,42 +675,33 @@ void Network::flush()
         return;
     }
     const double t = now();
-    Writer moves = message(kTransform);
-    Writer batch;
-    uint64_t count = 0;
-    for (const auto& obj : scene().objects()) {
-        if (obj->isDestroyed()) continue;
-        auto* no = obj->getComponent<NetworkObject>();
-        if (!no || !no->isOwner()) continue;
-        if (auto* nt = obj->getComponent<NetworkTransform>(); nt && t - nt->m_lastSend >= 1.0 / std::max(1.0f, nt->sendRate)) {
-            const glm::vec3 p = obj->transform().position();
-            const glm::quat q = obj->transform().rotation();
+    const auto send = [&](Channel ch, const Writer& w) {
+        if (m_role == Role::Host) sendToClients(ch, w);
+        else sendTo(kServer, ch, w);
+    };
+    TransformBatch moves;
+    scene().forEach<NetworkObject>([&](NetworkObject& no) {
+        GameObject& obj = no.gameObject();
+        if (obj.isDestroyed() || !no.isOwner()) return;
+        if (auto* nt = obj.getComponent<NetworkTransform>(); nt && t - nt->m_lastSend >= 1.0 / std::max(1.0f, nt->sendRate)) {
+            const glm::vec3 p = obj.transform().position();
+            const glm::quat q = obj.transform().rotation();
             const bool moved = glm::distance(p, nt->m_sentPosition) > 0.002f || std::abs(glm::dot(q, nt->m_sentRotation)) < 0.99999f;
             if (moved || t - nt->m_lastSend > 1.0) { // (a slow heartbeat while still)
-                batch.write(obj->id());
-                batch.write(p);
-                batch.writeRotation(q);
-                ++count;
+                moves.add(obj.id(), p, q);
+                if (moves.full()) send(Channel::Unreliable, moves.take());
                 nt->m_sentPosition = p;
                 nt->m_sentRotation = q;
                 nt->m_lastSend = t;
             }
         }
-        if (no->m_dirty) {
-            no->m_dirty = false;
+        if (no.m_dirty) {
+            no.m_dirty = false;
             Writer s = message(kState);
-            if (writeState(*obj, s)) {
-                if (m_role == Role::Host) sendToClients(Channel::Reliable, s);
-                else sendTo(kServer, Channel::Reliable, s);
-            }
+            if (writeState(obj, s)) send(Channel::Reliable, s);
         }
-    }
-    if (count > 0) {
-        moves.writeVarint(count);
-        moves.append(batch);
-        if (m_role == Role::Host) sendToClients(Channel::Unreliable, moves);
-        else sendTo(kServer, Channel::Unreliable, moves);
-    }
+    });
+    if (!moves.empty()) send(Channel::Unreliable, moves.take());
     if (m_role == Role::Host && t - m_lastFlush > 2.0) { // round trips for the player list now and then
         m_lastFlush = t;
         for (PeerInfo& p : m_peerList)
@@ -691,3 +719,27 @@ Transport::Stats Network::stats(PeerId peer) const
 }
 
 } // namespace ve::net
+
+// -----------------------------------------------------------------------------
+// Reflection
+// -----------------------------------------------------------------------------
+
+#include "ve/scene/Reflection.hpp"
+
+namespace ve {
+
+void registerNetworkTypes(TypeRegistry& r)
+{
+    r.add<net::NetworkObject>("NetworkObject", [](TypeBuilder<net::NetworkObject>& t) {
+        t.category("Network");
+        t.field("despawnWithOwner", &net::NetworkObject::despawnWithOwner).tooltip("the owner left: the host removes it (else the host takes it over)");
+    });
+    r.add<net::NetworkTransform>("NetworkTransform", [](TypeBuilder<net::NetworkTransform>& t) {
+        t.category("Network");
+        t.field("sendRate", &net::NetworkTransform::sendRate).range(1.0f, 60.0f);
+        t.field("interpolationDelay", &net::NetworkTransform::interpolationDelay).range(0.0f, 0.5f).speed(0.005f);
+        t.field("teleportDistance", &net::NetworkTransform::teleportDistance).range(0.5f, 100.0f);
+    });
+}
+
+} // namespace ve

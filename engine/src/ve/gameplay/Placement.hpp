@@ -124,7 +124,8 @@ std::optional<SnapResult> findSnap(const Scene& scene, const std::vector<LocalSn
 glm::vec3 snapToGrid(const glm::vec3& p, const glm::vec3& cell, const glm::vec3& origin = glm::vec3(0.0f));
 float snapAngle(float radians, float step);
 
-// The local bounds of everything the object's subtree draws (relative to its root).
+// The local bounds of everything the object's subtree draws, relative to its root
+// (its position and rotation; its scale stays in, as for snapPointsOf).
 AABB localBounds(const GameObject& root);
 // The piece's volume: its PlacementBoxes, or else its drawn bounds as one box.
 std::vector<OrientedBox> volumeOf(const GameObject& root);
@@ -176,5 +177,9 @@ private:
     bool m_measured = false; // snap points / bounds read (after the piece's start())
     std::shared_ptr<StandardMaterial> m_material;
 };
+
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerPlacementTypes(TypeRegistry& r);
 
 } // namespace ve

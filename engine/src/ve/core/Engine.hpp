@@ -16,6 +16,7 @@
 // See docs/01-architecture.md §3 for the exact order of a frame.
 // =============================================================================
 
+#include "ve/core/Jobs.hpp" // the worker pool the Engine shuts down (also sizes physics threads)
 #include "ve/core/Input.hpp"
 #include "ve/core/Time.hpp"
 #include "ve/render/Renderer.hpp"
@@ -90,6 +91,9 @@ public:
     PhysicsWorld& physics() { return *m_physics; }
     UiLayer& ui() { return *m_ui; }
     Editor* editor() { return m_editor.get(); } // null if EngineConfig::enableEditor is false
+    // The editor is in Edit mode (game paused); false without an editor. For
+    // modules that may not include the editor (ui, gameplay, ...).
+    bool editorPaused() const;
     const EngineConfig& config() const { return m_config; }
 
     // Pauses gameplay like the editor's Edit mode: no fixed steps or physics,

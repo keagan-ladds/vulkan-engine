@@ -13,6 +13,7 @@
 // =============================================================================
 
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 
@@ -34,10 +35,10 @@ public:
     void start() override { rebuild(); }
     void onDestroy() override;
     void rebuild();
-    GameObject* instanceRoot() const { return m_root; }
+    GameObject* instanceRoot() const; // null until started / if it was destroyed
 
 private:
-    GameObject* m_root = nullptr;
+    ObjectRef<> m_root; // the editor or game may destroy the spawned nodes
 };
 
 class PrimitiveRenderer : public Component {
@@ -57,7 +58,8 @@ public:
     void rebuild();
 
 private:
-    MeshRenderer* m_renderer = nullptr;
+    // The MeshRenderer this added next to itself (the editor may remove it).
+    ComponentRef<MeshRenderer> m_renderer;
     std::shared_ptr<StandardMaterial> m_material;
 };
 

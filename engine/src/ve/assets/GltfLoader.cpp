@@ -132,8 +132,9 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
     if (cgltf_parse_file(&options, path.c_str(), &data) != cgltf_result_success) {
         throw std::runtime_error("Failed to parse glTF: " + path);
     }
+    // Freed on every way out, including exceptions (texture loads, Mesh::create...).
+    const std::unique_ptr<cgltf_data, void (*)(cgltf_data*)> guard(data, cgltf_free);
     if (cgltf_load_buffers(&options, data, path.c_str()) != cgltf_result_success) {
-        cgltf_free(data);
         throw std::runtime_error("Failed to load glTF buffers: " + path);
     }
 
@@ -145,6 +146,9 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
     std::vector<std::shared_ptr<Material>> materials(data->materials_count);
     for (size_t i = 0; i < data->materials_count; ++i) materials[i] = convertMaterial(ctx, &data->materials[i]);
     std::shared_ptr<Material> defaultMaterial;
+    // model->skinnedMeshes holds const sources; the joint radii below are
+    // filled in through these (per mesh, null if not skinned).
+    std::vector<std::shared_ptr<SkinnedMeshSource>> skinSources;
 
     // --- Meshes ----------------------------------------------------------------
     for (size_t mi = 0; mi < data->meshes_count; ++mi) {
@@ -241,24 +245,26 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
             model->meshMaterials.push_back({});
             model->meshData.emplace_back();
             model->skinnedMeshes.push_back(nullptr);
+            skinSources.push_back(nullptr);
             continue;
         }
         if (needTangents) md.computeTangents();
+        model->meshes.push_back(Mesh::create(renderer, md, submeshes, gm.name ? gm.name : model->name));
         std::shared_ptr<SkinnedMeshSource> skin;
         if (skinned) {
             skinJoints.resize(md.vertices.size(), glm::uvec4(0));
             skinWeights.resize(md.vertices.size(), glm::vec4(1, 0, 0, 0));
             skin = std::make_shared<SkinnedMeshSource>();
-            skin->data = md;
-            skin->submeshes = submeshes;
-            skin->joints = skinJoints;
-            skin->weights = skinWeights;
+            skin->data = md; // (the one copy: meshData keeps the other, for colliders)
+            skin->submeshes = std::move(submeshes);
+            skin->joints = std::move(skinJoints);
+            skin->weights = std::move(skinWeights);
             skin->name = gm.name ? gm.name : model->name;
         }
-        model->meshData.push_back(md);
-        model->meshes.push_back(Mesh::create(renderer, md, submeshes, gm.name ? gm.name : model->name));
+        model->meshData.push_back(std::move(md));
         model->meshMaterials.push_back(std::move(slots));
-        model->skinnedMeshes.push_back(std::move(skin));
+        model->skinnedMeshes.push_back(skin);
+        skinSources.push_back(std::move(skin));
     }
 
     // --- Nodes -----------------------------------------------------------------
@@ -300,7 +306,7 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
     // Bounds padding per joint: how far its vertices reach from it (in the bind pose).
     for (const ModelNode& node : model->nodes) {
         if (node.skin < 0) continue;
-        auto& src = const_cast<SkinnedMeshSource&>(*model->skinnedMeshes[size_t(node.mesh)]);
+        SkinnedMeshSource& src = *skinSources[size_t(node.mesh)];
         const ModelSkin& skin = model->skins[size_t(node.skin)];
         src.jointRadius.assign(skin.joints.size(), 0.0f);
         for (size_t v = 0; v < src.data.vertices.size(); ++v) {
@@ -342,8 +348,7 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
         model->animations.push_back(std::move(clip));
     }
 
-    cgltf_free(data);
-    return model;
+    return model; // (guard frees the cgltf data)
 }
 
 } // namespace ve

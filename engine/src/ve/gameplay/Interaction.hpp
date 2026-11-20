@@ -25,6 +25,7 @@
 // =============================================================================
 
 #include "ve/scene/Components.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 
@@ -72,8 +73,11 @@ public:
 private:
     Interactable* findFocus() const;
     glm::vec3 m_eye{0.0f}, m_dir{0.0f, 0.0f, -1.0f};
-    uint64_t m_focusObject = 0;   // the focused Interactable's object (it may be destroyed)
-    Interactable* m_focus = nullptr;
+    ComponentRef<Interactable> m_focus; // it (or its object) may be destroyed
 };
+
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerInteractionTypes(TypeRegistry& r);
 
 } // namespace ve

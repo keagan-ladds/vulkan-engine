@@ -21,12 +21,15 @@
 //     mat->setVector(0, {0.1, 0.3, 0.35, 0.8});   // whatever water.frag expects in params[0]
 // =============================================================================
 
+#include "ve/gfx/Device.hpp"
 #include "ve/gfx/Pipeline.hpp"
 #include "ve/render/GpuTypes.hpp"
 
 #include <array>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace ve {
 
@@ -116,7 +119,25 @@ protected:
     Renderer* m_renderer;
     std::shared_ptr<Shader> m_shader;
     uint32_t m_index = kInvalidIndex;
-    std::array<std::shared_ptr<Texture>, 16> m_textures;
+    std::array<std::shared_ptr<Texture>, kMaterialTextureCount> m_textures;
+};
+
+// Engine internal: which GpuMaterial slots changed and which per-frame material
+// buffers haven't received them yet. The Renderer keeps one buffer per frame
+// slot, so a change is copied once into each of them (on that slot's next
+// frame) instead of every material into every frame.
+class MaterialDirtySet {
+public:
+    // Slot `index` changed (Material::data() written, or a material created).
+    void mark(uint32_t index);
+    // Runs {first, count} of slots that frame slot `frameSlot` hasn't received
+    // yet, in ascending order; they count as received afterwards.
+    void take(uint32_t frameSlot, std::vector<std::pair<uint32_t, uint32_t>>& runs);
+
+private:
+    static constexpr uint8_t kAllFrameSlots = (1u << Device::kFramesInFlight) - 1u;
+    std::vector<uint8_t> m_pending; // per material slot: bit s = frame slot s still needs it
+    std::vector<uint32_t> m_dirty;  // slots with any bit set (unsorted, no duplicates)
 };
 
 // The built-in PBR material (standard.vert/frag). Parameter layout:

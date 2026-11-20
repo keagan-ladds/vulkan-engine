@@ -23,11 +23,22 @@ void AssetManager::clear()
     m_textures.clear();
     m_models.clear();
     m_audio.clear();
+    m_resolved.clear(); // (files may have moved meanwhile)
 }
 
 void AssetManager::addSearchPath(const std::filesystem::path& path)
 {
     m_searchPaths.push_back(path);
+    m_resolved.clear(); // an earlier-found file may now be shadowed
+}
+
+const std::filesystem::path& AssetManager::resolveCached(const std::filesystem::path& path)
+{
+    // Cache hits in the load functions skip the filesystem (exists + canonical
+    // per search path). Only successful lookups are remembered.
+    std::string key = path.generic_string();
+    if (auto it = m_resolved.find(key); it != m_resolved.end()) return it->second;
+    return m_resolved.emplace(std::move(key), resolve(path)).first->second;
 }
 
 bool AssetManager::exists(const std::filesystem::path& path) const
@@ -67,8 +78,12 @@ std::string AssetManager::assetName(const std::filesystem::path& file) const
 std::shared_ptr<Texture> AssetManager::loadTexture(const std::filesystem::path& path, bool srgb, bool mipmaps,
                                                    SamplerType sampler)
 {
-    const auto file = resolve(path);
-    const std::string key = file.string() + (srgb ? "|srgb" : "|linear");
+    const std::filesystem::path& file = resolveCached(path);
+    // Everything that changes the texture is in the key: the same image as
+    // colour and as data, with or without mips, or with another sampler, are
+    // different textures.
+    const std::string key = file.string() + (srgb ? "|srgb" : "|linear") + (mipmaps ? "|mips" : "|nomips") + "|sampler" +
+                            std::to_string(static_cast<int>(sampler));
     if (auto it = m_textures.find(key); it != m_textures.end()) return it->second;
     auto tex = loadTextureFile(*m_renderer, file, srgb, mipmaps, sampler);
     m_textures[key] = tex;
@@ -77,7 +92,7 @@ std::shared_ptr<Texture> AssetManager::loadTexture(const std::filesystem::path& 
 
 std::shared_ptr<Model> AssetManager::loadModel(const std::filesystem::path& path)
 {
-    const auto file = resolve(path);
+    const std::filesystem::path& file = resolveCached(path);
     const std::string key = file.string();
     if (auto it = m_models.find(key); it != m_models.end()) return it->second;
     const auto t0 = std::chrono::steady_clock::now();
@@ -91,7 +106,7 @@ std::shared_ptr<Model> AssetManager::loadModel(const std::filesystem::path& path
 
 std::shared_ptr<AudioClip> AssetManager::loadAudio(const std::filesystem::path& path, bool stream)
 {
-    const auto file = resolve(path);
+    const std::filesystem::path& file = resolveCached(path);
     const std::string key = file.string() + (stream ? "|stream" : "");
     if (auto it = m_audio.find(key); it != m_audio.end()) return it->second;
     auto clip = std::make_shared<AudioClip>(file.string(), stream, assetName(file));

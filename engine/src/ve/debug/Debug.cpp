@@ -2,10 +2,10 @@
 
 #include "ve/core/Engine.hpp"
 #include "ve/core/Time.hpp"
-#include "ve/editor/Gizmo.hpp"
 #include "ve/nav/Navigation.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Renderer.hpp"
+#include "ve/render/ViewProjector.hpp"
 #include "ve/scene/Scene.hpp"
 
 #include <imgui.h>
@@ -17,11 +17,11 @@ namespace ve::debug {
 
 namespace {
 struct State {
-    std::vector<Line> lines;
-    std::vector<double> lineExpiry; // < 0: this frame
+    std::vector<Line>& lines = DebugLineBuffer::get().lines; // what DebugLinePass draws
+    std::vector<double> lineExpiry; // per line; < 0: this frame
     std::vector<Label> labels;
     std::vector<double> labelExpiry;
-    std::map<std::string, bool> channels{
+    ChannelMap channels{
         {"Physics colliders", false}, {"Physics terrain", false}, {"Character controllers", false},
         {"Navmesh", false},           {"Nav agents", false},        {"Physics joints", false},
     };
@@ -188,9 +188,12 @@ void clear()
 // Channels
 // -----------------------------------------------------------------------------
 
-bool enabled(const std::string& channel)
+bool enabled(std::string_view channel)
 {
-    return state().channels.try_emplace(channel, false).first->second;
+    ChannelMap& channels = state().channels;
+    if (auto it = channels.find(channel); it != channels.end()) return it->second;
+    channels.emplace(std::string(channel), false);
+    return false;
 }
 
 void setChannel(const std::string& channel, bool on)
@@ -198,7 +201,7 @@ void setChannel(const std::string& channel, bool on)
     state().channels[channel] = on;
 }
 
-const std::map<std::string, bool>& channels()
+const ChannelMap& channels()
 {
     return state().channels;
 }

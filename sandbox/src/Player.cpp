@@ -1,8 +1,10 @@
 #include "Player.hpp"
 
 #include "Building.hpp"
+#include "Footsteps.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
+#include "SceneLookup.hpp"
 
 #include <ve/gameplay/Interaction.hpp>
 #include <ve/world/Grass.hpp>
@@ -22,6 +24,12 @@
 namespace savanna {
 
 using ve::Key;
+
+Player* localPlayer(const ve::Scene& scene)
+{
+    static ve::ObjectRef<Player> s_player; // (validated on every call: a new level has a new player)
+    return findCached(scene, s_player);
+}
 
 Player::Player() : GameObject("Player")
 {
@@ -63,10 +71,11 @@ void Player::start()
 {
     // The camera lives on a child "Head" object at eye height: the body only
     // yaws, the head also pitches.
-    m_head = &scene().spawn("Head");
-    m_head->setParent(this, false);
-    m_head->transform().setLocalPosition({0.0f, eyeHeight, 0.0f});
-    auto& cam = m_head->addComponent<ve::Camera>();
+    ve::GameObject& head = scene().spawn("Head");
+    m_head = &head;
+    head.setParent(this, false);
+    head.transform().setLocalPosition({0.0f, eyeHeight, 0.0f});
+    auto& cam = head.addComponent<ve::Camera>();
     cam.fovDegrees = 65.0f;
     cam.nearPlane = 0.1f;
     cam.farPlane = 4000.0f;
@@ -110,9 +119,7 @@ void Player::damage(float amount, const std::string& cause)
     m_sinceHurt = 0.0f;
     if (health > 0.0f) return;
     // Collapsed: wake up at the camp, a little worse for wear.
-    GameState& gs = gameState();
-    gs.message = "You collapsed (" + cause + ") and woke up at the camp";
-    gs.messageTimer = 4.0f;
+    notify("You collapsed (" + cause + ") and woke up at the camp", 4.0f);
     health = maxHealth * 0.5f;
     stamina = maxStamina;
     const glm::vec2 c = layout::kCamp + glm::vec2(6.0f, 6.0f);
@@ -134,12 +141,14 @@ bool Player::grounded() const
 
 glm::vec3 Player::eyePosition() const
 {
-    return m_head ? m_head->transform().position() : transform().position() + glm::vec3(0, eyeHeight, 0);
+    const ve::GameObject* head = m_head.get(scene());
+    return head ? head->transform().position() : transform().position() + glm::vec3(0, eyeHeight, 0);
 }
 
 glm::vec3 Player::lookDirection() const
 {
-    return m_head ? m_head->transform().forward() : transform().forward();
+    const ve::GameObject* head = m_head.get(scene());
+    return head ? head->transform().forward() : transform().forward();
 }
 
 void Player::throwRock()
@@ -165,8 +174,8 @@ void Player::throwRock()
     // Keep the world tidy: only the most recent rocks stay.
     m_thrown.push_back(&rock);
     if (m_thrown.size() > 30) {
-        m_thrown.front()->destroy();
-        m_thrown.erase(m_thrown.begin());
+        if (ve::GameObject* oldest = m_thrown.front().get(scene())) oldest->destroy();
+        m_thrown.pop_front();
     }
 }
 
@@ -186,7 +195,7 @@ void Player::update(float)
     m_yaw -= in.axisValue("LookX") * stick;
     m_pitch = std::clamp(m_pitch - in.axisValue("LookY") * stick, -1.5f, 1.5f);
     transform().setLocalRotation(glm::angleAxis(m_yaw, glm::vec3(0, 1, 0)));
-    if (m_head) m_head->transform().setLocalRotation(glm::angleAxis(m_pitch, glm::vec3(1, 0, 0)));
+    if (ve::GameObject* head = m_head.get(scene())) head->transform().setLocalRotation(glm::angleAxis(m_pitch, glm::vec3(1, 0, 0)));
 
     // Edges ("pressed this frame") must be read in update(): fixedUpdate may
     // run zero or several times per frame. Hand them over as flags.
@@ -201,10 +210,11 @@ void Player::update(float)
     if (m_exhausted && stamina > maxStamina * 0.3f) m_exhausted = false;
     if (m_sinceHurt > 4.0f) health = std::min(maxHealth, health + 1.5f * dt);
     if (!m_fly)
-        for (ve::GameObject* fire : scene().findAllWithTag("fire")) {
-            const glm::vec3 d = transform().position() - fire->transform().position();
-            if (glm::length(glm::vec2(d.x, d.z)) < 0.95f && std::abs(d.y) < 1.2f) damage(22.0f * dt, "burnt");
-        }
+        for (const auto& campfire : Campfire::all())
+            if (const Campfire* fire = campfire.get(scene())) {
+                const glm::vec3 d = transform().position() - fire->transform().position();
+                if (glm::length(glm::vec2(d.x, d.z)) < 0.95f && std::abs(d.y) < 1.2f) damage(22.0f * dt, "burnt");
+            }
     if (in.actionPressed("ToggleFly")) {
         m_fly = !m_fly;
         if (!m_fly) m_controller->teleport(transform().position()); // land where we are
@@ -281,19 +291,10 @@ void Player::fixedUpdate(float)
 
 void Player::footstep()
 {
-    // The physics surface underfoot -> a sound. Terrain has no single surface:
-    // its biome decides (sand / bare ground in the desert and camp, grass elsewhere).
+    // The physics surface underfoot -> a sound (Footsteps.hpp).
     m_stepSurface = m_controller->groundSurface();
     const glm::vec3 feet = transform().position();
-    std::string sound = "grass";
-    if (m_stepSurface == "Wood" || m_stepSurface == "Thatch") sound = "wood";
-    else if (m_stepSurface == "Stone" || m_stepSurface == "Metal") sound = "stone";
-    else if (m_stepSurface == "Mud") sound = "dirt";
-    else if (m_stepSurface == "Terrain")
-        if (const ve::Terrain* t = ve::Terrain::find(scene())) {
-            if (t->biomeWeight("Desert", feet.x, feet.z) > 0.5f || t->biomeWeight("Camp", feet.x, feet.z) > 0.5f) sound = "dirt";
-            else if (t->biomeWeight("Rocky", feet.x, feet.z) > 0.5f) sound = "stone";
-        }
+    const std::string sound = footstepSound(scene(), m_stepSurface, feet);
     m_stepSound = sound;
     static std::mt19937 rng(5);
     const int variant = int(rng() % 3);
@@ -314,6 +315,7 @@ void Player::footstep()
 namespace savanna {
 ve::Camera* Player::camera() const
 {
-    return m_head ? m_head->getComponent<ve::Camera>() : nullptr;
+    const ve::GameObject* head = m_head.get(scene());
+    return head ? head->getComponent<ve::Camera>() : nullptr;
 }
 } // namespace savanna

@@ -4,27 +4,23 @@
 #include "ve/render/Renderer.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
+#include <thread>
 
 namespace ve {
 
-TerrainLod::TerrainLod(Renderer& renderer) : m_renderer(&renderer)
-{
-    // Nodes build independently: a few workers (the first view needs a few hundred).
-    const unsigned n = std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u);
-    for (unsigned i = 0; i < n; ++i) m_workers.emplace_back([this] { workerLoop(); });
-}
+TerrainLod::TerrainLod(Renderer& renderer) : m_renderer(&renderer) {}
 
 TerrainLod::~TerrainLod()
 {
+    // Builds in flight own their inputs and the queue: let them finish (or
+    // stop at the next node) without waiting here.
     {
-        std::lock_guard lock(m_mutex);
-        m_quit = true;
-        m_jobs.clear();
+        std::lock_guard lock(m_queue->mutex);
+        m_queue->quit = true;
+        m_queue->jobs.clear();
     }
-    m_wake.notify_all();
-    for (std::thread& t : m_workers) t.join();
+    m_drains.cancel();
 }
 
 void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings,
@@ -33,7 +29,7 @@ void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainL
     const bool layoutChanged = !m_data || data->res != m_data->res || data->cellSize != m_data->cellSize ||
                                data->origin != m_data->origin || settings.nodeCells != m_settings.nodeCells;
     m_data = std::move(data);
-    m_look = look;
+    m_look = std::make_shared<const TerrainLook>(look);
     m_settings = settings;
     m_settings.nodeCells = std::max(m_settings.nodeCells, 4) & ~1; // even: parent vertices are every other one
     const uint64_t previous = m_version++;
@@ -126,19 +122,20 @@ void TerrainLod::update(const glm::vec3& camera, bool preload, bool uploadAll)
         // 1. Finished meshes (budgeted, except while preloading).
         std::vector<Result> results;
         {
-            std::lock_guard lock(m_mutex);
-            const size_t n = preload || uploadAll ? m_results.size() : std::min<size_t>(m_results.size(), m_settings.uploadsPerFrame);
-            results.assign(std::make_move_iterator(m_results.begin()), std::make_move_iterator(m_results.begin() + ptrdiff_t(n)));
-            m_results.erase(m_results.begin(), m_results.begin() + ptrdiff_t(n));
+            std::lock_guard lock(m_queue->mutex);
+            std::vector<Result>& done = m_queue->results;
+            const size_t n = preload || uploadAll ? done.size() : std::min<size_t>(done.size(), m_settings.uploadsPerFrame);
+            results.assign(std::make_move_iterator(done.begin()), std::make_move_iterator(done.begin() + ptrdiff_t(n)));
+            done.erase(done.begin(), done.begin() + ptrdiff_t(n));
         }
         for (Result& r : results) upload(r);
 
         // 2. Jobs nobody started yet are re-decided below from this frame's view.
         {
-            std::lock_guard lock(m_mutex);
-            for (const Job& j : m_jobs)
+            std::lock_guard lock(m_queue->mutex);
+            for (const Job& j : m_queue->jobs)
                 if (auto it = m_nodes.find(j.key); it != m_nodes.end()) it->second.queued = false;
-            m_jobs.clear();
+            m_queue->jobs.clear();
         }
 
         // 3. Walk the tree.
@@ -151,42 +148,46 @@ void TerrainLod::update(const glm::vec3& camera, bool preload, bool uploadAll)
         // 4. Hand the missing meshes to the worker: coarse / near first.
         std::sort(m_requests.begin(), m_requests.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
         if (preload) {
-            // Build them right here.
-            std::vector<Job> jobs;
-            for (const auto& [prio, k] : m_requests) jobs.push_back({k, m_version, m_settings.nodeCells, m_data, m_look});
-            for (Job& j : jobs) {
-                Result r{j.key, j.version, {}, 0.0f, 0.0f};
-                r.mesh = build(j, r.minY, r.maxY);
-                upload(r);
-            }
+            // Build them right here (this thread and the pool), upload in order.
+            std::vector<Job> todo;
+            for (const auto& [prio, k] : m_requests) todo.push_back({k, m_version, m_settings.nodeCells, m_data, m_look});
+            std::vector<Result> built(todo.size());
+            jobs::parallelFor(todo.size(), [&](size_t i) {
+                built[i] = {todo[i].key, todo[i].version, {}, 0.0f, 0.0f};
+                built[i].mesh = build(todo[i], built[i].minY, built[i].maxY);
+            });
+            for (Result& r : built) upload(r);
             bool busy;
             {
-                std::lock_guard lock(m_mutex);
-                busy = m_busy > 0 || !m_results.empty();
+                std::lock_guard lock(m_queue->mutex);
+                busy = m_queue->busy > 0 || !m_queue->results.empty();
             }
-            if (jobs.empty() && !busy) {
+            if (todo.empty() && !busy) {
                 m_drawn.clear();
                 for (const Key& k : want) m_drawn.push_back({m_nodes[k].mesh, k.level});
                 break;
             }
-            if (jobs.empty()) std::this_thread::yield();
+            if (todo.empty()) std::this_thread::yield();
             continue;
         }
         {
-            std::lock_guard lock(m_mutex);
-            for (const auto& [prio, k] : m_requests) m_jobs.push_back({k, m_version, m_settings.nodeCells, m_data, m_look});
+            std::lock_guard lock(m_queue->mutex);
+            for (const auto& [prio, k] : m_requests) m_queue->jobs.push_back({k, m_version, m_settings.nodeCells, m_data, m_look});
         }
-        if (!m_requests.empty()) m_wake.notify_one();
+        if (!m_requests.empty()) {
+            // Nodes build independently: a few jobs at a time (the first view needs a few hundred).
+            const size_t n = std::clamp(jobs::hardwareThreads() / 2, 1u, 4u);
+            m_drains.topUp(std::min(n, m_requests.size()), [q = m_queue](const std::atomic<bool>& c) { drain(*q, c); });
+        }
 
         m_drawn.clear();
         for (const Key& k : want) m_drawn.push_back({m_nodes[k].mesh, k.level});
     }
 
     evict();
-    std::lock_guard lock(m_mutex);
+    std::lock_guard lock(m_queue->mutex);
     m_stats.drawn = uint32_t(m_drawn.size());
-    m_stats.cached = uint32_t(m_nodes.size());
-    m_stats.pending = uint32_t(m_jobs.size()) + uint32_t(m_busy) + uint32_t(m_results.size());
+    m_stats.pending = uint32_t(m_queue->jobs.size()) + uint32_t(m_queue->busy) + uint32_t(m_queue->results.size());
     m_stats.missing = uint32_t(m_requests.size());
 }
 
@@ -200,7 +201,6 @@ void TerrainLod::upload(Result& r)
     n.version = r.version;
     n.minY = r.minY;
     n.maxY = r.maxY;
-    ++m_stats.built;
 }
 
 void TerrainLod::evict()
@@ -214,30 +214,29 @@ void TerrainLod::evict()
     for (size_t i = 0; i < old.size() && m_nodes.size() > m_settings.maxNodes; ++i) m_nodes.erase(old[i].second);
 }
 
-void TerrainLod::workerLoop()
+void TerrainLod::drain(Queue& q, const std::atomic<bool>& cancelled)
 {
     for (;;) {
         Job job;
         {
-            std::unique_lock lock(m_mutex);
-            m_wake.wait(lock, [&] { return m_quit || !m_jobs.empty(); });
-            if (m_quit) return;
-            job = std::move(m_jobs.front());
-            m_jobs.pop_front();
-            ++m_busy;
+            std::lock_guard lock(q.mutex);
+            if (q.quit || cancelled || q.jobs.empty()) return;
+            job = std::move(q.jobs.front());
+            q.jobs.pop_front();
+            ++q.busy;
         }
-        const auto t0 = std::chrono::steady_clock::now();
         Result r{job.key, job.version, {}, 0.0f, 0.0f};
         r.mesh = build(job, r.minY, r.maxY);
-        const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
-        std::lock_guard lock(m_mutex);
-        m_results.push_back(std::move(r));
-        --m_busy;
-        m_stats.buildMs = m_stats.buildMs * 0.95f + ms * 0.05f;
+        {
+            std::lock_guard lock(q.mutex);
+            q.results.push_back(std::move(r));
+            --q.busy;
+        }
+        if (jobs::yieldSuggested()) return; // others are waiting: update() submits again
     }
 }
 
-MeshData TerrainLod::build(const Job& job, float& minY, float& maxY) const
+MeshData TerrainLod::build(const Job& job, float& minY, float& maxY)
 {
     const TerrainData& d = *job.data;
     const int L = job.key.level, step = 1 << L, N = job.nodeCells, V = N + 1;
@@ -269,7 +268,7 @@ MeshData TerrainLod::build(const Job& job, float& minY, float& maxY) const
     // Splat layers: the textured biomes, then rock. Each vertex keeps its
     // weight for (at most) three of them, the same three across the node;
     // whatever weight is left over shows the vertex colour.
-    const TerrainLook& look = job.look;
+    const TerrainLook& look = *job.look;
     const size_t nb = d.biomeNames.size(), layers = nb + 1;
     std::vector<uint8_t> textured(layers);
     for (size_t k = 0; k < nb; ++k) textured[k] = d.biomeTextured(int(k));
@@ -289,8 +288,16 @@ MeshData TerrainLod::build(const Job& job, float& minY, float& maxY) const
 
             // Fine-scale slope and biomes (as at full detail, so colours don't change with the level).
             glm::vec3 fine;
-            if (L == 0) {
-                fine = normalAt(a, b, 1);
+            if (L <= 1) {
+                // Level 0 and 1 vertices are full-resolution samples: the
+                // cached tiles hold their heights and biome weights (computed
+                // from the same neighbours, see TerrainData::generateTile).
+                if (L == 0) {
+                    fine = normalAt(a, b, 1);
+                } else {
+                    auto g = [&](int di, int dj) { return d.sampleHeight(clampI(i + di), clampI(j + dj)); };
+                    fine = glm::normalize(glm::vec3(g(-1, 0) - g(1, 0), 2.0f * d.cellSize, g(0, -1) - g(0, 1)));
+                }
                 for (size_t k = 0; k < w.size(); ++k) w[k] = d.sampleBiome(int(k), i, j);
             } else {
                 const float c = d.cellSize;

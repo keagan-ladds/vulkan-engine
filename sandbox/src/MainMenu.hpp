@@ -12,13 +12,21 @@
 // Tests and the editor start straight in the game (no title).
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 #include <ve/ui/Gui.hpp>
 
 #include <glm/glm.hpp>
 
 #include <string>
 
+namespace vfx {
+class DayNightCycle;
+}
+
 namespace savanna {
+
+class Builder;
+class Hud;
 
 class MainMenu : public ve::GameObject {
 public:
@@ -64,7 +72,11 @@ private:
     ve::ui::Canvas* m_pause = nullptr;
     ve::ui::Canvas* m_panels = nullptr;
     std::string m_panel;
-    uint64_t m_camera = 0; // the title's camera
+    ve::ObjectRef<> m_camera; // the title's camera
+    // (looked up every frame: SceneLookup.hpp)
+    ve::ObjectRef<Hud> m_hud;
+    ve::ObjectRef<Builder> m_builder;
+    ve::ObjectRef<vfx::DayNightCycle> m_dayNight;
     float m_t = 0.0f;
     float m_leaving = -1.0f; // fading the title out (seconds left)
     bool m_newGameReload = false;

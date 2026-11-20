@@ -28,6 +28,7 @@ struct DrawItem {
     AABB bounds;          // world space
     float distance = 0.0f; // distance from the camera (sorting)
     bool castShadows = true;
+    bool deforming = false; // vertices change on the GPU (skinning): never cache shadows of it
     const GameObject* owner = nullptr; // the MeshRenderer's object (editor picking)
 };
 

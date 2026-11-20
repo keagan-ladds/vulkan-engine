@@ -65,7 +65,7 @@ public:
     template <class T>
     void setPush(const T& data)
     {
-        static_assert(sizeof(T) <= 128, "push constants are limited to 128 bytes");
+        static_assert(sizeof(T) <= kPushConstantBytes, "push constants are limited to 128 bytes");
         std::memcpy(m_push.data(), &data, sizeof(T));
         m_pushSize = sizeof(T);
     }
@@ -76,7 +76,7 @@ protected:
     TextureId m_output = kNoTexture;
     TextureId m_depth = kNoTexture;
     PipelineHandle m_pipeline;
-    std::array<uint8_t, 128> m_push{};
+    std::array<uint8_t, kPushConstantBytes> m_push{};
     uint32_t m_pushSize = 0;
 };
 

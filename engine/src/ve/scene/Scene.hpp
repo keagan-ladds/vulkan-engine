@@ -14,6 +14,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
@@ -45,7 +46,8 @@ public:
     // Spawns the node hierarchy of an imported model (glTF) as GameObjects
     // with MeshRenderers. With staticColliders, every mesh node also gets a
     // static Rigidbody using the exact triangle mesh (buildings, ruins...).
-    // Returns the root.
+    // Returns the root. (Defined in assets/ModelInstantiate.cpp: it builds
+    // anim and physics components, which the scene module can't include.)
     GameObject& instantiate(const Model& model, GameObject* parent = nullptr, bool staticColliders = false);
 
     GameObject* find(const std::string& name) const;
@@ -64,7 +66,19 @@ public:
         }
         return nullptr;
     }
+    // Live objects with this tag, including ones spawned this frame (like find()).
     std::vector<GameObject*> findAllWithTag(const std::string& tag) const;
+    // The same without allocating: fn(GameObject&) for each.
+    template <class F>
+    void forEachWithTag(std::string_view tag, F&& fn) const
+    {
+        for (const auto* list : {&m_objects, &m_pending}) {
+            for (size_t i = 0; i < list->size(); ++i) { // (fn may spawn: index loop)
+                GameObject* o = (*list)[i].get();
+                if (!o->isDestroyed() && o->tag == tag) fn(*o);
+            }
+        }
+    }
     const std::vector<std::unique_ptr<GameObject>>& objects() const { return m_objects; }
     size_t objectCount() const { return m_objects.size() + m_pending.size(); }
 
@@ -74,7 +88,8 @@ public:
     void forEach(F&& fn) const
     {
         for (const Bucket* b : bucketsFor(typeid(T), [](Component* c) { return dynamic_cast<T*>(c) != nullptr; })) {
-            for (Component* c : b->items) fn(static_cast<T&>(*c));
+            // Index loop: fn may add or remove components (bucket order isn't kept).
+            for (size_t i = 0; i < b->items.size(); ++i) fn(static_cast<T&>(*b->items[i]));
         }
     }
 
@@ -98,13 +113,15 @@ public:
 
     void registerComponent(Component* c);
     void unregisterComponent(Component* c);
+    void queueStart(GameObject* o); // o or one of its components needs start()
     template <class Hook>
     static void callComponents(GameObject& o, uint8_t bit, Hook&& hook);
 
 private:
     std::vector<uint64_t> m_levelObjects;
     friend class GameObject;
-    // Components registered under one exact type.
+    // Components registered under one exact type, in no particular order
+    // (unregistering swaps the last one into the gap).
     struct Bucket {
         std::type_index type;
         std::vector<Component*> items;
@@ -131,6 +148,7 @@ private:
 
     void adopt(std::unique_ptr<GameObject> obj);
     void destroyNow(GameObject* obj);
+    void flushRemovedComponents();
     // Runs `fn` on every active object that may implement `hook` (itself or a component).
     template <class Fn>
     void forActive(uint8_t hook, bool editorOnly, Fn&& fn);
@@ -139,6 +157,10 @@ private:
 
     std::vector<std::unique_ptr<GameObject>> m_objects;
     std::vector<std::unique_ptr<GameObject>> m_pending;
+    // Objects that (or whose components) still need start(): startPending
+    // walks only these instead of every object. Inactive ones stay queued.
+    std::vector<GameObject*> m_unstarted, m_startScratch;
+    std::vector<std::unique_ptr<Component>> m_removedComponents; // removeComponent: freed at the end of the frame
     std::unordered_map<uint64_t, GameObject*> m_byId;
     std::vector<std::unique_ptr<Bucket>> m_buckets; // stable addresses (cached in queries)
     std::unordered_map<std::type_index, Bucket*> m_bucketByType;

@@ -37,7 +37,8 @@ For each roadmap item:
    point in the engine and putting content in `effects/` or `sandbox/`
    (dependency rule: the engine never includes effects or sandbox code).
 2. **Implement** with comments explaining the why (this is a learning codebase).
-3. **Build warning-free**: `cmake --build build 2>&1 | grep -E "warning|error"` must print nothing.
+3. **Build warning-free**: `cmake --build build 2>&1 | grep -E "warning|error"` must print nothing
+   (GCC and Clang, Debug and Release), and `python3 tools/check_layering.py` must pass.
 4. **Verify** (§4). Validation output must stay empty.
 5. **Exercise it in the sandbox**: every engine feature should be used by the
    test scene, ideally reachable by a test hook or the `AutoTest`.
@@ -79,9 +80,14 @@ north (-Z), 90 looks west (-X).
 
 ## 5. Gotchas (learned the hard way)
 
-- **Remember other objects by `id()`, not by pointer** (`scene.findById(id)`
-  each frame is O(1)). The editor can delete or replace any object; a stored
-  raw pointer then dangles, and even `isDestroyed()` reads freed memory.
+- **Remember other objects with `ve::ObjectRef<T>` / `ve::ComponentRef<T>`**
+  (`ve/scene/ObjectRef.hpp`), never a `GameObject*` / `Component*` member.
+  The editor can delete or replace any object; a stored raw pointer then
+  dangles, and even `isDestroyed()` reads freed memory. Resolve with
+  `ref.get(scene())` where you use it (O(1)).
+- **Includes follow the module layering**: `python3 tools/check_layering.py`
+  must pass. Need something from a higher module? Add an extension point
+  (a registration or callback the composition root wires up), don't include it.
 
 - **`GpuTypes.hpp` ↔ `ve.glsl` must match byte for byte.** If you add a field,
   add it in both places, keep 16-byte alignment, and update `fillGlobals()`.
@@ -104,8 +110,12 @@ north (-Z), 90 looks west (-X).
   pass that draws scene materials must bind both (`TransparentPass` does, and
   leaves the normal target unwritten). Otherwise pipeline/rendering attachment
   counts mismatch. Full-screen passes are unaffected.
-- **FoliageSystem callbacks run on a worker thread.** `FoliageWorld::height`,
-  `normal` and every `FoliageLayer::density` must only read immutable data.
+- **FoliageSystem and windowed-grass callbacks run as jobs on the engine pool,
+  several at once.** `FoliageWorld::height`, `normal`, every
+  `FoliageLayer::density` and `GrassDesc` height / mask callbacks must only
+  read immutable data and own what they capture (by value or `shared_ptr`):
+  a cancelled job may still be finishing after its owner is gone. Jobs
+  (`ve/core/Jobs.hpp`) never touch the scene, renderer, device or audio.
   Add layers and exclusions before the first `update()`/`preload()`.
 - **Don't call a base class's empty hook** (`ve::GameObject::update(dt)`,
   `ve::Component::onGui()`) from an override. The base versions mark the hook

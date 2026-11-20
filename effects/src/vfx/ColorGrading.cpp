@@ -15,7 +15,7 @@ struct GradingPush { // color_grading.frag
     glm::vec4 whiteBalance, filter, shadows, highlights, lift, gamma, gain;
     uint32_t sceneColor, tonemapper, lut, lutSize;
 };
-static_assert(sizeof(GradingPush) <= 128);
+static_assert(sizeof(GradingPush) <= ve::kPushConstantBytes);
 
 // White balance as LMS channel scales (Unity's ColorBalanceToLMSCoeffs).
 glm::vec3 whiteBalanceCoeffs(float temperature, float tint)
@@ -33,7 +33,7 @@ glm::vec3 whiteBalanceCoeffs(float temperature, float tint)
 }
 } // namespace
 
-ColorGradingSettings ColorGradingSettings::farCry2()
+ColorGradingSettings ColorGradingSettings::sunBleached()
 {
     ColorGradingSettings s;
     s.temperature = 14.0f;
@@ -96,9 +96,9 @@ void ColorGradingPass::prepare(ve::FrameData&)
 
 void ColorGradingPass::onGui()
 {
-    if (ImGui::Combo("Preset", &m_preset, "Neutral\0Far Cry 2\0")) {
+    if (ImGui::Combo("Preset", &m_preset, "Neutral\0Sun-bleached\0")) {
         auto lut = settings.lut;
-        settings = m_preset == 1 ? ColorGradingSettings::farCry2() : ColorGradingSettings::neutral();
+        settings = m_preset == 1 ? ColorGradingSettings::sunBleached() : ColorGradingSettings::neutral();
         settings.lut = lut;
     }
     ColorGradingSettings& s = settings;

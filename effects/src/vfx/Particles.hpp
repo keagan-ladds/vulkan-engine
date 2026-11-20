@@ -13,6 +13,8 @@
 // camera-facing (or velocity-stretched) soft quads.
 // =============================================================================
 
+#include "vfx/InstancedDraw.hpp"
+
 #include <ve/gfx/Pipeline.hpp>
 #include <ve/gfx/Resources.hpp>
 #include <ve/render/RenderGraph.hpp>
@@ -130,9 +132,10 @@ private:
         float stretch, softness;
     };
 
-    std::array<ve::Buffer, 2> m_instances{};
+    FrameBuffers m_instances; // per frame in flight
     std::vector<Draw> m_draws;
     std::vector<uint32_t> m_order;
+    std::vector<float> m_distance; // squared camera distance per particle (sort keys)
     VkPipeline m_alpha = VK_NULL_HANDLE;
     VkPipeline m_additive = VK_NULL_HANDLE;
     uint32_t m_slot = 0;

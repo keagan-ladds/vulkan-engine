@@ -48,8 +48,9 @@ struct Effects {
 // Also registers the effects' scene types (registerTypes()).
 Effects addDefaultEffects(ve::Renderer& renderer);
 
-// Registers Weather, DayNightCycle, Water and ParticleEmitter for scene files
-// and the editor (called by addDefaultEffects; safe to call more than once).
+// Registers Fire, Weather, DayNightCycle and Water for scene files and the
+// editor (called by addDefaultEffects; safe to call more than once).
+// ParticleEmitter isn't a scene type yet: add it from code.
 void registerTypes();
 
 } // namespace vfx

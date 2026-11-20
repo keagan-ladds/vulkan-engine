@@ -24,6 +24,7 @@
 // Plays on the "Ambient" bus by default, so AudioZones (huts) muffle it.
 // =============================================================================
 
+#include "ve/audio/Audio.hpp" // SoundPtr
 #include "ve/scene/GameObject.hpp"
 
 #include <glm/glm.hpp>
@@ -76,8 +77,9 @@ private:
     float computeTarget();
     void releaseLoop();
 
-    ma_sound* m_loop = nullptr;
+    SoundPtr m_loop;
     std::string m_loopPath;
+    std::string m_failedLoop; // a loop file that wouldn't open: not retried every frame
     std::vector<std::shared_ptr<AudioClip>> m_shots;
     std::string m_shotsSpec;
     std::vector<std::pair<int, float>> m_biomeWeights;
