@@ -169,3 +169,27 @@ because single-player-only systems (direct world changes) are what make
 networking expensive to add later.
 **Cost:** clients feel the round trip on actions until prediction is added
 (N3); the host's machine and connection carry the session.
+
+### D20. Removed components leave the object at once, freed at end of frame (2026-11 review)
+**Chosen:** `removeComponent` unregisters the component, runs its
+`onDestroy()` (if it started) and moves its `unique_ptr` out of the object's
+list into a scene-owned list freed in `flushDestroyed`. Hook loops iterate a
+snapshot of the component pointers.
+**Alternatives:** erase immediately (a component removing itself inside its
+own hook freed the code that was running: use-after-free); flag in place and
+erase later (every loop over `components()` in engine and game code would
+have to remember to skip flagged ones).
+**Why:** no dangling `this` inside hooks, and `components()` stays the plain
+list callers expect. **Cost:** a removed component lives until the end of the
+frame (`isRemoved()` tells a remembered pointer apart).
+
+### D21. Platform-independent default seeds; persistent pipeline cache (2026-11 review)
+- A `FoliageType` without a seed derives it with FNV-1a over its name (was
+  `std::hash<std::string>`, which differs between standard libraries): the
+  same scene places the same trees with every compiler, which saves
+  (`FoliageInstanceId` overrides) and co-op between platforms (D19) rely on.
+  **Cost:** default placement changed once; saves made earlier with chopped
+  or picked instances in seedless layers refer to the old layout.
+- `Device` keeps a `VkPipelineCache` on disk (`pipeline_cache.bin` next to the
+  executable). Header fields are checked before use; a mismatch or a damaged
+  file just starts an empty cache.

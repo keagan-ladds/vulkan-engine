@@ -139,6 +139,10 @@ vegetation and navmesh progress.
   nodes, static props).
 - Spawning during an update is safe: new objects get `start()` at the start of the next frame.
   `destroy()` is deferred to end of frame and also destroys children.
+  `removeComponent()` takes the component out of `components()` and the
+  registry at once (its `onDestroy()` runs then, if it started) but the scene
+  frees it at the end of the frame, so a hook may remove itself or a sibling.
+  Bucket order is not stable (removal swaps the last item into the gap).
 - **Ids, not pointers, across frames.** Every GameObject has a random 64-bit
   `id()`; `scene.findById(id)` is O(1) and returns null once the object is
   destroyed, so remembering an id (not a raw pointer) can't dangle when the
@@ -341,6 +345,8 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
   caster's mesh, submesh, shader, world matrix and material data, plus
   `Renderer::contentEpoch()`, which bumps when shadow maps are recreated or
   shaders hot-reload) and skips faces whose hash matches their last render.
+  A face with a deforming caster (a `SkinnedMeshRenderer`, `DrawItem::deforming`)
+  is never cached: its vertices change while its mesh and matrix don't.
   Static torches and campfires re-render only when something in range moves.
   The shadow maps persist across frames, so a skipped face keeps its depth.
 - Directional shadows sample a 3×3 PCF kernel as 4 bilinear taps with the
@@ -475,8 +481,12 @@ helpers (the instancing helpers are vertex-only).
 - `Device`: instance, debug messenger, surface, physical-device selection
   (requires Vulkan 1.3 dynamic rendering + synchronization2 + descriptor
   indexing features), logical device, graphics queue, VMA allocator, an
-  immediate-submit helper for uploads, and a **deferred deletion queue** that
-  destroys GPU objects after `kFramesInFlight` frames.
+  immediate-submit helper for uploads (`uploadBuffers`: several regions, one
+  staging buffer and one submit, e.g. a mesh's vertices + indices), a
+  **deferred deletion queue** that destroys GPU objects after
+  `kFramesInFlight` frames, and a `VkPipelineCache` saved to
+  `pipeline_cache.bin` next to the executable (checked against the GPU's
+  vendor / device / UUID on load), so pipelines compile fast after the first run.
 - `Swapchain`: as in tinyvulkan (FIFO, per-image present semaphores).
 - `Buffer`/`Image`: VMA-backed, created from small desc structs.
 - `Bindless`: allocates/frees slots in the texture and storage-image arrays (deferred free).
