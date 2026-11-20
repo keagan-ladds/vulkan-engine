@@ -334,6 +334,16 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
 
 ### 5.5 Per-frame renderer flow
 
+`Renderer::render()` reads as acquire → prepare → record → submit. The work
+is done by parts the Renderer owns: `SceneGatherer` (scene → `FrameData`:
+camera, draw items, culling and sorting, previous world matrices, lights; the
+only render code that reads scene components), `ShadowSetup` (cascades and
+cube faces), `LightClusterer` (CPU light binning) and `FrameCapture` (photo
+mode, `VE_CAPTURE*`, readback and PNG). The Renderer keeps the frame loop,
+the pipeline / shader / material registries and the shared GPU objects.
+The command buffer starts with `Device::flushUploads` (queued buffer
+uploads), and only dirty material slots are copied (D25).
+
 1. Find the main camera and build view/projection (reversed-Z, Vulkan Y-flip).
 2. Gather `MeshRenderer`s → draw items (world matrix, world AABB, submesh,
    material). Frustum-cull for the main view. Split into opaque (sorted by
@@ -350,7 +360,7 @@ them into `RenderPass::gpuTimeMs`, which is shown per pass in the F1 overlay.
    TAA off; ~0.02 % snapped), but the steps themselves are visible. Lighting
    uses the exact direction. Compute the six cube-face matrices.
 4. `pass->prepare()` for all enabled passes.
-5. Upload FrameGlobals, LightBuffer and MaterialBuffer (host-visible, per frame in flight).
+5. Upload FrameGlobals, LightBuffer and the dirty MaterialBuffer slots (host-visible, per frame in flight).
 6. Acquire swapchain image, record graph (barriers + passes), submit, present.
 
 ### 5.6 Shadows
