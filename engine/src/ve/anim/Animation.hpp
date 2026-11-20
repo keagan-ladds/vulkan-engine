@@ -19,6 +19,7 @@
 
 #include "ve/render/Skinning.hpp"
 #include "ve/scene/Components.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -139,7 +140,7 @@ private:
     std::shared_ptr<const AnimationClip> find(const std::string& name) const;
 
     std::vector<std::shared_ptr<const AnimationClip>> m_clips;
-    std::vector<uint64_t> m_nodes;   // object ids per model node (0 = none)
+    std::vector<ObjectRef<>> m_nodes; // per model node (empty = none)
     std::vector<std::string> m_nodeNames;
     std::vector<int> m_parents;      // per model node (-1 = root)
     std::vector<Rest> m_rest;        // per model node
@@ -174,7 +175,7 @@ public:
 
 private:
     bool resolve();
-    uint64_t m_upper = 0, m_middle = 0, m_end = 0;
+    ObjectRef<> m_upper, m_middle, m_end;
     glm::quat m_restUpper{1, 0, 0, 0}, m_restMiddle{1, 0, 0, 0}; // for joints no clip animates (no accumulation)
     bool m_resetUpper = false, m_resetMiddle = false;
     glm::vec3 m_animatedEnd{0.0f};
@@ -199,10 +200,9 @@ public:
     glm::vec3 footTarget(int side) const { return m_targets[side]; } // 0 left, 1 right
 
 private:
-    // The TwoBoneIKs start() added. Raw pointers, but only used after
-    // GameObject::hasComponent() confirmed they're still there.
-    TwoBoneIK* m_legs[2] = {nullptr, nullptr};
-    uint64_t m_hipsId = 0;
+    // The TwoBoneIKs start() added (the editor may remove them).
+    ComponentRef<TwoBoneIK> m_legs[2];
+    ObjectRef<> m_hipsJoint;
     float m_hips = 0.0f;
     float m_offset[2] = {0.0f, 0.0f};
     glm::vec3 m_targets[2]{};
@@ -243,10 +243,10 @@ public:
 
 private:
     bool resolve();
-    std::vector<uint64_t> m_joints;      // per chain bone
+    std::vector<ObjectRef<>> m_joints;   // per chain bone
     std::vector<glm::quat> m_rest;
     std::vector<char> m_reset;           // not animated: back to rest first
-    uint64_t m_effector = 0;
+    ObjectRef<> m_effector;
     glm::vec3 m_target{0.0f};
     bool m_hasTarget = false;
     float m_blend = 0.0f;
@@ -285,7 +285,7 @@ public:
 private:
     void release();
     std::shared_ptr<const SkinnedMeshSource> m_source;
-    std::vector<uint64_t> m_joints; // object ids
+    std::vector<ObjectRef<>> m_joints;
     std::vector<glm::mat4> m_inverseBind;
     std::vector<glm::mat4> m_matrices; // scratch
     SkinningSystem::Instance m_instance;
