@@ -45,7 +45,7 @@ namespace ve {
 class GrassPass;
 class Renderer;
 class Terrain;
-struct TerrainData;
+class TerrainData;
 
 // Ready-to-draw meshes of one kind of prop.
 struct FoliageMeshes {

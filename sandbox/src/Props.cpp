@@ -1851,7 +1851,7 @@ void Hud::start()
     // Crosshair, and the name of what's in front of us (a physics ray from the eye).
     auto& cross = root.add<ui::Image>("crosshair");
     cross.anchor({0.5f, 0.5f}).pivot({0.5f, 0.5f}).size({16.0f, 16.0f});
-    cross.custom = [this](ui::Painter& p, const ui::Rect& r) {
+    cross.custom = [](ui::Painter& p, const ui::Rect& r) {
         if (!input().mouseCaptured()) return;
         p.circle(r.center(), 3.5f, ui::rgba(0x00000080));
         p.circle(r.center(), 2.4f, ui::rgba(0xffffffe0));

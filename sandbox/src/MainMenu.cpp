@@ -244,7 +244,7 @@ void MainMenu::buildTitle()
     gui::menuButton(list, "Multiplayer", [this] { showPanel("multiplayer"); });
     gui::menuButton(list, "Settings", [this] { showPanel("settings"); });
     gui::menuButton(list, "Controls", [this] { showPanel("controls"); });
-    gui::menuButton(list, "Quit", [this] { engine().quit(); });
+    gui::menuButton(list, "Quit", [] { engine().quit(); });
 
     auto& foot = gui::label(root, "Made with vulkan-engine", gui::font::body, 20.0f, ui::withAlpha(gui::color::dim, 0.8f));
     foot.anchor({0.0f, 1.0f}).pivot({0.0f, 1.0f}).at({140.0f, -36.0f}).size({600.0f, 26.0f});
@@ -285,7 +285,7 @@ void MainMenu::buildPause()
     centred(gui::menuButton(list, "Settings", [this] { showPanel("settings"); }, 32.0f));
     centred(gui::menuButton(list, "Controls", [this] { showPanel("controls"); }, 32.0f));
     centred(gui::menuButton(list, "Main menu", [this] { toTitle(); }, 32.0f));
-    centred(gui::menuButton(list, "Quit game", [this] { engine().quit(); }, 32.0f));
+    centred(gui::menuButton(list, "Quit game", [] { engine().quit(); }, 32.0f));
 }
 
 void MainMenu::buildPanels()
@@ -339,7 +339,7 @@ void MainMenu::buildLoad(ui::Element& content)
         } catch (...) {
         }
         const std::string slot = s.name;
-        auto& b = gui::boxButton(list, slot + "      " + when, [this, slot] {
+        auto& b = gui::boxButton(list, slot + "      " + when, [slot] {
             s_played = true;
             loadProgress(slot);
         }, 22.0f);
@@ -411,14 +411,14 @@ void MainMenu::buildControls(ui::Element& content)
         name.anchor({0.0f, 0.5f}).pivot({0.0f, 0.5f}).at({14.0f, 0.0f}).size({230.0f, 40.0f});
         auto& keys = gui::label(row, "", gui::font::body, 20.0f, gui::color::dim);
         keys.anchors({0.0f, 0.5f}, {1.0f, 0.5f}).pivot({0.0f, 0.5f}).at({250.0f, 0.0f}).size({150.0f, 40.0f});
-        keys.bind = [this, action] {
+        keys.bind = [action] {
             ve::Input& in = input();
             if (in.rebinding() == action) return std::string("Press a key or button...  (Esc cancels)");
             std::string s;
             for (const std::string& n : in.bindingNames(action)) s += (s.empty() ? "" : ",  ") + n;
             return s;
         };
-        auto& rebind = gui::boxButton(row, "Rebind", [this, action] { input().startRebind(action); }, 18.0f);
+        auto& rebind = gui::boxButton(row, "Rebind", [action] { input().startRebind(action); }, 18.0f);
         rebind.anchor({1.0f, 0.5f}).pivot({1.0f, 0.5f}).at({-8.0f, 0.0f}).size({120.0f, 36.0f});
     }
 }
@@ -529,7 +529,7 @@ void MainMenu::buildMultiplayer(ui::Element& content)
     status.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({0.0f, 310.0f}).size({0.0f, 80.0f});
     status.wrap = true;
     status.alignY = ui::Align::Start;
-    status.bind = [this] {
+    status.bind = [] {
         const ve::net::Network& n = net();
         switch (n.status()) {
         case ve::net::Status::Hosting: return "Hosting: " + std::to_string(n.peers().size()) + " player(s) in the game.";
