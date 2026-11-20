@@ -70,16 +70,13 @@ FirePass::~FirePass()
     ve::Renderer& r = renderer();
     r.destroyPipeline(m_pipeline);
     r.destroyPipeline(m_hazePipeline);
-    ve::Device* device = &r.device();
-    for (ve::Buffer b : m_instances) device->deferDestroy([device, b]() mutable { device->destroyBuffer(b); });
+    m_instances.destroy(r.device());
 }
 
 void FirePass::setup(ve::RenderGraph&)
 {
     ve::Renderer& r = renderer();
-    for (auto& b : m_instances)
-        b = r.device().createBuffer(sizeof(Instance) * kMaxInstances, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, ve::MemoryUsage::CpuToGpu,
-                                    "fire instances");
+    m_instances.create(r.device(), sizeof(Instance) * kMaxInstances, "fire instances");
     const VkVertexInputBindingDescription binding{0, sizeof(Instance), VK_VERTEX_INPUT_RATE_INSTANCE};
     const VkVertexInputAttributeDescription attrs[4] = {
         {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Instance, baseHeight)},
@@ -87,23 +84,8 @@ void FirePass::setup(ve::RenderGraph&)
         {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Instance, lean)},
         {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Instance, anim)},
     };
-    auto build = [&](const char* frag, ve::BlendMode blend) {
-        VkShaderModule vs = r.loadShader("fire.vert");
-        VkShaderModule fs = r.loadShader(frag);
-        VkPipeline p = ve::PipelineBuilder()
-                           .shaders(vs, fs)
-                           .vertexInput({&binding, 1}, attrs)
-                           .colorAttachment(ve::Renderer::kSceneColorFormat, blend)
-                           .depthAttachment(ve::Renderer::kDepthFormat)
-                           .depthTest(true, false, VK_COMPARE_OP_GREATER_OR_EQUAL)
-                           .layout(r.pipelineLayout())
-                           .build(r.device().handle());
-        vkDestroyShaderModule(r.device().handle(), vs, nullptr);
-        vkDestroyShaderModule(r.device().handle(), fs, nullptr);
-        return p;
-    };
-    m_pipeline = build("fire.frag", ve::BlendMode::Additive);
-    m_hazePipeline = build("fire_haze.frag", ve::BlendMode::AlphaBlend);
+    m_pipeline = buildInstancedPipeline(r, "fire.vert", "fire.frag", binding, attrs, ve::BlendMode::Additive);
+    m_hazePipeline = buildInstancedPipeline(r, "fire.vert", "fire_haze.frag", binding, attrs, ve::BlendMode::AlphaBlend);
     m_hazeCopy = graph().createTexture("FireHazeCopy", {.format = ve::Renderer::kSceneColorFormat,
                                                         .extraUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT});
 }
@@ -113,7 +95,7 @@ void FirePass::prepare(ve::FrameData& frame)
     m_count = 0;
     m_hazeCount = 0;
     m_fires = 0;
-    m_slot = static_cast<uint32_t>(renderer().frameNumber() % 2);
+    m_slot = FrameBuffers::slot(renderer());
     if (!frame.scene) return;
     auto* out = static_cast<Instance*>(m_instances[m_slot].mapped);
     const glm::vec4 wind = renderer().globalParam(SlotWind);

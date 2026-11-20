@@ -21,6 +21,8 @@
 // Smoke and sparks are separate (ParticleEmitter), as is the light.
 // =============================================================================
 
+#include "vfx/InstancedDraw.hpp"
+
 #include <ve/gfx/Resources.hpp>
 #include <ve/render/RenderGraph.hpp>
 #include <ve/scene/GameObject.hpp>
@@ -77,7 +79,7 @@ private:
         glm::vec4 anim;        // time (s, scaled by speed), sheet index, sheet count, unused
     };
 
-    std::array<ve::Buffer, 2> m_instances{};
+    FrameBuffers m_instances; // per frame in flight
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkPipeline m_hazePipeline = VK_NULL_HANDLE;
     ve::TextureId m_hazeCopy{};    // the screen around the fires, sampled by the haze

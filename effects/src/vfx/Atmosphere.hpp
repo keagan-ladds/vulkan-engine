@@ -52,7 +52,7 @@ public:
 
     // --- Sky -------------------------------------------------------------------
     float sunIlluminance = 9.0f;  // overall sky brightness
-    float haze = 1.5f;            // aerosol (Mie) amount: >1 = dusty savannah air
+    float haze = 1.5f;            // aerosol (Mie) amount: >1 = hazy, dusty air
     float mieAnisotropy = 0.8f;   // size of the glow around the sun
     float multipleScattering = 1.0f;
     float sunDiskSize = 1.0f;     // multiplier on the real 0.27 degree radius
