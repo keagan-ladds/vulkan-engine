@@ -283,6 +283,17 @@ void Device::shutdown()
 
     flushDeletions();
 
+    // Uploads nobody rendered any more are dropped with their staging.
+    m_pendingCopies.clear();
+    destroyBuffer(m_staging);
+    m_stagingUsed = 0;
+    for (Buffer& b : m_dedicatedStaging) destroyBuffer(b);
+    m_dedicatedStaging.clear();
+    for (RetiredStaging& r : m_stagingRetired) destroyBuffer(r.buffer);
+    m_stagingRetired.clear();
+    for (Buffer& b : m_stagingFree) destroyBuffer(b);
+    m_stagingFree.clear();
+
     savePipelineCache();
     setPipelineCache(VK_NULL_HANDLE);
     if (m_pipelineCache) vkDestroyPipelineCache(m_device, m_pipelineCache, nullptr);
@@ -473,6 +484,11 @@ void Device::collectGarbage(uint64_t frameNumber)
         m_deletions.front().fn();
         m_deletions.pop_front();
     }
+    // Same rule for staging blocks whose copies frame F recorded.
+    while (!m_stagingRetired.empty() && m_stagingRetired.front().frame + kFramesInFlight <= frameNumber) {
+        recycleStaging(m_stagingRetired.front().buffer);
+        m_stagingRetired.pop_front();
+    }
 }
 
 void Device::flushDeletions()
@@ -524,6 +540,11 @@ Buffer Device::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, MemoryU
 
 void Device::destroyBuffer(Buffer& buffer)
 {
+    // Queued uploads into it would copy into a dead (or, once the handle is
+    // reused, an unrelated) buffer at the next flush: drop them.
+    if (buffer.handle && !m_pendingCopies.empty()) {
+        std::erase_if(m_pendingCopies, [&](const PendingCopy& c) { return c.dst == buffer.handle; });
+    }
     if (buffer.handle) vmaDestroyBuffer(m_allocator, buffer.handle, buffer.allocation);
     buffer = Buffer{};
 }
@@ -534,32 +555,156 @@ void Device::uploadBuffer(const Buffer& dst, const void* data, VkDeviceSize size
     uploadBuffers({&upload, 1});
 }
 
+namespace {
+// Staging block sizes: blocks start small and double on demand; an upload
+// bigger than kDedicatedStaging gets a buffer of its own instead (so one huge
+// upload doesn't leave a huge block behind), and a block that grew past
+// kMaxKeptStaging (e.g. a whole level loaded before the first frame) is freed
+// instead of kept once the GPU is done with it.
+constexpr VkDeviceSize kMinStaging = VkDeviceSize(1) << 20;
+constexpr VkDeviceSize kDedicatedStaging = VkDeviceSize(8) << 20;
+constexpr VkDeviceSize kMaxKeptStaging = VkDeviceSize(32) << 20;
+
+VkDeviceSize paddedSize(VkDeviceSize size) { return (size + 15) & ~VkDeviceSize(15); }
+} // namespace
+
 void Device::uploadBuffers(std::span<const BufferUpload> uploads)
 {
-    // One staging buffer and one blocking submit for all regions: each
-    // immediateSubmit is a full CPU<->GPU round trip, so batching matters
-    // when many small meshes are created (vertices + indices each).
-    auto padded = [](VkDeviceSize size) { return (size + 15) & ~VkDeviceSize(15); };
-    VkDeviceSize total = 0;
-    for (const BufferUpload& u : uploads) total += padded(u.size);
-    if (total == 0) return;
-    Buffer staging = createBuffer(total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::CpuToGpu);
-    VkDeviceSize offset = 0;
+    // Copy the data now (the caller's memory may go away), queue the GPU copies.
     for (const BufferUpload& u : uploads) {
-        std::memcpy(static_cast<char*>(staging.mapped) + offset, u.data, static_cast<size_t>(u.size));
-        offset += padded(u.size);
-    }
-    immediateSubmit([&](VkCommandBuffer cmd) {
-        VkDeviceSize src = 0;
-        for (const BufferUpload& u : uploads) {
-            if (u.size) {
-                VkBufferCopy region{src, u.dstOffset, u.size};
-                vkCmdCopyBuffer(cmd, staging.handle, u.dst->handle, 1, &region);
-            }
-            src += padded(u.size);
+        if (u.size == 0 || !u.dst || !u.dst->handle) continue;
+        if (u.size > kDedicatedStaging) {
+            Buffer staging = createBuffer(u.size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::CpuToGpu, "upload staging (large)");
+            std::memcpy(staging.mapped, u.data, static_cast<size_t>(u.size));
+            m_pendingCopies.push_back({staging.handle, 0, u.dst->handle, u.dstOffset, u.size});
+            m_dedicatedStaging.push_back(staging);
+            continue;
         }
-    });
-    destroyBuffer(staging);
+        const VkDeviceSize offset = allocateStaging(u.size);
+        std::memcpy(static_cast<char*>(m_staging.mapped) + offset, u.data, static_cast<size_t>(u.size));
+        m_pendingCopies.push_back({VK_NULL_HANDLE, offset, u.dst->handle, u.dstOffset, u.size});
+    }
+}
+
+void Device::uploadBuffersNow(std::span<const BufferUpload> uploads)
+{
+    uploadBuffers(uploads);
+    immediateSubmit([](VkCommandBuffer) {}); // records the queued copies, waits for them
+}
+
+VkDeviceSize Device::allocateStaging(VkDeviceSize size)
+{
+    const VkDeviceSize need = m_stagingUsed + paddedSize(size);
+    if (need > m_staging.size) {
+        if (m_stagingUsed == 0) {
+            // Nothing queued in the open block: swap it for a big enough free one.
+            if (m_staging.handle) m_stagingFree.push_back(m_staging);
+            m_staging = {};
+            auto it = std::find_if(m_stagingFree.begin(), m_stagingFree.end(), [&](const Buffer& b) { return b.size >= need; });
+            if (it != m_stagingFree.end()) {
+                m_staging = *it;
+                m_stagingFree.erase(it);
+            }
+        }
+        if (need > m_staging.size) {
+            // Grow: a bigger block with the queued bytes copied over. The old
+            // block has no GPU work referencing it (the open block is only
+            // used by copies recorded at the next flush), so it can go now.
+            Buffer grown = createBuffer(std::max({need, m_staging.size * 2, kMinStaging}), VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                        MemoryUsage::CpuToGpu, "upload staging");
+            if (m_stagingUsed) std::memcpy(grown.mapped, m_staging.mapped, static_cast<size_t>(m_stagingUsed));
+            destroyBuffer(m_staging);
+            m_staging = grown;
+        }
+    }
+    const VkDeviceSize offset = m_stagingUsed;
+    m_stagingUsed = need;
+    return offset;
+}
+
+void Device::recycleStaging(Buffer buffer)
+{
+    if (buffer.size > kMaxKeptStaging) destroyBuffer(buffer);
+    else m_stagingFree.push_back(buffer);
+}
+
+bool Device::recordPendingCopies(VkCommandBuffer cmd)
+{
+    if (m_pendingCopies.empty()) return false;
+
+    // Before: the destinations (often sub-ranges of shared buffers: skinning,
+    // instancing, terrain) may still be read or written by earlier submissions
+    // on this queue (the previous frame in flight). A pipeline barrier's first
+    // scope includes everything submitted earlier, so this orders the copies
+    // after those reads (WAR) and writes (WAW).
+    VkMemoryBarrier2 before{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    before.srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT |
+                          VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                          VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    before.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+    before.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    before.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &before;
+    vkCmdPipelineBarrier2(cmd, &dep);
+
+    // Consecutive copies between the same two buffers share one command
+    // (a mesh's uploads are usually one region per buffer anyway).
+    std::vector<VkBufferCopy> regions;
+    for (size_t i = 0; i < m_pendingCopies.size();) {
+        const PendingCopy& first = m_pendingCopies[i];
+        const VkBuffer src = first.src ? first.src : m_staging.handle;
+        regions.clear();
+        size_t j = i;
+        for (; j < m_pendingCopies.size() && m_pendingCopies[j].src == first.src && m_pendingCopies[j].dst == first.dst; ++j) {
+            const PendingCopy& c = m_pendingCopies[j];
+            regions.push_back({c.srcOffset, c.dstOffset, c.size});
+        }
+        vkCmdCopyBuffer(cmd, src, first.dst, static_cast<uint32_t>(regions.size()), regions.data());
+        i = j;
+    }
+    m_pendingCopies.clear();
+
+    // After: the new data is read as vertices / indices / indirect commands /
+    // by any shader stage (compute included), or written again (skinning
+    // writes over the rest pose it was given).
+    VkMemoryBarrier2 after{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    after.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    after.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    after.dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT |
+                         VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                         VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    after.dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT |
+                          VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_READ_BIT |
+                          VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT |
+                          VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    dep.pMemoryBarriers = &after;
+    vkCmdPipelineBarrier2(cmd, &dep);
+    return true;
+}
+
+void Device::flushUploads(VkCommandBuffer cmd)
+{
+    if (!recordPendingCopies(cmd)) return;
+    // This frame's command buffer reads the open block and the dedicated
+    // buffers: retire them until its fence has passed (collectGarbage).
+    if (m_staging.handle) m_stagingRetired.push_back({m_currentFrame, m_staging});
+    m_staging = {};
+    m_stagingUsed = 0;
+    for (Buffer& b : m_dedicatedStaging) {
+        deferDestroy([this, b]() mutable { destroyBuffer(b); });
+    }
+    m_dedicatedStaging.clear();
+    // A destination released with deferDestroy() before this flush was tagged
+    // with an earlier frame (e.g. queued between the previous frame's submit
+    // and this frame's collectGarbage) and could be destroyed while this
+    // frame's copy into it still runs: keep it until this frame is done too.
+    // (The queue stays sorted: everything older becomes the current frame.)
+    for (PendingDeletion& d : m_deletions) {
+        if (d.frame >= m_currentFrame) break;
+        d.frame = m_currentFrame;
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -669,6 +814,17 @@ void Device::immediateSubmit(const std::function<void(VkCommandBuffer)>& fn)
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(cmd, &begin));
+    // Queued buffer uploads first: `fn` may use them (an icon bake drawing a
+    // mesh created this frame), and so may the next frame, which would only
+    // flush them after this submit. Their staging is free once we've waited.
+    Buffer flushedStaging;
+    std::vector<Buffer> flushedDedicated;
+    if (recordPendingCopies(cmd)) {
+        flushedStaging = m_staging;
+        flushedDedicated.swap(m_dedicatedStaging);
+        m_staging = {};
+        m_stagingUsed = 0;
+    }
     fn(cmd);
     VK_CHECK(vkEndCommandBuffer(cmd));
 
@@ -681,6 +837,17 @@ void Device::immediateSubmit(const std::function<void(VkCommandBuffer)>& fn)
     VK_CHECK(vkWaitForFences(m_device, 1, &m_uploadFence, VK_TRUE, UINT64_MAX));
     VK_CHECK(vkResetFences(m_device, 1, &m_uploadFence));
     vkFreeCommandBuffers(m_device, m_uploadPool, 1, &cmd);
+
+    if (flushedStaging.handle) recycleStaging(flushedStaging);
+    for (Buffer& b : flushedDedicated) destroyBuffer(b);
+    // A fence covers everything submitted before it on the queue, so frames
+    // that retired staging blocks are done as well - if they were submitted:
+    // the current frame may still be recording (an immediateSubmit from a
+    // pass), so only earlier frames count.
+    while (!m_stagingRetired.empty() && m_stagingRetired.front().frame < m_currentFrame) {
+        recycleStaging(m_stagingRetired.front().buffer);
+        m_stagingRetired.pop_front();
+    }
 }
 
 void Device::setDebugName(VkObjectType type, uint64_t handle, const char* name) const
