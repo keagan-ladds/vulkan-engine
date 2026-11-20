@@ -187,6 +187,9 @@ Engine::~Engine()
     m_physics.reset(); // after the scene: Rigidbodies remove themselves from the world
     m_renderer.reset();
     m_window.reset();
+    // Last: everything that submits jobs (world systems, grass passes, shader
+    // hot-reload) is gone. Queued jobs are dropped, running ones finish.
+    jobs::shutdown();
     g_engine = nullptr;
 }
 

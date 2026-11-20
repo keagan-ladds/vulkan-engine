@@ -16,6 +16,7 @@
 // See docs/01-architecture.md §3 for the exact order of a frame.
 // =============================================================================
 
+#include "ve/core/Jobs.hpp" // the worker pool the Engine shuts down (also sizes physics threads)
 #include "ve/core/Input.hpp"
 #include "ve/core/Time.hpp"
 #include "ve/render/Renderer.hpp"
