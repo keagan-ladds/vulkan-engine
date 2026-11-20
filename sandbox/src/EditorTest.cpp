@@ -3,6 +3,7 @@
 #include "Props.hpp"
 
 #include <ve/core/Engine.hpp>
+#include <ve/core/Env.hpp>
 #include <ve/core/Log.hpp>
 #include <ve/editor/Editor.hpp>
 #include <ve/render/Renderer.hpp>
@@ -96,7 +97,7 @@ void EditorTest::update(float)
         if (auto* k = s.find("Kopje")) {
             k->transform().setPosition(k->transform().position() + glm::vec3(40.0f, 0.0f, 0.0f));
             ed->select(k);
-            if (std::string(std::getenv("SAVANNA_EDITORTEST")) == "hold") {
+            if (ve::env::get("SAVANNA_EDITORTEST") == "hold") {
                 // Look at it from above for a screenshot.
                 if (auto* cam = s.find("Editor Camera")) {
                     cam->transform().setPosition({160.0f, 110.0f, 30.0f});
@@ -154,7 +155,7 @@ void EditorTest::update(float)
         }
     }
     if (m_frame == 636) {
-        if (const char* shot = std::getenv("SAVANNA_EDITORTEST_SHOT")) renderer().requestCapture(shot); // the brushed hill
+        if (const auto shot = ve::env::get("SAVANNA_EDITORTEST_SHOT")) renderer().requestCapture(std::string(*shot)); // the brushed hill
     }
     if (m_frame == 640) {
         auto* t = ve::Terrain::find(s);
@@ -199,7 +200,7 @@ void EditorTest::update(float)
             log("prefab: no Torch in the scene");
         }
     }
-    if (m_frame == 683 && std::string(std::getenv("SAVANNA_EDITORTEST")) != "hold") {
+    if (m_frame == 683 && ve::env::get("SAVANNA_EDITORTEST") != "hold") {
         log("done");
         engine().quit();
     }

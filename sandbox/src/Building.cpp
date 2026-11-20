@@ -3,7 +3,9 @@
 #include <ve/net/Network.hpp>
 
 #include "GameUi.hpp"
+#include "Player.hpp"
 #include "Props.hpp"
+#include "SceneLookup.hpp"
 
 #include <ve/assets/AssetManager.hpp>
 #include <ve/core/Engine.hpp>
@@ -551,7 +553,8 @@ void Builder::loadCatalogue()
 
 bool Builder::building(const ve::Scene& scene)
 {
-    const Builder* b = scene.findFirst<Builder>();
+    static uint64_t s_id = 0; // (asked several times a frame: remembered, not searched for)
+    const Builder* b = findCached<Builder>(scene, s_id);
     return b && b->active();
 }
 
@@ -560,7 +563,7 @@ void Builder::setActive(bool on)
     if (m_active == on) return;
     m_active = on;
     // The player's own Use / Throw step aside while building.
-    if (ve::GameObject* player = scene().find("Player"))
+    if (Player* player = localPlayer(scene()))
         if (auto* who = player->getComponent<ve::Interactor>()) who->enabled = !on;
     if (!on) m_preview.hide();
 }

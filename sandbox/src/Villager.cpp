@@ -4,6 +4,8 @@
 #include <ve/world/Terrain.hpp>
 #include <ve/audio/Audio.hpp>
 
+#include "Footsteps.hpp"
+#include "Player.hpp"
 #include "Props.hpp"
 
 #include <ve/anim/Animation.hpp>
@@ -53,12 +55,11 @@ Villager::Villager() : GameObject("Villager")
     talk.onUse = [this](ve::GameObject& user) {
         if (m_mode == Mode::Follow) {
             goHome();
-            gameState().message = "\"I'll head back to the camp.\"";
+            notify("\"I'll head back to the camp.\"", 3.0f);
         } else {
             follow(user);
-            gameState().message = "\"Lead the way!\"";
+            notify("\"Lead the way!\"", 3.0f);
         }
-        gameState().messageTimer = 3.0f;
     };
 }
 
@@ -149,13 +150,8 @@ void Villager::footstep()
     ++m_steps;
     // What's underfoot (terrain: its biome), quieter than the player's own steps.
     const glm::vec3 p = transform().position();
-    std::string sound = "grass";
-    if (auto hit = physics().raycast(p + glm::vec3(0, 0.5f, 0), {0, -1, 0}, 1.5f)) {
-        if (hit->surface == "Wood" || hit->surface == "Thatch") sound = "wood";
-        else if (hit->surface == "Stone") sound = "stone";
-        else if (hit->surface == "Mud") sound = "dirt";
-        else if (const ve::Terrain* t = ve::Terrain::find(scene()); t && t->biomeWeight("Camp", p.x, p.z) > 0.5f) sound = "dirt";
-    }
+    const auto hit = physics().raycast(p + glm::vec3(0, 0.5f, 0), {0, -1, 0}, 1.5f);
+    const std::string sound = footstepSound(scene(), hit ? hit->surface : std::string(), p); // (Footsteps.hpp, as the player's)
     try {
         auto clip = assets().loadAudio("audio/footstep_" + sound + "_" + std::to_string(m_steps % 3) + ".wav");
         ve::OneShotSettings s;
@@ -196,7 +192,7 @@ void Villager::update(float dt)
         }
     }
     if (m_pointTimer > 0.0f && (m_pointTimer -= dt) <= 0.0f && m_point) m_point->clearTarget();
-    if (ve::GameObject* player = scene().find("Player")) {
+    if (const Player* player = localPlayer(scene())) {
         const glm::vec3 eyes = player->transform().position() + glm::vec3(0.0f, 1.6f, 0.0f);
         const float d = glm::distance(player->transform().position(), transform().position());
         if (d < 4.0f && !m_greeted && m_mode != Mode::Follow) {

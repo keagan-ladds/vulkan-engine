@@ -15,8 +15,9 @@
 #include <ve/scene/GameObject.hpp>
 #include <ve/scene/SaveGame.hpp>
 
+#include <cstdint>
+#include <deque>
 #include <memory>
-#include <vector>
 
 namespace ve {
 class Mesh;
@@ -29,6 +30,13 @@ class Terrain;
 
 namespace savanna {
 
+
+class Player;
+
+// The local player (the one this machine controls; remote players are
+// PlayerAvatars). Remembered by id, so it's O(1) in the usual case; null if
+// the scene has none.
+Player* localPlayer(const ve::Scene& scene);
 
 class Player : public ve::GameObject, public ve::Saveable {
 public:
@@ -94,7 +102,7 @@ private:
     std::shared_ptr<ve::Mesh> m_rockMesh;
     std::shared_ptr<ve::Material> m_rockMaterial;
     ve::Collider m_rockCollider;
-    std::vector<ve::GameObject*> m_thrown;
+    std::deque<uint64_t> m_thrown; // ids: the editor (or anything else) may delete a rock first
 };
 
 } // namespace savanna

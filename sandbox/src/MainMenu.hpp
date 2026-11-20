@@ -65,6 +65,7 @@ private:
     ve::ui::Canvas* m_panels = nullptr;
     std::string m_panel;
     uint64_t m_camera = 0; // the title's camera
+    uint64_t m_hudId = 0, m_builderId = 0, m_dayNightId = 0; // (looked up every frame: SceneLookup.hpp)
     float m_t = 0.0f;
     float m_leaving = -1.0f; // fading the title out (seconds left)
     bool m_newGameReload = false;

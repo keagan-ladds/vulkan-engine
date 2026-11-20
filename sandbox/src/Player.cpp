@@ -1,8 +1,10 @@
 #include "Player.hpp"
 
 #include "Building.hpp"
+#include "Footsteps.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
+#include "SceneLookup.hpp"
 
 #include <ve/gameplay/Interaction.hpp>
 #include <ve/world/Grass.hpp>
@@ -22,6 +24,12 @@
 namespace savanna {
 
 using ve::Key;
+
+Player* localPlayer(const ve::Scene& scene)
+{
+    static uint64_t s_id = 0; // (validated on every call: a new level has a new player)
+    return findCached<Player>(scene, s_id);
+}
 
 Player::Player() : GameObject("Player")
 {
@@ -110,9 +118,7 @@ void Player::damage(float amount, const std::string& cause)
     m_sinceHurt = 0.0f;
     if (health > 0.0f) return;
     // Collapsed: wake up at the camp, a little worse for wear.
-    GameState& gs = gameState();
-    gs.message = "You collapsed (" + cause + ") and woke up at the camp";
-    gs.messageTimer = 4.0f;
+    notify("You collapsed (" + cause + ") and woke up at the camp", 4.0f);
     health = maxHealth * 0.5f;
     stamina = maxStamina;
     const glm::vec2 c = layout::kCamp + glm::vec2(6.0f, 6.0f);
@@ -163,10 +169,10 @@ void Player::throwRock()
     body.setLinearVelocity(dir * throwSpeed + m_controller->velocity());
 
     // Keep the world tidy: only the most recent rocks stay.
-    m_thrown.push_back(&rock);
+    m_thrown.push_back(rock.id());
     if (m_thrown.size() > 30) {
-        m_thrown.front()->destroy();
-        m_thrown.erase(m_thrown.begin());
+        if (ve::GameObject* oldest = scene().findById(m_thrown.front())) oldest->destroy();
+        m_thrown.pop_front();
     }
 }
 
@@ -201,10 +207,11 @@ void Player::update(float)
     if (m_exhausted && stamina > maxStamina * 0.3f) m_exhausted = false;
     if (m_sinceHurt > 4.0f) health = std::min(maxHealth, health + 1.5f * dt);
     if (!m_fly)
-        for (ve::GameObject* fire : scene().findAllWithTag("fire")) {
-            const glm::vec3 d = transform().position() - fire->transform().position();
-            if (glm::length(glm::vec2(d.x, d.z)) < 0.95f && std::abs(d.y) < 1.2f) damage(22.0f * dt, "burnt");
-        }
+        for (uint64_t id : Campfire::all())
+            if (const ve::GameObject* fire = scene().findById(id)) {
+                const glm::vec3 d = transform().position() - fire->transform().position();
+                if (glm::length(glm::vec2(d.x, d.z)) < 0.95f && std::abs(d.y) < 1.2f) damage(22.0f * dt, "burnt");
+            }
     if (in.actionPressed("ToggleFly")) {
         m_fly = !m_fly;
         if (!m_fly) m_controller->teleport(transform().position()); // land where we are
@@ -281,19 +288,10 @@ void Player::fixedUpdate(float)
 
 void Player::footstep()
 {
-    // The physics surface underfoot -> a sound. Terrain has no single surface:
-    // its biome decides (sand / bare ground in the desert and camp, grass elsewhere).
+    // The physics surface underfoot -> a sound (Footsteps.hpp).
     m_stepSurface = m_controller->groundSurface();
     const glm::vec3 feet = transform().position();
-    std::string sound = "grass";
-    if (m_stepSurface == "Wood" || m_stepSurface == "Thatch") sound = "wood";
-    else if (m_stepSurface == "Stone" || m_stepSurface == "Metal") sound = "stone";
-    else if (m_stepSurface == "Mud") sound = "dirt";
-    else if (m_stepSurface == "Terrain")
-        if (const ve::Terrain* t = ve::Terrain::find(scene())) {
-            if (t->biomeWeight("Desert", feet.x, feet.z) > 0.5f || t->biomeWeight("Camp", feet.x, feet.z) > 0.5f) sound = "dirt";
-            else if (t->biomeWeight("Rocky", feet.x, feet.z) > 0.5f) sound = "stone";
-        }
+    const std::string sound = footstepSound(scene(), m_stepSurface, feet);
     m_stepSound = sound;
     static std::mt19937 rng(5);
     const int variant = int(rng() % 3);

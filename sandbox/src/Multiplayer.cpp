@@ -7,6 +7,8 @@
 #include <ve/anim/Animation.hpp>
 #include <ve/assets/AssetManager.hpp>
 #include <ve/core/Engine.hpp>
+#include <ve/core/Env.hpp>
+#include <ve/core/MathUtil.hpp>
 #include <ve/core/Log.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
@@ -32,6 +34,16 @@ VE_REGISTER_TYPE(PlayerAvatar, "PlayerAvatar")
 }
 
 namespace net = ve::net;
+
+namespace {
+// Who may join: only Savanna, same protocol version (set before hosting or
+// joining, from SAVANNA_NET or the menus).
+void configure(net::Network& n)
+{
+    n.config.game = "savanna";
+    n.config.version = 1;
+}
+} // namespace
 
 // -----------------------------------------------------------------------------
 // PlayerAvatar
@@ -61,14 +73,10 @@ void PlayerAvatar::lateUpdate(float dt)
     auto* no = getComponent<net::NetworkObject>();
     if (no && no->isOwner()) {
         // Ours: follow the local player (NetworkTransform sends it at the end of the frame).
-        if (auto* player = dynamic_cast<Player*>(scene().find("Player"))) {
+        if (const Player* player = localPlayer(scene())) {
             transform().setPosition(player->transform().position());
-            glm::vec3 f = player->camera() ? player->camera()->transform().forward() : glm::vec3(0, 0, -1);
-            f.y = 0.0f;
-            if (glm::length(f) > 1e-3f) {
-                f = glm::normalize(f);
-                transform().setRotation(glm::angleAxis(std::atan2(-f.x, -f.z), glm::vec3(0, 1, 0)));
-            }
+            const glm::vec3 f = player->camera() ? player->camera()->transform().forward() : glm::vec3(0, 0, -1);
+            if (glm::length(glm::vec2(f.x, f.z)) > 1e-3f) transform().setRotation(ve::math::yawRotation(ve::math::yawOf(f)));
         }
         return;
     }
@@ -92,13 +100,12 @@ void PlayerAvatar::lateUpdate(float dt)
 bool Multiplayer::startFromEnvironment(ve::Engine& engine)
 {
     net::Network& n = engine.net();
-    n.config.game = "savanna";
-    n.config.version = 1;
-    if (const char* name = std::getenv("SAVANNA_NAME")) n.playerName = name;
+    configure(n);
+    if (const auto name = ve::env::get("SAVANNA_NAME")) n.playerName = *name;
     if (n.online()) return true;
-    const char* spec = std::getenv("SAVANNA_NET");
+    const auto spec = ve::env::get("SAVANNA_NET");
     if (!spec) return false;
-    const std::string s = spec;
+    const std::string s(*spec);
     auto portAfter = [](const std::string& str, size_t colon) {
         return colon == std::string::npos ? net::kDefaultPort : uint16_t(std::atoi(str.c_str() + colon + 1));
     };
@@ -121,8 +128,7 @@ Multiplayer::Multiplayer() : GameObject("Multiplayer")
     // (Hooked up now, not in start(): messages that waited for the loading
     // screen are handled at the top of the next frame, before start() runs.)
     net::Network& n = net();
-    n.config.game = "savanna"; // (menus host / join too, not just SAVANNA_NET)
-    n.config.version = 1;
+    configure(n); // (menus host / join too, not just SAVANNA_NET)
     // Host: what joining players get (the save capture minus our own player:
     // they keep theirs), and an avatar for each.
     n.worldSnapshot = [this](net::PeerId) {
@@ -230,7 +236,7 @@ void NetTest::update(float)
     m_total += dt;
     net::Network& n = net();
     auto* mp = scene().findFirst<Multiplayer>();
-    auto* player = dynamic_cast<Player*>(scene().find("Player"));
+    Player* player = localPlayer(scene());
     auto next = [&] {
         ++m_step;
         m_t = 0.0f;
@@ -288,12 +294,12 @@ void NetTest::update(float)
                 const glm::vec3 p = theirs->transform().position();
                 const glm::vec3 eye = p + glm::vec3(-4.0f, 0.5f, 5.0f);
                 const glm::vec3 d = p + glm::vec3(0, 1.0f, 0) - (eye + glm::vec3(0, 1.7f, 0));
-                player->setPose(eye, glm::degrees(std::atan2(-d.x, -d.z)), glm::degrees(std::atan2(d.y, glm::length(glm::vec2(d.x, d.z)))));
+                player->setPose(eye, glm::degrees(ve::math::yawOf(d)), glm::degrees(ve::math::pitchOf(d)));
             }
             if (!theirs || m_t < 2.5f) break;
             if (!m_shot) {
                 m_shot = true;
-                if (const char* dir = std::getenv("SAVANNA_SHOTS")) renderer().requestCapture(std::string(dir) + "/net-host.png");
+                if (const auto dir = ve::env::get("SAVANNA_SHOTS")) renderer().requestCapture(std::string(*dir) + "/net-host.png");
                 break;
             }
             log("their avatar: '" + theirs->playerName + "' at " + std::to_string(theirs->transform().position().x) + ", " +
@@ -343,12 +349,12 @@ void NetTest::update(float)
             if (player) {
                 const glm::vec3 eye = p + glm::vec3(5.0f, 1.0f, 6.0f);
                 const glm::vec3 d = p + glm::vec3(0, 1.0f, 0) - (eye + glm::vec3(0, 1.7f, 0));
-                player->setPose(eye, glm::degrees(std::atan2(-d.x, -d.z)), glm::degrees(std::atan2(d.y, glm::length(glm::vec2(d.x, d.z)))));
+                player->setPose(eye, glm::degrees(ve::math::yawOf(d)), glm::degrees(ve::math::pitchOf(d)));
             }
         }
         if (pieces() >= 2 && m_moved > 3.0f && !m_shot && m_t > 6.0f) {
             m_shot = true;
-            if (const char* dir = std::getenv("SAVANNA_SHOTS")) renderer().requestCapture(std::string(dir) + "/net-client.png");
+            if (const auto dir = ve::env::get("SAVANNA_SHOTS")) renderer().requestCapture(std::string(*dir) + "/net-client.png");
         }
         if ((pieces() < 2 || m_moved < 3.0f || m_t < 7.0f) && m_t < 40.0f) break;
         log("the host's avatar walked " + std::to_string(m_moved) + " m (interpolated), piece B arrived: " + (pieces() >= 2 ? "yes" : "NO") +
