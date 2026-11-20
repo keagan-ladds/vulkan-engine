@@ -4,7 +4,6 @@
 #include "ve/core/Log.hpp"
 #include "ve/core/Profiler.hpp"
 #include "ve/debug/Debug.hpp"
-#include "ve/editor/Gizmo.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Scene.hpp"
@@ -127,6 +126,8 @@ void NavMeshSurface::build()
 {
     m_buildRequested = false;
     destroyNav();
+    m_bodies.clear();
+    m_foliageShapes.clear();
     m_built = settings;
     NavMeshSettings& s = m_built;
     s.tileSize = std::max(s.tileSize, s.cellSize * 16.0f);
@@ -272,14 +273,19 @@ void NavMeshSurface::gather(TileJob& job)
     }
 
     if (includeStaticBodies) {
+        ++m_gatherStamp;
         scene.forEach<Rigidbody>([&](Rigidbody& rb) {
             if (rb.type != BodyType::Static || !rb.isActive() || !rb.collider.valid()) return;
             if (dynamic_cast<Terrain*>(&rb.gameObject())) return; // sampled above
-            const uint64_t key = rb.gameObject().id() * 31u + uint64_t(reinterpret_cast<uintptr_t>(&rb) & 0xFFFF);
+            // By address, checked against the object id and the shape: a freed
+            // Rigidbody's address can be reused by a new one.
             const glm::mat4& m = rb.transform().worldMatrix();
-            BodyCache& cache = m_bodies[key];
-            if (cache.tris.empty() || cache.transform != m) {
+            BodyCache& cache = m_bodies[&rb];
+            cache.seen = m_gatherStamp;
+            if (cache.tris.empty() || cache.transform != m || cache.object != rb.gameObject().id() || cache.shape != rb.collider.impl) {
                 cache.transform = m;
+                cache.object = rb.gameObject().id();
+                cache.shape = rb.collider.impl;
                 cache.tris = rb.collider.triangles(m);
                 cache.lo = glm::vec3(1e30f);
                 cache.hi = glm::vec3(-1e30f);
@@ -291,6 +297,10 @@ void NavMeshSurface::gather(TileJob& job)
             if (!overlaps(cache.lo, cache.hi)) return;
             for (size_t i = 0; i + 2 < cache.tris.size(); i += 3) addTri(cache.tris[i], cache.tris[i + 1], cache.tris[i + 2], false);
         });
+        // Bodies gone (or no longer static / active) since the last gather.
+        std::erase_if(m_bodies, [&](const auto& entry) { return entry.second.seen != m_gatherStamp; });
+    } else {
+        m_bodies.clear();
     }
 
     if (includeFoliage) {
@@ -306,9 +316,15 @@ void NavMeshSurface::gather(TileJob& job)
                     rebuild({p.x - 2.0f, p.z - 2.0f, p.x + 2.0f, p.z + 2.0f});
                 });
             }
+            // A few shapes shared by thousands of instances: triangulate each
+            // once (unplaced), then place the triangles per instance.
             m_foliage->forEachCollider(area, [&](const Collider& c, const glm::mat4& m) {
-                const std::vector<glm::vec3> tris = c.triangles(m);
-                for (size_t i = 0; i + 2 < tris.size(); i += 3) addTri(tris[i], tris[i + 1], tris[i + 2], false);
+                auto it = std::find_if(m_foliageShapes.begin(), m_foliageShapes.end(), [&](const auto& f) { return f.first == c.impl; });
+                if (it == m_foliageShapes.end()) it = m_foliageShapes.insert(m_foliageShapes.end(), {c.impl, c.triangles(glm::mat4(1.0f))});
+                const std::vector<glm::vec3>& tris = it->second;
+                for (size_t i = 0; i + 2 < tris.size(); i += 3)
+                    addTri(glm::vec3(m * glm::vec4(tris[i], 1.0f)), glm::vec3(m * glm::vec4(tris[i + 1], 1.0f)),
+                           glm::vec3(m * glm::vec4(tris[i + 2], 1.0f)), false);
             });
         }
     }
@@ -527,6 +543,10 @@ void NavMeshSurface::updateStreaming()
 
 void NavMeshSurface::pump()
 {
+    // Once per frame: update() and onGui() (which also runs while the editor pauses) both ask.
+    const uint64_t frame = engine().time().frameCount;
+    if (frame == m_pumpedFrame) return;
+    m_pumpedFrame = frame;
     if (m_buildRequested) build();
     if (!m_nav) return;
     applyResults();
@@ -552,13 +572,10 @@ void NavMeshSurface::update(float dt)
 
 void NavMeshSurface::onGui()
 {
-    pump(); // also while the editor pauses the world
-    if (!showDebug || !m_nav) return;
-    const CameraData& cam = renderer().frameData().camera;
-    const ImVec2 ds = ImGui::GetIO().DisplaySize;
-    const ViewProjector view = ViewProjector::from(cam, {ds.x, ds.y});
-    DebugDraw dd(ImGui::GetBackgroundDrawList(), view);
-    drawDebug(dd, cam.position, 60.0f);
+    pump(); // also while the editor pauses the world (a no-op if update() already did this frame)
+    // (The "Navmesh" debug channel draws it already: not twice.)
+    if (!showDebug || !m_nav || debug::enabled("Navmesh")) return;
+    drawDebugLines(renderer().frameData().camera.position, 60.0f);
 }
 
 void NavMeshSurface::inspectorGui()
@@ -566,32 +583,6 @@ void NavMeshSurface::inspectorGui()
     ImGui::Text("Tiles %u (%u pending), polygons %u, %.1f ms per tile", m_stats.tiles, m_stats.pending, m_stats.polygons, m_stats.lastTileMs);
     ImGui::Checkbox("Show navmesh", &showDebug);
     if (ImGui::Button("Rebuild")) build();
-}
-
-void NavMeshSurface::drawDebug(DebugDraw& dd, const glm::vec3& eye, float maxDistance) const
-{
-    if (!m_nav) return;
-    const dtNavMesh* nav = m_nav;
-    const glm::vec3 lift(0.0f, 0.08f, 0.0f);
-    for (int i = 0; i < nav->getMaxTiles(); ++i) {
-        const dtMeshTile* tile = nav->getTile(i);
-        if (!tile || !tile->header) continue;
-        const glm::vec3 lo = vec(tile->header->bmin), hi = vec(tile->header->bmax);
-        const glm::vec3 nearest = glm::clamp(eye, lo, hi);
-        if (glm::distance(nearest, eye) > maxDistance) continue;
-        for (int p = 0; p < tile->header->polyCount; ++p) {
-            const dtPoly& poly = tile->polys[p];
-            if (poly.getType() != DT_POLYTYPE_GROUND) continue;
-            const glm::vec3 first = vec(&tile->verts[poly.verts[0] * 3]);
-            if (glm::distance(first, eye) > maxDistance) continue;
-            for (int j = 0; j < poly.vertCount; ++j) {
-                const glm::vec3 a = vec(&tile->verts[poly.verts[j] * 3]) + lift;
-                const glm::vec3 b = vec(&tile->verts[poly.verts[(j + 1) % poly.vertCount] * 3]) + lift;
-                const bool edge = poly.neis[j] == 0; // boundary: a wall or the mesh's edge
-                dd.line(a, b, edge ? IM_COL32(40, 220, 255, 230) : IM_COL32(40, 160, 255, 90), edge ? 2.0f : 1.0f);
-            }
-        }
-    }
 }
 
 void NavMeshSurface::drawDebugLines(const glm::vec3& eye, float maxDistance) const
@@ -743,10 +734,13 @@ void NavAgent::start()
     m_yawInit = true;
 }
 
-void NavAgent::applyParams()
+void NavAgent::applyParams(NavMeshSurface* s, bool force)
 {
-    NavMeshSurface* s = surface();
     if (!s || !s->crowd() || m_index < 0) return;
+    // Only when a setting changed: lateUpdate asks every frame, and they rarely do.
+    const PushedParams now{radius, height, acceleration, speed, avoidOthers};
+    if (!force && now == m_pushed) return;
+    m_pushed = now;
     dtCrowdAgentParams p{};
     p.radius = radius;
     p.height = height;
@@ -781,7 +775,7 @@ bool NavAgent::attach()
     m_index = s->crowd()->addAgent(ptr(pos), &p);
     if (m_index < 0) return false;
     m_generation = s->generation();
-    applyParams();
+    applyParams(s, true);
     if (m_pendingTarget || m_hasTarget) {
         m_pendingTarget = false;
         setDestination(m_target);
@@ -837,8 +831,12 @@ void NavAgent::warp(const glm::vec3& position)
 
 bool NavAgent::arrived() const
 {
+    return arrivedOn(m_hasTarget ? surface() : nullptr);
+}
+
+bool NavAgent::arrivedOn(const NavMeshSurface* s) const
+{
     if (!m_hasTarget) return true;
-    NavMeshSurface* s = surface();
     if (m_index < 0 || !s || !s->crowd()) return false;
     const dtCrowdAgent* ag = s->crowd()->getAgent(m_index);
     if (!ag || !ag->active || ag->targetState != DT_CROWDAGENT_TARGET_VALID) return false;
@@ -871,15 +869,17 @@ void NavAgent::lateUpdate(float dt)
 {
     NavMeshSurface* s = surface();
     if (m_index >= 0 && (!s || !s->crowd() || s->generation() != m_generation)) m_index = -1; // the navmesh was rebuilt
-    if (m_index < 0 && !attach()) {
-        m_velocity = glm::vec3(0.0f);
-        return;
+    if (m_index < 0) {
+        if (!attach()) {
+            m_velocity = glm::vec3(0.0f);
+            return;
+        }
+        s = surface(); // (attach may have found it)
     }
-    s = surface();
-    applyParams();
+    applyParams(s, false);
     const dtCrowdAgent* ag = s->crowd()->getAgent(m_index);
     if (!ag || !ag->active) return;
-    if (m_hasTarget && arrived()) {
+    if (m_hasTarget && arrivedOn(s)) {
         // Stop exactly: the crowd would otherwise creep the last bit.
         s->crowd()->resetMoveTarget(m_index);
         m_hasTarget = false;

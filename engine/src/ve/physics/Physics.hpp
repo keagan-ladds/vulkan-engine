@@ -404,6 +404,7 @@ private:
     Type m_type;
     uint64_t m_connectedId = 0;
     bool m_broken = false;
+    uint8_t m_findWait = 0; // fixed steps until attach() searches for `connectedTo` by name again
     float m_force = 0.0f, m_torque = 0.0f;
     std::unique_ptr<Impl> m_impl;
 };

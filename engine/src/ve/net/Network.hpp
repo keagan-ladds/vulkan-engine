@@ -204,7 +204,7 @@ private:
     Writer spawnMessage(const NetworkObject& no) const;
     bool writeState(GameObject& o, Writer& w) const;
     void readState(GameObject& o, Reader& r);
-    void applyTransform(uint64_t id, const glm::vec3& p, const glm::quat& q, PeerId sender);
+    bool applyTransform(uint64_t id, const glm::vec3& p, const glm::quat& q, PeerId sender); // false: ignored (not theirs to move...)
     void refreshPeerList();
     void reset();
     Scene& scene() const;
@@ -221,6 +221,7 @@ private:
     PeerId m_nextPeer = 1;
     std::vector<Peer> m_peers;
     std::vector<PeerInfo> m_peerList;
+    std::vector<ConnectionId> m_sendList; // sendToClients' scratch (no allocation per message)
     std::deque<Pending> m_pending; // received while loading
     std::unordered_map<std::string, Handler> m_handlers;
     std::string m_error;

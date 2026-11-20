@@ -247,6 +247,7 @@ struct PhysicsWorld::Impl {
     uint32_t addedSinceOptimize = 0;
     LayerTable layers;
     std::vector<Joint*> joints; // attached ones
+    std::vector<Joint*> jointScratch; // step()'s copy of `joints`
     // Surfaces: names interned; bodies without a component to hold one (createStaticBody) by id.
     std::vector<std::string> surfaceNames{""};
     std::unordered_map<uint32_t, uint16_t> staticSurfaces;
@@ -265,10 +266,29 @@ struct PhysicsWorld::Impl {
         int count = 0;
         bool sensor = false;
         bool persisted = false;
+        bool enteredNow = false; // began in this step's events (no "stay" for it yet)
         glm::vec3 point{0.0f}, normal{0.0f};
     };
     std::unordered_map<uint64_t, Pair> pairs;
     std::vector<ContactQueue::Event> scratch;
+    // What dispatchContacts reports this step (kept: no allocation per step).
+    enum class Phase { Enter, Stay, Exit };
+    struct ContactOut {
+        Phase phase;
+        bool sensor;
+        JPH::BodyID a, b;
+        glm::vec3 point, normal;
+        float speed;
+    };
+    std::vector<ContactOut> contactOut;
+
+    // drawDebug: triangles of each shape in its centre-of-mass space (holding a
+    // reference to the shape, so its address can't be reused). Cleared in shutdown.
+    struct ShapeTriangles {
+        JPH::RefConst<JPH::Shape> keep;
+        std::vector<glm::vec3> tris;
+    };
+    std::unordered_map<const JPH::Shape*, ShapeTriangles> debugTriangles;
 
     void dispatchContacts();
 };
@@ -385,6 +405,7 @@ void PhysicsWorld::init()
 void PhysicsWorld::shutdown()
 {
     if (!m_impl->system) return;
+    m_impl->debugTriangles.clear(); // (the shapes they hold go before Jolt's factory)
     m_impl->system.reset();
     m_impl->jobs.reset();
     m_impl->temp.reset();
@@ -430,7 +451,10 @@ void PhysicsWorld::step(Scene& scene, float dt)
 
     m_impl->system->Update(dt, /*collisionSteps*/ 1, m_impl->temp.get(), m_impl->jobs.get());
     // Joint forces this step (and the ones that break).
-    for (Joint* j : std::vector<Joint*>(m_impl->joints)) j->afterStep(dt);
+    // (Over a copy: a joint that breaks detaches, which erases it from the list.
+    // The scratch vector keeps its capacity, so no allocation per step.)
+    m_impl->jointScratch.assign(m_impl->joints.begin(), m_impl->joints.end());
+    for (Joint* j : m_impl->jointScratch) j->afterStep(dt);
 
     // Remember the last two poses of each dynamic body for interpolation.
     scene.forEach<Rigidbody>([&](Rigidbody& rb) {
@@ -482,19 +506,11 @@ void PhysicsWorld::Impl::dispatchContacts()
     }
     if (scratch.empty() && pairs.empty()) return;
 
-    enum class Phase { Enter, Stay, Exit };
-    struct Out {
-        Phase phase;
-        bool sensor;
-        JPH::BodyID a, b;
-        glm::vec3 point, normal;
-        float speed;
-    };
-    std::vector<Out> out;
+    std::vector<ContactOut>& out = contactOut;
+    out.clear();
     auto key = [](JPH::BodyID a, JPH::BodyID b) {
         return (uint64_t(a.GetIndexAndSequenceNumber()) << 32) | b.GetIndexAndSequenceNumber();
     };
-    std::vector<uint64_t> entered;
     for (const ContactQueue::Event& e : scratch) {
         const uint64_t k = key(e.a, e.b);
         if (e.kind == ContactQueue::Kind::Removed) {
@@ -513,7 +529,7 @@ void PhysicsWorld::Impl::dispatchContacts()
         if (e.kind == ContactQueue::Kind::Added) {
             if (p.count++ == 0) {
                 out.push_back({Phase::Enter, p.sensor, e.a, e.b, e.point, e.normal, e.speed});
-                entered.push_back(k);
+                p.enteredNow = true;
             }
         } else {
             p.persisted = true;
@@ -521,10 +537,11 @@ void PhysicsWorld::Impl::dispatchContacts()
     }
     scratch.clear();
     for (auto& [k, p] : pairs) {
-        if (p.persisted && !p.sensor && std::find(entered.begin(), entered.end(), k) == entered.end()) {
+        if (p.persisted && !p.sensor && !p.enteredNow) {
             out.push_back({Phase::Stay, false, JPH::BodyID(uint32_t(k >> 32)), JPH::BodyID(uint32_t(k)), p.point, p.normal, 0.0f});
         }
         p.persisted = false;
+        p.enteredNow = false;
     }
     if (out.empty()) return;
 
@@ -535,14 +552,15 @@ void PhysicsWorld::Impl::dispatchContacts()
         int layer = 0;
         std::string surface;
     };
-    auto side = [&](JPH::BodyID id) {
+    // (Triggers don't report surfaces: no string for them.)
+    auto side = [&](JPH::BodyID id, bool withSurface) {
         JPH::BodyLockRead lock(locks, id);
         if (!lock.Succeeded()) return Side{};
         const JPH::Body& body = lock.GetBody();
-        return Side{ownerOf(body.GetUserData()), gameLayerOf(body.GetObjectLayer()), surfaceOf(body)};
+        return Side{ownerOf(body.GetUserData()), gameLayerOf(body.GetObjectLayer()), withSurface ? surfaceOf(body) : std::string()};
     };
-    for (const Out& o : out) {
-        const Side sa = side(o.a), sb = side(o.b);
+    for (const ContactOut& o : out) {
+        Side sa = side(o.a, !o.sensor), sb = side(o.b, !o.sensor);
         const BodyOwner &a = sa.owner, &b = sb.owner;
         if (!a.gameObject && !b.gameObject) continue;
         if (o.sensor) {
@@ -554,8 +572,9 @@ void PhysicsWorld::Impl::dispatchContacts()
         void (Behaviour::*hook)(const Collision&) = &Behaviour::onCollisionExit;
         if (o.phase == Phase::Enter) hook = &Behaviour::onCollisionEnter;
         else if (o.phase == Phase::Stay) hook = &Behaviour::onCollisionStay;
-        Collision ca{b.gameObject, b.body, b.userValue, o.point, -o.normal, o.speed, sb.layer, sb.surface}; // seen from a
-        Collision cb{a.gameObject, a.body, a.userValue, o.point, o.normal, o.speed, sa.layer, sa.surface};  // seen from b
+        // (The surface names move into the Collisions: one copy each, made by surfaceOf.)
+        Collision ca{b.gameObject, b.body, b.userValue, o.point, -o.normal, o.speed, sb.layer, std::move(sb.surface)}; // seen from a
+        Collision cb{a.gameObject, a.body, a.userValue, o.point, o.normal, o.speed, sa.layer, std::move(sa.surface)};  // seen from b
         sendCollision(a.gameObject, hook, ca);
         sendCollision(b.gameObject, hook, cb);
     }
@@ -845,10 +864,11 @@ std::vector<glm::vec3> Collider::triangles(const glm::mat4& transform) const
 {
     std::vector<glm::vec3> out;
     if (!impl) return out;
-    glm::vec3 scale, translation, skew;
-    glm::vec4 perspective;
-    glm::quat rotation;
-    glm::decompose(transform, scale, rotation, translation, skew, perspective);
+    glm::vec3 scale{1.0f}, translation{0.0f}, skew{0.0f};
+    glm::vec4 perspective{0.0f, 0.0f, 0.0f, 1.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    // A degenerate transform (zero scale) has no triangles to give.
+    if (!glm::decompose(transform, scale, rotation, translation, skew, perspective)) return out;
     const JPH::Shape& shape = *impl->shape;
     const JPH::Quat rot = toJ(rotation);
     const JPH::Vec3 com = toJ(translation) + rot * (toJ(scale) * shape.GetCenterOfMass());
@@ -1055,6 +1075,9 @@ void Rigidbody::start()
         return;
     }
     m_bodyId = id.GetIndexAndSequenceNumber();
+    // Applied: a later rebuild() must not relaunch the body with it.
+    m_hasPendingVelocity = false;
+    m_pendingVelocity = glm::vec3(0.0f);
     m_prevPos = m_currPos = pos;
     m_prevRot = m_currRot = rot;
     ++impl.addedSinceOptimize;
@@ -1164,7 +1187,9 @@ void CharacterController::destroy()
 {
     // The character owns an inner body in the physics system; release it while the system exists.
     if (m_impl && !physicsAlive()) {
-        // System already gone: leak-free because Jolt freed everything with the system.
+        // System already gone (shutdown): destroying the CharacterVirtual would
+        // remove its inner body from the freed system. Deliberately leak the
+        // small Impl instead (once, at exit) - Jolt's own memory went with the system.
         (void)m_impl.release();
         return;
     }
@@ -1317,17 +1342,13 @@ void CharacterController::teleport(const glm::vec3& feet)
 namespace ve {
 
 namespace {
-// Triangles of a shape in its centre-of-mass space, kept while the shape lives.
-struct ShapeTriangles {
-    JPH::RefConst<JPH::Shape> keep;
-    std::vector<glm::vec3> tris;
-};
-const std::vector<glm::vec3>& shapeTriangles(const JPH::Shape* shape)
+// Triangles of a shape in its centre-of-mass space, cached in `cache`.
+const std::vector<glm::vec3>& shapeTriangles(std::unordered_map<const JPH::Shape*, PhysicsWorld::Impl::ShapeTriangles>& cache,
+                                             const JPH::Shape* shape)
 {
-    static std::unordered_map<const JPH::Shape*, ShapeTriangles> cache;
     if (auto it = cache.find(shape); it != cache.end()) return it->second.tris;
     if (cache.size() > 4096) cache.clear();
-    ShapeTriangles& st = cache[shape];
+    PhysicsWorld::Impl::ShapeTriangles& st = cache[shape];
     st.keep = shape;
     JPH::AllHitCollisionCollector<JPH::TransformedShapeCollector> leaves;
     shape->CollectTransformedShapes(JPH::AABox::sBiggest(), JPH::Vec3::sZero(), JPH::Quat::sIdentity(), JPH::Vec3::sReplicate(1.0f),
@@ -1374,7 +1395,7 @@ void PhysicsWorld::drawDebug(const glm::vec3& center, float radius, bool showBod
         else if (body.IsDynamic()) color = body.IsActive() ? debug::kOrange : glm::vec4(0.6f, 0.4f, 0.15f, 1.0f);
         if (heightfield) color = glm::vec4(0.55f, 0.75f, 0.45f, 0.6f);
         const JPH::RMat44 m = body.GetCenterOfMassTransform();
-        const auto& tris = shapeTriangles(shape);
+        const auto& tris = shapeTriangles(m_impl->debugTriangles, shape);
         for (size_t i = 0; i + 2 < tris.size(); i += 3) {
             glm::vec3 p[3];
             for (int k = 0; k < 3; ++k) {
@@ -1417,6 +1438,7 @@ void Joint::connect(GameObject* other)
     detach();
     m_connectedId = other ? other->id() : 0;
     connectedTo = other ? other->name() : std::string();
+    m_findWait = 0;
 }
 
 bool Joint::attached() const
@@ -1466,7 +1488,16 @@ bool Joint::attach()
     Rigidbody* other = nullptr;
     GameObject* otherObject = nullptr;
     if (m_connectedId) otherObject = gameObject().scene().findById(m_connectedId);
-    if (!otherObject && !connectedTo.empty()) otherObject = gameObject().scene().find(connectedTo);
+    if (!otherObject && !connectedTo.empty()) {
+        // A search by name walks the whole scene: while the other isn't there
+        // yet, look again only every few steps (fixedUpdate retries each one).
+        if (m_findWait > 0) {
+            --m_findWait;
+            return false;
+        }
+        otherObject = gameObject().scene().find(connectedTo);
+        if (!otherObject) m_findWait = 15;
+    }
     if (!connectedTo.empty() || m_connectedId) {
         if (!otherObject) return false; // (not there yet)
         other = otherObject->getComponent<Rigidbody>();

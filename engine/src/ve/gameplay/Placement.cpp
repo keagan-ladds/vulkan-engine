@@ -12,18 +12,23 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#include <sstream>
+#include <string_view>
 
 namespace ve {
 
 namespace {
 
-bool listHas(const std::string& list, const std::string& value)
+// "wall, floor" contains "floor" (or "*": anything). Views into the list, no
+// copies: findSnap runs it for every point pair, every frame.
+bool listHas(std::string_view list, std::string_view value)
 {
-    std::stringstream ss(list);
-    for (std::string item; std::getline(ss, item, ',');) {
-        item.erase(0, item.find_first_not_of(" \t"));
-        item.erase(item.find_last_not_of(" \t") + 1);
+    while (!list.empty()) {
+        const size_t comma = list.find(',');
+        std::string_view item = list.substr(0, comma);
+        list = comma == std::string_view::npos ? std::string_view() : list.substr(comma + 1);
+        const size_t b = item.find_first_not_of(" \t");
+        if (b == std::string_view::npos) continue;
+        item = item.substr(b, item.find_last_not_of(" \t") - b + 1);
         if (item == "*" || item == value) return true;
     }
     return false;
@@ -33,6 +38,21 @@ void forSubtree(GameObject& o, const std::function<void(GameObject&)>& fn)
 {
     fn(o);
     for (Transform* c : o.transform().children()) forSubtree(c->gameObject(), fn);
+}
+
+// From world space to the root's frame: its position and rotation, but not its
+// scale (a piece scaled 2x measures twice as big, like snapPointsOf's points).
+glm::mat4 rootFrameInverse(const GameObject& root)
+{
+    const glm::mat4& w = root.transform().worldMatrix();
+    glm::mat3 r(w);
+    for (int a = 0; a < 3; ++a) {
+        const float len = glm::length(r[a]);
+        if (len > 1e-8f) r[a] /= len;
+    }
+    glm::mat4 frame(r);
+    frame[3] = w[3];
+    return glm::inverse(frame);
 }
 
 bool inSubtree(const GameObject& o, const GameObject* root)
@@ -155,7 +175,7 @@ float snapAngle(float radians, float step)
 AABB localBounds(const GameObject& root)
 {
     AABB out;
-    const glm::mat4 inv = glm::inverse(root.transform().worldMatrix());
+    const glm::mat4 inv = rootFrameInverse(root);
     forSubtree(const_cast<GameObject&>(root), [&](GameObject& o) {
         const auto* mr = o.getComponent<MeshRenderer>();
         if (!mr || !mr->mesh) return;
@@ -173,13 +193,24 @@ AABB localBounds(const GameObject& root)
 std::vector<OrientedBox> volumeOf(const GameObject& root)
 {
     std::vector<OrientedBox> out;
-    const glm::mat4 inv = glm::inverse(root.transform().worldMatrix());
+    const glm::mat4 inv = rootFrameInverse(root);
     forSubtree(const_cast<GameObject&>(root), [&](GameObject& o) {
         for (const auto& c : o.components()) {
             const auto* b = dynamic_cast<const PlacementBox*>(c.get());
             if (!b) continue;
+            // m carries the scale of the root and the children: split it into a
+            // rotation (quat_cast wants a pure one) and the box's scaled half sizes.
             const glm::mat4 m = inv * o.transform().worldMatrix();
-            out.push_back({glm::vec3(m * glm::vec4(b->center, 1.0f)), b->halfExtents, glm::quat_cast(glm::mat3(m)) * b->rotation});
+            const glm::mat3 linear(m);
+            glm::mat3 rot = linear;
+            for (int a = 0; a < 3; ++a) {
+                const float len = glm::length(rot[a]);
+                if (len > 1e-8f) rot[a] /= len;
+            }
+            const glm::mat3 boxAxes = glm::mat3_cast(b->rotation);
+            glm::vec3 half;
+            for (int a = 0; a < 3; ++a) half[a] = b->halfExtents[a] * glm::length(linear * boxAxes[a]);
+            out.push_back({glm::vec3(m * glm::vec4(b->center, 1.0f)), half, glm::quat_cast(rot) * b->rotation});
         }
     });
     if (out.empty()) {
@@ -295,17 +326,12 @@ void PlacementPreview::update()
         o->transform().setPosition(glm::vec3(0.0f));
         o->transform().setRotation(glm::quat(1, 0, 0, 0));
         m_bounds = placement::localBounds(*o);
-        // Snap points are disabled on the ghost; read them anyway.
-        std::vector<SnapPoint*> sps;
-        forSubtree(*o, [&](GameObject& g) {
-            for (const auto& c : g.components())
-                if (auto* sp = dynamic_cast<SnapPoint*>(c.get())) sps.push_back(sp);
-        });
+        // (Snap points are disabled on the ghost; snapPointsOf reads them anyway.)
         m_snaps = placement::snapPointsOf(*o);
         m_volume = placement::volumeOf(*o);
         o->transform().setPosition(p);
         o->transform().setRotation(q);
-        m_measured = m_bounds.valid() || !sps.empty();
+        m_measured = m_bounds.valid() || !m_snaps.empty();
     }
     forSubtree(*o, [&](GameObject& g) {
         for (const auto& c : g.components()) {
