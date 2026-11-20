@@ -54,9 +54,8 @@ public:
         int level;
     };
     struct Stats {
-        uint32_t drawn = 0, cached = 0, pending = 0, built = 0;
+        uint32_t drawn = 0, pending = 0;
         uint32_t missing = 0; // nodes the view wants that have no mesh yet (a coarser one stands in)
-        float buildMs = 0.0f; // worker time per node, smoothed
     };
 
     explicit TerrainLod(Renderer& renderer);
@@ -99,7 +98,7 @@ private:
         uint64_t version;
         int nodeCells;
         std::shared_ptr<const TerrainData> data;
-        TerrainLook look;
+        std::shared_ptr<const TerrainLook> look; // shared: jobs are queued every frame
     };
     struct Result {
         Key key;
@@ -119,7 +118,7 @@ private:
 
     Renderer* m_renderer;
     std::shared_ptr<const TerrainData> m_data;
-    TerrainLook m_look;
+    std::shared_ptr<const TerrainLook> m_look;
     Settings m_settings;
     uint64_t m_version = 0;
     int m_levels = 1;

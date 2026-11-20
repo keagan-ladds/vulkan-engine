@@ -34,7 +34,7 @@
 // out to each layer's viewDistance. The main thread adds the results to the
 // layer's InstanceGroups under a per-frame budget, and removes cells that fall
 // behind. Static colliders are created only for cells within
-// colliderDistance of `colliderFocus` (the player), also budgeted.
+// colliderDistance of the collider focus (the player), also budgeted.
 //
 // Thread safety: the FoliageWorld and layer callbacks run on the worker
 // thread. They must only read data that doesn't change while the system is
@@ -137,7 +137,7 @@ struct FoliageRules {
     float viewDistance = 500.0f;     // generated, loaded and drawn within this distance of the camera
     float shadowDistance = FLT_MAX;
     bool castShadows = true;
-    float colliderDistance = 60.0f;  // colliders exist within this distance of colliderFocus
+    float colliderDistance = 60.0f;  // colliders exist within this distance of the collider focus
     uint32_t maxInstances = 0;       // loaded at once; 0 = estimate from viewDistance/spacing
     uint32_t seed = 0;
 };
@@ -163,7 +163,7 @@ struct FoliageLayer : FoliageRules {
 
     // ---- Interaction (see FoliageSystem::setState / FoliageLink) ----
     std::vector<FoliageState> states; // extra looks, states 1..n
-    // > 0: instances this close to FoliageSystem::colliderFocus become
+    // > 0: instances this close to the FoliageSystem's collider focus become
     // GameObjects (with a FoliageLink) so gameplay code can live on them; they
     // turn back into instances further away.
     float promoteDistance = 0.0f;
@@ -248,8 +248,10 @@ public:
     // again. Everything else, and instance states, stay as they are.
     void refresh(FoliageWorld world, const std::vector<std::function<float(const FoliageSample&)>>& densities, glm::vec4 area);
 
-    // Colliders are streamed around this object (e.g. the player); null = the camera.
-    GameObject* colliderFocus = nullptr;
+    // Colliders are streamed around this object (e.g. the player); 0 / not
+    // found = the camera. Stored by id: the object may be deleted at any time.
+    uint64_t colliderFocusId = 0;
+    void setColliderFocus(const GameObject* object) { colliderFocusId = object ? object->id() : 0; }
 
     void update(float dt) override;
     void onGui() override;
@@ -335,6 +337,7 @@ private:
         uint32_t ticket;
         uint32_t layer;
         int cx, cz;
+        float distance; // to the viewer when the queue was last sorted
     };
     struct Result {
         uint64_t key;
@@ -395,7 +398,6 @@ private:
     std::condition_variable m_cv;
     std::vector<Job> m_jobs;
     std::vector<Result> m_results;
-    glm::vec2 m_workerViewer{0.0f};
     bool m_quit = false;
 };
 

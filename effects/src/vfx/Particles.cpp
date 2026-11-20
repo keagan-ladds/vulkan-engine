@@ -103,19 +103,13 @@ ParticlePass::~ParticlePass()
     ve::Renderer& r = renderer();
     r.destroyPipeline(m_alpha);
     r.destroyPipeline(m_additive);
-    ve::Device* device = &r.device();
-    for (ve::Buffer b : m_instances) {
-        device->deferDestroy([device, b]() mutable { device->destroyBuffer(b); });
-    }
+    m_instances.destroy(r.device());
 }
 
 void ParticlePass::setup(ve::RenderGraph&)
 {
     ve::Renderer& r = renderer();
-    for (auto& b : m_instances) {
-        b = r.device().createBuffer(sizeof(Instance) * kMaxInstances, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                                    ve::MemoryUsage::CpuToGpu, "particle instances");
-    }
+    m_instances.create(r.device(), sizeof(Instance) * kMaxInstances, "particle instances");
 
     const VkVertexInputBindingDescription binding{0, sizeof(Instance), VK_VERTEX_INPUT_RATE_INSTANCE};
     const VkVertexInputAttributeDescription attrs[3] = {
@@ -123,23 +117,8 @@ void ParticlePass::setup(ve::RenderGraph&)
         {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Instance, color)},
         {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Instance, velRot)},
     };
-    auto build = [&](ve::BlendMode blend) {
-        VkShaderModule vs = r.loadShader("particle.vert");
-        VkShaderModule fs = r.loadShader("particle.frag");
-        VkPipeline p = ve::PipelineBuilder()
-                           .shaders(vs, fs)
-                           .vertexInput({&binding, 1}, attrs)
-                           .colorAttachment(ve::Renderer::kSceneColorFormat, blend)
-                           .depthAttachment(ve::Renderer::kDepthFormat)
-                           .depthTest(true, false, VK_COMPARE_OP_GREATER_OR_EQUAL)
-                           .layout(r.pipelineLayout())
-                           .build(r.device().handle());
-        vkDestroyShaderModule(r.device().handle(), vs, nullptr);
-        vkDestroyShaderModule(r.device().handle(), fs, nullptr);
-        return p;
-    };
-    m_alpha = build(ve::BlendMode::AlphaBlend);
-    m_additive = build(ve::BlendMode::Additive);
+    m_alpha = buildInstancedPipeline(r, "particle.vert", "particle.frag", binding, attrs, ve::BlendMode::AlphaBlend);
+    m_additive = buildInstancedPipeline(r, "particle.vert", "particle.frag", binding, attrs, ve::BlendMode::Additive);
 
     const auto soft = generateSoftSprite(64);
     softSprite = ve::Texture::create2D(r, 64, 64, VK_FORMAT_R8G8B8A8_UNORM, soft.data(), soft.size(), true,
@@ -152,7 +131,7 @@ void ParticlePass::setup(ve::RenderGraph&)
 void ParticlePass::prepare(ve::FrameData& frame)
 {
     m_draws.clear();
-    m_slot = static_cast<uint32_t>(renderer().frameNumber() % 2);
+    m_slot = FrameBuffers::slot(renderer());
     if (!frame.scene) return;
     auto* out = static_cast<Instance*>(m_instances[m_slot].mapped);
     const glm::vec3 cam = frame.camera.position;
@@ -177,9 +156,10 @@ void ParticlePass::prepare(ve::FrameData& frame)
         m_order.resize(ps.size());
         for (uint32_t i = 0; i < ps.size(); ++i) m_order[i] = i;
         if (s.blend != ve::BlendMode::Additive) {
-            std::sort(m_order.begin(), m_order.end(), [&](uint32_t a, uint32_t b) {
-                return glm::dot(ps[a].position - cam, ps[a].position - cam) > glm::dot(ps[b].position - cam, ps[b].position - cam);
-            });
+            // Back to front. Distances once per particle, not per comparison.
+            m_distance.resize(ps.size());
+            for (uint32_t i = 0; i < ps.size(); ++i) m_distance[i] = glm::dot(ps[i].position - cam, ps[i].position - cam);
+            std::sort(m_order.begin(), m_order.end(), [&](uint32_t a, uint32_t b) { return m_distance[a] > m_distance[b]; });
         }
         const uint32_t first = count;
         for (uint32_t idx : m_order) {

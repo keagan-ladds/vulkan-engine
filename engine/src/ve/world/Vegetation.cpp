@@ -60,12 +60,25 @@ std::string fieldsOf(const char* type, const void* object)
     return t ? SceneSerializer::serializeFields(*t, object).dump() : std::string();
 }
 
-// Active exclusions for foliage or grass (ghost previews of building pieces don't count).
-std::vector<FoliageExclusionShape> exclusionShapes(const Scene& scene, bool grass)
+// Default layer seed from its name: FNV-1a (32 bit), the same on every
+// platform and standard library (std::hash isn't). Never 0 (= "unset").
+uint32_t nameSeed(const std::string& name)
+{
+    uint32_t h = 2166136261u;
+    for (const char c : name) {
+        h ^= static_cast<uint8_t>(c);
+        h *= 16777619u;
+    }
+    return h != 0 ? h : 1u;
+}
+
+// Active foliage exclusions (ghost previews of building pieces don't count).
+// GrassLayer::exclusions() is the grass version.
+std::vector<FoliageExclusionShape> exclusionShapes(const Scene& scene)
 {
     std::vector<FoliageExclusionShape> out;
     scene.forEach<FoliageExclusion>([&](FoliageExclusion& e) {
-        if (!e.isActive() || !(grass ? e.grass : e.foliage) || PlacementGhost::is(e.gameObject())) return;
+        if (!e.isActive() || !e.foliage || PlacementGhost::is(e.gameObject())) return;
         out.push_back(e.shape());
     });
     return out;
@@ -243,40 +256,26 @@ std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const
             return l;
         };
         std::vector<MeshData> authoredColliders;
+        size_t levelCount = 0; // of the first variant (log)
         for (LodVariant& v : model.variants) {
-            std::vector<InstanceLod> chain;
             // Missing materials (untextured exports): plain white.
             for (LodGeometry& g : v.levels)
                 for (auto& m : g.materials)
                     if (!m) m = r.createStandardMaterial();
-            if (v.levels.size() == 1 && autoLods > 0 && v.levels[0].submeshes.size() == 1) {
-                const MeshData base = v.levels[0].data;
-                for (int k = 1; k <= std::min(autoLods, 2); ++k) {
-                    SimplifyOptions so;
-                    so.ratio = std::pow(0.35f, float(k));
-                    so.maxError = 0.08f * float(k);
-                    LodGeometry g;
-                    g.data = base.simplified(so);
-                    g.materials = v.levels[0].materials;
-                    v.levels.push_back(std::move(g));
-                }
-            }
-            const size_t maxLevels = impostor ? 3 : 4;
-            for (size_t i = 0; i < v.levels.size() && i < maxLevels; ++i) {
-                LodGeometry& g = v.levels[i];
-                g.data.optimize();
-                InstanceLod l = threshold(i);
-                l.mesh = Mesh::create(r, g.data, g.submeshes.size() > 1 ? g.submeshes : std::vector<Submesh>{},
-                                      v.name + " LOD" + std::to_string(i));
-                l.materials = g.materials;
-                chain.push_back(l);
-            }
-            if (impostor && !chain.empty()) {
-                const InstanceLod t = threshold(chain.size());
-                chain.push_back(Impostor::bake(r, *chain.front().mesh, chain.front().materials)->lod(t.screenSize, t.maxDistance));
-            }
-            out->variants.push_back(std::move(chain));
             hulls.push_back(v.levels.front().data);
+            LodChainDesc c;
+            c.name = v.name;
+            if (v.levels.size() == 1 && autoLods > 0 && v.levels[0].submeshes.size() == 1) {
+                for (int k = 1; k <= std::min(autoLods, 2); ++k)
+                    c.simplify.push_back({.ratio = std::pow(0.35f, float(k)), .maxError = 0.08f * float(k)});
+            }
+            if (levelCount == 0) levelCount = v.levels.size() + c.simplify.size();
+            c.levels = std::move(v.levels);
+            c.maxLevels = impostor ? 3 : 4;
+            c.impostor = impostor;
+            for (size_t i = 0; i < 4; ++i) c.switches.push_back(threshold(i));
+            std::vector<InstanceLod> chain = buildLodChain(r, std::move(c));
+            out->variants.push_back(std::move(chain));
             if (!v.collider.vertices.empty()) authoredColliders.push_back(v.collider);
         }
         // Authored *_COL shapes: one per variant, or one shared.
@@ -287,7 +286,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const
                 log::warnOnce(owner + ": some variants have *_COL shapes and some don't: colliders ignored");
         }
         log::info("{}: {} variant(s) from {}, {} level(s){}, {} authored collider(s)", owner, model.variants.size(), mesh,
-                  model.variants.front().levels.size(), impostor ? " + impostor" : "", authoredColliders.size());
+                  levelCount, impostor ? " + impostor" : "", authoredColliders.size());
     } else {
         return nullptr;
     }
@@ -359,6 +358,7 @@ void Foliage::update(float dt)
 {
     VE_PROFILE("Foliage rules");
     m_sinceBuild += dt;
+    m_sinceCheck += dt;
     if (m_sinceBuild < 0.25f) return;
     const Terrain* terrain = Terrain::find(scene());
     if (terrain != m_terrain || (terrain && terrain->version() != m_terrainVersion)) {
@@ -369,12 +369,16 @@ void Foliage::update(float dt)
         else
             m_dirty = true;
     }
-    if (!m_dirty && state() != m_state) m_dirty = true;
+    // Serializing every field and scanning the scene is too costly for every
+    // frame: edits are picked up within a quarter second (code can markDirty()).
+    const bool check = m_sinceCheck >= 0.25f;
+    if (check) m_sinceCheck = 0.0f;
+    if (check && !m_dirty && state() != m_state) m_dirty = true;
     if (m_dirty) {
         rebuild();
-    } else if (m_system) {
+    } else if (m_system && check) {
         // An exclusion appeared, moved or went (a building): re-place only around it.
-        auto shapes = exclusionShapes(scene(), false);
+        auto shapes = exclusionShapes(scene());
         if (shapes != m_exclusions) {
             const glm::vec4 area = changedArea(shapes, m_exclusions, 1.0f);
             m_exclusions = shapes;
@@ -382,10 +386,9 @@ void Foliage::update(float dt)
         }
     }
 
-    if (m_system) {
-        GameObject* focus = colliderFocus.empty() ? nullptr : scene().find(colliderFocus);
-        m_system->colliderFocus = focus;
-    }
+    // The focus is looked up by name (it may be spawned or renamed later); the
+    // system remembers its id and follows it every frame.
+    if (m_system && check) m_system->setColliderFocus(colliderFocus.empty() ? nullptr : scene().find(colliderFocus));
 }
 
 void Foliage::rebuild()
@@ -393,6 +396,12 @@ void Foliage::rebuild()
     m_dirty = false;
     m_sinceBuild = 0.0f;
     m_state = state();
+    // Instance states (chopped trees, picked bushes) outlive the rebuild,
+    // unless a save game handed us its own (loadState before the first build).
+    if (m_system && !m_hasPendingOverrides) {
+        m_pendingOverrides = m_system->overrides();
+        m_hasPendingOverrides = !m_pendingOverrides.empty();
+    }
     if (m_system) m_system->destroy();
     m_system = nullptr;
     m_layerNames.clear();
@@ -420,7 +429,7 @@ void Foliage::rebuild()
     sys.runInEditor = true;
     sys.setParent(this, true);
     m_system = &sys;
-    m_exclusions = exclusionShapes(scene(), false);
+    m_exclusions = exclusionShapes(scene());
     for (const FoliageExclusionShape& e : m_exclusions) sys.addExclusion(e);
 
     const std::string self = "Foliage '" + name() + "'";
@@ -453,7 +462,7 @@ void Foliage::rebuild()
         static_cast<FoliageRules&>(l) = *t; // the shared placement / streaming fields
         l.spacing = std::max(l.spacing, 0.1f);
         l.maxScale = std::max(l.maxScale, l.minScale);
-        if (l.seed == 0) l.seed = uint32_t(std::hash<std::string>{}(layerName));
+        if (l.seed == 0) l.seed = nameSeed(layerName);
         const LayerDensity density{parseBiomeWeights(t->biomes, *td, "FoliageType '" + layerName + "'"), t->biomeThreshold};
         l.density = makeDensity(td, density);
         for (const auto& [other, radius] : parseNameValues(t->avoid)) {
@@ -471,7 +480,7 @@ void Foliage::rebuild()
     }
 
     GameObject* focus = colliderFocus.empty() ? nullptr : scene().find(colliderFocus);
-    sys.colliderFocus = focus;
+    sys.setColliderFocus(focus);
     if (preload && !m_built) {
         if (engine().loading()) {
             // Behind a loading screen: the workers fill the cells over the
@@ -592,6 +601,7 @@ void GrassLayer::update(float dt)
 {
     VE_PROFILE("Grass layers");
     m_sinceBuild += dt;
+    m_sinceCheck += dt;
     if (m_sinceBuild >= 0.25f) {
         const Terrain* terrain = Terrain::find(scene());
         if (terrain != m_terrain || (terrain && terrain->version() != m_terrainVersion)) {
@@ -600,21 +610,26 @@ void GrassLayer::update(float dt)
             if (!m_dirty && m_pass && terrain == m_terrain && terrain->changedOnlyIn(m_terrainVersion, area) && state() == m_state) {
                 m_terrainVersion = terrain->version();
                 auto td = terrain->data();
-                m_pass->refresh([td](glm::vec2 p) { return td->height(p.x, p.y); }, makeMask(td));
+                m_exclusions = exclusions();
+                m_pass->refresh([td](glm::vec2 p) { return td->height(p.x, p.y); }, makeMask(td, m_exclusions));
             } else {
                 m_dirty = true;
             }
         }
-        if (!m_dirty && state() != m_state) m_dirty = true;
+        // Serializing the settings and scanning the scene is too costly for
+        // every frame: edits are picked up within a quarter second.
+        const bool check = m_sinceCheck >= 0.25f;
+        if (check) m_sinceCheck = 0.0f;
+        if (check && !m_dirty && state() != m_state) m_dirty = true;
         if (m_dirty) {
             rebuild();
-        } else if (m_pass && m_terrain) {
+        } else if (m_pass && m_terrain && check) {
             // Exclusions changed (a building placed / removed): re-bake in the background, keep the pass.
-            auto shapes = exclusionShapes(scene(), true);
-            if (shapes != m_exclusions) {
-                m_exclusions = shapes;
+            auto current = exclusions();
+            if (current != m_exclusions) {
+                m_exclusions = std::move(current);
                 auto td = m_terrain->data();
-                m_pass->refresh([td](glm::vec2 p) { return td->height(p.x, p.y); }, makeMask(td));
+                m_pass->refresh([td](glm::vec2 p) { return td->height(p.x, p.y); }, makeMask(td, m_exclusions));
                 m_sinceBuild = 0.0f;
             }
         }
@@ -638,18 +653,21 @@ void GrassLayer::update(float dt)
     d.lodBlend = lodBlend;
 }
 
-std::function<glm::vec4(glm::vec2)> GrassLayer::makeMask(const std::shared_ptr<const TerrainData>& td) const
+std::vector<GrassLayer::Exclusion> GrassLayer::exclusions() const
 {
-    const std::string self = "GrassLayer '" + name() + "'";
-    struct Exclusion {
-        FoliageExclusionShape shape;
-        float falloff;
-    };
-    std::vector<Exclusion> exclusions;
+    // Like exclusionShapes() for grass, plus each one's falloff (fades the grass).
+    std::vector<Exclusion> out;
     scene().forEach<FoliageExclusion>([&](FoliageExclusion& e) {
         if (!e.isActive() || !e.grass || PlacementGhost::is(e.gameObject())) return;
-        exclusions.push_back({e.shape(), std::max(e.falloff, 0.01f)});
+        out.push_back({e.shape(), std::max(e.falloff, 0.01f)});
     });
+    return out;
+}
+
+std::function<glm::vec4(glm::vec2)> GrassLayer::makeMask(const std::shared_ptr<const TerrainData>& td,
+                                                         std::vector<Exclusion> exclusions) const
+{
+    const std::string self = "GrassLayer '" + name() + "'";
     auto weights = parseBiomeWeights(biomes, *td, self);
     const auto s = uint32_t(seed);
     // Copies of the settings (not `this`): windowed grass bakes on a worker
@@ -702,8 +720,8 @@ void GrassLayer::rebuild()
     // Big worlds: bake only a window around the camera (it follows on a worker thread).
     d.window = 4.0f * radius + 64.0f;
 
-    m_exclusions = exclusionShapes(scene(), true);
-    d.mask = makeMask(td);
+    m_exclusions = exclusions();
+    d.mask = makeMask(td, m_exclusions);
     d.bladesPerClump = uint32_t(std::max(bladesPerClump, 1));
     d.clumpRadius = clumpRadius;
     d.castShadows = castShadows;

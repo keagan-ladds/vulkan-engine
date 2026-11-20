@@ -4,7 +4,6 @@
 #include "ve/render/Renderer.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 
 namespace ve {
@@ -33,7 +32,7 @@ void TerrainLod::setData(std::shared_ptr<const TerrainData> data, const TerrainL
     const bool layoutChanged = !m_data || data->res != m_data->res || data->cellSize != m_data->cellSize ||
                                data->origin != m_data->origin || settings.nodeCells != m_settings.nodeCells;
     m_data = std::move(data);
-    m_look = look;
+    m_look = std::make_shared<const TerrainLook>(look);
     m_settings = settings;
     m_settings.nodeCells = std::max(m_settings.nodeCells, 4) & ~1; // even: parent vertices are every other one
     const uint64_t previous = m_version++;
@@ -185,7 +184,6 @@ void TerrainLod::update(const glm::vec3& camera, bool preload, bool uploadAll)
     evict();
     std::lock_guard lock(m_mutex);
     m_stats.drawn = uint32_t(m_drawn.size());
-    m_stats.cached = uint32_t(m_nodes.size());
     m_stats.pending = uint32_t(m_jobs.size()) + uint32_t(m_busy) + uint32_t(m_results.size());
     m_stats.missing = uint32_t(m_requests.size());
 }
@@ -200,7 +198,6 @@ void TerrainLod::upload(Result& r)
     n.version = r.version;
     n.minY = r.minY;
     n.maxY = r.maxY;
-    ++m_stats.built;
 }
 
 void TerrainLod::evict()
@@ -226,14 +223,11 @@ void TerrainLod::workerLoop()
             m_jobs.pop_front();
             ++m_busy;
         }
-        const auto t0 = std::chrono::steady_clock::now();
         Result r{job.key, job.version, {}, 0.0f, 0.0f};
         r.mesh = build(job, r.minY, r.maxY);
-        const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
         std::lock_guard lock(m_mutex);
         m_results.push_back(std::move(r));
         --m_busy;
-        m_stats.buildMs = m_stats.buildMs * 0.95f + ms * 0.05f;
     }
 }
 
@@ -269,7 +263,7 @@ MeshData TerrainLod::build(const Job& job, float& minY, float& maxY) const
     // Splat layers: the textured biomes, then rock. Each vertex keeps its
     // weight for (at most) three of them, the same three across the node;
     // whatever weight is left over shows the vertex colour.
-    const TerrainLook& look = job.look;
+    const TerrainLook& look = *job.look;
     const size_t nb = d.biomeNames.size(), layers = nb + 1;
     std::vector<uint8_t> textured(layers);
     for (size_t k = 0; k < nb; ++k) textured[k] = d.biomeTextured(int(k));
@@ -289,8 +283,16 @@ MeshData TerrainLod::build(const Job& job, float& minY, float& maxY) const
 
             // Fine-scale slope and biomes (as at full detail, so colours don't change with the level).
             glm::vec3 fine;
-            if (L == 0) {
-                fine = normalAt(a, b, 1);
+            if (L <= 1) {
+                // Level 0 and 1 vertices are full-resolution samples: the
+                // cached tiles hold their heights and biome weights (computed
+                // from the same neighbours, see TerrainData::generateTile).
+                if (L == 0) {
+                    fine = normalAt(a, b, 1);
+                } else {
+                    auto g = [&](int di, int dj) { return d.sampleHeight(clampI(i + di), clampI(j + dj)); };
+                    fine = glm::normalize(glm::vec3(g(-1, 0) - g(1, 0), 2.0f * d.cellSize, g(0, -1) - g(0, 1)));
+                }
                 for (size_t k = 0; k < w.size(); ++k) w[k] = d.sampleBiome(int(k), i, j);
             } else {
                 const float c = d.cellSize;

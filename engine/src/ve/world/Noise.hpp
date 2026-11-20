@@ -43,15 +43,33 @@ inline float fbm(glm::vec2 p, int octaves, uint32_t seed = 0)
     return v / norm;
 }
 
+// PCG hash (one LCG step + output permutation): a well mixed 32-bit hash.
+inline uint32_t pcg(uint32_t v)
+{
+    const uint32_t state = v * 747796405u + 2891336453u;
+    const uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// Hash of four values (seed, grid x, grid z, purpose): independent random
+// streams per grid square without storing anything.
+inline uint32_t hash4(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+    return pcg(a ^ pcg(b ^ pcg(c ^ pcg(d))));
+}
+
+// The top 24 bits of a hash as a float in [0, 1).
+inline float unitFloat(uint32_t h) { return static_cast<float>(h >> 8) * (1.0f / 16777216.0f); }
+
 // Simple deterministic random number generator for scattering.
 class Rng {
 public:
     explicit Rng(uint32_t seed) : m_state(seed * 747796405u + 2891336453u) {}
     float next()
     {
+        // pcg(state) permutes the *next* LCG state, which is what we advance to.
+        const uint32_t w = pcg(m_state);
         m_state = m_state * 747796405u + 2891336453u;
-        uint32_t w = ((m_state >> ((m_state >> 28u) + 4u)) ^ m_state) * 277803737u;
-        w = (w >> 22u) ^ w;
         return static_cast<float>(w & 0xFFFFFFu) / 16777216.0f;
     }
     float range(float lo, float hi) { return lo + (hi - lo) * next(); }

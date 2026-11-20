@@ -211,6 +211,7 @@
         "borderNoise": 80.0,
         "borderRockStart": 1800.0,
         "borderRockEnd": 2010.0,
+        "detailTexture": "textures/ground_detail.png",
         "rockMaterial": {
           "albedo": "textures/ground/rock_albedo.png",
           "normal": "textures/ground/rock_normal.png",

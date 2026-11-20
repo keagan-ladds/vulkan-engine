@@ -157,7 +157,10 @@ public:
     float cellSize = 64.0f;
     int instancesPerFrame = 6000;
     int bodiesPerFrame = 300;
-    std::string colliderFocus = "Player"; // colliders stream around this object (else the camera)
+    // Colliders stream around the object with this name (else the camera).
+    // "Player" is only a naming convention (the sandbox's player object is
+    // called that); set your own player's name, or "" for the camera.
+    std::string colliderFocus = "Player";
     bool preload = true;                 // load what's visible synchronously on the first build
 
     void markDirty() { m_dirty = true; }
@@ -188,6 +191,7 @@ private:
     bool m_dirty = true;
     bool m_built = false;
     float m_sinceBuild = 1e6f;
+    float m_sinceCheck = 1e6f; // since state() / exclusions / focus were last compared
 };
 
 // GPU grass over the terrain (one ve::GrassPass).
@@ -245,16 +249,23 @@ private:
     std::string state() const; // what needs a rebuild (exclusions are handled incrementally)
     void rebuild();
     void removePass();
-    std::function<glm::vec4(glm::vec2)> makeMask(const std::shared_ptr<const TerrainData>& td) const;
+    struct Exclusion {
+        FoliageExclusionShape shape;
+        float falloff; // grass fades in over this distance from the edge
+        bool operator==(const Exclusion&) const = default;
+    };
+    std::vector<Exclusion> exclusions() const; // the scene's active grass exclusions
+    std::function<glm::vec4(glm::vec2)> makeMask(const std::shared_ptr<const TerrainData>& td, std::vector<Exclusion> exclusions) const;
 
     GrassPass* m_pass = nullptr;
     std::string m_passName;
     std::string m_state;
-    std::vector<FoliageExclusionShape> m_exclusions; // as last applied
+    std::vector<Exclusion> m_exclusions; // as last applied
     uint64_t m_terrainVersion = 0;
     const Terrain* m_terrain = nullptr;
     bool m_dirty = true;
     float m_sinceBuild = 1e6f;
+    float m_sinceCheck = 1e6f; // since state() / exclusions were last compared
 };
 
 } // namespace ve

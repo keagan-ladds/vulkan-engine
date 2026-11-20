@@ -58,11 +58,13 @@ ve::FoliageSystem& addFoliage(ve::Scene& scene, ve::Renderer& renderer, ve::Game
 
     // LOD chains: full mesh -> simplified mesh (meshoptimizer) -> for the tree an
     // octahedral impostor (a camera-facing card baked from the mesh).
-    auto treeMesh = ve::Mesh::create(renderer, tree, {}, "tree");
-    auto treeLow = ve::Mesh::create(renderer, tree.simplified({.ratio = 0.35f, .maxError = 0.1f, .faceted = true}), {}, "tree lod1");
-    std::vector<ve::InstanceLod> treeLods = {{treeMesh, {material}, 0.12f}, // screen-size thresholds
-                                             {treeLow, {material}, 0.04f},
-                                             ve::Impostor::bake(renderer, *treeMesh, {material})->lod()};
+    ve::LodChainDesc treeChain;
+    treeChain.name = "tree";
+    treeChain.levels = {{tree, {}, {material}}};
+    treeChain.simplify = {{.ratio = 0.35f, .maxError = 0.1f, .faceted = true}};
+    treeChain.impostor = true;
+    treeChain.switches = {{.screenSize = 0.12f}, {.screenSize = 0.04f}}; // screen-size thresholds
+    std::vector<ve::InstanceLod> treeLods = ve::buildLodChain(renderer, std::move(treeChain));
     auto rockMesh = ve::Mesh::create(renderer, rock, {}, "rock");
 
     // --- The foliage system: rules decide where things grow ------------------------------
@@ -100,7 +102,7 @@ ve::FoliageSystem& addFoliage(ve::Scene& scene, ve::Renderer& renderer, ve::Game
     rocks.shadowDistance = 60.0f;
     foliage.addLayer(rocks);
 
-    foliage.colliderFocus = &colliderFocus;
+    foliage.setColliderFocus(&colliderFocus); // remembered by id: safe if the player is deleted
     foliage.preload(colliderFocus.transform().position()); // no pop-in on the first frames
     return foliage;
 }

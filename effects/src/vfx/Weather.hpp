@@ -90,11 +90,20 @@ private:
     float m_t = 1.0f, m_duration = 1.0f;
     float m_wetness = 0.0f;
     float m_gustPhase = 0.0f;
-    ve::GameObject* m_rainObject = nullptr;
+    // The spawned "Rain" object is remembered by id (the editor may delete it),
+    // its components by pointer. Those pointers are only used after checking
+    // they still belong to the live object (see rainParts()).
+    uint64_t m_rainId = 0;
     ParticleEmitter* m_rain = nullptr;
     ve::AudioSource* m_rainAudio = nullptr;
     ve::AudioSource* m_stormAudio = nullptr;
     ve::AudioSource* m_windAudio = nullptr;
+    struct RainParts {
+        ve::GameObject* object = nullptr;
+        ParticleEmitter* emitter = nullptr;
+        ve::AudioSource *rain = nullptr, *storm = nullptr, *wind = nullptr;
+    };
+    RainParts rainParts() const;
     ve::AudioSource* addLoop(ve::GameObject& owner, const std::shared_ptr<ve::AudioClip>& clip);
     void updateLightning(float dt);
     float m_nextFlash = 4.0f, m_flashT = -1.0f;
