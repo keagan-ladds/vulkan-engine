@@ -13,6 +13,7 @@
 // =============================================================================
 
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 
@@ -37,7 +38,7 @@ public:
     GameObject* instanceRoot() const; // null until started / if it was destroyed
 
 private:
-    uint64_t m_rootId = 0; // by id: the editor or game may destroy the spawned nodes
+    ObjectRef<> m_root; // the editor or game may destroy the spawned nodes
 };
 
 class PrimitiveRenderer : public Component {
@@ -57,10 +58,8 @@ public:
     void rebuild();
 
 private:
-    MeshRenderer* liveRenderer() const; // m_renderer if it's still on this object
-    // The MeshRenderer this added next to itself. A raw pointer, but only used
-    // after hasComponent() confirmed it's still there (see liveRenderer).
-    MeshRenderer* m_renderer = nullptr;
+    // The MeshRenderer this added next to itself (the editor may remove it).
+    ComponentRef<MeshRenderer> m_renderer;
     std::shared_ptr<StandardMaterial> m_material;
 };
 

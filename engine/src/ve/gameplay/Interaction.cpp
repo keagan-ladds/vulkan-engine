@@ -61,21 +61,14 @@ void Interactor::update(float)
         if (now) now->focusChanged(true);
     }
     m_focus = now;
-    m_focusObject = now ? now->gameObject().id() : 0;
     if (!action.empty() && input().actionPressed(action)) interact();
 }
 
 Interactable* Interactor::focus() const
 {
     // The focus may have been destroyed since update(), or just its component
-    // removed: check it still exists without touching m_focus (it may dangle) -
-    // the object by id, then the component by address among the object's.
-    if (!m_focus || !m_focusObject) return nullptr;
-    GameObject* o = gameObject().scene().findById(m_focusObject);
-    if (!o || o->isDestroyed()) return nullptr;
-    for (const auto& c : o->components())
-        if (c.get() == m_focus) return m_focus;
-    return nullptr;
+    // removed: ComponentRef checks both without touching freed memory.
+    return m_focus.get(gameObject().scene());
 }
 
 std::string Interactor::prompt() const

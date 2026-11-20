@@ -9,6 +9,7 @@
 // =============================================================================
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 #include <ve/scene/SaveGame.hpp>
 
 namespace ve {
@@ -39,21 +40,21 @@ public:
     // Night brightness. Exposure rises towards this at night (crude eye
     // adaptation): 1 = no adaptation (darkest), 3 = bright "game" nights.
     float nightExposure = 1.4f;
-    // The scene's Weather (found automatically), or null. Valid for the current frame.
-    Weather* weather() const { return m_weather; }
+    // The scene's Weather (found automatically), or null. Don't keep the pointer.
+    Weather* weather() const;
 
-    // The lights (separate objects; the editor can delete them). Valid for the current frame, may be null.
-    ve::DirectionalLight* sun() const { return m_sun; }
-    ve::DirectionalLight* moon() const { return m_moon; }
+    // The lights (separate objects; the editor can delete them). May be null; don't keep the pointers.
+    ve::DirectionalLight* sun() const;
+    ve::DirectionalLight* moon() const;
     glm::vec3 towardsSun() const { return m_towardsSun; }
     static glm::vec3 sunDirection(float hours);
 
 private:
-    Weather* m_weather = nullptr; // looked up every frame by id (can't dangle)
-    uint64_t m_weatherId = 0;
-    ve::DirectionalLight* m_sun = nullptr;  // looked up every frame by id
-    ve::DirectionalLight* m_moon = nullptr;
-    uint64_t m_sunId = 0, m_moonId = 0;
+    // By id: the editor can delete or replace the Weather and the Sun / Moon
+    // objects at any time (and undo-restore them with the same ids, so the
+    // lights are found through their objects, not remembered as components).
+    ve::ObjectRef<Weather> m_weather;
+    ve::ObjectRef<> m_sun, m_moon;
     glm::vec3 m_towardsSun{0, 1, 0};
 };
 

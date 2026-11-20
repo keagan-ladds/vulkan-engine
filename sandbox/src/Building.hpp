@@ -19,6 +19,7 @@
 #include <ve/scene/Reflection.hpp>
 #include <ve/gameplay/Placement.hpp>
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 #include <ve/ui/Gui.hpp>
 #include <ve/scene/SaveGame.hpp>
 
@@ -59,14 +60,14 @@ public:
     float speed = 3.0f;       // 1 / seconds for a full swing
     bool open() const { return m_open; }
     void setOpen(bool open) { m_open = open; }
-    void setLeaf(ve::GameObject* leaf) { m_leaf = leaf ? leaf->id() : 0; }
+    void setLeaf(ve::GameObject* leaf) { m_leaf = leaf; }
 
     void update(float dt) override;
     void saveState(ve::Json& out) const override { out = {{"open", m_open}}; }
     void loadState(const ve::Json& in) override;
 
 private:
-    uint64_t m_leaf = 0;
+    ve::ObjectRef<> m_leaf;
     bool m_open = false;
     float m_t = 0.0f; // 0 closed .. 1 open
 };
@@ -117,7 +118,7 @@ private:
     void rebuildNavigation(const glm::vec3& at);
     void registerRequests();                   // the host's side of building (ve::net)
     int removeNow(ve::GameObject* piece);      // (host)
-    ve::GameObject* m_placed = nullptr;        // what the last request placed (host)
+    ve::ObjectRef<> m_placed;                  // what the last request placed (host)
     int m_removed = 0;
     ve::GameObject* aimedPiece() const;
 

@@ -26,18 +26,18 @@ namespace ve {
 
 GameObject* ModelInstance::instanceRoot() const
 {
-    return m_rootId ? gameObject().scene().findById(m_rootId) : nullptr;
+    return m_root.get(gameObject().scene());
 }
 
 void ModelInstance::rebuild()
 {
     if (GameObject* old = instanceRoot()) old->destroy();
-    m_rootId = 0;
+    m_root.reset();
     if (path.empty()) return;
     try {
         auto model = assets().loadModel(path);
         GameObject* root = &gameObject().scene().instantiate(*model, &gameObject(), staticColliders);
-        m_rootId = root->id();
+        m_root = root;
         if (!hiddenNodes.empty()) {
             const std::vector<std::string> names = str::split(hiddenNodes, ',');
             // Destroyed before they start: no colliders or draws for hidden nodes.
@@ -60,7 +60,7 @@ void ModelInstance::onDestroy()
     // The instantiated nodes are children: they go with the owner. When only
     // this component is removed, remove them too.
     if (GameObject* root = instanceRoot(); root && !gameObject().isDestroyed()) root->destroy();
-    m_rootId = 0;
+    m_root.reset();
 }
 
 // -----------------------------------------------------------------------------
@@ -102,22 +102,17 @@ void PrimitiveRenderer::rebuild()
         }
     }
     m_material->setAlbedoTexture(tex);
-    MeshRenderer* mr = liveRenderer();
+    MeshRenderer* mr = m_renderer.get(gameObject().scene());
     if (!mr) m_renderer = mr = &gameObject().addComponent<MeshRenderer>();
     mr->mesh = mesh;
     mr->materials = {m_material};
     mr->castShadows = castShadows;
 }
 
-MeshRenderer* PrimitiveRenderer::liveRenderer() const
-{
-    return m_renderer && gameObject().hasComponent(m_renderer) ? m_renderer : nullptr;
-}
-
 void PrimitiveRenderer::onDestroy()
 {
-    if (MeshRenderer* mr = liveRenderer(); mr && !gameObject().isDestroyed()) gameObject().removeComponent(mr);
-    m_renderer = nullptr;
+    if (MeshRenderer* mr = m_renderer.get(gameObject().scene()); mr && !gameObject().isDestroyed()) gameObject().removeComponent(mr);
+    m_renderer.reset();
 }
 
 } // namespace ve

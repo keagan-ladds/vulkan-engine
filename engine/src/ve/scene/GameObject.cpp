@@ -1,9 +1,13 @@
 #include "ve/scene/GameObject.hpp"
 
+#include "ve/core/Engine.hpp"
+#include "ve/scene/ObjectRef.hpp"
+
 #include "ve/scene/Ids.hpp"
 #include "ve/scene/Scene.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +18,11 @@ namespace ve {
 Transform& Component::transform() const
 {
     return m_owner->transform();
+}
+
+Scene& detail::mainScene()
+{
+    return Engine::get().scene();
 }
 
 bool Component::isActive() const
@@ -79,8 +88,12 @@ void GameObject::setParent(GameObject* parent, bool keepWorld)
 
 void GameObject::attachComponent(std::unique_ptr<Component> component, std::type_index type)
 {
+    // Serials only need to be unique, not random. Atomic so that building an
+    // object off the main thread (before spawning it) stays safe.
+    static std::atomic<uint64_t> s_nextSerial{1};
     component->m_owner = this;
     component->m_type = type;
+    component->m_serial = s_nextSerial.fetch_add(1, std::memory_order_relaxed);
     m_componentsNoHook = 0; // the new component's hooks are unknown until it runs
     Component* raw = component.get();
     m_components.push_back(std::move(component));

@@ -59,10 +59,11 @@ void PlayerAvatar::start()
     }
     try {
         auto m = assets().loadModel("models/villager.gltf");
-        m_body = &scene().instantiate(*m, this);
-        m_body->transform().setLocalRotation(glm::angleAxis(3.14159265f, glm::vec3(0, 1, 0))); // the model faces +Z
-        m_animator = m_body->getComponent<ve::Animator>();
-        if (m_animator) m_animator->play("Idle", 0.0f);
+        ve::GameObject& body = scene().instantiate(*m, this);
+        body.transform().setLocalRotation(glm::angleAxis(3.14159265f, glm::vec3(0, 1, 0))); // the model faces +Z
+        ve::Animator* animator = body.getComponent<ve::Animator>();
+        m_animator = animator;
+        if (animator) animator->play("Idle", 0.0f);
     } catch (const std::exception& e) {
         ve::log::warn("PlayerAvatar: {}", e.what());
     }
@@ -85,7 +86,7 @@ void PlayerAvatar::lateUpdate(float dt)
     if (dt > 0.0f) m_speed = glm::mix(m_speed, glm::length(glm::vec2(p.x - m_last.x, p.z - m_last.z)) / dt, glm::min(1.0f, dt * 8.0f));
     m_last = p;
     const bool walking = m_speed > 0.4f;
-    if (m_animator && walking != m_walking) m_animator->play(walking ? "Walk" : "Idle", 0.3f);
+    if (ve::Animator* animator = m_animator.get(scene()); animator && walking != m_walking) animator->play(walking ? "Walk" : "Idle", 0.3f);
     m_walking = walking;
     if (!m_named && !playerName.empty()) {
         m_named = true;

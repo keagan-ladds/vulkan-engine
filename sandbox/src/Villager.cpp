@@ -69,32 +69,34 @@ void Villager::start()
     m_home = transform().position();
     try {
         auto m = assets().loadModel(model);
-        m_body = &scene().instantiate(*m, this);
+        ve::GameObject& body = scene().instantiate(*m, this);
+        m_body = &body;
         // The model faces +Z; the agent turns our -Z (engine forward) along the way.
-        m_body->transform().setLocalRotation(glm::angleAxis(3.14159265f, glm::vec3(0, 1, 0)));
-        m_animator = m_body->getComponent<ve::Animator>();
-        if (m_animator) {
+        body.transform().setLocalRotation(glm::angleAxis(3.14159265f, glm::vec3(0, 1, 0)));
+        if (ve::Animator* animator = body.getComponent<ve::Animator>()) {
+            m_animator = animator;
             // The right arm on its own layer: wave over whatever the body does.
-            m_waveLayer = m_animator->addLayer("Wave", "UpperArm.R");
-            m_animator->setLayerWeight(m_waveLayer, 0.0f, 0.0f);
+            m_waveLayer = animator->addLayer("Wave", "UpperArm.R");
+            animator->setLayerWeight(m_waveLayer, 0.0f, 0.0f);
             // Footsteps: the Walk clip's foot contacts (its legs swing on a 1 s cycle).
-            m_animator->addEvent("Walk", 0.25f, "step");
-            m_animator->addEvent("Walk", 0.75f, "step");
-            m_animator->onEvent = [this](const std::string& e, const std::string&) {
+            animator->addEvent("Walk", 0.25f, "step");
+            animator->addEvent("Walk", 0.75f, "step");
+            animator->onEvent = [this](const std::string& e, const std::string&) {
                 if (e == "step") footstep();
             };
         }
         // Feet on the ground on slopes and steps (two-bone IK per leg, hips lowered).
-        auto& feet = m_body->addComponent<ve::FootIK>();
+        auto& feet = body.addComponent<ve::FootIK>();
         feet.layers = ~(1u << std::max(0, physics().layer("Debris"))); // (not on loose rocks)
         // Head and eyes follow the player nearby; the right arm points things out.
-        m_look = &m_body->addComponent<ve::LookAtIK>();
-        m_point = &m_body->addComponent<ve::AimIK>();
-        m_point->chain = {{"Chest", 0.15f}, {"UpperArm.R", 0.85f}};
-        m_point->effector = "UpperArm.R";
-        m_point->axis = {0.0f, -1.0f, 0.0f}; // the arm hangs down in the rest pose
-        m_point->maxAngle = 170.0f;
-        m_point->blendTime = 0.45f;
+        m_look = &body.addComponent<ve::LookAtIK>();
+        auto& point = body.addComponent<ve::AimIK>();
+        m_point = &point;
+        point.chain = {{"Chest", 0.15f}, {"UpperArm.R", 0.85f}};
+        point.effector = "UpperArm.R";
+        point.axis = {0.0f, -1.0f, 0.0f}; // the arm hangs down in the rest pose
+        point.maxAngle = 170.0f;
+        point.blendTime = 0.45f;
     } catch (const std::exception& e) {
         ve::log::warn("Villager: {}", e.what());
     }
@@ -102,7 +104,27 @@ void Villager::start()
     transform().setRotation(glm::angleAxis(yaw, glm::vec3(0, 1, 0)));
     m_agent->speed = speed;
     m_timer = restTime * 0.5f;
-    if (m_animator) m_animator->play("Idle", 0.0f);
+    if (ve::Animator* animator = this->animator()) animator->play("Idle", 0.0f);
+}
+
+ve::GameObject* Villager::body() const
+{
+    return m_body.get(scene());
+}
+
+ve::Animator* Villager::animator() const
+{
+    return m_animator.get(scene());
+}
+
+ve::AimIK* Villager::pointer() const
+{
+    return m_point.get(scene());
+}
+
+ve::LookAtIK* Villager::looker() const
+{
+    return m_look.get(scene());
 }
 
 void Villager::setMode(Mode m)
@@ -122,7 +144,7 @@ void Villager::pickWanderTarget()
 void Villager::follow(ve::GameObject& who)
 {
     wave(1.6f); // "sure, let's go"
-    m_leader = who.id();
+    m_leader = &who;
     m_timer = followTime;
     m_repath = 0.0f;
     setMode(Mode::Follow);
@@ -130,18 +152,21 @@ void Villager::follow(ve::GameObject& who)
 
 void Villager::wave(float seconds)
 {
-    if (!m_animator || m_waveLayer < 0) return;
-    m_animator->play(m_waveLayer, "Wave", 0.0f);
-    m_animator->setLayerWeight(m_waveLayer, 1.0f, 0.35f);
+    ve::Animator* animator = this->animator();
+    if (!animator || m_waveLayer < 0) return;
+    animator->play(m_waveLayer, "Wave", 0.0f);
+    animator->setLayerWeight(m_waveLayer, 1.0f, 0.35f);
     m_waveTimer = seconds;
 }
 
 void Villager::pointAt(const glm::vec3& at, float seconds)
 {
-    if (!m_point) return;
-    if (m_animator && m_waveLayer >= 0) m_animator->setLayerWeight(m_waveLayer, 0.0f, 0.2f); // (one arm, one job)
+    ve::AimIK* point = pointer();
+    if (!point) return;
+    if (ve::Animator* animator = this->animator(); animator && m_waveLayer >= 0)
+        animator->setLayerWeight(m_waveLayer, 0.0f, 0.2f); // (one arm, one job)
     m_waveTimer = 0.0f;
-    m_point->setTarget(at);
+    point->setTarget(at);
     m_pointTimer = seconds;
 }
 
@@ -166,7 +191,7 @@ void Villager::footstep()
 
 void Villager::goHome()
 {
-    m_leader = 0;
+    m_leader.reset();
     setMode(Mode::Return);
     m_agent->setDestination(m_home);
 }
@@ -175,8 +200,9 @@ void Villager::update(float dt)
 {
     // The wave fades out when it's done; a player walking up gets one too,
     // then a hint: the arm points at the nearest sunstone.
-    if (m_waveTimer > 0.0f && (m_waveTimer -= dt) <= 0.0f && m_animator) {
-        m_animator->setLayerWeight(m_waveLayer, 0.0f, 0.4f);
+    ve::Animator* animator = this->animator();
+    if (m_waveTimer > 0.0f && (m_waveTimer -= dt) <= 0.0f && animator) {
+        animator->setLayerWeight(m_waveLayer, 0.0f, 0.4f);
         if (m_hintAfterWave) {
             m_hintAfterWave = false;
             const glm::vec3 me = transform().position();
@@ -191,7 +217,8 @@ void Villager::update(float dt)
             if (best) pointAt(best->transform().position());
         }
     }
-    if (m_pointTimer > 0.0f && (m_pointTimer -= dt) <= 0.0f && m_point) m_point->clearTarget();
+    if (m_pointTimer > 0.0f && (m_pointTimer -= dt) <= 0.0f)
+        if (ve::AimIK* point = pointer()) point->clearTarget();
     if (const Player* player = localPlayer(scene())) {
         const glm::vec3 eyes = player->transform().position() + glm::vec3(0.0f, 1.6f, 0.0f);
         const float d = glm::distance(player->transform().position(), transform().position());
@@ -202,9 +229,9 @@ void Villager::update(float dt)
         } else if (d > 8.0f) {
             m_greeted = false;
         }
-        if (m_look) { // watch the player who's close
-            if (d < 8.0f) m_look->setTarget(eyes);
-            else m_look->clearTarget();
+        if (ve::LookAtIK* look = looker()) { // watch the player who's close
+            if (d < 8.0f) look->setTarget(eyes);
+            else look->clearTarget();
         }
     }
     switch (m_mode) {
@@ -222,7 +249,7 @@ void Villager::update(float dt)
         }
         break;
     case Mode::Follow: {
-        ve::GameObject* leader = scene().findById(m_leader);
+        ve::GameObject* leader = m_leader.get(scene());
         if (!leader || (m_timer -= dt) <= 0.0f) {
             goHome();
             break;
@@ -244,9 +271,9 @@ void Villager::update(float dt)
     // Animation follows the actual speed (Idle / Walk, played faster when jogging).
     const float v = glm::length(glm::vec2(m_agent->velocity().x, m_agent->velocity().z));
     const bool walking = v > 0.25f;
-    if (m_animator) {
-        if (walking != m_walking) m_animator->play(walking ? "Walk" : "Idle", 0.3f);
-        m_animator->speed = walking ? std::clamp(v / std::max(speed, 0.1f), 0.6f, 2.2f) : 1.0f;
+    if (animator) {
+        if (walking != m_walking) animator->play(walking ? "Walk" : "Idle", 0.3f);
+        animator->speed = walking ? std::clamp(v / std::max(speed, 0.1f), 0.6f, 2.2f) : 1.0f;
     }
     m_walking = walking;
 

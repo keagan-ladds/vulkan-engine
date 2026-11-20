@@ -108,11 +108,16 @@ public:
     // Saved in scene files (set by the editor / scene loader). Components a
     // GameObject class creates for itself stay false.
     bool persistent = false;
+    // Unique for this run and never reused (0 until attached to an object).
+    // ComponentRef (ve/scene/ObjectRef.hpp) uses it to tell a remembered
+    // component apart from a new one the allocator put at the same address.
+    uint64_t serial() const { return m_serial; }
 
 private:
     friend class GameObject;
     friend class Scene;
     GameObject* m_owner = nullptr;
+    uint64_t m_serial = 0;
     bool m_started = false;
     bool m_removed = false;
     uint32_t m_bucketIndex = 0; // position in the Scene's registry bucket (O(1) unregister)
@@ -189,7 +194,9 @@ public:
     // itself or a sibling from inside a hook.
     void removeComponent(Component* component);
     // Is `component` (maybe a remembered pointer) still a live component of
-    // this object? Only compares addresses, so it's safe on a dangling one.
+    // this object? Only compares addresses, so it's safe on a dangling one;
+    // but a new component may have reused the address: to remember a
+    // component across frames use ComponentRef (ve/scene/ObjectRef.hpp).
     bool hasComponent(const Component* component) const
     {
         for (const auto& c : m_components)

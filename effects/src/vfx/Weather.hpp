@@ -21,6 +21,7 @@
 // =============================================================================
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 
 #include <glm/glm.hpp>
 
@@ -90,20 +91,11 @@ private:
     float m_t = 1.0f, m_duration = 1.0f;
     float m_wetness = 0.0f;
     float m_gustPhase = 0.0f;
-    // The spawned "Rain" object is remembered by id (the editor may delete it),
-    // its components by pointer. Those pointers are only used after checking
-    // they still belong to the live object (see rainParts()).
-    uint64_t m_rainId = 0;
-    ParticleEmitter* m_rain = nullptr;
-    ve::AudioSource* m_rainAudio = nullptr;
-    ve::AudioSource* m_stormAudio = nullptr;
-    ve::AudioSource* m_windAudio = nullptr;
-    struct RainParts {
-        ve::GameObject* object = nullptr;
-        ParticleEmitter* emitter = nullptr;
-        ve::AudioSource *rain = nullptr, *storm = nullptr, *wind = nullptr;
-    };
-    RainParts rainParts() const;
+    // The spawned "Rain" object and its components (the editor may delete
+    // either; the refs then resolve to null).
+    ve::ObjectRef<> m_rainObject;
+    ve::ComponentRef<ParticleEmitter> m_rain;
+    ve::ComponentRef<ve::AudioSource> m_rainAudio, m_stormAudio, m_windAudio;
     ve::AudioSource* addLoop(ve::GameObject& owner, const std::shared_ptr<ve::AudioClip>& clip);
     void updateLightning(float dt);
     float m_nextFlash = 4.0f, m_flashT = -1.0f;

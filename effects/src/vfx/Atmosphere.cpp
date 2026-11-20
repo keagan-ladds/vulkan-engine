@@ -167,8 +167,8 @@ void AtmospherePass::setup(ve::RenderGraph& g)
                   std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
 }
 
-void AtmospherePass::setSun(const ve::DirectionalLight* light) { sunObject = light ? light->gameObject().id() : 0; }
-void AtmospherePass::setMoon(const ve::DirectionalLight* light) { moonObject = light ? light->gameObject().id() : 0; }
+void AtmospherePass::setSun(const ve::DirectionalLight* light) { sunObject = light ? &light->gameObject() : nullptr; }
+void AtmospherePass::setMoon(const ve::DirectionalLight* light) { moonObject = light ? &light->gameObject() : nullptr; }
 
 void AtmospherePass::prepare(ve::FrameData& frame)
 {
@@ -176,8 +176,8 @@ void AtmospherePass::prepare(ve::FrameData& frame)
 
     // The sun / moon lights, by id: deleted objects come back null (and are only
     // freed after the frame is rendered, so the pointers hold until execute()).
-    auto light = [&](uint64_t id) -> ve::DirectionalLight* {
-        ve::GameObject* o = (id && frame.scene) ? frame.scene->findById(id) : nullptr;
+    auto light = [&](const ve::ObjectRef<>& ref) -> ve::DirectionalLight* {
+        ve::GameObject* o = frame.scene ? ref.get(*frame.scene) : nullptr;
         return o ? o->getComponent<ve::DirectionalLight>() : nullptr;
     };
     m_sun = light(sunObject);

@@ -112,13 +112,13 @@ void Editor::init(Engine& engine)
 
 void Editor::shutdown()
 {
-    m_cameraId = 0;
+    m_camera.reset();
     m_picking = nullptr;
 }
 
 GameObject* Editor::camera() const
 {
-    return m_cameraId ? m_engine->scene().findById(m_cameraId) : nullptr;
+    return m_camera.get(m_engine->scene());
 }
 
 GameObject& Editor::ensureCamera()
@@ -131,7 +131,7 @@ GameObject& Editor::ensureCamera()
     c.priority = 1000000;
     c.farPlane = 6000.0f;
     cam.transform().setPosition(m_camPosition);
-    m_cameraId = cam.id();
+    m_camera = &cam;
     return cam;
 }
 
@@ -162,7 +162,7 @@ void Editor::setMode(Mode mode)
         // The game's camera (highest priority active Camera that isn't ours).
         Camera* game = nullptr;
         scene.forEach<Camera>([&](Camera& c) {
-            if (c.isActive() && c.gameObject().id() != m_cameraId && (!game || c.priority > game->priority)) game = &c;
+            if (c.isActive() && c.gameObject().id() != m_camera.id() && (!game || c.priority > game->priority)) game = &c;
         });
         GameObject& cam = ensureCamera();
         if (m_mode == Mode::Off && game) {
@@ -222,14 +222,12 @@ void Editor::restoreSnapshot(const Json& snapshot)
 
 GameObject* Editor::selected() const
 {
-    if (!m_selected) return nullptr;
-    GameObject* o = m_engine->scene().findById(m_selected);
-    return o && !o->isDestroyed() ? o : nullptr;
+    return m_selected.get(m_engine->scene()); // (null once destroyed)
 }
 
 void Editor::select(GameObject* object)
 {
-    m_selected = object ? object->id() : 0;
+    m_selected = object;
     m_editBeforeValid = false;
 }
 
@@ -496,7 +494,7 @@ GameObject* Editor::createObject(const Json& json, GameObject* parent, const std
 
 void Editor::deleteObject(GameObject& object)
 {
-    if (object.id() == m_cameraId) return;
+    if (object.id() == m_camera.id()) return;
     if (!object.persistent) {
         // Game code may hold pointers to its own objects (and worker threads may
         // use them): deleting those could crash the game.
@@ -510,7 +508,7 @@ void Editor::deleteObject(GameObject& object)
     after.parent = before.parent;
     object.destroy();
     pushUndo({"Delete " + object.name(), {before}, {after}});
-    if (m_selected == object.id()) select(nullptr);
+    if (m_selected.id() == object.id()) select(nullptr);
 }
 
 GameObject* Editor::duplicate(GameObject& object)
@@ -820,7 +818,7 @@ void Editor::drawHierarchy()
             std::transform(b.begin(), b.end(), b.begin(), ::tolower);
             if (a.find(b) == std::string::npos) continue;
             if (!m_showCodeObjects && !o->persistent) continue;
-            if (ImGui::Selectable((o->name() + "##" + std::to_string(o->id())).c_str(), o->id() == m_selected)) select(o.get());
+            if (ImGui::Selectable((o->name() + "##" + std::to_string(o->id())).c_str(), o->id() == m_selected.id())) select(o.get());
             continue;
         }
         if (o->transform().parent()) continue;
@@ -857,7 +855,7 @@ void Editor::drawHierarchyNode(GameObject& o)
     }
     ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
     if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
-    if (o.id() == m_selected) flags |= ImGuiTreeNodeFlags_Selected;
+    if (o.id() == m_selected.id()) flags |= ImGuiTreeNodeFlags_Selected;
 
     if (!o.persistent) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
     else if (!o.activeSelf()) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.5f, 0.5f, 1.0f));
@@ -1082,10 +1080,10 @@ void Editor::drawInspector()
         glm::vec3 p = t.localPosition();
         track(ImGui::DragFloat3("Position", &p.x, 0.05f) && (t.setLocalPosition(p), true), "Move");
         // Euler angles are cached per object so dragging doesn't flip at gimbal angles.
-        if (m_eulerObject != sel->id() || glm::abs(glm::dot(m_eulerFor, t.localRotation())) < 0.99999f) {
+        if (m_eulerObject.id() != sel->id() || glm::abs(glm::dot(m_eulerFor, t.localRotation())) < 0.99999f) {
             m_eulerCache = glm::degrees(glm::eulerAngles(t.localRotation()));
             m_eulerFor = t.localRotation();
-            m_eulerObject = sel->id();
+            m_eulerObject = sel;
         }
         glm::vec3 e = m_eulerCache;
         if (ImGui::DragFloat3("Rotation", &e.x, 0.5f)) {
@@ -1224,7 +1222,7 @@ void Editor::drawViewport()
             if (glm::length(p - view.eye) > 120.0f) continue;
             const auto s = view.project(p);
             if (!s || s->x < 0 || s->y < 0 || s->x > view.size.x || s->y > view.size.y) continue;
-            const bool sel = o->id() == m_selected;
+            const bool sel = o->id() == m_selected.id();
             list->AddCircleFilled(ImVec2(s->x, s->y), 9.0f, sel ? IM_COL32(255, 220, 40, 255) : IM_COL32(20, 20, 20, 170));
             list->AddCircle(ImVec2(s->x, s->y), 9.0f, color, 0, 1.5f);
             list->AddText(ImVec2(s->x - 3.5f, s->y - 7.0f), color, letter);

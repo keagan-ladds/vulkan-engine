@@ -15,6 +15,7 @@
 
 #include "ve/editor/Gizmo.hpp"
 #include "ve/world/Terrain.hpp"
+#include "ve/scene/ObjectRef.hpp"
 #include "ve/scene/Reflection.hpp"
 
 #include <filesystem>
@@ -105,14 +106,14 @@ private:
     Mode m_pendingMode = Mode::Off;
     bool m_hasPending = false;
     int m_frames = 0;
+    std::vector<Component*> m_inspectScratch; // the selection's components while drawing the inspector
     // By id, not pointer: the game may clear the scene (back to its menu) and
     // take the camera object with it (docs/04-agent-handoff.md, gotchas).
-    std::vector<Component*> m_inspectScratch; // the selection's components while drawing the inspector
-    uint64_t m_cameraId = 0;
+    ObjectRef<> m_camera;
     glm::vec3 m_camPosition{0.0f}; // where a re-spawned camera starts
     float m_camYaw = 0.0f, m_camPitch = -0.3f, m_camSpeed = 12.0f;
     bool m_looking = false;
-    uint64_t m_selected = 0;
+    ObjectRef<> m_selected;
     PickingPass* m_picking = nullptr;
     glm::vec2 m_pressPos{0.0f};
     bool m_pressInViewport = false;
@@ -152,7 +153,7 @@ private:
     bool m_editing = false;
     glm::vec3 m_eulerCache{0.0f};
     glm::quat m_eulerFor{0, 0, 0, 0};
-    uint64_t m_eulerObject = 0;
+    ObjectRef<> m_eulerObject; // (only compared, never looked up)
 
     std::string m_scenePath;
     char m_saveAsBuffer[256] = "scenes/untitled.json";

@@ -18,6 +18,7 @@
 
 #include <ve/net/Network.hpp>
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 
 #include <string>
 
@@ -39,8 +40,7 @@ public:
     void netRead(ve::net::Reader& in) override { playerName = in.readString(); }
 
 private:
-    ve::GameObject* m_body = nullptr;
-    ve::Animator* m_animator = nullptr;
+    ve::ComponentRef<ve::Animator> m_animator; // on the model instance (a child the editor can delete)
     glm::vec3 m_last{0.0f};
     float m_speed = 0.0f;
     bool m_walking = false;

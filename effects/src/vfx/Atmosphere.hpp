@@ -19,6 +19,7 @@
 
 #include <ve/render/PipelineHandle.hpp>
 #include <ve/render/RenderGraph.hpp>
+#include <ve/scene/ObjectRef.hpp>
 
 #include <glm/glm.hpp>
 
@@ -44,9 +45,9 @@ public:
 
     // --- Sources ---------------------------------------------------------------
     // By GameObject id (looked up every frame, so deleting the light's object
-    // can't leave a dangling pointer). 0 / missing: no sun / moon.
-    uint64_t sunObject = 0;  // its DirectionalLight is the sun; else the brightest directional light
-    uint64_t moonObject = 0; // optional, its DirectionalLight draws a moon disc
+    // can't leave a dangling pointer). Empty / missing: no sun / moon.
+    ve::ObjectRef<> sunObject;  // its DirectionalLight is the sun; else the brightest directional light
+    ve::ObjectRef<> moonObject; // optional, its DirectionalLight draws a moon disc
     void setSun(const ve::DirectionalLight* light);
     void setMoon(const ve::DirectionalLight* light);
 

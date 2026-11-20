@@ -60,7 +60,7 @@ void MainMenu::start()
 
 void MainMenu::onDestroy()
 {
-    if (ve::GameObject* cam = scene().findById(m_camera)) cam->destroy();
+    if (ve::GameObject* cam = m_camera.get(scene())) cam->destroy();
     engine().time().timeScale = 1.0f;
 }
 
@@ -78,13 +78,13 @@ void MainMenu::toTitle()
     showPanel("");
     engine().time().timeScale = 1.0f;
     // A camera of its own, above the camp looking west into the sunset.
-    if (!scene().findById(m_camera)) {
+    if (!m_camera.get(scene())) {
         auto& cam = scene().spawn("Title camera");
         auto& c = cam.addComponent<ve::Camera>();
         c.priority = 100;
         c.fovDegrees = 48.0f;
         c.farPlane = 6000.0f;
-        m_camera = cam.id();
+        m_camera = &cam;
     }
     if (auto* weather = scene().findFirst<vfx::Weather>()) weather->setWeather(vfx::Weather::Type::Clear, 0.5f);
     m_title->focus(nullptr);
@@ -100,8 +100,8 @@ void MainMenu::enterPlaying()
     m_pause->visible = false;
     showPanel("");
     engine().time().timeScale = 1.0f;
-    if (ve::GameObject* cam = scene().findById(m_camera)) cam->destroy();
-    m_camera = 0;
+    if (ve::GameObject* cam = m_camera.get(scene())) cam->destroy();
+    m_camera.reset();
     input().setMouseCaptured(true);
 }
 
@@ -165,12 +165,12 @@ void MainMenu::showPanel(const std::string& name)
 void MainMenu::update(float dt)
 {
     m_t += dt;
-    if (Hud* hud = findCached<Hud>(scene(), m_hudId)) hud->setVisible(m_screen == Screen::Playing);
+    if (Hud* hud = findCached(scene(), m_hud)) hud->setVisible(m_screen == Screen::Playing);
 
     if (m_screen == Screen::Title) {
         // Hold the light at dusk and drift the camera slowly along the camp's edge.
-        if (auto* dn = findCached<vfx::DayNightCycle>(scene(), m_dayNightId); dn && m_leaving < 0.0f) dn->timeOfDay = kTitleTime;
-        if (ve::GameObject* cam = scene().findById(m_camera)) {
+        if (auto* dn = findCached(scene(), m_dayNight); dn && m_leaving < 0.0f) dn->timeOfDay = kTitleTime;
+        if (ve::GameObject* cam = m_camera.get(scene())) {
             const float s = std::sin(m_t * 0.05f), c = std::cos(m_t * 0.037f);
             const glm::vec2 base = layout::kCamp + glm::vec2(34.0f + 4.0f * s, 4.0f + 6.0f * c);
             const ve::Terrain* t = ve::Terrain::find(scene());
@@ -201,7 +201,7 @@ void MainMenu::update(float dt)
     if (m_screen == Screen::Playing) {
         // Escape (unless building: it stops building) / pad Start: pause.
         const bool escape = input().keyPressed(ve::Key::Escape) || input().gamepadPressed(ve::GamepadButton::Start);
-        const Builder* b = findCached<Builder>(scene(), m_builderId);
+        const Builder* b = findCached(scene(), m_builder);
         if (escape && !(b && (b->active() || b->justStopped()))) pause();
     }
 }
@@ -556,7 +556,7 @@ void MainMenu::applySettings()
         player->mouseSensitivity = glm::mix(0.0008f, 0.0043f, m_settings.mouse);
         if (ve::Camera* cam = player->camera()) cam->fovDegrees = glm::mix(55.0f, 95.0f, m_settings.fov);
     }
-    if (Hud* hud = findCached<Hud>(scene(), m_hudId)) hud->setShowHelp(m_settings.help);
+    if (Hud* hud = findCached(scene(), m_hud)) hud->setShowHelp(m_settings.help);
 }
 
 void MainMenu::saveSettings() const
