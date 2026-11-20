@@ -19,6 +19,7 @@
 #include <deque>
 #include <functional>
 #include <span>
+#include <vector>
 
 namespace ve {
 
@@ -83,17 +84,29 @@ public:
                                 VkImageAspectFlags aspect, uint32_t baseMip, uint32_t mipCount,
                                 uint32_t baseLayer, uint32_t layerCount) const;
 
-    // Copies CPU data into a GPU-only buffer through a temporary staging buffer.
-    void uploadBuffer(const Buffer& dst, const void* data, VkDeviceSize size, VkDeviceSize dstOffset = 0);
-    // Several regions (possibly into different buffers) through one staging
-    // buffer and one submit, e.g. a mesh's vertices and indices together.
+    // Asynchronous buffer uploads. The data is copied into staging memory right
+    // away (the caller may free it on return); the GPU copy is recorded at the
+    // start of the next frame's command buffer (flushUploads), or into the next
+    // immediateSubmit if that comes first, so it lands before any later use on
+    // the queue without stalling the CPU. The destination must stay alive until
+    // then: destroyBuffer() drops copies into a buffer destroyed before they
+    // were recorded, and a buffer released with deferDestroy() is kept alive
+    // until the frame that flushed its copies has finished.
     struct BufferUpload {
         const Buffer* dst = nullptr;
         const void* data = nullptr;
         VkDeviceSize size = 0;
         VkDeviceSize dstOffset = 0;
     };
+    void uploadBuffer(const Buffer& dst, const void* data, VkDeviceSize size, VkDeviceSize dstOffset = 0);
     void uploadBuffers(std::span<const BufferUpload> uploads);
+    // Same, but blocks until the data is on the GPU (one immediateSubmit), for
+    // code that reads it outside a frame without an immediateSubmit of its own.
+    void uploadBuffersNow(std::span<const BufferUpload> uploads);
+    // Renderer: records every queued buffer copy into the frame's command
+    // buffer, between barriers against earlier GPU use of the destinations and
+    // later reads of the new data. Call right after vkBeginCommandBuffer.
+    void flushUploads(VkCommandBuffer cmd);
     // Uploads pixel data into mip 0 of all layers (tightly packed, layer after
     // layer), optionally generates the remaining mips with linear blits, and
     // leaves the image in VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL.
@@ -101,6 +114,7 @@ public:
 
     // Records commands with `fn`, submits them and waits for completion.
     // Convenient for one-off uploads at load time; never use it per frame.
+    // Queued buffer uploads are recorded first, so `fn` may use their data.
     void immediateSubmit(const std::function<void(VkCommandBuffer)>& fn);
 
     // Attaches a readable name to a Vulkan object (shows up in validation
@@ -130,6 +144,35 @@ private:
     VkCommandPool m_uploadPool = VK_NULL_HANDLE;
     VkFence m_uploadFence = VK_NULL_HANDLE;
     VkPipelineCache m_pipelineCache = VK_NULL_HANDLE;
+
+    // --- Asynchronous uploads (see uploadBuffers) ---------------------------------
+    // Staging memory comes in blocks: the open block takes the uploads until the
+    // next flush; the flush retires it, tagged with the frame whose command
+    // buffer copies from it, and it's reused once that frame's fence has passed
+    // (collectGarbage, same rule as deferred deletion): in effect one block per
+    // frame in flight, grown on demand.
+    struct PendingCopy {
+        VkBuffer src; // VK_NULL_HANDLE: the open staging block (it may still be regrown)
+        VkDeviceSize srcOffset;
+        VkBuffer dst;
+        VkDeviceSize dstOffset;
+        VkDeviceSize size;
+    };
+    struct RetiredStaging {
+        uint64_t frame;
+        Buffer buffer;
+    };
+    VkDeviceSize allocateStaging(VkDeviceSize size); // offset in the open block
+    // Records the queued copies between their barriers; false if there were none.
+    bool recordPendingCopies(VkCommandBuffer cmd);
+    void recycleStaging(Buffer buffer);
+
+    Buffer m_staging; // the open block
+    VkDeviceSize m_stagingUsed = 0;
+    std::vector<Buffer> m_stagingFree;
+    std::deque<RetiredStaging> m_stagingRetired;
+    std::vector<Buffer> m_dedicatedStaging; // very large uploads, released after their flush
+    std::vector<PendingCopy> m_pendingCopies;
 
     struct PendingDeletion {
         uint64_t frame;

@@ -10,14 +10,25 @@
 #include <miniaudio.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace ve {
 
-// A 2nd-order low-pass node in miniaudio's node graph.
+// A 2nd-order low-pass node in miniaudio's node graph: a custom node rather
+// than ma_lpf_node, so that cutoff changes happen on the audio thread. The
+// main thread only stores the wanted cutoff (an atomic); onProcess picks it up
+// before filtering and reinits the filter there (reinit with the same order
+// keeps the filter state and allocates nothing). Reiniting from the main
+// thread instead would race the audio thread processing the same node.
 struct AudioFilter {
-    ma_lpf_node node{};
-    float cutoff = AudioSystem::kNoFilter;
+    ma_node_base node{}; // must stay first: miniaudio hands us the ma_node* of this struct
+    ma_lpf lpf{};
+    ma_uint32 channels = 0;
+    ma_uint32 sampleRate = 0;
+    std::atomic<float> target{AudioSystem::kNoFilter}; // written by the main thread
+    float applied = AudioSystem::kNoFilter;             // audio thread only
+    float cutoff = AudioSystem::kNoFilter;              // main thread's view (last value sent)
 };
 
 void SoundDeleter::operator()(ma_sound* s) const
@@ -28,7 +39,8 @@ void SoundDeleter::operator()(ma_sound* s) const
 
 void FilterDeleter::operator()(AudioFilter* f) const
 {
-    ma_lpf_node_uninit(&f->node, nullptr);
+    ma_node_uninit(&f->node, nullptr); // detaches it from the graph first
+    ma_lpf_uninit(&f->lpf, nullptr);
     delete f;
 }
 
@@ -49,23 +61,44 @@ namespace {
 
 constexpr ma_uint32 kFilterOrder = 2;
 
+// Audio thread: apply the latest cutoff, then filter.
+void processFilter(ma_node* node, const float** in, ma_uint32* frameCountIn, float** out, ma_uint32* frameCountOut)
+{
+    (void)frameCountIn;
+    auto* f = reinterpret_cast<AudioFilter*>(node);
+    const float target = f->target.load(std::memory_order_relaxed);
+    if (target != f->applied) {
+        f->applied = target;
+        const ma_lpf_config cfg = ma_lpf_config_init(ma_format_f32, f->channels, f->sampleRate, target, kFilterOrder);
+        ma_lpf_reinit(&cfg, &f->lpf);
+    }
+    ma_lpf_process_pcm_frames(&f->lpf, out[0], in[0], *frameCountOut);
+}
+
+ma_node_vtable g_filterVtable = {processFilter, nullptr, 1, 1, 0}; // one input, one output
+
 FilterPtr createFilter(ma_engine* engine)
 {
     auto f = std::make_unique<AudioFilter>();
-    const ma_uint32 channels = ma_engine_get_channels(engine);
-    const ma_uint32 rate = ma_engine_get_sample_rate(engine);
-    const ma_lpf_node_config cfg = ma_lpf_node_config_init(channels, rate, std::min(AudioSystem::kNoFilter, rate * 0.45f), kFilterOrder);
-    if (ma_lpf_node_init(ma_engine_get_node_graph(engine), &cfg, nullptr, &f->node) != MA_SUCCESS) return nullptr;
+    f->channels = ma_engine_get_channels(engine);
+    f->sampleRate = ma_engine_get_sample_rate(engine);
+    const float open = std::min(AudioSystem::kNoFilter, f->sampleRate * 0.45f);
+    f->target = f->applied = f->cutoff = open;
+    const ma_lpf_config lpf = ma_lpf_config_init(ma_format_f32, f->channels, f->sampleRate, open, kFilterOrder);
+    if (ma_lpf_init(&lpf, nullptr, &f->lpf) != MA_SUCCESS) return nullptr;
+    ma_node_config cfg = ma_node_config_init();
+    cfg.vtable = &g_filterVtable;
+    cfg.pInputChannels = &f->channels;
+    cfg.pOutputChannels = &f->channels;
+    if (ma_node_init(ma_engine_get_node_graph(engine), &cfg, nullptr, &f->node) != MA_SUCCESS) {
+        ma_lpf_uninit(&f->lpf, nullptr);
+        return nullptr;
+    }
     return FilterPtr(f.release());
 }
 
-// Changes the cutoff; reinit keeps the filter state.
-// The reinit runs here on the main thread while the audio thread may be
-// processing the node (miniaudio doesn't lock it), so it's kept rare: only
-// for steps of >= 4 % (a semitone is ~6 %: inaudible as steps), plus the
-// final step onto "no filter" so a fade-out ends fully open. Smooth fades
-// therefore reinit every few frames rather than every frame, and a settled
-// cutoff never does.
+// Changes the cutoff: only hands the value to the audio thread (see
+// AudioFilter), so a fade can update it every frame.
 void setCutoff(ma_engine* engine, AudioFilter* f, float hz)
 {
     if (!f) return;
@@ -73,10 +106,8 @@ void setCutoff(ma_engine* engine, AudioFilter* f, float hz)
     const float open = std::min(AudioSystem::kNoFilter, nyquistSafe);
     hz = std::clamp(hz, 40.0f, open);
     if (hz == f->cutoff) return;
-    if (std::abs(hz - f->cutoff) < f->cutoff * 0.04f && hz < open * 0.999f) return;
     f->cutoff = hz;
-    const ma_lpf_config cfg = ma_lpf_config_init(ma_format_f32, ma_engine_get_channels(engine), ma_engine_get_sample_rate(engine), hz, kFilterOrder);
-    ma_lpf_node_reinit(&cfg, &f->node);
+    f->target.store(hz, std::memory_order_relaxed);
 }
 
 // Low-pass interpolation in log-frequency (perceptually even).

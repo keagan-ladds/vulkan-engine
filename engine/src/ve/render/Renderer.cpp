@@ -1318,13 +1318,20 @@ bool Renderer::render(Scene& scene, const Time& time)
     std::memcpy(slot.globals.mapped, &m_frame.globals, sizeof(FrameGlobals));
     // The light buffer up to the used part of the cluster light lists.
     std::memcpy(slot.lights.mapped, m_lights.get(), offsetof(LightBuffer, clusterLights) + m_clusterWords * sizeof(uint32_t));
-    std::memcpy(slot.materials.mapped, m_materials.data(), sizeof(GpuMaterial) * m_materialHighWater);
+    // Only the materials that changed since this slot's buffer last got them.
+    std::vector<std::pair<uint32_t, uint32_t>> materialRuns; // usually empty: no allocation
+    m_materialDirty.take(slotIndex, materialRuns);
+    for (const auto& [first, count] : materialRuns) {
+        std::memcpy(static_cast<GpuMaterial*>(slot.materials.mapped) + first, &m_materials[first], sizeof(GpuMaterial) * count);
+    }
 
     // --- Record -------------------------------------------------------------------
     VK_CHECK(vkResetCommandPool(dev, slot.pool, 0));
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     VK_CHECK(vkBeginCommandBuffer(slot.cmd, &begin));
+    // Buffer uploads queued since the last flush (meshes, terrain nodes, skinning...) land first.
+    m_device.flushUploads(slot.cmd);
 
     // The swapchain image's previous contents are irrelevant (UNDEFINED). Its
     // first use must wait for the acquire semaphore, which the submit below

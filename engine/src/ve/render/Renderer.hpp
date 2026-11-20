@@ -251,6 +251,7 @@ public:
     uint32_t allocateMaterialSlot();
     void freeMaterialSlot(uint32_t index);
     GpuMaterial& materialData(uint32_t index) { return m_materials[index]; }
+    void markMaterialDirty(uint32_t index) { m_materialDirty.mark(index); }
     void bindGlobalSets(VkCommandBuffer cmd);
     // Copies all material parameters to the GPU now (normally done per frame);
     // for GPU work at load time that reads materials, e.g. impostor baking.
@@ -390,9 +391,10 @@ private:
     TextureId m_pointShadowMap = kNoTexture;
     TextureId m_backbuffer = kNoTexture;
 
-    std::vector<GpuMaterial> m_materials; // CPU copy, uploaded every frame
+    std::vector<GpuMaterial> m_materials; // CPU copy; changed slots are uploaded per frame
     std::vector<uint32_t> m_freeMaterials;
     uint32_t m_materialHighWater = 0;
+    MaterialDirtySet m_materialDirty;             // changed slots not yet in every frame slot's buffer
 
     std::unique_ptr<SkinningSystem> m_skinning;
     std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)

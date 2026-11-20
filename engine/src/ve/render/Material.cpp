@@ -4,6 +4,8 @@
 #include "ve/render/Renderer.hpp"
 #include "ve/render/Texture.hpp"
 
+#include <algorithm>
+
 namespace ve {
 
 // -----------------------------------------------------------------------------
@@ -59,6 +61,8 @@ Material::~Material()
 
 GpuMaterial& Material::data()
 {
+    // Every write goes through here: remember the slot for the per-frame upload.
+    m_renderer->markMaterialDirty(m_index);
     return m_renderer->materialData(m_index);
 }
 
@@ -94,6 +98,33 @@ void Material::setTextureIndex(uint32_t slot, uint32_t bindlessIndex)
 uint32_t Material::textureIndex(uint32_t slot) const
 {
     return slot < kMaterialTextureCount ? data().textures[slot] : kInvalidIndex;
+}
+
+// -----------------------------------------------------------------------------
+// MaterialDirtySet
+// -----------------------------------------------------------------------------
+
+void MaterialDirtySet::mark(uint32_t index)
+{
+    if (index >= m_pending.size()) m_pending.resize(index + 1, 0);
+    if (m_pending[index] == 0) m_dirty.push_back(index);
+    m_pending[index] = kAllFrameSlots;
+}
+
+void MaterialDirtySet::take(uint32_t frameSlot, std::vector<std::pair<uint32_t, uint32_t>>& runs)
+{
+    runs.clear();
+    if (m_dirty.empty()) return;
+    std::sort(m_dirty.begin(), m_dirty.end());
+    const auto bit = static_cast<uint8_t>(1u << frameSlot);
+    for (const uint32_t i : m_dirty) {
+        if (!(m_pending[i] & bit)) continue;
+        m_pending[i] &= static_cast<uint8_t>(~bit);
+        if (!runs.empty() && runs.back().first + runs.back().second == i) ++runs.back().second;
+        else runs.push_back({i, 1});
+    }
+    // Keep a slot until every frame slot has received it.
+    std::erase_if(m_dirty, [&](uint32_t i) { return m_pending[i] == 0; });
 }
 
 // -----------------------------------------------------------------------------
