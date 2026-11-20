@@ -296,9 +296,10 @@ Button::Button(std::string text, std::string name) : Panel(name.empty() ? text :
     m_label = &add<Label>(std::move(text), "label");
     m_label->fill();
     m_label->alignX = Align::Center;
-    normal = rgba(0x2a221ccc);
-    hover = rgba(0x4a3a2aee);
-    down = rgba(0x6a4a2aff);
+    // Neutral greys: games set their own look (see the sandbox's gui:: helpers).
+    normal = rgba(0x262626cc);
+    hover = rgba(0x404040ee);
+    down = rgba(0x5a5a5aff);
     disabled = rgba(0x1a1a1a99);
 }
 

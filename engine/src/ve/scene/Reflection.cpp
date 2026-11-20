@@ -352,7 +352,7 @@ void registerBuiltinTypes()
         t.field("fromHour", &AmbientLayer::fromHour).range(0.0f, 24.0f).speed(0.05f).tooltip("plays from this hour...");
         t.field("toHour", &AmbientLayer::toHour).range(0.0f, 24.0f).speed(0.05f).tooltip("...to this one (wraps past midnight; 0..24 = always)");
         t.field("hourFade", &AmbientLayer::hourFade).range(0.0f, 12.0f).speed(0.05f).tooltip("hours to fade in / out at each end");
-        t.field("biomes", &AmbientLayer::biomes).tooltip("level per terrain biome around the listener: 'Savannah:1, Swamp:-1' (empty = everywhere)");
+        t.field("biomes", &AmbientLayer::biomes).tooltip("level per terrain biome around the listener: 'Desert:1, Forest:-1' (empty = everywhere)");
         t.field("biomeRadius", &AmbientLayer::biomeRadius).range(0.0f, 500.0f).tooltip("m around the listener the biome is averaged over");
         t.field("parameters", &AmbientLayer::parameters)
             .tooltip("audio parameters: 'rain:-1, wind:-0.5' = 1 + sum (clamped); '*:0, danger:1' = only with danger");
