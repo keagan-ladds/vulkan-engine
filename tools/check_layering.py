@@ -48,7 +48,7 @@ EXEMPT = {
 EXCEPTIONS = {
     # The renderer reads scene components (MeshRenderer, lights, Camera) as
     # plain data each frame; the doc's "the renderer reads the scene".
-    ("render/Renderer.cpp", "scene"),
+    ("render/SceneGatherer.cpp", "scene"),
     # ModelInstance loads a model by path and sets its Animator's clip.
     ("scene/MeshComponents.cpp", "assets"),
     ("scene/MeshComponents.cpp", "anim"),
