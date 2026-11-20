@@ -25,10 +25,9 @@ GrassPass::GrassPass(GrassDesc desc) : RenderPass(desc.name, RenderStage::Opaque
 GrassPass::~GrassPass()
 {
     if (m_registered) renderer().removeShadowCaster(this);
-    // A bake in flight calls the height / mask callbacks, which may capture
-    // things that die with the owner: stop it early and wait (a row at most).
-    m_cancelBake->store(true);
-    if (m_pending.valid()) m_pending.wait();
+    // A bake in flight owns its copy of the callbacks and its output: tell it
+    // to stop (at its next row) and forget it, no waiting.
+    m_pending.job.cancel();
 }
 
 MeshData GrassDesc::cardMeshCrossed(uint32_t quads, float width)
@@ -56,7 +55,7 @@ MeshData GrassDesc::cardMeshCrossed(uint32_t quads, float width)
 }
 
 GrassPass::Baked GrassPass::bake(const BakeInput& d, glm::vec2 lo, glm::vec2 size, uint32_t res, uint32_t mres,
-                                 std::shared_ptr<const std::atomic<bool>> cancel)
+                                 const std::atomic<bool>* cancel)
 {
     auto cancelled = [&] { return cancel && cancel->load(std::memory_order_relaxed); };
     Baked k;
@@ -296,15 +295,27 @@ void GrassPass::refresh(std::function<float(glm::vec2)> height, std::function<gl
 
 void GrassPass::startBake(glm::vec2 lo)
 {
-    m_pending = std::async(std::launch::async, &GrassPass::bake, bakeInput(), lo, m_area.size, m_area.res, m_area.maskRes,
-                           std::shared_ptr<const std::atomic<bool>>(m_cancelBake));
+    auto result = std::make_shared<Baked>();
+    m_pending.result = result;
+    m_pending.job = jobs::submit([in = bakeInput(), lo, size = m_area.size, res = m_area.res, maskRes = m_area.maskRes,
+                                  result](const std::atomic<bool>& cancelled) {
+        *result = bake(in, lo, size, res, maskRes, &cancelled);
+    });
+}
+
+void GrassPass::bakeFinished()
+{
+    if (!m_pending.job.valid() || !m_pending.job.done()) return;
+    PendingBake done = std::move(m_pending);
+    m_pending = {};
+    if (!done.job.cancelled()) apply(std::move(*done.result)); // (cancelled: the pool shut down)
 }
 
 void GrassPass::prepare(FrameData& frame)
 {
     gatherBenders(frame);
-    if (m_pending.valid() && m_pending.wait_for(std::chrono::seconds(0)) == std::future_status::ready) apply(m_pending.get());
-    if (m_refresh && !m_pending.valid()) {
+    bakeFinished();
+    if (m_refresh && !m_pending.job.valid()) {
         // Same area, new ground: bake it again in the background.
         m_refresh = false;
         startBake(m_area.lo);
@@ -312,11 +323,11 @@ void GrassPass::prepare(FrameData& frame)
     if (m_windowSize > 0.0f) {
         // A finished re-bake replaces the window; otherwise start one once the
         // camera has crossed a quarter of it (the grass radius stays inside).
-        if (m_pending.valid() && m_pending.wait_for(std::chrono::seconds(0)) == std::future_status::ready) apply(m_pending.get());
+        bakeFinished();
         const glm::vec2 eye(frame.camera.position.x, frame.camera.position.z);
         const glm::vec2 centre = m_area.lo + m_area.size * 0.5f;
         const glm::vec2 off = glm::abs(eye - centre);
-        if (!m_pending.valid() && std::max(off.x, off.y) > m_windowSize * 0.25f) {
+        if (!m_pending.job.valid() && std::max(off.x, off.y) > m_windowSize * 0.25f) {
             const glm::vec2 lo = windowFor(eye);
             if (lo != m_area.lo) {
                 startBake(lo);

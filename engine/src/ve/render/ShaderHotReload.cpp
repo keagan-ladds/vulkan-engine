@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <future>
 #include <sstream>
 
 #ifdef _WIN32
@@ -149,7 +148,10 @@ void ShaderHotReload::startChanged()
         if (t > e.stamp) {
             e.stamp = t; // also on failure: don't retry until the next save
             // An edited include (ve.glsl) can touch dozens of shaders: compile them in parallel.
-            m_jobs.push_back({&e, std::async(std::launch::async, runCommand, e.command)});
+            auto result = std::make_shared<CompileResult>();
+            jobs::Handle job = jobs::submit(
+                [command = e.command, result](const std::atomic<bool>&) { *result = runCommand(command); }, jobs::Lane::Background);
+            m_jobs.push_back({&e, std::move(job), std::move(result)});
         }
     }
 }
@@ -161,12 +163,13 @@ std::vector<std::string> ShaderHotReload::finishJobs(bool wait)
     StampCache seen;
     for (size_t i = 0; i < m_jobs.size();) {
         Job& job = m_jobs[i];
-        if (!wait && job.result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        if (!wait && !job.job.done()) {
             ++i;
             continue;
         }
+        job.job.wait();
         Entry& e = *job.entry;
-        const CompileResult r = job.result.get();
+        const CompileResult r = *job.result; // (never ran if the pool shut down: ok = false)
         if (r.ok) {
             readDepfile(e); // includes may have changed (new ones aren't in `seen` yet)
             e.stamp = std::max(e.stamp, newest(e, seen));

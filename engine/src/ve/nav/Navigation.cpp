@@ -42,6 +42,12 @@ uint32_t nextPow2(uint32_t v)
 const float* ptr(const glm::vec3& v) { return &v.x; }
 glm::vec3 vec(const float* p) { return {p[0], p[1], p[2]}; }
 
+// Tile builds are independent: a few jobs at a time on one navmesh's queue.
+size_t buildJobs()
+{
+    return std::clamp(std::max(2u, jobs::hardwareThreads()) / 2, 1u, 4u);
+}
+
 int borderCells(const NavMeshSettings& s) { return int(std::ceil(s.agentRadius / s.cellSize)) + 3; }
 
 // Detour wants a plain function for random numbers.
@@ -79,18 +85,15 @@ NavMeshSurface* NavMeshSurface::find(const Scene& scene)
 
 void NavMeshSurface::destroyNav()
 {
-    {
-        std::lock_guard lock(m_mutex);
-        m_quit = true;
+    // Tile builds only read their own TileJob: drop them, a build in flight
+    // finishes into the old queue (freed with it) without us waiting.
+    if (m_queue) {
+        std::lock_guard lock(m_queue->mutex);
+        m_queue->quit = true;
+        m_queue->jobs.clear();
     }
-    m_cv.notify_all();
-    for (std::thread& t : m_workers) t.join();
-    m_workers.clear();
-    m_quit = false;
-    m_jobs.clear();
-    for (TileResult& r : m_results) dtFree(r.data);
-    m_results.clear();
-    m_busy = 0;
+    m_drains.cancel();
+    m_queue.reset();
     if (m_crowd) dtFreeCrowd(m_crowd);
     if (m_query) dtFreeNavMeshQuery(m_query);
     if (m_nav) dtFreeNavMesh(m_nav);
@@ -162,10 +165,9 @@ void NavMeshSurface::build()
     m_crowd->init(kMaxAgents, std::max(1.0f, s.agentRadius * 3.0f), m_nav);
     ++m_generation;
 
-    // Workers (tile builds are independent).
-    const uint32_t cores = std::max(2u, std::thread::hardware_concurrency());
-    const uint32_t n = std::clamp(cores / 2, 1u, 4u);
-    for (uint32_t i = 0; i < n; ++i) m_workers.emplace_back([this] { workerLoop(); });
+    // Tile builds run as pool jobs (queueTile()) on this navmesh's queue.
+    m_queue = std::make_shared<BuildQueue>();
+    m_queue->settings = m_built;
 
     if (m_streaming) {
         m_lastFocus = glm::vec2(1e30f);
@@ -216,10 +218,10 @@ void NavMeshSurface::queueTile(int tx, int tz)
     m_tileVersion[tileKey(tx, tz)] = job.version;
     gather(job);
     {
-        std::lock_guard lock(m_mutex);
-        m_jobs.push_back(std::move(job));
+        std::lock_guard lock(m_queue->mutex);
+        m_queue->jobs.push_back(std::move(job));
     }
-    m_cv.notify_one();
+    m_drains.topUp(buildJobs(), [q = m_queue](const std::atomic<bool>& c) { drain(*q, c); });
 }
 
 // Collects the tile's input triangles (main thread: reads the scene).
@@ -448,33 +450,45 @@ NavMeshSurface::TileResult NavMeshSurface::buildTile(const NavMeshSettings& s, c
     return out;
 }
 
-void NavMeshSurface::workerLoop()
+NavMeshSurface::BuildQueue::~BuildQueue()
 {
-    const NavMeshSettings s = m_built;
+    for (TileResult& r : results) dtFree(r.data);
+}
+
+void NavMeshSurface::drain(BuildQueue& q, const std::atomic<bool>& cancelled)
+{
     for (;;) {
         TileJob job;
         {
-            std::unique_lock lock(m_mutex);
-            m_cv.wait(lock, [&] { return m_quit || !m_jobs.empty(); });
-            if (m_quit) return;
-            job = std::move(m_jobs.front());
-            m_jobs.pop_front();
-            ++m_busy;
+            std::lock_guard lock(q.mutex);
+            if (q.quit || cancelled || q.jobs.empty()) return;
+            job = std::move(q.jobs.front());
+            q.jobs.pop_front();
+            ++q.busy;
         }
-        TileResult r = buildTile(s, job);
-        std::lock_guard lock(m_mutex);
-        --m_busy;
-        m_results.push_back(r);
+        TileResult r = buildTile(q.settings, job);
+        {
+            std::lock_guard lock(q.mutex);
+            --q.busy;
+            q.results.push_back(r);
+        }
+        if (jobs::yieldSuggested()) return; // others are waiting: pump() submits again
     }
 }
 
 void NavMeshSurface::applyResults()
 {
     std::vector<TileResult> results;
+    size_t queued;
     {
-        std::lock_guard lock(m_mutex);
-        results.swap(m_results);
-        m_stats.pending = uint32_t(m_jobs.size()) + m_busy;
+        std::lock_guard lock(m_queue->mutex);
+        results.swap(m_queue->results);
+        queued = m_queue->jobs.size();
+        m_stats.pending = uint32_t(queued) + m_queue->busy;
+    }
+    // Drains that gave their worker back to other jobs: start them again.
+    if (queued > 0) {
+        m_drains.topUp(std::min(buildJobs(), queued), [q = m_queue](const std::atomic<bool>& c) { drain(*q, c); });
     }
     for (TileResult& r : results) {
         const uint64_t key = tileKey(r.tx, r.tz);

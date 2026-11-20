@@ -30,17 +30,18 @@
 // and nothing needs to be stored or saved.
 //
 // Streaming: the world is split into square cells (FoliageSettings::cellSize).
-// A worker thread generates (cell, layer) pairs nearest-first around the camera
-// out to each layer's viewDistance. The main thread adds the results to the
+// Jobs on the engine's worker pool (ve/core/Jobs.hpp) generate (cell, layer)
+// pairs nearest-first around the camera out to each layer's viewDistance. The main thread adds the results to the
 // layer's InstanceGroups under a per-frame budget, and removes cells that fall
 // behind. Static colliders are created only for cells within
 // colliderDistance of the collider focus (the player), also budgeted.
 //
-// Thread safety: the FoliageWorld and layer callbacks run on the worker
-// thread. They must only read data that doesn't change while the system is
-// alive. Add layers and exclusions before the first update/preload.
+// Thread safety: the FoliageWorld and layer callbacks run on worker threads
+// (several at once). They must only read data that doesn't change while the
+// system is alive. Add layers and exclusions before the first update/preload.
 // =============================================================================
 
+#include "ve/core/Jobs.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Instancing.hpp"
 #include "ve/scene/GameObject.hpp"
@@ -49,13 +50,11 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <cfloat>
-#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -365,10 +364,9 @@ private:
     bool cellInBounds(int cx, int cz) const;
     glm::ivec4 cellRange(int x0, int z0, int x1, int z1) const;
     void ensureGroups(LayerData& layer);
-    void startWorker();
     void stopWorkers();
     void replaceCells(glm::vec4 area); // unload the cells near area (and queued ones) to be placed again
-    void workerLoop();
+    void drain(const std::atomic<bool>& cancelled); // a pool job: generates queued cells, nearest first
     size_t applyInstances(Cell& cell, size_t budget);
     void unload(Cell& cell);
     void destroyBodies(Cell& cell);
@@ -393,10 +391,12 @@ private:
     bool m_bodiesWaiting = false; // colliders not all created (body budget)
     FoliageStats m_stats;
 
-    std::vector<std::thread> m_workers; // placement workers (cores - 1, at least 1)
+    // Placement jobs (up to one per pool worker). They call generate() on this
+    // system, so the destructor and refresh() cancel *and wait* for them (a
+    // cell at most). m_jobs, m_results and m_quit are shared with them.
+    jobs::DrainGroup m_drains;
     std::mutex m_mutex;
-    std::condition_variable m_cv;
-    std::vector<Job> m_jobs;
+    std::vector<Job> m_jobs; // sorted farthest-first: drains pop the nearest from the back
     std::vector<Result> m_results;
     bool m_quit = false;
 };
