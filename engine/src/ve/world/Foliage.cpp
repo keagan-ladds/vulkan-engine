@@ -7,6 +7,7 @@
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
+#include "ve/world/Noise.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
@@ -22,22 +23,12 @@ namespace ve {
 
 namespace {
 
-uint32_t pcg(uint32_t v)
-{
-    const uint32_t state = v * 747796405u + 2891336453u;
-    const uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
+using noise::hash4;
+float unit(uint32_t h) { return noise::unitFloat(h); }
 
-uint32_t hash4(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
-{
-    return pcg(a ^ pcg(b ^ pcg(c ^ pcg(d))));
-}
-
-float unit(uint32_t h) { return static_cast<float>(h >> 8) * (1.0f / 16777216.0f); }
-
-// Smooth 2D value noise in [0,1], 2 octaves.
-float valueNoise(glm::vec2 p, uint32_t seed)
+// Smooth 2D value noise in [0,1], 2 octaves. Not noise::fbm: its lattice uses
+// hash4 (placement must stay identical to earlier versions).
+float clusterNoise(glm::vec2 p, uint32_t seed)
 {
     auto lattice = [&](int x, int z) { return unit(hash4(seed, 0x51ED27u, uint32_t(x), uint32_t(z))); };
     auto octave = [&](glm::vec2 q) {
@@ -193,7 +184,8 @@ const std::vector<Collider>& FoliageSystem::collidersFor(const LayerData& layer,
 
 uint64_t FoliageSystem::cellKey(uint32_t layer, int cx, int cz)
 {
-    return (uint64_t(layer & 0xFFFFu) << 48) | (uint64_t(uint32_t(cx) & 0xFFFFFFu) << 24) | uint64_t(uint32_t(cz) & 0xFFFFFFu);
+    // Same packing as an instance id (layer, 24-bit x, 24-bit z), with cell coordinates.
+    return FoliageInstanceId{layer, cx, cz}.packed();
 }
 
 // -----------------------------------------------------------------------------
@@ -213,7 +205,7 @@ bool FoliageSystem::candidate(uint32_t layerIndex, int gx, int gz, Candidate* ou
     for (const FoliageExclusionShape& e : m_exclusions)
         if (e.distance(p) < 0.0f) return false;
     if (L.clusterFrequency > 0.0f) {
-        const float n = valueNoise(p * L.clusterFrequency, L.seed);
+        const float n = clusterNoise(p * L.clusterFrequency, L.seed);
         const float edge = 1.0f - L.clusterCoverage;
         const float t = std::clamp((n - edge + 0.08f) / 0.16f, 0.0f, 1.0f);
         if (rnd(3) >= t * t * (3.0f - 2.0f * t)) return false;
@@ -346,7 +338,8 @@ glm::vec3 FoliageSystem::viewerPosition() const
 
 glm::vec3 FoliageSystem::focusPosition(const glm::vec3& viewer) const
 {
-    return colliderFocus ? colliderFocus->transform().position() : viewer;
+    const GameObject* focus = colliderFocusId ? scene().findById(colliderFocusId) : nullptr;
+    return focus ? focus->transform().position() : viewer;
 }
 
 void FoliageSystem::refresh(FoliageWorld world, const std::vector<std::function<float(const FoliageSample&)>>& densities,
@@ -417,7 +410,9 @@ void FoliageSystem::startWorker()
 {
     if (!m_workers.empty()) return;
     // Placement is independent per cell: one worker per spare core.
-    const unsigned n = std::max(1u, std::min(std::thread::hardware_concurrency(), 16u) - 1u);
+    // hardware_concurrency() may return 0 ("unknown"): count that as one core.
+    const unsigned cores = std::clamp(std::thread::hardware_concurrency(), 1u, 16u);
+    const unsigned n = std::max(1u, cores - 1u);
     for (unsigned i = 0; i < n; ++i) m_workers.emplace_back([this] { workerLoop(); });
 }
 
@@ -429,18 +424,8 @@ void FoliageSystem::workerLoop()
             std::unique_lock lock(m_mutex);
             m_cv.wait(lock, [&] { return m_quit || !m_jobs.empty(); });
             if (m_quit) return;
-            // Nearest job first.
-            auto best = m_jobs.begin();
-            float bestDist = FLT_MAX;
-            for (auto it = m_jobs.begin(); it != m_jobs.end(); ++it) {
-                const float d = cellDistance(it->cx, it->cz, m_workerViewer);
-                if (d < bestDist) {
-                    bestDist = d;
-                    best = it;
-                }
-            }
-            job = *best;
-            *best = m_jobs.back();
+            // Nearest job first: update() keeps m_jobs sorted farthest-first.
+            job = m_jobs.back();
             m_jobs.pop_back();
         }
         const auto t0 = std::chrono::steady_clock::now();
@@ -626,7 +611,7 @@ void FoliageSystem::update(float)
                 if (m_cells.count(key)) continue;
                 const uint32_t ticket = m_nextTicket++;
                 m_cells.emplace(key, Cell{li, cx, cz, ticket});
-                newJobs.push_back({key, ticket, li, cx, cz});
+                newJobs.push_back({key, ticket, li, cx, cz, 0.0f});
             }
         }
     }
@@ -635,7 +620,6 @@ void FoliageSystem::update(float)
     std::vector<Result> results;
     {
         std::lock_guard lock(m_mutex);
-        m_workerViewer = viewer;
         // Drop queued jobs whose cell was unloaded meanwhile.
         if (unloaded) {
             std::erase_if(m_jobs, [&](const Job& j) {
@@ -644,6 +628,12 @@ void FoliageSystem::update(float)
             });
         }
         m_jobs.insert(m_jobs.end(), newJobs.begin(), newJobs.end());
+        // Keep the queue sorted farthest-first, so workers just pop the nearest
+        // from the back. Re-sorted only when jobs arrive or the viewer moved.
+        if (rescan || !newJobs.empty()) {
+            for (Job& j : m_jobs) j.distance = cellDistance(j.cx, j.cz, viewer);
+            std::sort(m_jobs.begin(), m_jobs.end(), [](const Job& a, const Job& b) { return a.distance > b.distance; });
+        }
         results.swap(m_results);
         m_stats.pending = static_cast<uint32_t>(m_jobs.size());
     }
