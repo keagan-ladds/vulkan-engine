@@ -21,7 +21,8 @@
 // frame.globalParams[windSlot] (xy direction, z strength; the vfx convention).
 //
 // Runs in RenderStage::Opaque after OpaquePass (writes colour, the thin
-// G-buffer and depth; casts no shadows). For a custom look, keep
+// G-buffer and depth). It is also a ShadowCaster: with castShadows, clumps
+// within shadowDistance go into the sun's cascades. For a custom look, keep
 // grass_field.vert and write your own fragment shader with the same inputs
 // (see grass_field.frag), or start your vertex shader from ve_grass.glsl.
 // Alpha-clipped grass cards: set GrassDesc::cardMesh + cardTexture.
@@ -41,6 +42,7 @@
 
 #include <glm/glm.hpp>
 
+#include <atomic>
 #include <functional>
 #include <future>
 #include <memory>
@@ -117,6 +119,7 @@ struct GrassDesc {
 
     // LOD chain, nearest first. Empty = one LOD from cardMesh / cardTexture /
     // fragmentShader above (procedural blades if cardMesh is empty).
+    // GrassPass uploads the meshes in setup() and then frees these CPU copies.
     std::vector<GrassLod> lods;
     float lodBlend = 4.0f; // m over which neighbouring LODs are dithered
 };
@@ -163,7 +166,18 @@ private:
         std::vector<glm::vec2> tileHeights; // min/max ground height per tile
         int tilesX = 0, tilesZ = 0;
     };
-    static Baked bake(const GrassDesc& d, glm::vec2 lo, glm::vec2 size, uint32_t res, uint32_t maskRes);
+    // What a bake reads: only this is copied to the worker (not the whole
+    // GrassDesc with its LOD meshes).
+    struct BakeInput {
+        std::function<float(glm::vec2)> height;
+        std::function<glm::vec4(glm::vec2)> mask;
+        float tileSize;
+    };
+    BakeInput bakeInput() const { return {m_desc.height, m_desc.mask, m_desc.tileSize}; }
+    // `cancel` (optional) is polled per row: an abandoned bake returns early.
+    static Baked bake(const BakeInput& in, glm::vec2 lo, glm::vec2 size, uint32_t res, uint32_t maskRes,
+                      std::shared_ptr<const std::atomic<bool>> cancel = nullptr);
+    void startBake(glm::vec2 lo); // m_pending = bake of `lo` (m_area's size and resolutions) on a worker
     void apply(Baked&& baked); // upload the textures, switch to the new area
     glm::vec2 windowFor(glm::vec2 eye) const; // window origin for a camera position
 
@@ -186,6 +200,9 @@ private:
     Baked m_area;                      // what the textures hold now (samples freed after upload)
     float m_windowSize = 0.0f;         // 0 = whole bounds
     std::future<Baked> m_pending;      // a window being re-baked
+    // Set when the pass goes away: the running bake stops at its next row, so
+    // destruction (which must wait for it: it uses the callbacks) is quick.
+    std::shared_ptr<std::atomic<bool>> m_cancelBake = std::make_shared<std::atomic<bool>>(false);
     uint32_t m_lastTiles = 0, m_lastClumps = 0, m_shadowClumps = 0, m_lastShadowClumps = 0;
     bool m_registered = false;
 };

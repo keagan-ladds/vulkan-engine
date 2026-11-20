@@ -25,6 +25,10 @@ GrassPass::GrassPass(GrassDesc desc) : RenderPass(desc.name, RenderStage::Opaque
 GrassPass::~GrassPass()
 {
     if (m_registered) renderer().removeShadowCaster(this);
+    // A bake in flight calls the height / mask callbacks, which may capture
+    // things that die with the owner: stop it early and wait (a row at most).
+    m_cancelBake->store(true);
+    if (m_pending.valid()) m_pending.wait();
 }
 
 MeshData GrassDesc::cardMeshCrossed(uint32_t quads, float width)
@@ -51,8 +55,10 @@ MeshData GrassDesc::cardMeshCrossed(uint32_t quads, float width)
     return md;
 }
 
-GrassPass::Baked GrassPass::bake(const GrassDesc& d, glm::vec2 lo, glm::vec2 size, uint32_t res, uint32_t mres)
+GrassPass::Baked GrassPass::bake(const BakeInput& d, glm::vec2 lo, glm::vec2 size, uint32_t res, uint32_t mres,
+                                 std::shared_ptr<const std::atomic<bool>> cancel)
 {
+    auto cancelled = [&] { return cancel && cancel->load(std::memory_order_relaxed); };
     Baked k;
     k.lo = lo;
     k.size = size;
@@ -62,6 +68,7 @@ GrassPass::Baked GrassPass::bake(const GrassDesc& d, glm::vec2 lo, glm::vec2 siz
     // Heights: exact samples (manual bilinear in the shader; R32F isn't always filterable).
     k.heights.resize(size_t(res) * res);
     for (uint32_t z = 0; z < res; ++z) {
+        if (cancelled()) return k;
         for (uint32_t x = 0; x < res; ++x) {
             const glm::vec2 p = lo + size * glm::vec2(float(x), float(z)) / float(res - 1);
             k.heights[size_t(z) * res + x] = d.height(p);
@@ -70,6 +77,7 @@ GrassPass::Baked GrassPass::bake(const GrassDesc& d, glm::vec2 lo, glm::vec2 siz
     // Mask: x density, y colour mix, z height scale, w free (sampled at texel centres).
     k.mask.resize(size_t(mres) * mres * 4);
     for (uint32_t z = 0; z < mres; ++z) {
+        if (cancelled()) return k;
         for (uint32_t x = 0; x < mres; ++x) {
             const glm::vec2 p = lo + size * (glm::vec2(float(x), float(z)) + 0.5f) / float(mres);
             const glm::vec4 m = d.mask ? glm::clamp(d.mask(p), 0.0f, 1.0f) : glm::vec4(1.0f, 0.5f, 1.0f, 0.0f);
@@ -169,17 +177,20 @@ void GrassPass::setup(RenderGraph&)
             const glm::vec3 p = cam->transform().position();
             eye = {p.x, p.z};
         }
-        apply(bake(d, windowFor(eye), glm::vec2(m_windowSize), uint32_t(std::lround(m_windowSize / spacing.x)) + 1,
+        apply(bake(bakeInput(), windowFor(eye), glm::vec2(m_windowSize), uint32_t(std::lround(m_windowSize / spacing.x)) + 1,
                    uint32_t(std::lround(m_windowSize / texel.x))));
     } else {
-        apply(bake(d, d.boundsMin, size, res, d.maskResolution));
+        apply(bake(bakeInput(), d.boundsMin, size, res, d.maskResolution));
         m_desc.height = nullptr; // baked for good: release the callbacks and what they captured
         m_desc.mask = nullptr;
     }
 
-    // LOD chain (or the single legacy LOD).
-    std::vector<GrassLod> lods = d.lods;
-    if (lods.empty()) lods.push_back({d.cardMesh, d.cardTexture, FLT_MAX, d.fragmentShader});
+    // LOD chain (or the single legacy LOD). The meshes move out of the desc:
+    // once uploaded, the CPU copies are freed.
+    std::vector<GrassLod> lods = std::move(m_desc.lods);
+    m_desc.lods.clear();
+    if (lods.empty()) lods.push_back({std::move(m_desc.cardMesh), d.cardTexture, FLT_MAX, d.fragmentShader});
+    m_desc.cardMesh = {};
     m_lods.clear();
     float prev = 0.0f;
     for (size_t i = 0; i < lods.size(); ++i) {
@@ -283,6 +294,12 @@ void GrassPass::refresh(std::function<float(glm::vec2)> height, std::function<gl
     m_refresh = true;
 }
 
+void GrassPass::startBake(glm::vec2 lo)
+{
+    m_pending = std::async(std::launch::async, &GrassPass::bake, bakeInput(), lo, m_area.size, m_area.res, m_area.maskRes,
+                           std::shared_ptr<const std::atomic<bool>>(m_cancelBake));
+}
+
 void GrassPass::prepare(FrameData& frame)
 {
     gatherBenders(frame);
@@ -290,7 +307,7 @@ void GrassPass::prepare(FrameData& frame)
     if (m_refresh && !m_pending.valid()) {
         // Same area, new ground: bake it again in the background.
         m_refresh = false;
-        m_pending = std::async(std::launch::async, &GrassPass::bake, m_desc, m_area.lo, m_area.size, m_area.res, m_area.maskRes);
+        startBake(m_area.lo);
     }
     if (m_windowSize > 0.0f) {
         // A finished re-bake replaces the window; otherwise start one once the
@@ -302,7 +319,7 @@ void GrassPass::prepare(FrameData& frame)
         if (!m_pending.valid() && std::max(off.x, off.y) > m_windowSize * 0.25f) {
             const glm::vec2 lo = windowFor(eye);
             if (lo != m_area.lo) {
-                m_pending = std::async(std::launch::async, &GrassPass::bake, m_desc, lo, m_area.size, m_area.res, m_area.maskRes);
+                startBake(lo);
             }
         }
     }
