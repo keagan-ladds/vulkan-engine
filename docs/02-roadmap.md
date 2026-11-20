@@ -7,7 +7,7 @@ verification workflow.
 
 Legend: `[x]` done · `[ ]` todo · `[~]` partially done (see note)
 
-## Status snapshot (2026-11-18)
+## Status snapshot (2026-11-20)
 
 Phases 0–13 are done, as are F2 (animation), most of F3, F5 tooling and the
 engine side of F4 (interaction, save games, loading screens, gamepad,
@@ -19,6 +19,13 @@ Savanna players see each other and build together.
 - Zero Vulkan validation messages through the autotest (which also covers
   save / load, navigation and building) and the editor test.
 - Savanna starts in ~0.9 s in Release, behind a loading screen.
+- 2026-11-20 code review (see "Review follow-ups" under F5): use-after-free and
+  dangling-pointer fixes (UI handlers, editor camera, component removal,
+  weather, interactor, foliage focus, sandbox player refs), a network authority
+  hole closed, per-frame allocations / scans removed, Clang + GCC Release
+  warnings fixed, generic code moved into the engine (`ve::Inventory`,
+  `buildLodChain`, `ve::env`, `ve::math`, config files) and game tuning out
+  of it.
 
 Next up: F6 N2 (gameplay through the host: interactions, pickups,
 villagers, doors) alongside game-side F4 (animal AI, crafting, building
@@ -491,3 +498,17 @@ and ask the host for everything else (decision D19).
 - [x] Gamepad input + rebinding (engine): SDL game controllers, axes with radial dead zones, triggers as actions, `startRebind`, bindings JSON, virtual pad for tests. Savanna: pad layout for the player, F10 controls window saved to `config/controls.json`
 - [x] CPU profiler zones (engine): `VE_PROFILE` scopes, nested, F1 "CPU zones" table + bench output
 - [x] Retained-mode game UI (engine, `ve/ui/Gui.hpp`): canvases of anchored elements (panels, labels, images, buttons, progress bars, sliders, stacks, grids), mouse + keyboard / pad focus navigation, drag & drop, tooltips, modal capture, TTF fonts, mesh icon baking. Savanna: title screen over a live sunset (Continue / New / Load / Settings / Controls / Quit), pause menu, settings saved to `config/settings.json`, HUD (health / stamina, hotbar, clock), inventory, build menu with piece cards; the autotest opens and drives each
+
+### Review follow-ups (2026-11-20 code review)
+Done in the review: the items listed in the status snapshot. Found but left
+for later (bigger changes, or behaviour worth deciding deliberately):
+- [ ] Split `Renderer` (scene gathering, shadow setup, light clustering, frame capture) out of the 1400-line class
+- [ ] Layering: `Engine` (the composition root) lives in `core`; render → anim (`prepareSkinning`) and `DebugLinePass` → debug; `Reflection.cpp` registers every module's types; `Model` holds a mutable physics collider cache
+- [ ] Async uploads: a per-frame staging ring instead of `immediateSubmit` (streamed terrain nodes still wait for the GPU once per mesh)
+- [ ] Upload only changed material slots; motion vectors for skinned meshes
+- [ ] Audio low-pass changes still reinit the miniaudio filter on the main thread (now only on 4 %+ steps); hand them to the audio thread
+- [ ] One shared engine job pool (foliage, terrain LOD, grass bakes, navmesh each run their own threads); `~GrassPass` still waits for a cancelled bake
+- [ ] Fog: the sky ambient is the same for every pixel; compute it once on the CPU
+- [ ] Network join: `welcome()` sends several small messages per networked object
+- [ ] Savanna: `Campfire`, `Torch` and `Sunstone` keep raw pointers to their own children (light, fire, visual)
+- [ ] `FoliageType` (scene-built foliage) bakes impostors with the neutral edge colour; expose `ImpostorSettings::backgroundAlbedo` as a field if fringes show
