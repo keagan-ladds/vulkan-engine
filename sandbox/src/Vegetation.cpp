@@ -335,6 +335,7 @@ void addVariant(ve::Renderer& r, ve::FoliageMeshes& set, const MeshData& md, con
         c.switches.push_back({.screenSize = screenSize});
     }
     c.impostor = impostor;
+    c.impostorSettings.backgroundAlbedo = {0.35f, 0.33f, 0.2f}; // dry foliage: no dark fringes on the cards
     std::vector<ve::InstanceLod> chain = ve::buildLodChain(r, std::move(c));
     std::string tris;
     for (const ve::InstanceLod& l : chain) {

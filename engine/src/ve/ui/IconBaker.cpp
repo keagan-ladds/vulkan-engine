@@ -17,7 +17,7 @@ struct IconPush {
     glm::mat4 viewProj;
     glm::vec4 sunDir, sunColor, sky, ground;
 };
-static_assert(sizeof(IconPush) <= 128);
+static_assert(sizeof(IconPush) <= kPushConstantBytes);
 } // namespace
 
 std::shared_ptr<Texture> bakeIcon(Renderer& r, const MeshData& mesh, uint32_t size, const IconView& v)

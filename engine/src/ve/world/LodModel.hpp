@@ -32,6 +32,7 @@
 //   std::vector<ve::InstanceLod> lods = ve::buildLodChain(renderer, std::move(c));
 // =============================================================================
 
+#include "ve/render/Impostor.hpp"
 #include "ve/render/Instancing.hpp"
 #include "ve/render/Mesh.hpp"
 
@@ -77,6 +78,7 @@ struct LodChainDesc {
     std::vector<SimplifyOptions> simplify;
     size_t maxLevels = SIZE_MAX;          // mesh levels kept (the impostor doesn't count)
     bool impostor = false;                // an octahedral impostor of level 0 as the last level
+    ImpostorSettings impostorSettings;    // its bake settings (atlas size, edge colour...)
     // Switch thresholds per level (impostor included): only screenSize and
     // maxDistance are read; levels without an entry get InstanceLod's defaults.
     std::vector<InstanceLod> switches;

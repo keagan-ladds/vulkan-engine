@@ -370,10 +370,7 @@ glm::uvec2 GrassPass::drawTiles(RenderContext& ctx, const Lod& lod, const Frustu
     const float lodMin = lod.minDistance - halfBlend, lodMax = lod.maxDistance + halfBlend;
     if (lodMin > radius) return {0, 0};
 
-    VkBuffer vb = lod.mesh->vertexBuffer();
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-    vkCmdBindIndexBuffer(ctx.cmd, lod.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+    lod.mesh->bind(ctx.cmd); // (honours a shared mesh's vertex offset)
     const auto indexCount = static_cast<uint32_t>(lod.mesh->submeshes()[0].indexCount);
 
     uint32_t tiles = 0, clumps = 0;

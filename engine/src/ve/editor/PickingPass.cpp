@@ -84,10 +84,7 @@ void PickingPass::execute(RenderContext& ctx)
             const DrawItem& it = frame.items[idx];
             if (!it.owner) continue;
             if (it.mesh != bound) {
-                VkBuffer vb = it.mesh->vertexBuffer();
-                VkDeviceSize offset = it.mesh->vertexOffset();
-                vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-                vkCmdBindIndexBuffer(ctx.cmd, it.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+                it.mesh->bind(ctx.cmd);
                 bound = it.mesh;
             }
             m_owners.push_back(it.owner->id());

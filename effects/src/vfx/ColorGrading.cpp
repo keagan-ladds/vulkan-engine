@@ -15,7 +15,7 @@ struct GradingPush { // color_grading.frag
     glm::vec4 whiteBalance, filter, shadows, highlights, lift, gamma, gain;
     uint32_t sceneColor, tonemapper, lut, lutSize;
 };
-static_assert(sizeof(GradingPush) <= 128);
+static_assert(sizeof(GradingPush) <= ve::kPushConstantBytes);
 
 // White balance as LMS channel scales (Unity's ColorBalanceToLMSCoeffs).
 glm::vec3 whiteBalanceCoeffs(float temperature, float tint)

@@ -278,7 +278,7 @@ std::vector<InstanceLod> buildLodChain(Renderer& renderer, LodChainDesc desc)
         l.materials = g.materials;
         chain.push_back(withSwitch(std::move(l)));
     }
-    if (desc.impostor) chain.push_back(withSwitch(Impostor::bake(renderer, *chain.front().mesh, chain.front().materials)->lod()));
+    if (desc.impostor) chain.push_back(withSwitch(Impostor::bake(renderer, *chain.front().mesh, chain.front().materials, desc.impostorSettings)->lod()));
     return chain;
 }
 
