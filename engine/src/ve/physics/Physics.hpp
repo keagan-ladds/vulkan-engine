@@ -33,6 +33,7 @@
 // =============================================================================
 
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 #include "ve/scene/SaveGame.hpp"
 
 #include <glm/glm.hpp>
@@ -209,12 +210,12 @@ public:
     void step(Scene& scene, float dt);           // once per fixed update
     void interpolate(Scene& scene, float alpha); // after the fixed updates of a frame
 
-    struct Impl;
+    struct Impl; // (Jolt state: ve/physics/JoltInternal.hpp, physics .cpp files only)
     Impl& impl() { return *m_impl; }
 
 private:
     std::unique_ptr<Impl> m_impl;
-    struct MeshColliderCache; // meshCollider()'s (Physics.cpp)
+    struct MeshColliderCache; // meshCollider()'s (PhysicsWorld.cpp)
     std::shared_ptr<MeshColliderCache> m_meshColliders;
 };
 
@@ -404,13 +405,14 @@ public:
     void drawDebug() const;
 
 protected:
-    explicit Joint(Type t); // (out of line: Impl is complete only in Physics.cpp)
+    explicit Joint(Type t); // (out of line: Impl is complete only in Joints.cpp)
 
 private:
     bool attach();
     void applyMotor();
+    GameObject* connectedObject() const; // the remembered other object, if it's still alive
     Type m_type;
-    uint64_t m_connectedId = 0;
+    ObjectRef<> m_connected; // the other object once found (connect() or by name); empty = none / the world
     bool m_broken = false;
     uint8_t m_findWait = 0; // fixed steps until attach() searches for `connectedTo` by name again
     float m_force = 0.0f, m_torque = 0.0f;
