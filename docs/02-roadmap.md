@@ -504,11 +504,12 @@ Done in the review: the items listed in the status snapshot. Found but left
 for later (bigger changes, or behaviour worth deciding deliberately):
 - [ ] Split `Renderer` (scene gathering, shadow setup, light clustering, frame capture) out of the 1400-line class
 - [ ] Layering: `Engine` (the composition root) lives in `core`; render → anim (`prepareSkinning`) and `DebugLinePass` → debug; `Reflection.cpp` registers every module's types; `Model` holds a mutable physics collider cache
-- [ ] Async uploads: a per-frame staging ring instead of `immediateSubmit` (streamed terrain nodes still wait for the GPU once per mesh)
-- [ ] Upload only changed material slots; motion vectors for skinned meshes
-- [ ] Audio low-pass changes still reinit the miniaudio filter on the main thread (now only on 4 %+ steps); hand them to the audio thread
-- [ ] One shared engine job pool (foliage, terrain LOD, grass bakes, navmesh each run their own threads); `~GrassPass` still waits for a cancelled bake
+- [x] Async uploads: a per-frame staging ring flushed at the start of the frame (`Device::flushUploads`); no GPU wait per streamed mesh
+- [x] Upload only changed material slots (`MaterialDirtySet`)
+- [ ] Motion vectors for skinned meshes
+- [x] Audio low-pass cutoffs go to the audio thread (atomic target, applied in a custom node's process callback)
+- [x] One shared engine job pool (`ve/core/Jobs.hpp`): foliage, terrain LOD, grass bakes, navmesh tiles and shader compiles; no destructor waits for a cancelled bake
 - [ ] Fog: the sky ambient is the same for every pixel; compute it once on the CPU
 - [ ] Network join: `welcome()` sends several small messages per networked object
-- [ ] Savanna: `Campfire`, `Torch` and `Sunstone` keep raw pointers to their own children (light, fire, visual)
+- [x] Remembered objects are typed handles (`ObjectRef` / `ComponentRef`) across engine, effects and Savanna (incl. Campfire, Torch, Sunstone children)
 - [ ] `FoliageType` (scene-built foliage) bakes impostors with the neutral edge colour; expose `ImpostorSettings::backgroundAlbedo` as a field if fringes show

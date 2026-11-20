@@ -606,7 +606,8 @@ For anything scattered by rules rather than placed by hand, use
 ```cpp
 ve::FoliageWorld world;
 world.boundsMin = {-2000, -2000}; world.boundsMax = {2000, 2000};
-world.height = [&](glm::vec2 p) { return terrain.height(p.x, p.y); }; // called on a worker thread
+auto td = terrain.data(); // an immutable snapshot the jobs can keep alive
+world.height = [td](glm::vec2 p) { return td->height(p.x, p.y); }; // runs on pool jobs, several at once
 auto& foliage = scene.spawn<ve::FoliageSystem>(world);
 foliage.addExclusion(campCentre, 25.0f);
 

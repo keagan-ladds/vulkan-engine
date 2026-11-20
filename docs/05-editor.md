@@ -25,7 +25,8 @@ in C++ (the Unity split). Press **F2** in any game built on the engine.
 - A field is a name, a kind (bool, int, float, vec2/3/4, colour, string,
   enum, asset path) and an accessor, plus UI hints (range, step, tooltip).
 - Registration:
-  - engine types: `ve::registerBuiltinTypes()`, called by the Engine;
+  - engine types: each module's `registerXTypes(TypeRegistry&)` (scene types in
+    `registerBuiltinTypes()`), all called once by the Engine;
   - effects: `vfx::registerTypes()`, called by `addDefaultEffects`;
   - game types: `VE_REGISTER_TYPE(...)` in a game .cpp. The executable's
     object files are always linked, so static registrars work there.
