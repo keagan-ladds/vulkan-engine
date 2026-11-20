@@ -975,7 +975,7 @@ Optional add-ons built only on public engine APIs:
   - It writes `GradedColor` and calls `CompositePass::useGradedInput()` each
     frame, so the composite only adds vignette and dither. Disabling the pass
     restores the built-in tonemapping.
-  - Presets: `neutral()`, `farCry2()` (a starting point).
+  - Presets: `neutral()`, `sunBleached()` (a starting point).
   - `tools/generate_assets.py` writes `lut_neutral_32.png` for authoring LUTs.
 - `Weather`: a GameObject that blends presets (clear/hazy/overcast/rain/thunderstorm)
   by driving the atmosphere, fog, light intensity and a rain emitter that follows

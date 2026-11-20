@@ -721,7 +721,7 @@ Set `bus` and `occlusion` before the sound first plays.
 #include <vfx/ColorGrading.hpp>
 auto& grade = renderer.graph().addPass<vfx::ColorGradingPass>();
 grade.settings.tonemapper = vfx::ColorGradingSettings::Tonemapper::AgX;
-grade.settings.temperature = 10.0f; grade.settings.contrast = 1.15f;   // or a preset: ...::farCry2()
+grade.settings.temperature = 10.0f; grade.settings.contrast = 1.15f;   // or a preset: ...::sunBleached()
 grade.settings.lut = assets.loadTexture("textures/my_lut.png", /*srgb*/ false); // optional strip LUT
 ```
 Tweak everything live in F1 > Render passes > Color grading. Night brightness
