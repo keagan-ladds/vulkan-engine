@@ -71,7 +71,7 @@ void DebugLinePass::prepare(FrameData&)
     m_tested = m_untested = 0;
     const auto& lines = debug::lines();
     if (lines.empty()) return;
-    m_slot = uint32_t(renderer().frameNumber() % 2);
+    m_slot = uint32_t(renderer().frameNumber() % Device::kFramesInFlight); // the renderer's frame slot
     auto* out = static_cast<debug::Line*>(m_buffers[m_slot].mapped);
     // Depth-tested lines first, then the ones on top.
     for (const debug::Line& l : lines)

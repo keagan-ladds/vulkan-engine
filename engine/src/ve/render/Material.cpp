@@ -69,31 +69,31 @@ const GpuMaterial& Material::data() const
 
 void Material::setVector(uint32_t slot, const glm::vec4& value)
 {
-    if (slot < 12) data().params[slot] = value;
+    if (slot < kMaterialParamCount) data().params[slot] = value;
 }
 
 glm::vec4 Material::vector(uint32_t slot) const
 {
-    return slot < 12 ? data().params[slot] : glm::vec4(0.0f);
+    return slot < kMaterialParamCount ? data().params[slot] : glm::vec4(0.0f);
 }
 
 void Material::setTexture(uint32_t slot, std::shared_ptr<Texture> texture)
 {
-    if (slot >= 16) return;
+    if (slot >= kMaterialTextureCount) return;
     data().textures[slot] = texture ? texture->index() : kInvalidIndex;
     m_textures[slot] = std::move(texture);
 }
 
 void Material::setTextureIndex(uint32_t slot, uint32_t bindlessIndex)
 {
-    if (slot >= 16) return;
+    if (slot >= kMaterialTextureCount) return;
     data().textures[slot] = bindlessIndex;
     m_textures[slot].reset();
 }
 
 uint32_t Material::textureIndex(uint32_t slot) const
 {
-    return slot < 16 ? data().textures[slot] : kInvalidIndex;
+    return slot < kMaterialTextureCount ? data().textures[slot] : kInvalidIndex;
 }
 
 // -----------------------------------------------------------------------------

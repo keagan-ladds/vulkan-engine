@@ -116,7 +116,7 @@ protected:
     Renderer* m_renderer;
     std::shared_ptr<Shader> m_shader;
     uint32_t m_index = kInvalidIndex;
-    std::array<std::shared_ptr<Texture>, 16> m_textures;
+    std::array<std::shared_ptr<Texture>, kMaterialTextureCount> m_textures;
 };
 
 // The built-in PBR material (standard.vert/frag). Parameter layout:
