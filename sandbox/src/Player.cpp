@@ -27,8 +27,8 @@ using ve::Key;
 
 Player* localPlayer(const ve::Scene& scene)
 {
-    static uint64_t s_id = 0; // (validated on every call: a new level has a new player)
-    return findCached<Player>(scene, s_id);
+    static ve::ObjectRef<Player> s_player; // (validated on every call: a new level has a new player)
+    return findCached(scene, s_player);
 }
 
 Player::Player() : GameObject("Player")
@@ -71,10 +71,11 @@ void Player::start()
 {
     // The camera lives on a child "Head" object at eye height: the body only
     // yaws, the head also pitches.
-    m_head = &scene().spawn("Head");
-    m_head->setParent(this, false);
-    m_head->transform().setLocalPosition({0.0f, eyeHeight, 0.0f});
-    auto& cam = m_head->addComponent<ve::Camera>();
+    ve::GameObject& head = scene().spawn("Head");
+    m_head = &head;
+    head.setParent(this, false);
+    head.transform().setLocalPosition({0.0f, eyeHeight, 0.0f});
+    auto& cam = head.addComponent<ve::Camera>();
     cam.fovDegrees = 65.0f;
     cam.nearPlane = 0.1f;
     cam.farPlane = 4000.0f;
@@ -140,12 +141,14 @@ bool Player::grounded() const
 
 glm::vec3 Player::eyePosition() const
 {
-    return m_head ? m_head->transform().position() : transform().position() + glm::vec3(0, eyeHeight, 0);
+    const ve::GameObject* head = m_head.get(scene());
+    return head ? head->transform().position() : transform().position() + glm::vec3(0, eyeHeight, 0);
 }
 
 glm::vec3 Player::lookDirection() const
 {
-    return m_head ? m_head->transform().forward() : transform().forward();
+    const ve::GameObject* head = m_head.get(scene());
+    return head ? head->transform().forward() : transform().forward();
 }
 
 void Player::throwRock()
@@ -169,9 +172,9 @@ void Player::throwRock()
     body.setLinearVelocity(dir * throwSpeed + m_controller->velocity());
 
     // Keep the world tidy: only the most recent rocks stay.
-    m_thrown.push_back(rock.id());
+    m_thrown.push_back(&rock);
     if (m_thrown.size() > 30) {
-        if (ve::GameObject* oldest = scene().findById(m_thrown.front())) oldest->destroy();
+        if (ve::GameObject* oldest = m_thrown.front().get(scene())) oldest->destroy();
         m_thrown.pop_front();
     }
 }
@@ -192,7 +195,7 @@ void Player::update(float)
     m_yaw -= in.axisValue("LookX") * stick;
     m_pitch = std::clamp(m_pitch - in.axisValue("LookY") * stick, -1.5f, 1.5f);
     transform().setLocalRotation(glm::angleAxis(m_yaw, glm::vec3(0, 1, 0)));
-    if (m_head) m_head->transform().setLocalRotation(glm::angleAxis(m_pitch, glm::vec3(1, 0, 0)));
+    if (ve::GameObject* head = m_head.get(scene())) head->transform().setLocalRotation(glm::angleAxis(m_pitch, glm::vec3(1, 0, 0)));
 
     // Edges ("pressed this frame") must be read in update(): fixedUpdate may
     // run zero or several times per frame. Hand them over as flags.
@@ -207,8 +210,8 @@ void Player::update(float)
     if (m_exhausted && stamina > maxStamina * 0.3f) m_exhausted = false;
     if (m_sinceHurt > 4.0f) health = std::min(maxHealth, health + 1.5f * dt);
     if (!m_fly)
-        for (uint64_t id : Campfire::all())
-            if (const ve::GameObject* fire = scene().findById(id)) {
+        for (const auto& campfire : Campfire::all())
+            if (const Campfire* fire = campfire.get(scene())) {
                 const glm::vec3 d = transform().position() - fire->transform().position();
                 if (glm::length(glm::vec2(d.x, d.z)) < 0.95f && std::abs(d.y) < 1.2f) damage(22.0f * dt, "burnt");
             }
@@ -312,6 +315,7 @@ void Player::footstep()
 namespace savanna {
 ve::Camera* Player::camera() const
 {
-    return m_head ? m_head->getComponent<ve::Camera>() : nullptr;
+    const ve::GameObject* head = m_head.get(scene());
+    return head ? head->getComponent<ve::Camera>() : nullptr;
 }
 } // namespace savanna

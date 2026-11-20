@@ -41,17 +41,18 @@ void notify(const std::string& text, float seconds)
 
 namespace {
 // Live objects of one kind, by id (Campfire::all, Sunstone::remaining).
-std::vector<uint64_t>& campfireIds()
+std::vector<ve::ObjectRef<Campfire>>& campfireIds()
 {
-    static std::vector<uint64_t> ids;
+    static std::vector<ve::ObjectRef<Campfire>> ids;
     return ids;
 }
-std::vector<uint64_t>& sunstoneIds()
+std::vector<ve::ObjectRef<Sunstone>>& sunstoneIds()
 {
-    static std::vector<uint64_t> ids;
+    static std::vector<ve::ObjectRef<Sunstone>> ids;
     return ids;
 }
-void forget(std::vector<uint64_t>& ids, uint64_t id) { std::erase(ids, id); }
+template <class T>
+void forget(std::vector<ve::ObjectRef<T>>& refs, const T* object) { std::erase(refs, ve::ObjectRef<T>(object)); }
 } // namespace
 
 // -----------------------------------------------------------------------------
@@ -93,14 +94,14 @@ VE_REGISTER_TYPE(Sunstone, "Sunstone") { t.category("Savanna"); }
 VE_REGISTER_TYPE(ReedScreen, "ReedScreen") { t.category("Savanna"); }
 VE_REGISTER_TYPE(PlayerStart, "PlayerStart") { t.category("Savanna"); }
 
-const std::vector<uint64_t>& Campfire::all() { return campfireIds(); }
+const std::vector<ve::ObjectRef<Campfire>>& Campfire::all() { return campfireIds(); }
 
-void Campfire::onDestroy() { forget(campfireIds(), id()); }
+void Campfire::onDestroy() { forget(campfireIds(), this); }
 
 void Campfire::start()
 {
     tag = "fire";
-    campfireIds().push_back(id()); // standing in it hurts (Player)
+    campfireIds().push_back(this); // standing in it hurts (Player)
     m_material = propMaterial();
     ve::Renderer& r = renderer();
     ve::Scene& s = scene();
@@ -127,23 +128,25 @@ void Campfire::start()
     auto& lightObj = s.spawn("FireLight");
     lightObj.setParent(this, false);
     lightObj.transform().setLocalPosition({0.0f, 0.9f, 0.0f});
-    m_light = &lightObj.addComponent<ve::PointLight>();
-    m_light->color = {1.0f, 0.52f, 0.2f};
-    m_light->range = 16.0f;
-    m_light->castShadows = true;
-    m_light->shadowBias = 0.004f;
+    auto& light = lightObj.addComponent<ve::PointLight>();
+    m_light = &light;
+    light.color = {1.0f, 0.52f, 0.2f};
+    light.range = 16.0f;
+    light.castShadows = true;
+    light.shadowBias = 0.004f;
 
     // Flames (procedural, vfx::Fire) over a bed of glowing coals; smoke and sparks are particles.
     auto& flames = s.spawn("Flames");
     flames.setParent(this, false);
     flames.transform().setLocalPosition({0.0f, 0.1f, 0.0f});
-    m_fire = &flames.addComponent<vfx::Fire>();
-    m_fire->height = 1.4f;
-    m_fire->radius = 0.5f;
-    m_fire->intensity = 4.0f;
-    m_fire->layers = 4;
-    m_fire->seed = 3;
-    m_fire->haze = ve::env::number("SAVANNA_HAZE", m_fire->haze); // comparisons
+    auto& fire = flames.addComponent<vfx::Fire>();
+    m_fire = &fire;
+    fire.height = 1.4f;
+    fire.radius = 0.5f;
+    fire.intensity = 4.0f;
+    fire.layers = 4;
+    fire.seed = 3;
+    fire.haze = ve::env::number("SAVANNA_HAZE", fire.haze); // comparisons
 
     auto& smokeObj = s.spawn("Smoke");
     smokeObj.setParent(this, false);
@@ -197,10 +200,12 @@ void Campfire::start()
 
 void Campfire::update(float)
 {
-    if (!m_light || !m_fire) return; // (both made in start())
+    ve::PointLight* light = m_light.get(scene());
+    const vfx::Fire* fire = m_fire.get(scene());
+    if (!light || !fire) return; // (made in start(); the editor may have deleted them)
     // The glow follows the flames: brightness and a small wobble (shadows dance).
-    m_light->intensity = baseIntensity * m_fire->flicker();
-    m_light->transform().setLocalPosition(glm::vec3(0.0f, 0.9f, 0.0f) + m_fire->lightJitter());
+    light->intensity = baseIntensity * fire->flicker();
+    light->transform().setLocalPosition(glm::vec3(0.0f, 0.9f, 0.0f) + fire->lightJitter());
 }
 
 // -----------------------------------------------------------------------------
@@ -220,35 +225,39 @@ void Torch::start()
     auto& flame = scene().spawn("TorchFlame");
     flame.setParent(this, false);
     flame.transform().setLocalPosition({0.0f, 1.97f, 0.0f});
-    m_fire = &flame.addComponent<vfx::Fire>();
-    m_fire->height = 0.5f;
-    m_fire->radius = 0.12f;
-    m_fire->intensity = 3.5f;
-    m_fire->layers = 3;
-    m_fire->coals = 0.0f;
-    m_fire->speed = 1.3f;
-    m_fire->haze = 0.6f;
-    m_fire->haze *= ve::env::number("SAVANNA_HAZE", 1.0f);
+    auto& fire = flame.addComponent<vfx::Fire>();
+    m_fire = &fire;
+    fire.height = 0.5f;
+    fire.radius = 0.12f;
+    fire.intensity = 3.5f;
+    fire.layers = 3;
+    fire.coals = 0.0f;
+    fire.speed = 1.3f;
+    fire.haze = 0.6f;
+    fire.haze *= ve::env::number("SAVANNA_HAZE", 1.0f);
     // Each torch flickers differently, the same way every run (from where it stands).
     const glm::vec3 at = transform().position();
-    m_fire->seed = uint32_t(int64_t(std::floor(at.x * 7.0f + at.z * 13.0f)) & 0x7fffffff) % 997u;
+    fire.seed = uint32_t(int64_t(std::floor(at.x * 7.0f + at.z * 13.0f)) & 0x7fffffff) % 997u;
     auto& glow = scene().spawn("TorchLight");
     glow.setParent(&flame, false);
     glow.transform().setLocalPosition({0.0f, 0.2f, 0.0f});
     // A thin solid pole (static capsule standing on the ground).
     addComponent<ve::Rigidbody>(ve::Collider::capsule(0.95f, 0.07f).offset({0.0f, 1.0f, 0.0f}), ve::BodyType::Static);
-    m_light = &glow.addComponent<ve::PointLight>();
-    m_light->color = {1.0f, 0.55f, 0.22f};
-    m_light->range = 10.0f;
-    m_light->castShadows = true;
-    m_light->shadowBias = 0.006f;
+    auto& light = glow.addComponent<ve::PointLight>();
+    m_light = &light;
+    light.color = {1.0f, 0.55f, 0.22f};
+    light.range = 10.0f;
+    light.castShadows = true;
+    light.shadowBias = 0.006f;
 }
 
 void Torch::update(float)
 {
-    if (!m_light || !m_fire) return; // (both made in start())
-    m_light->intensity = intensity * m_fire->flicker();
-    m_light->transform().setLocalPosition(glm::vec3(0.0f, 0.2f, 0.0f) + m_fire->lightJitter());
+    ve::PointLight* light = m_light.get(scene());
+    const vfx::Fire* fire = m_fire.get(scene());
+    if (!light || !fire) return; // (made in start(); the editor may have deleted them)
+    light->intensity = intensity * fire->flicker();
+    light->transform().setLocalPosition(glm::vec3(0.0f, 0.2f, 0.0f) + fire->lightJitter());
 }
 
 // -----------------------------------------------------------------------------
@@ -259,11 +268,11 @@ int Sunstone::remaining(const ve::Scene& scene)
 {
     // (The HUD asks every frame: a few ids, not a walk over every object.)
     int n = 0;
-    for (uint64_t id : sunstoneIds()) n += dynamic_cast<const Sunstone*>(scene.findById(id)) ? 1 : 0;
+    for (const auto& stone : sunstoneIds()) n += stone.get(scene) ? 1 : 0;
     return n;
 }
 
-void Sunstone::onDestroy() { forget(sunstoneIds(), id()); }
+void Sunstone::onDestroy() { forget(sunstoneIds(), this); }
 
 void Sunstone::start()
 {
@@ -285,7 +294,7 @@ void Sunstone::start()
         sharedMaterial = material;
     }
     m_sound = assets().loadAudio("audio/pickup.wav");
-    sunstoneIds().push_back(id());
+    sunstoneIds().push_back(this);
 
     m_base = transform().position();
     // No collider: the player's Interactor finds it in its view cone.
@@ -293,10 +302,11 @@ void Sunstone::start()
     use.prompt = "Pick up sunstone";
     use.focusOffset = {0.0f, 0.6f, 0.0f};
     use.onUse = [this](ve::GameObject&) { collect(); };
-    m_visual = &scene().spawn("SunstoneVisual");
-    m_visual->setParent(this, false);
-    m_visual->addComponent<ve::MeshRenderer>(mesh, material);
-    auto& glow = m_visual->addComponent<ve::PointLight>();
+    ve::GameObject& visual = scene().spawn("SunstoneVisual");
+    m_visual = &visual;
+    visual.setParent(this, false);
+    visual.addComponent<ve::MeshRenderer>(mesh, material);
+    auto& glow = visual.addComponent<ve::PointLight>();
     glow.color = {1.0f, 0.65f, 0.25f};
     glow.intensity = 2.5f;
     glow.range = 4.0f;
@@ -306,8 +316,10 @@ void Sunstone::start()
 void Sunstone::update(float dt)
 {
     m_t += dt;
-    m_visual->transform().setLocalPosition({0.0f, 0.6f + 0.15f * std::sin(m_t * 2.0f), 0.0f});
-    m_visual->transform().setLocalRotation(glm::angleAxis(m_t * 1.2f, glm::normalize(glm::vec3(0.3f, 1.0f, 0.1f))));
+    ve::GameObject* visual = m_visual.get(scene());
+    if (!visual) return;
+    visual->transform().setLocalPosition({0.0f, 0.6f + 0.15f * std::sin(m_t * 2.0f), 0.0f});
+    visual->transform().setLocalRotation(glm::angleAxis(m_t * 1.2f, glm::normalize(glm::vec3(0.3f, 1.0f, 0.1f))));
 
 }
 

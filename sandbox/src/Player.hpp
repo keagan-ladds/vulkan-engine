@@ -13,6 +13,7 @@
 
 #include <ve/physics/Physics.hpp>
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 #include <ve/scene/SaveGame.hpp>
 
 #include <cstdint>
@@ -78,8 +79,8 @@ public:
     ve::Camera* camera() const;
 
 private:
-    ve::CharacterController* m_controller = nullptr;
-    ve::GameObject* m_head = nullptr;
+    ve::CharacterController* m_controller = nullptr; // on this object, added in code (the editor can't remove it)
+    ve::ObjectRef<> m_head; // a child (the camera): the editor can delete it
     glm::vec3 m_walkVelocity{0.0f};
     float m_yaw = 0.0f, m_pitch = 0.0f;
     bool m_jumpRequested = false;
@@ -102,7 +103,7 @@ private:
     std::shared_ptr<ve::Mesh> m_rockMesh;
     std::shared_ptr<ve::Material> m_rockMaterial;
     ve::Collider m_rockCollider;
-    std::deque<uint64_t> m_thrown; // ids: the editor (or anything else) may delete a rock first
+    std::deque<ve::ObjectRef<>> m_thrown; // the editor (or anything else) may delete a rock first
 };
 
 } // namespace savanna

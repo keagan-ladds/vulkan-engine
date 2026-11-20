@@ -4,6 +4,7 @@
 // window), and the save / control-binding functions it and the menus use.
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/ui/Gui.hpp>
 
@@ -40,12 +41,14 @@ public:
     void setShowHelp(bool show) { m_showHelp = show; }
 
 private:
-    void findEnvironment(); // the scene's Weather / DayNightCycle (scene objects)
-    Player* player() const;  // null once the player is gone (the editor can delete it)
-    uint64_t m_playerId = 0;
-    vfx::DayNightCycle* m_dayNight = nullptr; // looked up by id every frame (the editor can delete them)
-    vfx::Weather* m_weather = nullptr;
-    uint64_t m_dayNightId = 0, m_weatherId = 0;
+    // Looked up on every use (O(1)): the editor can delete any of them, and
+    // the UI binds below may run in a frame where update() didn't.
+    Player* player() const;             // null once the player is gone
+    vfx::Weather* weather();            // the scene's Weather / DayNightCycle (scene objects), or null
+    vfx::DayNightCycle* dayNight();
+    ve::ObjectRef<Player> m_player;
+    ve::ObjectRef<vfx::DayNightCycle> m_dayNight;
+    ve::ObjectRef<vfx::Weather> m_weather;
     void drawControls(); // F10: actions, their bindings, rebinding
     bool m_showHelp = true;
     bool m_showControls = false;

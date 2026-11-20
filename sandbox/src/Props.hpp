@@ -6,6 +6,7 @@
 // =============================================================================
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 #include <ve/scene/Reflection.hpp>
 #include <ve/ui/Gui.hpp>
 #include <ve/world/Foliage.hpp>
@@ -65,14 +66,15 @@ public:
     void update(float dt) override;
     void onDestroy() override;
     float baseIntensity = 22.0f;
-    // Every started campfire's id (standing in one hurts: Player), so nobody
-    // has to search the scene for them each frame. Check with findById.
-    static const std::vector<uint64_t>& all();
+    // Every started campfire (standing in one hurts: Player), so nobody has
+    // to search the scene for them each frame. Resolve each with get(scene).
+    static const std::vector<ve::ObjectRef<Campfire>>& all();
 
 private:
     std::shared_ptr<ve::Material> m_material;
-    ve::PointLight* m_light = nullptr;
-    vfx::Fire* m_fire = nullptr;
+    // On child objects the editor can delete.
+    ve::ComponentRef<ve::PointLight> m_light;
+    ve::ComponentRef<vfx::Fire> m_fire;
 };
 
 // Wooden pole with a small flame and a shadow-casting point light.
@@ -85,8 +87,9 @@ public:
 
 private:
     std::shared_ptr<ve::Material> m_material;
-    ve::PointLight* m_light = nullptr;
-    vfx::Fire* m_fire = nullptr;
+    // On child objects the editor can delete.
+    ve::ComponentRef<ve::PointLight> m_light;
+    ve::ComponentRef<vfx::Fire> m_fire;
 };
 
 // Glowing stone that bobs and spins; press E near it to pick it up.
@@ -101,7 +104,7 @@ public:
 
 private:
     std::shared_ptr<ve::AudioClip> m_sound;
-    ve::GameObject* m_visual = nullptr;
+    ve::ObjectRef<> m_visual; // a child: the editor can delete it
     glm::vec3 m_base{0.0f};
     float m_t = 0.0f;
 };

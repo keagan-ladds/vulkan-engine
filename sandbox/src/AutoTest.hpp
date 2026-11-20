@@ -6,6 +6,7 @@
 // (deferred destroy, one-shot audio, weather transitions...) without input.
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 #include <ve/world/Foliage.hpp>
 
 #include <cstdint>
@@ -21,6 +22,8 @@ class Terrain;
 
 namespace savanna {
 
+class Villager;
+
 // What the autotest saved (checked after the reload).
 struct AutoTestSaveExpect {
     int collected = 0, wood = 0, berries = 0, stones = 0;
@@ -32,7 +35,7 @@ struct AutoTestSaveExpect {
 class AutoTest : public ve::GameObject {
 public:
     static void startAt(int step) { if (s_resume == 0) s_resume = step; } // (a reload resumes where it was)
-    explicit AutoTest(const ve::Terrain& terrain) : GameObject("AutoTest"), m_terrain(&terrain), m_step(s_resume) { s_resume = 0; }
+    explicit AutoTest(const ve::Terrain& terrain) : GameObject("AutoTest"), m_terrainRef(&terrain), m_step(s_resume) { s_resume = 0; }
     void update(float dt) override;
 
     // Loading a save rebuilds the level (and this test object): the new one resumes here.
@@ -43,18 +46,18 @@ public:
     int foliageAt(const glm::vec3& p, float radius) const;
     int m_foliageOnSite = 0, m_foliageDuring = 0;
     glm::vec3 m_exclusionAt{0.0f};
-    uint64_t m_exclusionObject = 0;
+    ve::ObjectRef<> m_exclusionObject;
     uint32_t m_frames = 0, m_stepFrame = 0; // frames: steps that need the preview to settle
     glm::vec3 m_site{0.0f};
-    std::vector<uint64_t> m_built;
+    std::vector<ve::ObjectRef<>> m_built;
     bool m_buildShot = false;
     void uiSteps(const std::function<void(const std::string&)>& log);
     void physicsSteps(const std::function<void(const std::string&)>& log);
-    uint64_t m_physGhost = 0, m_physSolid = 0, m_physPlatform = 0, m_physProbe = 0;
+    ve::ObjectRef<> m_physGhost, m_physSolid, m_physPlatform, m_physProbe;
     bool m_physOnStone = false;
-    uint64_t m_animVillager = 0;
-    std::vector<uint64_t> m_jointObjects;
-    uint64_t m_ropeEnd = 0;
+    ve::ObjectRef<Villager> m_animVillager;
+    std::vector<ve::ObjectRef<>> m_jointObjects;
+    ve::ObjectRef<> m_ropeEnd;
     glm::vec3 m_ropeTop{0.0f};
     float m_weldBroke = 0.0f;
     bool m_jointsLogged = false;
@@ -65,16 +68,18 @@ private:
     glm::vec3 groundAt(glm::vec2 p) const;
     void shot(const char* name);
     std::set<std::string> m_shotTaken;
-    const ve::Terrain* m_terrain;
+    // The level's terrain (if something deleted it, the test fails loudly).
+    ve::ObjectRef<const ve::Terrain> m_terrainRef;
+    const ve::Terrain& terrain() const;
     ve::FoliageInstanceId m_tree, m_bush; // interactive foliage checks
     std::vector<glm::vec3> m_crateStart;
     bool m_throwPending = false;
     bool m_inTrigger = false;
     glm::vec3 m_triggerCenter{0.0f}, m_triggerFeet{0.0f};
-    uint64_t m_destroyProbe = 0; // (an id: it destroys itself into something else)
+    ve::ObjectRef<> m_destroyProbe; // (it destroys itself into something else)
     glm::vec3 m_padStart{0.0f};
     float m_followStart = 0.0f;
-    uint64_t m_follower = 0;
+    ve::ObjectRef<Villager> m_follower;
     float m_t = 0.0f;
     int m_step;
 };

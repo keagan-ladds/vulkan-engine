@@ -30,19 +30,23 @@
 
 namespace savanna {
 
-Hud::Hud(Player& player) : GameObject("HUD"), m_playerId(player.id())
+Hud::Hud(Player& player) : GameObject("HUD"), m_player(&player)
 {
 }
 
 Player* Hud::player() const
 {
-    return dynamic_cast<Player*>(scene().findById(m_playerId));
+    return m_player.get(scene());
 }
 
-void Hud::findEnvironment()
+vfx::Weather* Hud::weather()
 {
-    m_weather = findCached<vfx::Weather>(scene(), m_weatherId);
-    m_dayNight = findCached<vfx::DayNightCycle>(scene(), m_dayNightId);
+    return findCached(scene(), m_weather);
+}
+
+vfx::DayNightCycle* Hud::dayNight()
+{
+    return findCached(scene(), m_dayNight);
 }
 
 bool saveProgress(ve::Scene& scene, const std::string& slot)
@@ -133,8 +137,7 @@ void Hud::update(float dt)
     gameState().total = gameState().collected + Sunstone::remaining(scene()); // stones can be added in the editor
     GameState& gs = gameState();
     gs.messageTimer = std::max(0.0f, gs.messageTimer - dt);
-    findEnvironment();
-    if (input().keyPressed(ve::Key::R) && m_weather && !Builder::building(scene())) m_weather->next(12.0f); // R rotates pieces while building
+    if (vfx::Weather* w = weather(); w && input().keyPressed(ve::Key::R) && !Builder::building(scene())) w->next(12.0f); // R rotates pieces while building
     if (input().keyPressed(ve::Key::H)) m_showHelp = !m_showHelp;
     if (input().keyPressed(ve::Key::F5)) saveProgress(scene(), "quick");
     if (input().keyPressed(ve::Key::F9)) loadProgress("quick");
@@ -268,7 +271,8 @@ void Hud::start()
     auto& clock = gui::label(info, "", gui::font::title, 40.0f, gui::color::text);
     clock.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({18.0f, 8.0f}).size({18.0f, 50.0f});
     clock.bind = [this] {
-        const float tod = m_dayNight ? m_dayNight->timeOfDay : 12.0f;
+        const vfx::DayNightCycle* dn = dayNight();
+        const float tod = dn ? dn->timeOfDay : 12.0f;
         char b[16];
         std::snprintf(b, sizeof(b), "%02d:%02d", int(tod), int((tod - int(tod)) * 60.0f));
         return std::string(b);
@@ -277,7 +281,8 @@ void Hud::start()
     weather.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({18.0f, 16.0f}).size({18.0f, 36.0f});
     weather.alignX = ui::Align::End;
     weather.bind = [this] {
-        return std::string(m_weather ? vfx::Weather::name(m_weather->weather()) : "") + (player() && player()->flying() ? "  ·  flying" : "");
+        const vfx::Weather* w = this->weather(); // (not the label above)
+        return std::string(w ? vfx::Weather::name(w->weather()) : "") + (player() && player()->flying() ? "  ·  flying" : "");
     };
     auto& stones = gui::label(info, "", gui::font::heading, 22.0f, gui::color::gold);
     stones.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({18.0f, 64.0f}).size({18.0f, 32.0f});

@@ -1,24 +1,24 @@
 #pragma once
 
 // Finding the scene's one-of-a-kind objects (the Builder, the HUD, the
-// Weather...) without walking the whole scene every frame: remember the id
-// (findById is O(1) and can't dangle, unlike a pointer) and only search again
-// once that object is gone.
+// Weather...) without walking the whole scene every frame: remember it as an
+// ObjectRef (an id: O(1) to look up and can't dangle, unlike a pointer) and
+// only search again once that object is gone.
 //
-//   Hud* hud = findCached<Hud>(scene(), m_hudId);
+//   ve::ObjectRef<Hud> m_hud;
+//   Hud* hud = findCached(scene(), m_hud);
 
+#include <ve/scene/ObjectRef.hpp>
 #include <ve/scene/Scene.hpp>
-
-#include <cstdint>
 
 namespace savanna {
 
 template <class T>
-T* findCached(const ve::Scene& scene, uint64_t& id)
+T* findCached(const ve::Scene& scene, ve::ObjectRef<T>& ref)
 {
-    if (auto* t = dynamic_cast<T*>(scene.findById(id))) return t;
+    if (T* t = ref.get(scene)) return t;
     T* t = scene.findFirst<T>();
-    id = t ? t->id() : 0;
+    ref = t;
     return t;
 }
 

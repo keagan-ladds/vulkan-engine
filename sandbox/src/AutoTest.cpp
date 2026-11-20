@@ -40,6 +40,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <stdexcept>
 
 namespace savanna {
 
@@ -104,9 +105,16 @@ void AutoTest::shot(const char* name)
     }
 }
 
+const ve::Terrain& AutoTest::terrain() const
+{
+    const ve::Terrain* t = m_terrainRef.get(scene());
+    if (!t) throw std::runtime_error("AutoTest: the terrain is gone");
+    return *t;
+}
+
 glm::vec3 AutoTest::groundAt(glm::vec2 p) const
 {
-    return {p.x, m_terrain->height(p.x, p.y) + 0.1f, p.y};
+    return {p.x, terrain().height(p.x, p.y) + 0.1f, p.y};
 }
 
 int AutoTest::foliageAt(const glm::vec3& p, float radius) const
@@ -160,14 +168,14 @@ void AutoTest::update(float dt)
             scene().forEach<ve::PointLight>([&](ve::PointLight& l) { seen += &l.gameObject() == &probe; });
             log("PointLight subclass seen by forEach<PointLight>: " + std::string(seen == 1 ? "yes" : "NO"));
             probe.destroy();
-            m_destroyProbe = scene().spawn<SpawnOnDestroy>().id();
+            m_destroyProbe = &scene().spawn<SpawnOnDestroy>();
         }
         // Physics: ray straight down onto the terrain, player standing, crates resting.
         const glm::vec3 above(layout::kCamp.x + 3.0f, 200.0f, layout::kCamp.y + 3.0f);
         if (auto hit = physics().raycast(above, {0, -1, 0}, 400.0f)) {
             log("raycast down hit '" + (hit->gameObject ? hit->gameObject->name() : std::string("?")) +
                 "' at y=" + std::to_string(hit->point.y) + " (terrain says " +
-                std::to_string(m_terrain->height(above.x, above.z)) + ")");
+                std::to_string(terrain().height(above.x, above.z)) + ")");
         } else {
             log("raycast down MISSED");
         }
@@ -183,7 +191,7 @@ void AutoTest::update(float dt)
         // Physics queries, and a trigger box the player is teleported into.
         {
             const glm::vec2 tp = layout::kCamp + glm::vec2(-4.0f, 4.0f); // clear ground between the fire and the reed screens
-            const glm::vec3 center(tp.x, m_terrain->height(tp.x, tp.y) + 1.0f, tp.y);
+            const glm::vec3 center(tp.x, terrain().height(tp.x, tp.y) + 1.0f, tp.y);
             auto& trigger = scene().spawn("TestTrigger");
             trigger.transform().setPosition(center);
             auto& rb = trigger.addComponent<ve::Rigidbody>(ve::Collider::box({1.5f, 1.5f, 1.5f}), ve::BodyType::Static);
@@ -233,8 +241,8 @@ void AutoTest::update(float dt)
             ", default raycast through it hit " + (ray && ray->gameObject ? ray->gameObject->name() : std::string("nothing")));
         m_inTrigger = true;
     } else if (m_step == 1 && m_t > 4.0f) {
-        if (ve::GameObject* probe = scene().findById(m_destroyProbe)) probe->destroy(); // checked at step 2
-        m_destroyProbe = 0;
+        if (ve::GameObject* probe = m_destroyProbe.get(scene())) probe->destroy(); // checked at step 2
+        m_destroyProbe.reset();
         if (auto* probe = scene().find("TestTrigger") ? scene().find("TestTrigger")->getComponent<EventProbe>() : nullptr)
             log("trigger after standing in it: " + std::to_string(probe->triggerEnters) + " enter(s): " + probe->lastTrigger);
         log("after pickup: " + std::to_string(scene().findAllWithTag("collectible").size()) + " left, collected " +
@@ -300,7 +308,7 @@ void AutoTest::update(float dt)
         for (auto* rock : scene().findAllWithTag("thrown")) {
             auto* rb = rock->getComponent<ve::Rigidbody>();
             const glm::vec3 p = rock->transform().position();
-            log("thrown rock at y=" + std::to_string(p.y) + " (ground " + std::to_string(m_terrain->height(p.x, p.z)) +
+            log("thrown rock at y=" + std::to_string(p.y) + " (ground " + std::to_string(terrain().height(p.x, p.z)) +
                 "), speed " + std::to_string(rb ? glm::length(rb->linearVelocity()) : -1.0f));
         }
         log("physics bodies: " + std::to_string(physics().bodyCount()) + ", step ms: " + std::to_string(physics().lastStepMs));
@@ -322,7 +330,7 @@ void AutoTest::update(float dt)
             log("foliage before: " + std::to_string(fs.instances) + " instances, " + std::to_string(fs.cells) + " cells, " +
                 std::to_string(fs.bodies) + " bodies");
             const glm::vec2 corner(-240.0f, -240.0f);
-            player->teleport({corner.x, m_terrain->height(corner.x, corner.y), corner.y}, 0.0f);
+            player->teleport({corner.x, terrain().height(corner.x, corner.y), corner.y}, 0.0f);
             m_t = 0.0f;
             ++m_step;
         } else {
@@ -375,11 +383,11 @@ void AutoTest::update(float dt)
         auto* foliageObject = scene().findFirst<ve::Foliage>();
         const int layer = foliageObject ? foliageObject->layerIndex(desert ? "Quiver trees" : "Jungle trees") : -1;
         const size_t trees = layer >= 0 ? foliageObject->system()->query(uint32_t(layer), glm::vec2(p.x, p.z), 100.0f).size() : 0;
-        log(std::string(biome) + ": weight " + std::to_string(m_terrain->biomeWeight(biome, p.x, p.z)) + ", player grounded: " +
+        log(std::string(biome) + ": weight " + std::to_string(terrain().biomeWeight(biome, p.x, p.z)) + ", player grounded: " +
             (player->grounded() ? "yes" : "NO") + " (feet " + std::to_string(p.y) + ", ground " +
-            std::to_string(m_terrain->height(p.x, p.z)) + "), " + std::to_string(trees) + " " +
-            (desert ? "quiver trees" : "jungle trees") + " within 100 m, terrain nodes " + std::to_string(m_terrain->drawnNodes()) +
-            ", collider tiles " + std::to_string(m_terrain->colliderTiles()) + ", foliage " +
+            std::to_string(terrain().height(p.x, p.z)) + "), " + std::to_string(trees) + " " +
+            (desert ? "quiver trees" : "jungle trees") + " within 100 m, terrain nodes " + std::to_string(terrain().drawnNodes()) +
+            ", collider tiles " + std::to_string(terrain().colliderTiles()) + ", foliage " +
             std::to_string(foliageObject ? foliageObject->system()->stats().instances : 0) + " instances");
         if (desert) {
             player->teleport(groundAt({-1150.0f, 450.0f}), 0.0f);
@@ -603,14 +611,14 @@ void AutoTest::update(float dt)
             player->setPose(goal, 0.0f, -10.0f);
             v->follow(*player);
             m_followStart = glm::distance(vp, goal);
-            m_follower = v->id();
+            m_follower = v;
             log("villager follows: start " + std::to_string(m_followStart) + " m from the player, on navmesh " +
                 (v->agent().onNavMesh() ? "yes" : "no"));
         }
         m_t = 0.0f;
         ++m_step;
     } else if (m_step == 24 && m_t > 9.0f) {
-        auto* v = dynamic_cast<Villager*>(scene().findById(m_follower));
+        auto* v = m_follower.get(scene());
         auto* player = localPlayer(scene());
         if (v && player) {
             const glm::vec3 vp = v->transform().position(), pp = player->transform().position();
@@ -637,13 +645,13 @@ void AutoTest::update(float dt)
     } else if (m_step >= 26 && m_step <= 44 && m_t > 0.4f && m_frames - m_stepFrame >= 4) {
         auto* b = scene().findFirst<Builder>();
         auto pos = [&](size_t i) {
-            ve::GameObject* o = i < m_built.size() ? scene().findById(m_built[i]) : nullptr;
+            ve::GameObject* o = i < m_built.size() ? m_built[i].get(scene()) : nullptr;
             return o ? o->transform().position() : glm::vec3(-9999.0f);
         };
         auto placeLog = [&](const char* what, const glm::vec3& expected) {
             const bool valid = b->previewValid(), snapped = b->previewSnapped();
             ve::GameObject* o = b->place();
-            if (o) m_built.push_back(o->id());
+            if (o) m_built.push_back(o);
             const float err = o ? glm::distance(o->transform().position(), expected) : -1.0f;
             log(std::string("build: ") + what + " placed " + (o ? "yes" : "NO") + ", valid " + (valid ? "yes" : "no") + ", snapped " +
                 (snapped ? "yes" : "no") + ", " + std::to_string(err) + " m from the expected spot");
@@ -699,8 +707,8 @@ void AutoTest::update(float dt)
         case 35: {
             placeLog("door (into the opening)", pos(3));
             auto yawGap = [&](size_t piece, size_t host) { // degrees between their x axes, mod 180
-                ve::GameObject* x = piece < m_built.size() ? scene().findById(m_built[piece]) : nullptr;
-                ve::GameObject* y = host < m_built.size() ? scene().findById(m_built[host]) : nullptr;
+                ve::GameObject* x = piece < m_built.size() ? m_built[piece].get(scene()) : nullptr;
+                ve::GameObject* y = host < m_built.size() ? m_built[host].get(scene()) : nullptr;
                 if (!x || !y) return -1.0f;
                 const glm::vec3 ax = x->transform().rotation() * glm::vec3(1, 0, 0), ay = y->transform().rotation() * glm::vec3(1, 0, 0);
                 return glm::degrees(std::acos(std::clamp(std::abs(glm::dot(ax, ay)), 0.0f, 1.0f)));
@@ -711,29 +719,29 @@ void AutoTest::update(float dt)
         }
         case 36: {
             placeLog("window (into the opening)", pos(4));
-            ve::GameObject* x = m_built.size() > 9 ? scene().findById(m_built[9]) : nullptr;
-            ve::GameObject* y = scene().findById(m_built[4]);
+            ve::GameObject* x = m_built.size() > 9 ? m_built[9].get(scene()) : nullptr;
+            ve::GameObject* y = m_built[4].get(scene());
             const float gap = x && y ? glm::degrees(std::acos(std::clamp(std::abs(glm::dot(x->transform().rotation() * glm::vec3(1, 0, 0),
                                                                                              y->transform().rotation() * glm::vec3(1, 0, 0))),
                                                                        0.0f, 1.0f)))
                                      : -1.0f;
             log("build: window turned to its wall: " + std::to_string(gap) + " deg off (aimed at 100 deg)");
             // Open the door the way the player does (Use on its Interactable).
-            if (ve::GameObject* door = scene().findById(m_built[8]))
+            if (ve::GameObject* door = m_built[8].get(scene()))
                 if (auto* use = door->getComponent<ve::Interactable>()) use->use(*localPlayer(scene()));
             buildStep(12, pos(1) + glm::vec3(3.2f, 0.0f, 0.4f), 0.0f); // a fence off the second foundation, then remove it
             break;
         }
         case 37: {
             float leaf = -1.0f;
-            if (ve::GameObject* door = scene().findById(m_built[8]))
+            if (ve::GameObject* door = m_built[8].get(scene()))
                 for (ve::Transform* c : door->transform().children())
                     if (c->gameObject().name() == "Door leaf") leaf = glm::degrees(glm::angle(c->localRotation()));
-            auto* hinge = scene().findById(m_built[8]) ? scene().findById(m_built[8])->getComponent<DoorHinge>() : nullptr;
+            auto* hinge = m_built[8].get(scene()) ? m_built[8].get(scene())->getComponent<DoorHinge>() : nullptr;
             log(std::string("build: door opened with Use: ") + (hinge && hinge->open() ? "yes" : "NO") + ", leaf swung " +
                 std::to_string(leaf) + " deg");
             placeLog("fence", b->previewPosition());
-            ve::GameObject* fence = m_built.empty() ? nullptr : scene().findById(m_built.back());
+            ve::GameObject* fence = m_built.empty() ? nullptr : m_built.back().get(scene());
             const int removed = b->remove(fence);
             if (removed) m_built.pop_back();
             log("build: fence removed " + std::to_string(removed));
@@ -752,10 +760,10 @@ void AutoTest::update(float dt)
             ++m_step;
             break;
         case 40: {
-            const uint64_t wall = m_built[m_built.size() - 2], door = m_built.back();
-            const int removed = b->remove(scene().findById(wall));
+            const ve::ObjectRef<> wall = m_built[m_built.size() - 2], door = m_built.back();
+            const int removed = b->remove(wall.get(scene()));
             log("build: removing the 2nd door wall removed " + std::to_string(removed) + " piece(s), its door gone " +
-                (scene().findById(door) ? "NO" : "yes"));
+                (door.get(scene()) ? "NO" : "yes"));
             m_built.resize(m_built.size() - 2);
             b->setAimOverride(std::nullopt);
             b->setActive(false);
@@ -774,7 +782,7 @@ void AutoTest::update(float dt)
             auto& fe = ex.addComponent<ve::FoliageExclusion>();
             fe.box = true;
             fe.size = {2.0f, 2.0f};
-            m_exclusionObject = ex.id();
+            m_exclusionObject = &ex;
             m_t = 0.0f;
             m_stepFrame = m_frames;
             ++m_step;
@@ -782,7 +790,7 @@ void AutoTest::update(float dt)
         }
         case 41: {
             const int during = foliageAt(m_exclusionAt, 0.3f);
-            if (ve::GameObject* ex = scene().findById(m_exclusionObject)) ex->destroy();
+            if (ve::GameObject* ex = m_exclusionObject.get(scene())) ex->destroy();
             log("build: foliage at a spot " + std::to_string(m_foliageOnSite) + " before an exclusion box, " + std::to_string(during) +
                 " with it");
             m_foliageDuring = during;
@@ -802,7 +810,7 @@ void AutoTest::update(float dt)
             // Save, then load (the level rebuilt behind the loading screen): the pieces come back.
             s_expect.pieces.clear();
             for (size_t i = 0; i < m_built.size(); ++i)
-                if (ve::GameObject* o = scene().findById(m_built[i])) s_expect.pieces.push_back({o->name(), o->transform().position()});
+                if (ve::GameObject* o = m_built[i].get(scene())) s_expect.pieces.push_back({o->name(), o->transform().position()});
             const bool saved = ve::save::saveGame(scene(), "buildtest");
             log("build: " + std::to_string(s_expect.pieces.size()) + " pieces, saved " + (saved ? "yes" : "NO"));
             s_resume = 45;
@@ -897,9 +905,9 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
             b.addComponent<ContactRecorder>();
             return b;
         };
-        m_physGhost = box("Ghost box", "TestGhost", -0.6f).id();
-        m_physSolid = box("Solid box", "Default", 0.6f).id();
-        m_physPlatform = platform.id();
+        m_physGhost = &box("Ghost box", "TestGhost", -0.6f);
+        m_physSolid = &box("Solid box", "Default", 0.6f);
+        m_physPlatform = &platform;
         log("layers: " + std::to_string(ph.layerCount()) + " (Default, Debris, TestPlatform, TestGhost), TestPlatform x TestGhost collide: " +
             (ph.collides(platformLayer, ghostLayer) ? "YES (wrong)" : "no"));
         m_stepFrame = m_frames;
@@ -909,8 +917,8 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
     }
     case 71: {
         if (m_t < 2.5f) break;
-        ve::GameObject* ghost = scene().findById(m_physGhost);
-        ve::GameObject* solid = scene().findById(m_physSolid);
+        ve::GameObject* ghost = m_physGhost.get(scene());
+        ve::GameObject* solid = m_physSolid.get(scene());
         if (!ghost || !solid) break;
         const float gy = ghost->transform().position().y, sy = solid->transform().position().y;
         const auto* rec = solid->getComponent<ContactRecorder>();
@@ -923,12 +931,12 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
         ve::QueryFilter noPlatform;
         noPlatform.layers = ~ph.layerMask({"TestPlatform"});
         const auto masked = ph.raycast(from, {0, -1, 0}, 20.0f, noPlatform);
-        log("queries: unmasked ray hits the platform: " + std::string(all && all->gameObject && all->gameObject->id() == m_physPlatform ? "yes" : "NO") +
+        log("queries: unmasked ray hits the platform: " + std::string(all && all->gameObject && all->gameObject->id() == m_physPlatform.id() ? "yes" : "NO") +
             " (surface '" + (all ? all->surface : "") + "', layer " + (all ? ph.layerName(all->layer) : "") +
             "), masked ray reaches the ground: " + (masked && masked->point.y < platformY - 1.0f ? "yes" : "NO") + " (surface '" +
             (masked ? masked->surface : "") + "')");
-        for (uint64_t id : {m_physGhost, m_physSolid, m_physPlatform})
-            if (ve::GameObject* o = scene().findById(id)) o->destroy();
+        for (const ve::ObjectRef<>& ref : {m_physGhost, m_physSolid, m_physPlatform})
+            if (ve::GameObject* o = ref.get(scene())) o->destroy();
         // A character standing on a stone foundation, then on the ground.
         const BuildPiece* stone = nullptr;
         for (const auto& o : scene().objects())
@@ -940,7 +948,7 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
                                             : ground + glm::vec3(0, 0.05f, 0));
         probe.addComponent<ve::CharacterController>();
         probe.addComponent<StandStill>();
-        m_physProbe = probe.id();
+        m_physProbe = &probe;
         m_physOnStone = stone != nullptr;
         m_t = 0.0f;
         ++m_step;
@@ -949,7 +957,7 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
     case 72:
     case 73: {
         if (m_t < 1.0f) break;
-        ve::GameObject* probe = scene().findById(m_physProbe);
+        ve::GameObject* probe = m_physProbe.get(scene());
         auto* cc = probe ? probe->getComponent<ve::CharacterController>() : nullptr;
         if (!cc) break;
         if (m_step == 72) {
@@ -975,7 +983,7 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
             m_step = 47;
             break;
         }
-        m_animVillager = v->id();
+        m_animVillager = v;
         m_animSteps = v->steps();
         v->wave(3.0f);
         // Walk somewhere 6 m away (footstep events while walking).
@@ -989,7 +997,7 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
         break;
     }
     case 75: {
-        auto* v = dynamic_cast<Villager*>(scene().findById(m_animVillager));
+        auto* v = m_animVillager.get(scene());
         ve::TwoBoneIK* ik = nullptr; // ours (the villager's FootIK has two more)
         if (v && v->body())
             for (const auto& c : v->body()->components())
@@ -1052,7 +1060,7 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
             pr.color = color;
             auto& rb = o.addComponent<ve::Rigidbody>(c, ve::BodyType::Dynamic);
             rb.mass = mass;
-            m_jointObjects.push_back(o.id());
+            m_jointObjects.push_back(&o);
             return o;
         };
         // Pendulum: a weight 1.2 m under a hinge (Z axis), limited to +-60 degrees, pushed.
@@ -1093,7 +1101,7 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
             rope.maxDistance = 0.5f;
             prev = &link;
         }
-        m_ropeEnd = prev->id();
+        m_ropeEnd = prev;
         m_ropeTop = top;
         // A plank welded to the world, breaking under 1500 N; a 120 kg block lands on its end.
         auto& plank = body("Plank", {yard.x + 14.0f, g + 1.0f, yard.y}, ve::Collider::box({0.8f, 0.05f, 0.2f}), 4.0f, {0.6f, 0.45f, 0.3f, 1},
@@ -1114,15 +1122,15 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
     case 77: {
         if (m_t < 3.0f) break;
         auto find = [&](const char* name) -> ve::GameObject* {
-            for (uint64_t id : m_jointObjects)
-                if (ve::GameObject* o = scene().findById(id); o && o->name() == name) return o;
+            for (const auto& ref : m_jointObjects)
+                if (ve::GameObject* o = ref.get(scene()); o && o->name() == name) return o;
             return nullptr;
         };
         const auto* pend = find("Pendulum") ? find("Pendulum")->getComponent<ve::HingeJoint>() : nullptr;
         const auto* wheel = find("Motor wheel") ? find("Motor wheel")->getComponent<ve::Rigidbody>() : nullptr;
         const auto* slide = find("Slider") ? find("Slider")->getComponent<ve::SliderJoint>() : nullptr;
         const auto* weld = find("Plank") ? find("Plank")->getComponent<ve::FixedJoint>() : nullptr;
-        const ve::GameObject* end = scene().findById(m_ropeEnd);
+        const ve::GameObject* end = m_ropeEnd.get(scene());
         if (!m_jointsLogged) {
         m_jointsLogged = true;
         log("joints: pendulum " + std::string(pend && pend->attached() ? "attached" : "NOT attached") + ", angle " +
@@ -1138,8 +1146,8 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
         }
         shot("8b-joints");
         if (m_t < 3.5f) break;
-        for (uint64_t id : m_jointObjects)
-            if (ve::GameObject* o = scene().findById(id)) o->destroy();
+        for (const auto& ref : m_jointObjects)
+            if (ve::GameObject* o = ref.get(scene())) o->destroy();
         m_jointObjects.clear();
         ve::debug::setChannel("Physics joints", false);
         m_t = 0.0f;
@@ -1149,7 +1157,7 @@ void AutoTest::physicsSteps(const std::function<void(const std::string&)>& log)
     }
     case 78:
     case 79: { // a villager looks at one point and points at another
-        auto* v = dynamic_cast<Villager*>(scene().findById(m_animVillager));
+        auto* v = m_animVillager.get(scene());
         if (!v || !v->body() || !v->looker() || !v->pointer()) {
             log("aim: no villager with IK");
             m_step = 47;
