@@ -180,21 +180,33 @@ std::shared_ptr<Mesh> Mesh::create(Renderer& renderer, const MeshData& data,
                                            MemoryUsage::GpuOnly, "mesh vertices");
     mesh->m_indices = device.createBuffer(ibSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                           MemoryUsage::GpuOnly, "mesh indices");
-    device.uploadBuffer(mesh->m_vertices, data.vertices.data(), vbSize);
-    device.uploadBuffer(mesh->m_indices, data.indices.data(), ibSize);
+    // Both in one staging buffer and one submit (a CPU<->GPU round trip each otherwise).
+    const Device::BufferUpload uploads[] = {{&mesh->m_vertices, data.vertices.data(), vbSize},
+                                            {&mesh->m_indices, data.indices.data(), ibSize}};
+    device.uploadBuffers(uploads);
+    mesh->setSubmeshes(data, std::move(submeshes));
+    return mesh;
+}
 
-    if (submeshes.empty()) {
-        submeshes.push_back({0, mesh->m_indexCount, 0, {}});
-    }
+void Mesh::setSubmeshes(const MeshData& data, std::vector<Submesh> submeshes)
+{
+    if (submeshes.empty()) submeshes.push_back({0, m_indexCount, 0, {}});
     for (auto& sm : submeshes) {
         sm.bounds = AABB{};
         for (uint32_t i = sm.firstIndex; i < sm.firstIndex + sm.indexCount; ++i) {
             sm.bounds.expand(data.vertices[data.indices[i]].position);
         }
-        mesh->m_bounds.expand(sm.bounds);
+        m_bounds.expand(sm.bounds);
     }
-    mesh->m_submeshes = std::move(submeshes);
-    return mesh;
+    m_submeshes = std::move(submeshes);
+}
+
+void Mesh::bind(VkCommandBuffer cmd) const
+{
+    VkBuffer vb = vertexBuffer();
+    VkDeviceSize offset = m_vertexOffset; // non-zero for shared (skinned) vertices
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vb, &offset);
+    vkCmdBindIndexBuffer(cmd, m_indices.handle, 0, VK_INDEX_TYPE_UINT32);
 }
 
 std::shared_ptr<Mesh> Mesh::createShared(Renderer& renderer, VkBuffer vertices, VkDeviceSize vertexOffset, const MeshData& data,
@@ -213,13 +225,7 @@ std::shared_ptr<Mesh> Mesh::createShared(Renderer& renderer, VkBuffer vertices, 
     mesh->m_indices = device.createBuffer(ibSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                           MemoryUsage::GpuOnly, "mesh indices");
     device.uploadBuffer(mesh->m_indices, data.indices.data(), ibSize);
-    if (submeshes.empty()) submeshes.push_back({0, mesh->m_indexCount, 0, {}});
-    for (auto& sm : submeshes) {
-        sm.bounds = AABB{};
-        for (uint32_t i = sm.firstIndex; i < sm.firstIndex + sm.indexCount; ++i) sm.bounds.expand(data.vertices[data.indices[i]].position);
-        mesh->m_bounds.expand(sm.bounds);
-    }
-    mesh->m_submeshes = std::move(submeshes);
+    mesh->setSubmeshes(data, std::move(submeshes));
     return mesh;
 }
 

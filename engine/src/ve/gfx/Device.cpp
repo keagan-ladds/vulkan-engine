@@ -2,9 +2,13 @@
 
 #include "ve/core/Log.hpp"
 #include "ve/core/Window.hpp"
+#include "ve/gfx/Pipeline.hpp"
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <vector>
 
 namespace ve {
@@ -213,6 +217,63 @@ void Device::init(const Window& window, bool enableValidation)
     VK_CHECK(vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_uploadPool));
     VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     VK_CHECK(vkCreateFence(m_device, &fenceInfo, nullptr, &m_uploadFence));
+    createPipelineCache();
+}
+
+// -----------------------------------------------------------------------------
+// Pipeline cache
+// -----------------------------------------------------------------------------
+// The driver compiles SPIR-V to GPU code when a pipeline is created, which is
+// slow (hundreds of pipelines at startup). A VkPipelineCache keeps the results;
+// saved to disk at shutdown, the next start reuses them. The file is only a
+// hint: data from another GPU or driver version is rejected (by our header
+// check and by the driver itself), and any I/O error just means an empty cache.
+
+namespace {
+std::filesystem::path pipelineCachePath()
+{
+    return executableDirectory() / "pipeline_cache.bin";
+}
+} // namespace
+
+void Device::createPipelineCache()
+{
+    std::vector<char> data;
+    if (std::ifstream in(pipelineCachePath(), std::ios::binary); in) {
+        data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    // Header (VkPipelineCacheHeaderVersionOne): size, version, vendor, device, UUID.
+    // Only hand the driver data that was written by this very GPU + driver.
+    bool valid = data.size() >= 16 + VK_UUID_SIZE;
+    if (valid) {
+        uint32_t header[4];
+        std::memcpy(header, data.data(), sizeof(header));
+        valid = header[1] == VK_PIPELINE_CACHE_HEADER_VERSION_ONE && header[2] == m_properties.vendorID &&
+                header[3] == m_properties.deviceID &&
+                std::memcmp(data.data() + 16, m_properties.pipelineCacheUUID, VK_UUID_SIZE) == 0;
+    }
+    VkPipelineCacheCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+    if (valid) {
+        info.initialDataSize = data.size();
+        info.pInitialData = data.data();
+    }
+    if (vkCreatePipelineCache(m_device, &info, nullptr, &m_pipelineCache) != VK_SUCCESS && valid) {
+        info.initialDataSize = 0; // the driver didn't like the data: start empty
+        info.pInitialData = nullptr;
+        if (vkCreatePipelineCache(m_device, &info, nullptr, &m_pipelineCache) != VK_SUCCESS) m_pipelineCache = VK_NULL_HANDLE;
+    }
+    setPipelineCache(m_pipelineCache);
+}
+
+void Device::savePipelineCache()
+{
+    if (!m_pipelineCache) return;
+    size_t size = 0;
+    if (vkGetPipelineCacheData(m_device, m_pipelineCache, &size, nullptr) != VK_SUCCESS || size == 0) return;
+    std::vector<char> data(size);
+    if (vkGetPipelineCacheData(m_device, m_pipelineCache, &size, data.data()) != VK_SUCCESS) return;
+    std::ofstream out(pipelineCachePath(), std::ios::binary | std::ios::trunc);
+    if (out) out.write(data.data(), std::streamsize(size));
 }
 
 void Device::shutdown()
@@ -222,6 +283,10 @@ void Device::shutdown()
 
     flushDeletions();
 
+    savePipelineCache();
+    setPipelineCache(VK_NULL_HANDLE);
+    if (m_pipelineCache) vkDestroyPipelineCache(m_device, m_pipelineCache, nullptr);
+    m_pipelineCache = VK_NULL_HANDLE;
     vkDestroyFence(m_device, m_uploadFence, nullptr);
     vkDestroyCommandPool(m_device, m_uploadPool, nullptr);
     vmaDestroyAllocator(m_allocator);
@@ -465,11 +530,34 @@ void Device::destroyBuffer(Buffer& buffer)
 
 void Device::uploadBuffer(const Buffer& dst, const void* data, VkDeviceSize size, VkDeviceSize dstOffset)
 {
-    Buffer staging = createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::CpuToGpu);
-    std::memcpy(staging.mapped, data, static_cast<size_t>(size));
+    const BufferUpload upload{&dst, data, size, dstOffset};
+    uploadBuffers({&upload, 1});
+}
+
+void Device::uploadBuffers(std::span<const BufferUpload> uploads)
+{
+    // One staging buffer and one blocking submit for all regions: each
+    // immediateSubmit is a full CPU<->GPU round trip, so batching matters
+    // when many small meshes are created (vertices + indices each).
+    auto padded = [](VkDeviceSize size) { return (size + 15) & ~VkDeviceSize(15); };
+    VkDeviceSize total = 0;
+    for (const BufferUpload& u : uploads) total += padded(u.size);
+    if (total == 0) return;
+    Buffer staging = createBuffer(total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::CpuToGpu);
+    VkDeviceSize offset = 0;
+    for (const BufferUpload& u : uploads) {
+        std::memcpy(static_cast<char*>(staging.mapped) + offset, u.data, static_cast<size_t>(u.size));
+        offset += padded(u.size);
+    }
     immediateSubmit([&](VkCommandBuffer cmd) {
-        VkBufferCopy region{0, dstOffset, size};
-        vkCmdCopyBuffer(cmd, staging.handle, dst.handle, 1, &region);
+        VkDeviceSize src = 0;
+        for (const BufferUpload& u : uploads) {
+            if (u.size) {
+                VkBufferCopy region{src, u.dstOffset, u.size};
+                vkCmdCopyBuffer(cmd, staging.handle, u.dst->handle, 1, &region);
+            }
+            src += padded(u.size);
+        }
     });
     destroyBuffer(staging);
 }

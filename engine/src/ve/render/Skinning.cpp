@@ -98,8 +98,10 @@ SkinningSystem::Instance SkinningSystem::create(const std::shared_ptr<const Skin
         std::vector<SkinWeight> w(count);
         for (uint32_t i = 0; i < count; ++i) w[i] = {src.joints[i], src.weights[i]};
         Device& d = m_renderer->device();
-        d.uploadBuffer(m_rest, src.data.vertices.data(), VkDeviceSize(count) * sizeof(Vertex), VkDeviceSize(base) * sizeof(Vertex));
-        d.uploadBuffer(m_weights, w.data(), VkDeviceSize(count) * sizeof(SkinWeight), VkDeviceSize(base) * sizeof(SkinWeight));
+        const Device::BufferUpload uploads[] = {
+            {&m_rest, src.data.vertices.data(), VkDeviceSize(count) * sizeof(Vertex), VkDeviceSize(base) * sizeof(Vertex)},
+            {&m_weights, w.data(), VkDeviceSize(count) * sizeof(SkinWeight), VkDeviceSize(base) * sizeof(SkinWeight)}};
+        d.uploadBuffers(uploads);
         it = m_sources.emplace(&src, SourceEntry{base, count, 0}).first;
         m_keepAlive.push_back(source);
     }
@@ -123,15 +125,24 @@ SkinningSystem::Instance SkinningSystem::create(const std::shared_ptr<const Skin
 void SkinningSystem::destroy(Instance& inst)
 {
     if (!inst.source || !m_renderer) return;
-    // The GPU may still draw the range this frame: free it with the mesh's own deferred destruction.
-    release(m_freeOutput, inst.outputBase, inst.count);
+    // Frames still in flight may skin into / draw from these ranges: only
+    // return them to the free lists once the GPU is done (deferred deletion),
+    // or a create() could reuse and overwrite them under a running frame.
+    // The SkinningSystem outlives the deletion queue (Renderer::shutdown flushes it first).
+    const uint32_t outputBase = inst.outputBase, count = inst.count;
+    uint32_t restBase = 0, restCount = 0;
     auto it = m_sources.find(inst.source);
     if (it != m_sources.end() && --it->second.users == 0) {
-        release(m_freeRest, it->second.base, it->second.count);
+        restBase = it->second.base;
+        restCount = it->second.count;
         m_keepAlive.erase(std::remove_if(m_keepAlive.begin(), m_keepAlive.end(), [&](const auto& p) { return p.get() == inst.source; }),
                           m_keepAlive.end());
-        m_sources.erase(it);
+        m_sources.erase(it); // a new create() of this source uploads a fresh rest range
     }
+    m_renderer->device().deferDestroy([this, outputBase, count, restBase, restCount] {
+        release(m_freeOutput, outputBase, count);
+        if (restCount) release(m_freeRest, restBase, restCount);
+    });
     inst = Instance{};
 }
 
