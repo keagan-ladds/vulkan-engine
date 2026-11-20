@@ -371,6 +371,16 @@ std::vector<std::string> Input::bindingNames(const std::string& action) const
     return out;
 }
 
+std::string Input::bindingText(const std::string& action, std::string_view sep) const
+{
+    std::string out;
+    for (const std::string& n : bindingNames(action)) {
+        if (!out.empty()) out += sep;
+        out += n;
+    }
+    return out;
+}
+
 void Input::startRebind(const std::string& action)
 {
     m_rebind = action;

@@ -68,5 +68,13 @@ bool remove(const std::string& slot);
 bool saveGame(Scene& scene, const std::string& slot, const Json& gameData = Json::object());
 std::optional<Json> loadGame(Scene& scene, const std::string& slot);
 
+// Small per-user settings files ("settings", "controls"...), kept in
+// folder()/config so they never show up in slots(). Written atomically
+// (temporary file + rename); read returns nullopt if missing or damaged.
+//   if (auto j = ve::save::readConfig("controls")) input.loadBindings(*j);
+//   ve::save::writeConfig("controls", input.saveBindings());
+std::optional<Json> readConfig(const std::string& name);
+bool writeConfig(const std::string& name, const Json& json);
+
 } // namespace save
 } // namespace ve

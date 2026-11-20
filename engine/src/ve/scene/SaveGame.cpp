@@ -183,12 +183,13 @@ void apply(Scene& scene, const Json& save)
     for (GameObject* o : created) subtree(*o);
 }
 
-bool write(const std::string& slot, const Json& save)
+namespace {
+
+// Temporary file + rename: a crash mid-write keeps the old file.
+bool writeJsonAtomic(const std::filesystem::path& file, const Json& json)
 {
-    const std::filesystem::path file = slotPath(slot);
     std::error_code ec;
     std::filesystem::create_directories(file.parent_path(), ec);
-    // Write a temporary file, then rename: a crash mid-save keeps the old save.
     const std::filesystem::path tmp = file.string() + ".tmp";
     {
         std::ofstream out(tmp, std::ios::binary);
@@ -196,7 +197,7 @@ bool write(const std::string& slot, const Json& save)
             log::error("Save: can't write {}", tmp.string());
             return false;
         }
-        out << save.dump(1) << '\n';
+        out << json.dump(1) << '\n';
         if (!out) return false;
     }
     std::filesystem::rename(tmp, file, ec);
@@ -204,22 +205,59 @@ bool write(const std::string& slot, const Json& save)
         log::error("Save: {}", ec.message());
         return false;
     }
-    log::info("Saved '{}' ({})", slot, file.string());
     return true;
 }
 
-std::optional<Json> read(const std::string& slot)
+std::optional<Json> readJson(const std::filesystem::path& file, const std::string& what)
 {
-    std::ifstream in(slotPath(slot));
+    std::ifstream in(file);
     if (!in) return std::nullopt;
     try {
         Json j;
         in >> j;
         return j;
     } catch (const std::exception& e) {
-        log::error("Save '{}' is damaged: {}", slot, e.what());
+        log::error("{} is damaged: {}", what, e.what());
         return std::nullopt;
     }
+}
+
+std::string safeName(const std::string& name, const char* fallback)
+{
+    std::string safe;
+    for (char ch : name) safe += (std::isalnum(static_cast<unsigned char>(ch)) || ch == '-' || ch == '_') ? ch : '_';
+    return safe.empty() ? std::string(fallback) : safe;
+}
+
+} // namespace
+
+bool write(const std::string& slot, const Json& save)
+{
+    const std::filesystem::path file = slotPath(slot);
+    if (!writeJsonAtomic(file, save)) return false;
+    log::info("Saved '{}' ({})", slot, file.string());
+    return true;
+}
+
+std::optional<Json> read(const std::string& slot)
+{
+    return readJson(slotPath(slot), "Save '" + slot + "'");
+}
+
+std::optional<Json> readConfig(const std::string& name)
+{
+    const std::string file = safeName(name, "config") + ".json";
+    if (auto j = readJson(folder() / "config" / file, file)) return j;
+    return readJson(folder() / file, file); // written by older builds, next to the saves
+}
+
+bool writeConfig(const std::string& name, const Json& json)
+{
+    const std::string file = safeName(name, "config") + ".json";
+    if (!writeJsonAtomic(folder() / "config" / file, json)) return false;
+    std::error_code ec;
+    std::filesystem::remove(folder() / file, ec); // an older build's copy would show up as a save slot
+    return true;
 }
 
 std::vector<SlotInfo> slots()
