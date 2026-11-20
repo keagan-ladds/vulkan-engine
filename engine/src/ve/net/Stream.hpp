@@ -18,6 +18,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <nlohmann/json.hpp>
 
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <span>
@@ -26,6 +27,11 @@
 #include <vector>
 
 namespace ve::net {
+
+// Values are memcpy'd as they are in memory, so "little-endian on the wire"
+// holds only on little-endian machines (every platform the engine targets).
+// A big-endian port would need byte swaps in write / read.
+static_assert(std::endian::native == std::endian::little, "ve::net streams assume a little-endian CPU");
 
 class Writer {
 public:
