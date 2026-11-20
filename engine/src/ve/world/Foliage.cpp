@@ -332,7 +332,7 @@ glm::vec3 FoliageSystem::viewerPosition() const
 
 glm::vec3 FoliageSystem::focusPosition(const glm::vec3& viewer) const
 {
-    const GameObject* focus = colliderFocusId ? scene().findById(colliderFocusId) : nullptr;
+    const GameObject* focus = colliderFocus.get(scene());
     return focus ? focus->transform().position() : viewer;
 }
 

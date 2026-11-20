@@ -371,10 +371,12 @@ void Foliage::update(float dt)
     m_sinceCheck += dt;
     if (m_sinceBuild < 0.25f) return;
     const Terrain* terrain = Terrain::find(scene());
-    if (terrain != m_terrain || (terrain && terrain->version() != m_terrainVersion)) {
+    const Terrain* builtOn = m_terrain.get(scene());
+    FoliageSystem* system = this->system();
+    if (terrain != builtOn || (terrain && terrain->version() != m_terrainVersion)) {
         // Brush edits only: re-place around them instead of everything.
         glm::vec4 area;
-        if (!m_dirty && m_system && terrain == m_terrain && terrain->changedOnlyIn(m_terrainVersion, area) && state() == m_state)
+        if (!m_dirty && system && terrain == builtOn && terrain->changedOnlyIn(m_terrainVersion, area) && state() == m_state)
             refresh(area);
         else
             m_dirty = true;
@@ -386,19 +388,20 @@ void Foliage::update(float dt)
     if (check && !m_dirty && state() != m_state) m_dirty = true;
     if (m_dirty) {
         rebuild();
-    } else if (m_system && check) {
+        system = this->system();
+    } else if (system && check) {
         // An exclusion appeared, moved or went (a building): re-place only around it.
         auto shapes = exclusionShapes(scene());
         if (shapes != m_exclusions) {
             const glm::vec4 area = changedArea(shapes, m_exclusions, 1.0f);
             m_exclusions = shapes;
-            if (area.x <= area.z) m_system->setExclusions(std::move(shapes), area);
+            if (area.x <= area.z) system->setExclusions(std::move(shapes), area);
         }
     }
 
     // The focus is looked up by name (it may be spawned or renamed later); the
     // system remembers its id and follows it every frame.
-    if (m_system && check) m_system->setColliderFocus(colliderFocus.empty() ? nullptr : scene().find(colliderFocus));
+    if (system && check) system->setColliderFocus(colliderFocus.empty() ? nullptr : scene().find(colliderFocus));
 }
 
 void Foliage::rebuild()
@@ -408,12 +411,14 @@ void Foliage::rebuild()
     m_state = state();
     // Instance states (chopped trees, picked bushes) outlive the rebuild,
     // unless a save game handed us its own (loadState before the first build).
-    if (m_system && !m_hasPendingOverrides) {
-        m_pendingOverrides = m_system->overrides();
-        m_hasPendingOverrides = !m_pendingOverrides.empty();
+    if (FoliageSystem* old = system()) {
+        if (!m_hasPendingOverrides) {
+            m_pendingOverrides = old->overrides();
+            m_hasPendingOverrides = !m_pendingOverrides.empty();
+        }
+        old->destroy();
     }
-    if (m_system) m_system->destroy();
-    m_system = nullptr;
+    m_system.reset();
     m_layerNames.clear();
 
     Terrain* terrain = Terrain::find(scene());
@@ -518,7 +523,8 @@ void Foliage::rebuild()
 void Foliage::saveState(Json& out) const
 {
     Json list = Json::array();
-    const auto overrides = m_system ? m_system->overrides() : m_pendingOverrides;
+    const FoliageSystem* sys = system();
+    const auto overrides = sys ? sys->overrides() : m_pendingOverrides;
     for (const auto& [id, state] : overrides) list.push_back({id, state});
     out["overrides"] = std::move(list);
 }
@@ -528,8 +534,8 @@ void Foliage::loadState(const Json& in)
     std::vector<std::pair<uint64_t, uint32_t>> overrides;
     for (const Json& e : in.value("overrides", Json::array()))
         if (e.is_array() && e.size() == 2) overrides.push_back({e[0].get<uint64_t>(), e[1].get<uint32_t>()});
-    if (m_system) {
-        m_system->setOverrides(overrides);
+    if (FoliageSystem* sys = system()) {
+        sys->setOverrides(overrides);
     } else {
         m_pendingOverrides = std::move(overrides); // applied when the system is built
         m_hasPendingOverrides = true;
@@ -558,11 +564,17 @@ std::function<float(const FoliageSample&)> Foliage::makeDensity(const std::share
 
 void Foliage::refresh(glm::vec4 area)
 {
-    m_terrainVersion = m_terrain->version();
-    auto td = m_terrain->data();
+    const Terrain* terrain = m_terrain.get(scene());
+    FoliageSystem* sys = system();
+    if (!terrain || !sys) { // deleted since the check: rebuild instead
+        m_dirty = true;
+        return;
+    }
+    m_terrainVersion = terrain->version();
+    auto td = terrain->data();
     std::vector<std::function<float(const FoliageSample&)>> densities;
     for (const LayerDensity& d : m_densities) densities.push_back(makeDensity(td, d));
-    m_system->refresh(makeWorld(td), densities, area);
+    sys->refresh(makeWorld(td), densities, area);
 }
 
 // -----------------------------------------------------------------------------
@@ -614,10 +626,11 @@ void GrassLayer::update(float dt)
     m_sinceCheck += dt;
     if (m_sinceBuild >= 0.25f) {
         const Terrain* terrain = Terrain::find(scene());
-        if (terrain != m_terrain || (terrain && terrain->version() != m_terrainVersion)) {
+        const Terrain* builtOn = m_terrain.get(scene());
+        if (terrain != builtOn || (terrain && terrain->version() != m_terrainVersion)) {
             // Brush edits only: re-bake the grass textures in the background, keep the pass.
             glm::vec4 area;
-            if (!m_dirty && m_pass && terrain == m_terrain && terrain->changedOnlyIn(m_terrainVersion, area) && state() == m_state) {
+            if (!m_dirty && m_pass && terrain == builtOn && terrain->changedOnlyIn(m_terrainVersion, area) && state() == m_state) {
                 m_terrainVersion = terrain->version();
                 auto td = terrain->data();
                 m_exclusions = exclusions();
@@ -633,12 +646,12 @@ void GrassLayer::update(float dt)
         if (check && !m_dirty && state() != m_state) m_dirty = true;
         if (m_dirty) {
             rebuild();
-        } else if (m_pass && m_terrain && check) {
+        } else if (m_pass && builtOn && check) {
             // Exclusions changed (a building placed / removed): re-bake in the background, keep the pass.
             auto current = exclusions();
             if (current != m_exclusions) {
                 m_exclusions = std::move(current);
-                auto td = m_terrain->data();
+                auto td = builtOn->data();
                 m_pass->refresh([td](glm::vec2 p) { return td->height(p.x, p.y); }, makeMask(td, m_exclusions));
                 m_sinceBuild = 0.0f;
             }

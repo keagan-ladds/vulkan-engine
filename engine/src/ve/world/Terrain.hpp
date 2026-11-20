@@ -20,6 +20,7 @@
 // =============================================================================
 
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 #include "ve/scene/Reflection.hpp"
 #include "ve/scene/SaveGame.hpp"
 
@@ -346,8 +347,8 @@ private:
     std::shared_ptr<Texture> m_layerTable;                                     // splat layer parameters
     std::vector<float> m_layerTableData;
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_layerTextures; // albedo / packed normal-roughness-AO
-    GameObject* m_nodeObject = nullptr;           // child holding one MeshRenderer per drawn node
-    std::vector<MeshRenderer*> m_nodeRenderers;
+    ObjectRef<> m_nodeObject;                     // child holding one MeshRenderer per drawn node
+    std::vector<MeshRenderer*> m_nodeRenderers;   // its components (valid while the child is: they die together)
     std::unordered_map<int64_t, Component*> m_colliderTiles; // tile key -> Rigidbody (heightfield)
     float m_sinceColliders = 1e9f;
     std::string m_editState;

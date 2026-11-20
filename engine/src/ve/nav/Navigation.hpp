@@ -34,6 +34,7 @@
 
 #include "ve/core/Jobs.hpp"
 #include "ve/scene/Components.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 
@@ -191,8 +192,7 @@ private:
     // Foliage collider shape -> its triangles, unplaced (kept alive, so the key can't be reused).
     std::vector<std::pair<std::shared_ptr<const void>, std::vector<glm::vec3>>> m_foliageShapes;
     uint64_t m_pumpedFrame = ~0ull;
-    FoliageSystem* m_foliage = nullptr;
-    uint64_t m_foliageId = 0;
+    ObjectRef<FoliageSystem> m_foliage; // whose colliders and chop events feed the navmesh
     uint32_t m_foliageListener = 0;
     bool m_buildRequested = false;
     std::mt19937 m_rng{1234u};

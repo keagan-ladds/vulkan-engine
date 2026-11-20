@@ -16,7 +16,6 @@
 #include "vfx/Atmosphere.hpp"
 #include "vfx/Weather.hpp"
 
-#include <ve/editor/Editor.hpp>
 
 #include <glm/gtc/constants.hpp>
 
@@ -98,7 +97,7 @@ void DayNightCycle::update(float dt)
     Weather* weatherNow = m_weather.get(scene());
     if (!weatherNow) m_weather = weatherNow = scene().findFirst<Weather>(); // (none yet, or replaced)
     float speed = 24.0f / (std::max(dayLengthMinutes, 0.01f) * 60.0f); // hours per second
-    if (engine().editor() && engine().editor()->paused() && !advanceInEditor) speed = 0.0f;
+    if (engine().editorPaused() && !advanceInEditor) speed = 0.0f;
     if (timeKeys && in.keyDown(ve::Key::T)) speed = 24.0f / 60.0f; // fast forward: 1 h per 2.5 s
     if (timeKeys && in.keyDown(ve::Key::G)) speed = -24.0f / 60.0f; // rewind
     timeOfDay = std::fmod(timeOfDay + speed * dt + 24.0f, 24.0f);

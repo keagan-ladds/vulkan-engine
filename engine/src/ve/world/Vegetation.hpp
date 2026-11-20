@@ -29,6 +29,7 @@
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Instancing.hpp"
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 #include "ve/scene/SaveGame.hpp"
 #include "ve/world/Foliage.hpp"
 
@@ -164,7 +165,7 @@ public:
     bool preload = true;                 // load what's visible synchronously on the first build
 
     void markDirty() { m_dirty = true; }
-    FoliageSystem* system() const { return m_system; }
+    FoliageSystem* system() const { return m_system.get(scene()); } // null before the first build
     // Layer index of a FoliageType by its object's name (for FoliageSystem::query), -1 if none.
     int layerIndex(const std::string& name) const;
 
@@ -179,7 +180,7 @@ private:
     FoliageWorld makeWorld(const std::shared_ptr<const TerrainData>& td) const;
     static std::function<float(const FoliageSample&)> makeDensity(const std::shared_ptr<const TerrainData>& td, const LayerDensity& d);
 
-    FoliageSystem* m_system = nullptr;
+    ObjectRef<FoliageSystem> m_system; // a hidden child (the editor could still delete it)
     std::vector<std::pair<uint64_t, uint32_t>> m_pendingOverrides; // loaded before the system existed
     bool m_hasPendingOverrides = false;
     std::vector<std::string> m_layerNames;
@@ -187,7 +188,7 @@ private:
     std::string m_state;
     std::vector<FoliageExclusionShape> m_exclusions; // as last applied
     uint64_t m_terrainVersion = 0;
-    const Terrain* m_terrain = nullptr;
+    ObjectRef<const Terrain> m_terrain; // built against (compared by id: it may be deleted)
     bool m_dirty = true;
     bool m_built = false;
     float m_sinceBuild = 1e6f;
@@ -262,7 +263,7 @@ private:
     std::string m_state;
     std::vector<Exclusion> m_exclusions; // as last applied
     uint64_t m_terrainVersion = 0;
-    const Terrain* m_terrain = nullptr;
+    ObjectRef<const Terrain> m_terrain; // built against (compared by id: it may be deleted)
     bool m_dirty = true;
     float m_sinceBuild = 1e6f;
     float m_sinceCheck = 1e6f; // since state() / exclusions were last compared

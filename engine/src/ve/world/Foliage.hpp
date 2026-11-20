@@ -45,6 +45,7 @@
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Instancing.hpp"
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -248,9 +249,9 @@ public:
     void refresh(FoliageWorld world, const std::vector<std::function<float(const FoliageSample&)>>& densities, glm::vec4 area);
 
     // Colliders are streamed around this object (e.g. the player); 0 / not
-    // found = the camera. Stored by id: the object may be deleted at any time.
-    uint64_t colliderFocusId = 0;
-    void setColliderFocus(const GameObject* object) { colliderFocusId = object ? object->id() : 0; }
+    // found = the camera. An ObjectRef: the object may be deleted at any time.
+    ObjectRef<> colliderFocus;
+    void setColliderFocus(const GameObject* object) { colliderFocus = object; }
 
     void update(float dt) override;
     void onGui() override;

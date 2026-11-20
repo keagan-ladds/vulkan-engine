@@ -734,8 +734,8 @@ void Terrain::setEditsJson(const Json& j)
 
 void Terrain::onDestroy()
 {
-    if (m_nodeObject) m_nodeObject->destroy();
-    m_nodeObject = nullptr;
+    if (GameObject* nodes = m_nodeObject.get(scene())) nodes->destroy();
+    m_nodeObject.reset();
     m_nodeRenderers.clear();
     m_colliderTiles.clear(); // components die with this object
     m_lod.reset();
@@ -878,21 +878,24 @@ void Terrain::updateNodes(bool preload)
 
     // The drawn nodes go to pooled MeshRenderers on a child object. Node
     // vertices are in world space, so the child keeps an identity transform.
-    if (!m_nodeObject) {
-        m_nodeObject = &scene().spawn("TerrainNodes");
-        m_nodeObject->hideInHierarchy = true;
-        m_nodeObject->setParent(this, false);
+    GameObject* nodes = m_nodeObject.get(scene());
+    if (!nodes) { // first time, or something deleted the child (and its renderers with it)
+        nodes = &scene().spawn("TerrainNodes");
+        nodes->hideInHierarchy = true;
+        nodes->setParent(this, false);
+        m_nodeObject = nodes;
+        m_nodeRenderers.clear();
     }
-    const glm::mat4& world = m_nodeObject->transform().worldMatrix();
+    const glm::mat4& world = nodes->transform().worldMatrix();
     if (world != glm::mat4(1.0f)) {
-        m_nodeObject->setParent(nullptr, false); // the terrain moved: back to the origin
-        m_nodeObject->transform().setLocalPosition(glm::vec3(0.0f));
-        m_nodeObject->transform().setLocalRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
-        m_nodeObject->transform().setLocalScale(glm::vec3(1.0f));
-        m_nodeObject->setParent(this, true);
+        nodes->setParent(nullptr, false); // the terrain moved: back to the origin
+        nodes->transform().setLocalPosition(glm::vec3(0.0f));
+        nodes->transform().setLocalRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+        nodes->transform().setLocalScale(glm::vec3(1.0f));
+        nodes->setParent(this, true);
     }
     const auto& drawn = m_lod->drawn();
-    while (m_nodeRenderers.size() < drawn.size()) m_nodeRenderers.push_back(&m_nodeObject->addComponent<MeshRenderer>());
+    while (m_nodeRenderers.size() < drawn.size()) m_nodeRenderers.push_back(&nodes->addComponent<MeshRenderer>());
     for (size_t i = 0; i < m_nodeRenderers.size(); ++i) {
         MeshRenderer& mr = *m_nodeRenderers[i];
         if (i < drawn.size()) {

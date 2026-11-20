@@ -306,21 +306,22 @@ void NavMeshSurface::gather(TileJob& job)
     }
 
     if (includeFoliage) {
-        if (!m_foliage || !scene.findById(m_foliageId)) {
-            m_foliage = scene.findFirst<FoliageSystem>();
-            m_foliageId = m_foliage ? m_foliage->id() : 0;
+        FoliageSystem* foliage = m_foliage.get(scene);
+        if (!foliage) {
+            foliage = scene.findFirst<FoliageSystem>();
+            m_foliage = foliage;
             m_foliageListener = 0;
         }
-        if (m_foliage) {
+        if (foliage) {
             if (!m_foliageListener) {
                 // A tree was chopped (or grew back): the paths around it change.
-                m_foliageListener = m_foliage->addStateListener([this](FoliageInstanceId, const glm::vec3& p) {
+                m_foliageListener = foliage->addStateListener([this](FoliageInstanceId, const glm::vec3& p) {
                     rebuild({p.x - 2.0f, p.z - 2.0f, p.x + 2.0f, p.z + 2.0f});
                 });
             }
             // A few shapes shared by thousands of instances: triangulate each
             // once (unplaced), then place the triangles per instance.
-            m_foliage->forEachCollider(area, [&](const Collider& c, const glm::mat4& m) {
+            foliage->forEachCollider(area, [&](const Collider& c, const glm::mat4& m) {
                 auto it = std::find_if(m_foliageShapes.begin(), m_foliageShapes.end(), [&](const auto& f) { return f.first == c.impl; });
                 if (it == m_foliageShapes.end()) it = m_foliageShapes.insert(m_foliageShapes.end(), {c.impl, c.triangles(glm::mat4(1.0f))});
                 const std::vector<glm::vec3>& tris = it->second;
@@ -645,7 +646,7 @@ void NavAgent::drawDebug() const
 
 void NavMeshSurface::onDestroy()
 {
-    if (m_foliageListener && gameObject().scene().findById(m_foliageId)) m_foliage->removeStateListener(m_foliageListener);
+    if (FoliageSystem* foliage = m_foliageListener ? m_foliage.get(gameObject().scene()) : nullptr) foliage->removeStateListener(m_foliageListener);
     m_foliageListener = 0;
     destroyNav();
 }
