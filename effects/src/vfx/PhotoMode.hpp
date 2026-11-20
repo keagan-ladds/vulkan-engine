@@ -26,6 +26,7 @@
 #include <ve/core/Input.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 
 #include <glm/glm.hpp>
 
@@ -66,7 +67,7 @@ private:
     ve::Renderer::PhotoCaptureSettings captureSettings() const;
 
     bool m_active = false;
-    ve::GameObject* m_camera = nullptr;
+    ve::ObjectRef<> m_camera; // (the editor may delete it)
     float m_yaw = 0.0f, m_pitch = 0.0f; // degrees
     float m_fov = 60.0f;
 

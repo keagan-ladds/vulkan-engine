@@ -39,11 +39,12 @@ void Water::rebuild()
     const glm::vec2 s = glm::max(size, glm::vec2(1.0f));
     const auto segments = static_cast<uint32_t>(glm::clamp(s.x / 80.0f, 1.0f, 32.0f));
     auto mesh = ve::Mesh::create(r, ve::primitives::plane(s.x, s.y, segments, segments), {}, "water");
-    if (!m_renderer) {
-        m_renderer = &addComponent<ve::MeshRenderer>(mesh, m_material);
-        m_renderer->castShadows = false;
+    if (ve::MeshRenderer* mr = m_renderer.get(scene())) {
+        mr->mesh = mesh;
     } else {
-        m_renderer->mesh = mesh;
+        auto& added = addComponent<ve::MeshRenderer>(mesh, m_material);
+        added.castShadows = false;
+        m_renderer = &added;
     }
 }
 

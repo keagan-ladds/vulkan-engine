@@ -32,14 +32,34 @@ DayNightCycle::DayNightCycle() : GameObject("DayNight")
 void DayNightCycle::onDestroy()
 {
     if (auto* atmo = renderer().graph().findPass<vfx::AtmospherePass>()) {
-        if (atmo->sunObject == m_sunId) atmo->sunObject = 0;
-        if (atmo->moonObject == m_moonId) atmo->moonObject = 0;
+        if (atmo->sunObject == m_sun) atmo->sunObject.reset();
+        if (atmo->moonObject == m_moon) atmo->moonObject.reset();
     }
     // The lights are separate objects we created (unless the editor already deleted them).
-    if (ve::GameObject* o = scene().findById(m_sunId)) o->destroy();
-    if (ve::GameObject* o = scene().findById(m_moonId)) o->destroy();
-    m_sunId = m_moonId = 0;
-    m_sun = m_moon = nullptr;
+    if (ve::GameObject* o = m_sun.get(scene())) o->destroy();
+    if (ve::GameObject* o = m_moon.get(scene())) o->destroy();
+    m_sun.reset();
+    m_moon.reset();
+}
+
+static ve::DirectionalLight* lightOn(const ve::GameObject* o)
+{
+    return o ? o->getComponent<ve::DirectionalLight>() : nullptr;
+}
+
+Weather* DayNightCycle::weather() const
+{
+    return m_weather.get(scene());
+}
+
+ve::DirectionalLight* DayNightCycle::sun() const
+{
+    return lightOn(m_sun.get(scene()));
+}
+
+ve::DirectionalLight* DayNightCycle::moon() const
+{
+    return lightOn(m_moon.get(scene()));
 }
 
 glm::vec3 DayNightCycle::sunDirection(float hours)
@@ -54,39 +74,29 @@ void DayNightCycle::start()
 {
     ve::GameObject& sunObject = scene().spawn("Sun");
     sunObject.runInEditor = true;
-    m_sun = &sunObject.addComponent<ve::DirectionalLight>();
-    m_sun->castShadows = true;
-    m_sunId = sunObject.id();
+    sunObject.addComponent<ve::DirectionalLight>().castShadows = true;
+    m_sun = &sunObject;
 
     ve::GameObject& moonObject = scene().spawn("Moon");
     moonObject.runInEditor = true;
-    m_moon = &moonObject.addComponent<ve::DirectionalLight>();
-    m_moon->castShadows = true;
-    m_moon->color = {0.55f, 0.65f, 1.0f};
-    m_moonId = moonObject.id();
+    auto& moon = moonObject.addComponent<ve::DirectionalLight>();
+    moon.castShadows = true;
+    moon.color = {0.55f, 0.65f, 1.0f};
+    m_moon = &moonObject;
 
     if (auto* atmo = renderer().graph().findPass<vfx::AtmospherePass>()) {
-        atmo->sunObject = m_sunId;
-        atmo->moonObject = m_moonId;
+        atmo->sunObject = m_sun;
+        atmo->moonObject = m_moon;
     }
 }
 
 void DayNightCycle::update(float dt)
 {
     ve::Input& in = input();
-    // By id: the editor can delete (and undo-restore) the Sun / Moon objects at any time.
-    auto light = [&](uint64_t id) -> ve::DirectionalLight* {
-        ve::GameObject* o = scene().findById(id);
-        return o ? o->getComponent<ve::DirectionalLight>() : nullptr;
-    };
-    m_sun = light(m_sunId);
-    m_moon = light(m_moonId);
-    // By id: the editor can delete or replace the Weather at any time.
-    m_weather = dynamic_cast<Weather*>(scene().findById(m_weatherId));
-    if (!m_weather) {
-        m_weather = scene().findFirst<Weather>();
-        m_weatherId = m_weather ? m_weather->id() : 0;
-    }
+    ve::DirectionalLight* sunLight = sun();
+    ve::DirectionalLight* moonLight = moon();
+    Weather* weatherNow = m_weather.get(scene());
+    if (!weatherNow) m_weather = weatherNow = scene().findFirst<Weather>(); // (none yet, or replaced)
     float speed = 24.0f / (std::max(dayLengthMinutes, 0.01f) * 60.0f); // hours per second
     if (engine().editor() && engine().editor()->paused() && !advanceInEditor) speed = 0.0f;
     if (timeKeys && in.keyDown(ve::Key::T)) speed = 24.0f / 60.0f; // fast forward: 1 h per 2.5 s
@@ -97,25 +107,25 @@ void DayNightCycle::update(float dt)
     // The moon roughly opposite the sun, offset so it isn't exactly in line.
     const glm::vec3 towardsMoon = glm::normalize(-m_towardsSun + glm::vec3(0.25f, 0.35f, -0.2f));
 
-    if (m_sun) m_sun->transform().setRotation(glm::quatLookAt(-m_towardsSun, glm::vec3(0, 1, 0)));
-    if (m_moon) m_moon->transform().setRotation(glm::quatLookAt(-towardsMoon, glm::vec3(0, 1, 0)));
+    if (sunLight) sunLight->transform().setRotation(glm::quatLookAt(-m_towardsSun, glm::vec3(0, 1, 0)));
+    if (moonLight) moonLight->transform().setRotation(glm::quatLookAt(-towardsMoon, glm::vec3(0, 1, 0)));
 
     // Sunlight colour = what survives the atmosphere: white at noon, deep orange at sunset.
-    const float haze = m_weather ? m_weather->current().haze : 1.5f;
+    const float haze = weatherNow ? weatherNow->current().haze : 1.5f;
     const glm::vec3 T = vfx::AtmospherePass::sunTransmittance(m_towardsSun, haze);
     const float maxT = std::max({T.r, T.g, T.b, 1e-4f});
-    const float weatherScale = m_weather ? m_weather->sunScale() : 1.0f;
-    if (m_sun) {
-        m_sun->color = T / maxT;
-        m_sun->intensity = sunIntensity * maxT * weatherScale;
-        m_sun->enabled = m_sun->intensity > 0.002f;
+    const float weatherScale = weatherNow ? weatherNow->sunScale() : 1.0f;
+    if (sunLight) {
+        sunLight->color = T / maxT;
+        sunLight->intensity = sunIntensity * maxT * weatherScale;
+        sunLight->enabled = sunLight->intensity > 0.002f;
     }
 
     const float moonUp = glm::smoothstep(-0.05f, 0.15f, towardsMoon.y);
     const float night = glm::smoothstep(0.08f, -0.12f, m_towardsSun.y);
-    if (m_moon) {
-        m_moon->intensity = moonIntensity * moonUp * night * (0.4f + 0.6f * weatherScale);
-        m_moon->enabled = m_moon->intensity > 0.002f;
+    if (moonLight) {
+        moonLight->intensity = moonIntensity * moonUp * night * (0.4f + 0.6f * weatherScale);
+        moonLight->enabled = moonLight->intensity > 0.002f;
     }
 
     // For ambience (AmbientLayer hours) and game code.
