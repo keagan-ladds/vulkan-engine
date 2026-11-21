@@ -19,6 +19,13 @@
 # =============================================================================
 include(FetchContent)
 
+# CMake 4 refuses projects whose cmake_minimum_required is below 3.5 (Recast,
+# ENet) and warns below 3.10 (glm, meshoptimizer). Raise those fetched
+# projects' minimum to 3.10; projects already above it are unaffected.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+endif()
+
 find_package(Vulkan REQUIRED COMPONENTS glslc)
 
 # SDL2: the system's (apt, vcpkg, an SDL2 development package on

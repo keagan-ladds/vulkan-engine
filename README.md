@@ -67,6 +67,28 @@ Or open the folder in Visual Studio 2022 and pick the `debug` / `release` preset
 the Visual Studio generator and debugger on Windows). Test hooks work the same
 way, for example `$env:SAVANNA_AUTOTEST=1; .\build-vs\bin\savanna.exe` in PowerShell.
 
+#### MinGW-w64 / GCC (w64devkit) instead of Visual Studio
+
+A MinGW-w64 GCC toolchain works too, for example
+[w64devkit](https://github.com/skeeto/w64devkit), which ships GCC, CMake and
+Ninja in one folder. Put its `bin` on `PATH` and install the Vulkan SDK as above
+(nothing else is needed). Then use the Ninja presets and name the compilers, so
+CMake doesn't pick up Visual Studio's if that is also installed:
+
+```powershell
+cmake --preset debug -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++   # or --preset release
+cmake --build --preset debug                                            # or release
+.\build\bin\savanna.exe                                                 # build-release\ for release
+```
+
+- The executable links the GCC runtime statically, so it runs without MinGW DLLs
+  next to it; it only needs `vulkan-1.dll`, which the GPU driver installs.
+- CMake 4 (which w64devkit ships) is fine: the build raises old fetched
+  libraries' `cmake_minimum_required` for you (`CMAKE_POLICY_VERSION_MINIMUM`).
+- A build folder can't switch generators: if `build/` was configured with
+  Visual Studio before, delete it first.
+- Open a new terminal after installing the Vulkan SDK so `VULKAN_SDK` is set.
+
 Games built with `ve_setup_game` get a manifest that makes UTF-8 the process
 code page (Windows 10 1903 or later), so paths with any characters work as on
 Linux. A shared SDL2 DLL, if one was found, is copied next to the executable.
