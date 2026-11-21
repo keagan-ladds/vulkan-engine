@@ -1,7 +1,8 @@
 #pragma once
 
 // Scripted smoke test (SAVANNA_AUTOTEST=1): picks up a sunstone, throws rocks,
-// streams the world, chops, picks, saves and loads, builds, then walks the UI,
+// streams the world, chops, picks, saves and loads, builds, picks up stones
+// (a ProxySet: promotion, demotion, save / load), then walks the UI,
 // logging what happened ("[autotest] ..."). Exercises gameplay code paths
 // (deferred destroy, one-shot audio, weather transitions...) without input.
 
@@ -30,6 +31,9 @@ struct AutoTestSaveExpect {
     glm::vec3 player{0.0f};
     uint64_t tree = 0;
     std::vector<std::pair<std::string, glm::vec3>> pieces; // building test: name, position
+    uint64_t pickupGone = 0, pickupKept = 0; // pickups test: the entry picked up, the one marked
+    int pickupStones = 0;
+    size_t pickupEntries = 0;
 };
 
 class AutoTest : public ve::GameObject {
@@ -53,6 +57,10 @@ public:
     bool m_buildShot = false;
     void uiSteps(const std::function<void(const std::string&)>& log);
     void physicsSteps(const std::function<void(const std::string&)>& log);
+    void pickupSteps(const std::function<void(const std::string&)>& log);
+    // Stands the player next to a point on the ground, looking at it.
+    void faceGround(const glm::vec3& target, float distance);
+    bool m_pickupLogged = false;
     ve::ObjectRef<> m_physGhost, m_physSolid, m_physPlatform, m_physProbe;
     bool m_physOnStone = false;
     ve::ObjectRef<Villager> m_animVillager;
