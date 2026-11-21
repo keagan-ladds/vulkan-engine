@@ -372,7 +372,10 @@ BuildPiece* BuildPiece::of(ve::GameObject* o)
 void BuildPiece::start()
 {
     Builder3 b;
-    addComponent<ve::MeshRenderer>(pieceMesh(kind, material, b), propMaterial());
+    const bool ghost = ve::PlacementGhost::is(*this);
+    // Placed pieces never move: static, batched on the GPU (a door's leaf
+    // swings: its own, non-static renderer). The ghost follows the aim.
+    addComponent<ve::MeshRenderer>(pieceMesh(kind, material, b), propMaterial()).isStatic = !ghost;
     for (const PieceSnap& p : snapPoints(kind)) {
         auto& sp = addComponent<ve::SnapPoint>();
         sp.offset = p.offset;
@@ -380,7 +383,6 @@ void BuildPiece::start()
         sp.accepts = p.accepts;
         sp.alignRotation = p.align; // fittings turn to match their opening
     }
-    const bool ghost = ve::PlacementGhost::is(*this);
     // A door's leaf swings on a hinge: its own object, its own (moving) collider.
     Builder3 leaf;
     ve::GameObject* leafObject = nullptr;
