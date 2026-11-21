@@ -33,9 +33,13 @@ std::map<std::string, ItemType>& items()
         {"wood", {"wood", "Wood", "Split acacia logs. Burns well; the start of every hut and fence.", 50}},
         {"berries", {"berries", "Berries", "Sweet and a little sour. Grow back on the bush after a while.", 30}},
         {"sunstone", {"sunstone", "Sunstone", "Warm to the touch, it glows faintly at dusk. Twelve are hidden around the savanna.", 12}},
+        {"stone", {"stone", "Stone", "A fist-sized stone from the plain. Good for a fire ring, or for throwing.", 40}},
+        {"stick", {"stick", "Stick", "A dry branch, fallen from an acacia. Kindling, or the start of a tool.", 40}},
     };
     return m;
 }
+
+} // namespace
 
 ve::MeshData itemMesh(const std::string& id)
 {
@@ -62,14 +66,20 @@ ve::MeshData itemMesh(const std::string& id)
         m.append(prim::cylinder(0.025f, 0.02f, 0.4f, 6), at({0.0f, 0.75f, 0.0f}), glm::vec4(0.3f, 0.35f, 0.15f, 1.0f));
         m.append(prim::cube({0.45f, 0.02f, 0.2f}), at({0.2f, 0.85f, 0.0f}, 0.0f, glm::radians(25.0f)), glm::vec4(0.3f, 0.5f, 0.2f, 1.0f));
         m.append(prim::cube({0.45f, 0.02f, 0.2f}), at({-0.2f, 0.85f, 0.0f}, 0.0f, glm::radians(-25.0f)), glm::vec4(0.28f, 0.46f, 0.18f, 1.0f));
+    } else if (id == "stone") { // a flattish, faceted pebble resting on its base
+        m.append(prim::icosphere(0.5f, 1), at({0.0f, 0.28f, 0.0f}) * glm::scale(glm::mat4(1.0f), {1.15f, 0.6f, 0.9f}),
+                 glm::vec4(0.47f, 0.44f, 0.40f, 1.0f));
+    } else if (id == "stick") { // a dry branch lying on the ground, with one twig
+        const glm::vec4 bark(0.42f, 0.30f, 0.19f, 1.0f);
+        m.append(prim::cylinder(0.09f, 0.06f, 1.6f, 6), at({0.0f, 0.09f, 0.0f}, 0.0f, glm::radians(90.0f)), bark);
+        m.append(prim::cylinder(0.05f, 0.025f, 0.5f, 5), at({0.25f, 0.09f, 0.12f}, glm::radians(-40.0f), glm::radians(90.0f)) *
+                     glm::translate(glm::mat4(1.0f), {0.0f, 0.25f, 0.0f}), bark);
     } else { // sunstone: a faceted golden gem
         m.append(prim::icosphere(0.55f, 0), glm::scale(glm::mat4(1.0f), {1.0f, 1.25f, 1.0f}), glm::vec4(1.0f, 0.72f, 0.25f, 1.0f));
     }
     m.makeFlatShaded();
     return m;
 }
-
-} // namespace
 
 const ItemType* itemType(const std::string& id)
 {

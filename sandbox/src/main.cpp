@@ -19,6 +19,7 @@
 #include "Inventory.hpp"
 #include "MainMenu.hpp"
 #include "Multiplayer.hpp"
+#include "Pickups.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
 #include "Vegetation.hpp"
@@ -363,6 +364,7 @@ void buildLevel(ve::Engine& engine)
     scene.spawn<Multiplayer>();     // avatars, the host's world for joiners (Multiplayer.hpp)
     if (const auto nt = ve::env::get("SAVANNA_NETTEST")) scene.spawn<NetTest>(*nt == "host");
     scene.spawn<Regrowth>(); // berry bushes grow back (Harvest.hpp)
+    spawnPickups(scene, terrain, player); // stones and sticks lying around (Pickups.hpp)
     auto& photoMode = scene.spawn<vfx::PhotoMode>(); // F12: free camera, DOF, max-quality screenshots
 
     // Environment objects from the scene file (Weather, DayNightCycle, Water).
