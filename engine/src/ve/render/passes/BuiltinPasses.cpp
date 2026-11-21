@@ -68,6 +68,11 @@ void InstanceCullPass::onGui()
     ImGui::Text("Indirect draws: %u", s.drawCalls);
     ImGui::Text("Camera per LOD: %u / %u / %u / %u", s.visibleLod[0], s.visibleLod[1], s.visibleLod[2], s.visibleLod[3]);
     RendererSettings& rs = renderer().settings();
+    // Static MeshRenderers as instances (StaticBatcher); off = drawn one by one (A/B).
+    const StaticBatcher& sb = renderer().staticBatcher();
+    ImGui::Checkbox("Static batching", &rs.staticBatching);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu renderers, %u groups", sb.size(), sb.groupCount());
     ImGui::SliderFloat("LOD bias", &rs.lodBias, 0.25f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     int shadowBias = static_cast<int>(rs.shadowLodBias);
     if (ImGui::SliderInt("Shadow LOD bias", &shadowBias, 0, 3)) rs.shadowLodBias = static_cast<uint32_t>(shadowBias);
@@ -120,6 +125,8 @@ void ShadowPass::execute(RenderContext& ctx)
         }
         m_scratch.clear();
         for (uint32_t i : sv.point ? m_lightCasters : m_casters) {
+            // Batched statics: their instance groups draw them into cascades (below).
+            if (!sv.point && frame.items[i].instanced) continue;
             if (sv.frustum.intersects(frame.items[i].bounds)) m_scratch.push_back(i);
         }
 
