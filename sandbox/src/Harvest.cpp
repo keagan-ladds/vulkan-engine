@@ -48,10 +48,8 @@ bool ChoppableTree::chop()
     ve::FoliageLink* l = link();
     if (!l || l->info.state != 0) return false;
     if (++chops < kChops) return false;
-    GameState& gs = gameState();
-    gs.inventory.add("wood", 4);
-    gs.message = "Timber! +4 wood";
-    gs.messageTimer = 2.0f;
+    gameState().inventory.add("wood", 4);
+    notify("Timber! +4 wood", 2.0f);
     // A stump from now on: the foliage system keeps it so, and swaps this
     // object for a fresh one showing the stump.
     l->setState("Stump");
@@ -72,10 +70,8 @@ bool BerryBush::pick()
 {
     ve::FoliageLink* l = link();
     if (!l || l->info.state != 0) return false;
-    GameState& gs = gameState();
-    gs.inventory.add("berries", 6);
-    gs.message = "+6 berries";
-    gs.messageTimer = 2.0f;
+    gameState().inventory.add("berries", 6);
+    notify("+6 berries", 2.0f);
     if (Regrowth* r = Regrowth::find(scene())) r->schedule(l->info.id.packed(), r->regrowSeconds);
     l->setState("Picked");
     return true;
@@ -112,6 +108,7 @@ void Regrowth::schedule(uint64_t instanceId, float seconds)
 void Regrowth::update(float dt)
 {
     m_time += dt;
+    if (m_due.empty()) return; // (nothing picked: no need to look for the foliage)
     auto* foliageObject = scene().findFirst<ve::Foliage>();
     ve::FoliageSystem* foliage = foliageObject ? foliageObject->system() : nullptr;
     if (!foliage) return;

@@ -32,6 +32,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -139,6 +140,7 @@ public:
     // --- Rebinding / settings ----------------------------------------------------
     std::vector<std::string> actions() const;             // sorted
     std::vector<std::string> bindingNames(const std::string& action) const; // "E", "Mouse Left", "Pad A"...
+    std::string bindingText(const std::string& action, std::string_view sep = ", ") const; // bindingNames joined
     // The next key / mouse button (or gamepad button) pressed replaces the
     // action's keyboard+mouse (or gamepad) bindings. Escape cancels.
     void startRebind(const std::string& action);

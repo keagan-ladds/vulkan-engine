@@ -1,7 +1,9 @@
 #include "ve/core/Engine.hpp"
+#include "ve/render/Renderer.hpp"
 #include "ve/net/Network.hpp"
 #include "ve/debug/Debug.hpp"
 
+#include "ve/anim/Animation.hpp"
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
 #include "ve/core/Log.hpp"
@@ -9,11 +11,16 @@
 #include "ve/ui/Gui.hpp"
 #include "ve/core/Window.hpp"
 #include "ve/editor/Editor.hpp"
+#include "ve/gameplay/Interaction.hpp"
+#include "ve/gameplay/Placement.hpp"
+#include "ve/gameplay/ProxySet.hpp"
+#include "ve/nav/Navigation.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Reflection.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/ui/UiLayer.hpp"
+#include "ve/world/Terrain.hpp"
 #include "ve/world/Vegetation.hpp"
 
 #include <SDL.h>
@@ -26,11 +33,38 @@
 #include <cstdlib>
 #include <fstream>
 
+#ifdef _WIN32
+#include <windows.h> // GetThreadTimes (NOMINMAX / WIN32_LEAN_AND_MEAN: set by CMake)
+#endif
+
 namespace ve {
 
 namespace {
 Engine* g_engine = nullptr;
+
+// Reflection: every module's components (scene files, editor). Each module
+// registers its own types, so the scene module doesn't include the modules
+// above it; this is the one place that knows them all. Once per process (the
+// registry is global and outlives an Engine).
+void registerAllTypes()
+{
+    static bool done = false;
+    if (done) return;
+    done = true;
+    registerBuiltinTypes(); // scene: GameObject, Camera, lights, ModelInstance, ...
+    TypeRegistry& r = TypeRegistry::get();
+    registerNetworkTypes(r);
+    registerInteractionTypes(r);
+    registerPlacementTypes(r);
+    registerProxyTypes(r);
+    registerNavigationTypes(r);
+    registerAnimationTypes(r);
+    registerPhysicsTypes(r);
+    registerAudioTypes(r);
+    registerTerrainTypes(r);
+    registerVegetationTypes(r);
 }
+} // namespace
 
 // Benchmark mode (VE_BENCH=<frames>[,<warmup>], usually with VE_HEADLESS=1):
 // skips `warmup` frames (default 30: streaming, pipeline creation), then
@@ -48,6 +82,13 @@ double threadCpuMs()
     timespec ts{};
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return double(ts.tv_sec) * 1e3 + double(ts.tv_nsec) * 1e-6;
+#elif defined(_WIN32)
+    FILETIME created, exited, kernel, user; // 100 ns units
+    if (GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) {
+        auto ticks = [](const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+        return double(ticks(kernel) + ticks(user)) * 1e-4;
+    }
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
 #else
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
 #endif
@@ -110,6 +151,7 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_window = std::make_unique<Window>(config.title, config.width, config.height, rs.headless);
     m_renderer = std::make_unique<Renderer>();
     m_renderer->init(*m_window, rs, config.validation, shaderDirs);
+    registerSkinnedMeshes(m_renderer->skinning()); // the renderer's skinning pass finds anim's SkinnedMeshRenderers
     m_audio = std::make_unique<AudioSystem>();
     if (config.enableAudio) m_audio->init();
     m_physics = std::make_unique<PhysicsWorld>();
@@ -120,7 +162,7 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_ui = std::make_unique<UiLayer>();
     m_ui->init(*this);
     m_scene = std::make_unique<Scene>();
-    registerBuiltinTypes(); // reflection: scene files + editor
+    registerAllTypes(); // reflection: scene files + editor
     if (config.enableEditor) {
         m_editor = std::make_unique<Editor>();
         m_editor->init(*this);
@@ -162,6 +204,9 @@ void Engine::benchFrame(float cpuMs)
               n, b.threadMs / n, b.cpuMs / n, b.cpuMax, b.waitMs / n, b.submitMs / n, b.physicsMs / n, b.gpuMs / n);
     const InstanceStats& is = m_renderer->instances().stats();
     log::info("[bench] instances {} (camera draws {}, shadow draws {})", is.instances, is.visibleCamera, is.visibleShadow);
+    const RenderStats& rs = m_renderer->stats();
+    log::info("[bench] draw calls {} (shadow {}, indirect {}), objects {} ({} batched static)", rs.drawCalls, rs.shadowDrawCalls,
+              is.drawCalls, rs.totalObjects, rs.staticObjects);
     for (const auto& [name, ms] : b.passMs) log::info("[bench]   {:<28} {:8.3f} ms", name, ms / n);
     for (const Profiler::Zone& z : Profiler::get().zones())
         log::info("[bench] cpu {}{:<28} {:8.3f} ms", std::string(size_t(z.depth) * 2, ' '), z.name, z.avgMs);
@@ -176,8 +221,7 @@ Engine::~Engine()
     if (m_editor) m_editor->shutdown();
     m_editor.reset();
     m_scene.reset();
-    MeshLibrary::releaseMeshes();
-    for (auto& fn : m_atShutdown) fn();
+    for (auto& fn : m_atShutdown) fn(); // modules' static GPU caches (e.g. world's MeshLibrary)
     m_atShutdown.clear();
     m_assets.reset();
     if (m_ui) m_ui->shutdown(); // no-op if run() already did it
@@ -187,6 +231,9 @@ Engine::~Engine()
     m_physics.reset(); // after the scene: Rigidbodies remove themselves from the world
     m_renderer.reset();
     m_window.reset();
+    // Last: everything that submits jobs (world systems, grass passes, shader
+    // hot-reload) is gone. Queued jobs are dropped, running ones finish.
+    jobs::shutdown();
     g_engine = nullptr;
 }
 
@@ -326,6 +373,11 @@ bool Engine::pollLoadTasks()
     return tasksDone && m_loadSteps.empty();
 }
 
+bool Engine::editorPaused() const
+{
+    return m_editor && m_editor->paused();
+}
+
 bool Engine::loadingInEditor() const
 {
     return m_loadingScene && m_editor && m_editor->editing();
@@ -385,7 +437,7 @@ void Engine::tickFrame()
 
     if (m_editor) m_editor->beginFrame(m_time.unscaledDeltaTime);
     // Editor "Edit" mode: the game is paused; only runInEditor objects update.
-    const bool paused = (m_editor && m_editor->paused()) || gamePaused || editorLoading;
+    const bool paused = editorPaused() || gamePaused || editorLoading;
 
     m_scene->startPending();
 

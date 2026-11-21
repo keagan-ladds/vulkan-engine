@@ -9,6 +9,9 @@ namespace ve {
 
 Window::Window(const std::string& title, int width, int height, bool hidden)
 {
+    // The game has its own main() (SDL_MAIN_HANDLED, no SDL2main): tell SDL
+    // the platform setup SDL_main would have done isn't needed.
+    SDL_SetMainReady();
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMECONTROLLER) != 0) {
         throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
     }

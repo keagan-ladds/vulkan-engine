@@ -18,6 +18,9 @@
 # clash with the engine's (standard.vert, sky.frag, ...). Prefix them if unsure.
 # =============================================================================
 
+# This folder (for files games pick up from the engine, e.g. the Windows manifest).
+set(VE_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}" CACHE INTERNAL "vulkan-engine's cmake/ folder")
+
 # Warning flags for first-party targets (third-party code is compiled with -w).
 function(ve_set_warnings target)
     if(MSVC)
@@ -37,6 +40,26 @@ function(ve_setup_game TARGET)
     ve_set_warnings(${TARGET})
     # $<1:...> stops multi-config generators (Visual Studio) adding Debug/ Release/.
     set_target_properties(${TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${VE_OUTPUT_DIR}>")
+
+    if(WIN32)
+        # UTF-8 as the process code page (see cmake/windows/ve.manifest).
+        if(MSVC)
+            target_sources(${TARGET} PRIVATE ${VE_CMAKE_DIR}/windows/ve.manifest)
+        else()
+            target_sources(${TARGET} PRIVATE ${VE_CMAKE_DIR}/windows/ve.rc)
+        endif()
+        # MinGW: link its C++ runtime (libstdc++, libgcc, winpthread) into the
+        # executable, so it runs without MinGW's DLLs next to it.
+        if(MINGW)
+            target_link_options(${TARGET} PRIVATE -static)
+        endif()
+        # A shared SDL2 (vcpkg, a development package) must sit next to the
+        # executable. The SDL2 built from source is static: then there's nothing to copy.
+        add_custom_command(TARGET ${TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E $<IF:$<BOOL:$<TARGET_RUNTIME_DLLS:${TARGET}>>,copy_if_different,true>
+                    $<TARGET_RUNTIME_DLLS:${TARGET}> $<TARGET_FILE_DIR:${TARGET}>
+            COMMAND_EXPAND_LISTS)
+    endif()
 
     if(ARG_SHADERS)
         ve_compile_shaders(${TARGET} SOURCES ${ARG_SHADERS}

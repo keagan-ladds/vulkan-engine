@@ -3,23 +3,23 @@
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/scene/Ids.hpp"
 
 #include <glm/gtc/quaternion.hpp>
 
-#include <cstdio>
 #include <fstream>
 #include <functional>
-#include <random>
 
 namespace ve {
 
 namespace {
-uint64_t randomId()
+// j[key] without copying (nlohmann's value(key, default) copies the subtree).
+const Json& member(const Json& j, const char* key)
 {
-    static std::mt19937_64 rng{std::random_device{}()};
-    uint64_t id = 0;
-    while (id == 0) id = rng();
-    return id;
+    static const Json kNull;
+    if (!j.is_object()) return kNull;
+    auto it = j.find(key);
+    return it != j.end() ? *it : kNull;
 }
 
 bool isPersistentRoot(const GameObject& o)
@@ -32,18 +32,12 @@ bool isPersistentRoot(const GameObject& o)
 
 std::string SceneSerializer::idToString(uint64_t id)
 {
-    char buf[17];
-    std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(id));
-    return buf;
+    return idToHex(id);
 }
 
 uint64_t SceneSerializer::idFromString(const std::string& s)
 {
-    try {
-        return std::stoull(s, nullptr, 16);
-    } catch (...) {
-        return 0;
-    }
+    return idFromHex(s);
 }
 
 Json SceneSerializer::serializeFields(const TypeInfo& type, const void* object)
@@ -96,7 +90,7 @@ Json SceneSerializer::serializeObject(const GameObject& o, bool worldTransform)
 
     Json comps = Json::array();
     for (const auto& c : o.components()) {
-        if (c->persistent && TypeRegistry::get().of(*c)) comps.push_back(serializeComponent(*c));
+        if (c->persistent && !c->isRemoved() && TypeRegistry::get().of(*c)) comps.push_back(serializeComponent(*c));
     }
     if (!comps.empty()) j["components"] = std::move(comps);
 
@@ -125,10 +119,10 @@ void applyTransformAndBasics(GameObject& o, const Json& j)
     o.setActive(j.value("active", true));
     o.tag = j.value("tag", std::string());
     Transform& t = o.transform();
-    t.setLocalPosition(detail::vecFromJson(j.value("position", Json()), glm::vec3(0.0f)));
-    const glm::vec4 q = detail::vecFromJson(j.value("rotation", Json()), glm::vec4(0, 0, 0, 1));
+    t.setLocalPosition(detail::vecFromJson(member(j, "position"), glm::vec3(0.0f)));
+    const glm::vec4 q = detail::vecFromJson(member(j, "rotation"), glm::vec4(0, 0, 0, 1));
     t.setLocalRotation(glm::normalize(glm::quat(q.w, q.x, q.y, q.z)));
-    t.setLocalScale(detail::vecFromJson(j.value("scale", Json()), glm::vec3(1.0f)));
+    t.setLocalScale(detail::vecFromJson(member(j, "scale"), glm::vec3(1.0f)));
 }
 } // namespace
 
@@ -144,7 +138,7 @@ GameObject* SceneSerializer::createObject(Scene& scene, const Json& j, GameObjec
     GameObject* o = type->spawn(scene);
     o->persistent = true;
     const uint64_t id = newIds ? 0 : idFromString(j.value("id", std::string()));
-    o->setId(id != 0 && !scene.findById(id) ? id : randomId());
+    o->setId(id != 0 && !scene.findById(id) ? id : newObjectId());
     if (parent) o->setParent(parent, false);
     applyTransformAndBasics(*o, j);
     if (auto it = j.find("fields"); it != j.end()) applyFields(*type, o, *it);
@@ -174,9 +168,11 @@ bool SceneSerializer::applyObject(GameObject& o, const Json& j)
     // Same persistent component types in the same order? Otherwise re-create.
     std::vector<Component*> comps;
     for (const auto& c : o.components()) {
-        if (c->persistent) comps.push_back(c.get());
+        if (c->persistent && !c->isRemoved()) comps.push_back(c.get());
     }
-    const Json cjs = j.value("components", Json::array());
+    static const Json kNoComponents = Json::array();
+    const Json& listed = member(j, "components");
+    const Json& cjs = listed.is_array() ? listed : kNoComponents;
     if (cjs.size() != comps.size()) return false;
     for (size_t i = 0; i < comps.size(); ++i) {
         const TypeInfo* ct = TypeRegistry::get().of(*comps[i]);
@@ -193,7 +189,7 @@ bool SceneSerializer::applyObject(GameObject& o, const Json& j)
     for (size_t i = 0; i < comps.size(); ++i) {
         const TypeInfo* ct = TypeRegistry::get().of(*comps[i]);
         comps[i]->enabled = cjs[i].value("enabled", true);
-        applyFields(*ct, comps[i], cjs[i].value("fields", Json::object()));
+        applyFields(*ct, comps[i], member(cjs[i], "fields")); // (null: nothing to apply)
         if (ct->onChanged) ct->onChanged(comps[i]);
     }
     return true;
@@ -234,7 +230,8 @@ bool SceneSerializer::save(const Scene& scene, const std::filesystem::path& path
 std::vector<GameObject*> SceneSerializer::loadJson(Scene& scene, const Json& json)
 {
     std::vector<GameObject*> roots;
-    for (const Json& oj : json.value("objects", Json::array())) roots.push_back(createObject(scene, oj));
+    if (const Json& objects = member(json, "objects"); objects.is_array())
+        for (const Json& oj : objects) roots.push_back(createObject(scene, oj));
     // Remember the level's objects (save games record which ones are gone).
     std::function<void(GameObject&)> mark = [&](GameObject& o) {
         if (o.persistent) scene.addLevelObject(o.id());

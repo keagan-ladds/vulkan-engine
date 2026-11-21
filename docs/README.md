@@ -11,6 +11,10 @@ project cold and keep going.
 | [02-roadmap.md](02-roadmap.md) | Phased plan with checklists and acceptance criteria (**the source of truth for progress**) |
 | [03-conventions.md](03-conventions.md) | Coding conventions + "how do I..." recipes (add a pass, material, component, asset) |
 | [04-agent-handoff.md](04-agent-handoff.md) | Instructions for an agent executing the roadmap: workflow, verification, gotchas |
+| [05-editor.md](05-editor.md) | The in-engine editor: reflection, inspector, undo, prefabs, how it's split |
+| [06-world.md](06-world.md) | Big worlds: terrain streaming, biomes, foliage, grass |
+| [07-audio.md](07-audio.md) | Audio: buses, 3D sources, zones, music, ambience |
+| [08-world-streaming.md](08-world-streaming.md) | **Proposal:** streaming placed objects by cell (not built yet) |
 | [decisions.md](decisions.md) | Architecture decision log: what was chosen, alternatives, and why |
 
 ## Quick start

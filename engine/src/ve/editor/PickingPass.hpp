@@ -3,8 +3,9 @@
 // =============================================================================
 // PickingPass - "which object is under the mouse?" for the editor.
 //
-// request(pixel) renders every visible MeshRenderer with its draw index as a
-// colour (scissored to that one pixel) into an R32F target, copies the pixel
+// request(pixel) renders every visible MeshRenderer (batched static ones too,
+// from the StaticBatcher) with its draw index as a colour (scissored to that
+// one pixel) into an R32F target, copies the pixel
 // to a CPU buffer, and a couple of frames later result() returns the owning
 // GameObject's id (0 = nothing). Disabled (free) when no pick is pending.
 // =============================================================================

@@ -228,7 +228,7 @@ bool Input::actionPressed(const std::string& action) const
 bool Input::actionReleased(const std::string& action) const
 {
     const auto it = m_actions.find(action);
-    if (it == m_actions.end()) return false;
+    if (it == m_actions.end() || !m_rebind.empty()) return false; // like actionDown/actionPressed
     for (Key k : it->second.keys) if (keyReleased(k)) return true;
     for (MouseButton b : it->second.buttons) if (mouseReleased(b)) return true;
     for (GamepadButton b : it->second.pad) if (!gamepadDown(b) && m_prevPadButtons[size_t(b)]) return true;
@@ -368,6 +368,16 @@ std::vector<std::string> Input::bindingNames(const std::string& action) const
     for (MouseButton b : it->second.buttons) out.push_back(size_t(b) < std::size(kMouseNames) ? kMouseNames[size_t(b)] : "Mouse ?");
     for (GamepadButton b : it->second.pad) out.push_back(std::string("Pad ") + (b < GamepadButton::Count ? kPadNames[size_t(b)] : "?"));
     for (GamepadAxis a : it->second.triggers) out.push_back(std::string("Pad ") + (a < GamepadAxis::Count ? kAxisNames[size_t(a)] : "?"));
+    return out;
+}
+
+std::string Input::bindingText(const std::string& action, std::string_view sep) const
+{
+    std::string out;
+    for (const std::string& n : bindingNames(action)) {
+        if (!out.empty()) out += sep;
+        out += n;
+    }
     return out;
 }
 

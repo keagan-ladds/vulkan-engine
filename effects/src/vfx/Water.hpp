@@ -8,6 +8,7 @@
 // =============================================================================
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 
 #include <glm/glm.hpp>
 
@@ -37,7 +38,7 @@ public:
 
 private:
     std::shared_ptr<ve::Material> m_material;
-    ve::MeshRenderer* m_renderer = nullptr;
+    ve::ComponentRef<ve::MeshRenderer> m_renderer; // (the editor may remove it)
 };
 
 } // namespace vfx

@@ -21,19 +21,34 @@
 namespace ve {
 
 // -----------------------------------------------------------------------------
+// MeshRenderer (Components.hpp): static renderers
+// -----------------------------------------------------------------------------
+
+void MeshRenderer::refresh()
+{
+    // Not spawned yet: start() queues it. Otherwise the renderer re-checks it
+    // (batch it, move it to another batch, or draw it the normal way again).
+    Scene::refreshStatic(*this);
+}
+
+// -----------------------------------------------------------------------------
 // ModelInstance
 // -----------------------------------------------------------------------------
 
+GameObject* ModelInstance::instanceRoot() const
+{
+    return m_root.get(gameObject().scene());
+}
+
 void ModelInstance::rebuild()
 {
-    if (m_root) {
-        m_root->destroy();
-        m_root = nullptr;
-    }
+    if (GameObject* old = instanceRoot()) old->destroy();
+    m_root.reset();
     if (path.empty()) return;
     try {
         auto model = assets().loadModel(path);
-        m_root = &gameObject().scene().instantiate(*model, &gameObject(), staticColliders);
+        GameObject* root = &gameObject().scene().instantiate(*model, &gameObject(), staticColliders);
+        m_root = root;
         if (!hiddenNodes.empty()) {
             const std::vector<std::string> names = str::split(hiddenNodes, ',');
             // Destroyed before they start: no colliders or draws for hidden nodes.
@@ -43,9 +58,13 @@ void ModelInstance::rebuild()
                     else hide(*c);
                 }
             };
-            hide(m_root->transform());
+            hide(root->transform());
         }
-        if (auto* animator = m_root->getComponent<Animator>(); animator && !animation.empty()) animator->clip = animation;
+        auto* animator = root->getComponent<Animator>();
+        if (animator && !animation.empty()) animator->clip = animation;
+        // Buildings (exact static colliders) never move: their nodes' renderers
+        // are batched on the GPU (MeshRenderer::isStatic). Animated models move.
+        if (staticColliders && !animator) root->setStatic(true);
     } catch (const std::exception& e) {
         log::warn("ModelInstance on '{}': {}", gameObject().name(), e.what());
     }
@@ -55,8 +74,8 @@ void ModelInstance::onDestroy()
 {
     // The instantiated nodes are children: they go with the owner. When only
     // this component is removed, remove them too.
-    if (m_root && !gameObject().isDestroyed()) m_root->destroy();
-    m_root = nullptr;
+    if (GameObject* root = instanceRoot(); root && !gameObject().isDestroyed()) root->destroy();
+    m_root.reset();
 }
 
 // -----------------------------------------------------------------------------
@@ -70,9 +89,13 @@ void PrimitiveRenderer::rebuild()
     // Primitives of the same shape and size share one mesh (a crate pyramid is
     // one cube), kept alive by the renderers using it.
     static std::map<std::tuple<Shape, float, float, float>, std::weak_ptr<Mesh>> shared;
-    std::weak_ptr<Mesh>& slot = shared[{shape, s.x, s.y, s.z}];
-    std::shared_ptr<Mesh> mesh = slot.lock();
+    const std::tuple<Shape, float, float, float> key{shape, s.x, s.y, s.z};
+    auto found = shared.find(key);
+    std::shared_ptr<Mesh> mesh = found != shared.end() ? found->second.lock() : nullptr;
     if (!mesh) {
+        // About to add one: drop entries whose meshes are gone (sizes edited
+        // in the editor would otherwise pile up).
+        std::erase_if(shared, [](const auto& entry) { return entry.second.expired(); });
         MeshData md;
         switch (shape) {
         case Shape::Cube: md = primitives::cube(s); break;
@@ -81,7 +104,7 @@ void PrimitiveRenderer::rebuild()
         case Shape::Plane: md = primitives::plane(s.x, s.z); break;
         }
         mesh = Mesh::create(r, md, {}, "primitive");
-        slot = mesh;
+        shared[key] = mesh;
     }
     if (!m_material) m_material = r.createStandardMaterial();
     m_material->setBaseColor(color).setRoughness(roughness).setMetallic(metallic).setUvScale(uvScale);
@@ -94,16 +117,19 @@ void PrimitiveRenderer::rebuild()
         }
     }
     m_material->setAlbedoTexture(tex);
-    if (!m_renderer) m_renderer = &gameObject().addComponent<MeshRenderer>();
-    m_renderer->mesh = mesh;
-    m_renderer->materials = {m_material};
-    m_renderer->castShadows = castShadows;
+    MeshRenderer* mr = m_renderer.get(gameObject().scene());
+    if (!mr) m_renderer = mr = &gameObject().addComponent<MeshRenderer>();
+    mr->mesh = mesh;
+    mr->materials = {m_material};
+    mr->castShadows = castShadows;
+    mr->isStatic = isStatic;
+    mr->refresh(); // (a static one's mesh or material may have changed)
 }
 
 void PrimitiveRenderer::onDestroy()
 {
-    if (m_renderer && !gameObject().isDestroyed()) gameObject().removeComponent(m_renderer);
-    m_renderer = nullptr;
+    if (MeshRenderer* mr = m_renderer.get(gameObject().scene()); mr && !gameObject().isDestroyed()) gameObject().removeComponent(mr);
+    m_renderer.reset();
 }
 
 } // namespace ve

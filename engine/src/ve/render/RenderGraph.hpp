@@ -150,7 +150,7 @@ public:
     template <class T>
     void push(const T& data)
     {
-        static_assert(sizeof(T) <= 128, "push constants are limited to 128 bytes");
+        static_assert(sizeof(T) <= kPushConstantBytes, "push constants are limited to 128 bytes");
         pushConstants(&data, sizeof(T));
     }
     void drawFullscreen(); // 3-vertex triangle, see fullscreen.vert
@@ -265,7 +265,9 @@ public:
     void setTimestampPool(VkQueryPool pool, uint32_t capacity) { m_queryPool = pool; m_queryCapacity = capacity; }
     // Called by the renderer with the resolved timings of a previous frame.
     void applyTimings(const std::vector<uint64_t>& timestamps, const std::vector<RenderPass*>& order, float periodNs);
-    const std::vector<RenderPass*>& lastExecuted() const { return m_executed; }
+    // Passes that got a timestamp pair in the last execute(), in query order
+    // (pair i = queries 2i, 2i+1; never more than the pool's capacity).
+    const std::vector<RenderPass*>& lastTimed() const { return m_timed; }
     // Passes at this stage or later are skipped (photo capture leaves out the UI).
     int maxStage = 1 << 30;
     // Loading-screen frames: only passes with runsWhileLoading.
@@ -289,7 +291,7 @@ private:
     std::vector<VkImageMemoryBarrier2> m_barriers; // scratch
     VkQueryPool m_queryPool = VK_NULL_HANDLE;
     uint32_t m_queryCapacity = 0;
-    std::vector<RenderPass*> m_executed; // passes recorded this frame, in order
+    std::vector<RenderPass*> m_timed; // passes timed this frame, in query order
 };
 
 } // namespace ve

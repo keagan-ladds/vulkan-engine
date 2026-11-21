@@ -19,6 +19,23 @@
                 "/usr/include"
             ],
             "defines": ["GLM_FORCE_RADIANS", "GLM_FORCE_DEPTH_ZERO_TO_ONE", "GLM_ENABLE_EXPERIMENTAL", "SDL_MAIN_HANDLED"]
+        },
+        {
+            "name": "Win32",
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "compilerPath": "g++.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++20",
+            "intelliSenseMode": "windows-gcc-x64",
+            "includePath": [
+                "${workspaceFolder}/engine/src",
+                "${workspaceFolder}/effects/src",
+                "${workspaceFolder}/sandbox/src",
+                "${workspaceFolder}/build/_deps/**",
+                "${env:VULKAN_SDK}/Include"
+            ],
+            "defines": ["GLM_FORCE_RADIANS", "GLM_FORCE_DEPTH_ZERO_TO_ONE", "GLM_ENABLE_EXPERIMENTAL", "SDL_MAIN_HANDLED",
+                        "NOMINMAX", "WIN32_LEAN_AND_MEAN"]
         }
     ],
     "version": 4

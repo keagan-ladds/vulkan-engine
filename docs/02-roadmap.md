@@ -7,7 +7,7 @@ verification workflow.
 
 Legend: `[x]` done · `[ ]` todo · `[~]` partially done (see note)
 
-## Status snapshot (2026-11-18)
+## Status snapshot (2026-11-20)
 
 Phases 0–13 are done, as are F2 (animation), most of F3, F5 tooling and the
 engine side of F4 (interaction, save games, loading screens, gamepad,
@@ -19,6 +19,13 @@ Savanna players see each other and build together.
 - Zero Vulkan validation messages through the autotest (which also covers
   save / load, navigation and building) and the editor test.
 - Savanna starts in ~0.9 s in Release, behind a loading screen.
+- 2026-11-20 code review (see "Review follow-ups" under F5): use-after-free and
+  dangling-pointer fixes (UI handlers, editor camera, component removal,
+  weather, interactor, foliage focus, sandbox player refs), a network authority
+  hole closed, per-frame allocations / scans removed, Clang + GCC Release
+  warnings fixed, generic code moved into the engine (`ve::Inventory`,
+  `buildLodChain`, `ve::env`, `ve::math`, config files) and game tuning out
+  of it.
 
 Next up: F6 N2 (gameplay through the host: interactions, pickups,
 villagers, doors) alongside game-side F4 (animal AI, crafting, building
@@ -248,7 +255,7 @@ million grass blades), scaling up on discrete GPUs.
 - [x] `vfx::ScreenSpaceGIPass`: half-res 1-bounce diffuse GI + AO, Bayer-rotated rays + 4×4 box upsample
 - [x] `vfx::ScreenSpaceReflectionsPass`: half-res view-space march + binary refine, Fresnel/roughness/edge fades
 - [x] `vfx::DepthOfFieldPass`: thin-lens CoC, auto focus, half-res golden-angle gather with background clamping
-- [x] Savanna: SSGI + SSR on (`SAVANNA_SSFX=0` disables), DOF off (`SAVANNA_DOF=1` enables); all toggle in F1
+- [x] Savanna: SSGI + SSR on (`SAVANNA_SSFX=0` disables), DOF off (`SAVANNA_DOF=1` enables; on/off switches read through `ve::env::flag`, so `0` / `false` / `off` mean off); all toggle in F1
 - **Result:** SSGI about 1.3 ms, SSR about 0.3 ms, DOF about 1.2 ms (1600×900, Iris Xe); validation clean
 - [x] Follow-up: temporal accumulation for SSGI + SSR (`vfx::TemporalAccumulator`), exact 4×4 depth-aware SSGI upsample (fixed dot patterns around small bright lights)
 - Not done: SSR roughness blur (glossy reflections are sharp), SSR fallback to the sky probe on miss, an albedo target for more accurate GI, bokeh highlights in DOF
@@ -483,11 +490,30 @@ and ask the host for everything else (decision D19).
 - [ ] Later: root motion, motion vectors from skinning; text selection / clipboard, multi-line text, on-screen keyboard for pads; ragdolls, buoyancy (Phase 11 list)
 
 ### F5 — Tooling
-- [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`)
+- [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`); compiles run in the background, the frame never waits for glslc
 - [x] Scene serialization (JSON scene files, editor save / load)
 - [x] Prefabs (E3): `.prefab` files, `prefab::instantiate`, `PrefabInstance` link, editor Save as prefab / Create > Prefab (no overrides / propagation yet)
 - [x] Loading screens (engine): `Engine::beginLoading(loadingScene)` + load steps (main thread, one per frame) + load tasks (progress of work over frames); the game's loading scene (UI) is drawn while the world streams in editor-paused mode. Foliage fills its cells on a worker pool (cores − 1) instead of the blocking preload. Savanna: sunset title, progress bar, tips. Loading waits for the area around the viewer (foliage `readyDistance`; terrain LOD on a worker pool, unbudgeted uploads): 2.4 s -> 0.9 s in Release. In the editor: no loading scene, a progress panel over the world as it fills in (also `openScene`)
 - [x] Save/load: `ve::save` (slots, capture / apply: moved and removed level objects, `ve::Saveable` hooks; Foliage overrides, Terrain edits and time of day built in). Savanna: F5 / F9 (reload behind the loading screen, then apply), player + regrowth Saveable, counters as game data; the autotest saves, changes things, loads and checks
-- [x] Gamepad input + rebinding (engine): SDL game controllers, axes with radial dead zones, triggers as actions, `startRebind`, bindings JSON, virtual pad for tests. Savanna: pad layout for the player, F10 controls window saved to `controls.json`
+- [x] Gamepad input + rebinding (engine): SDL game controllers, axes with radial dead zones, triggers as actions, `startRebind`, bindings JSON, virtual pad for tests. Savanna: pad layout for the player, F10 controls window saved to `config/controls.json`
 - [x] CPU profiler zones (engine): `VE_PROFILE` scopes, nested, F1 "CPU zones" table + bench output
-- [x] Retained-mode game UI (engine, `ve/ui/Gui.hpp`): canvases of anchored elements (panels, labels, images, buttons, progress bars, sliders, stacks, grids), mouse + keyboard / pad focus navigation, drag & drop, tooltips, modal capture, TTF fonts, mesh icon baking. Savanna: title screen over a live sunset (Continue / New / Load / Settings / Controls / Quit), pause menu, settings saved to `settings.json`, HUD (health / stamina, hotbar, clock), inventory, build menu with piece cards; the autotest opens and drives each
+- [x] Retained-mode game UI (engine, `ve/ui/Gui.hpp`): canvases of anchored elements (panels, labels, images, buttons, progress bars, sliders, stacks, grids), mouse + keyboard / pad focus navigation, drag & drop, tooltips, modal capture, TTF fonts, mesh icon baking. Savanna: title screen over a live sunset (Continue / New / Load / Settings / Controls / Quit), pause menu, settings saved to `config/settings.json`, HUD (health / stamina, hotbar, clock), inventory, build menu with piece cards; the autotest opens and drives each
+
+### Review follow-ups (2026-11-20 code review)
+Done in the review: the items listed in the status snapshot. Found but left
+for later (bigger changes, or behaviour worth deciding deliberately):
+- [x] Split `Renderer` into `SceneGatherer`, `ShadowSetup`, `LightClusterer`, `FrameCapture`; `Editor` and `Physics.cpp` into one file per part
+- [x] Layering (D23, D26): composition root in `app/Engine.cpp`, `core/Engine.hpp` a forward-declaring service locator; per-module type registration; skinning gatherers; render-side debug line buffer; mesh collider cache in physics; `tools/check_layering.py` enforces the table and Jolt's privacy
+- [ ] Shrink the layering exceptions listed in `tools/check_layering.py` (scene → assets / anim / physics in a few files, physics / nav ↔ debug, audio → world, world → gameplay / ui)
+- [x] Async uploads: a per-frame staging ring flushed at the start of the frame (`Device::flushUploads`); no GPU wait per streamed mesh
+- [x] Upload only changed material slots (`MaterialDirtySet`)
+- [x] Static renderers as GPU instances (`StaticBatcher`, D28) and proxy sets for many simple things (`ve::ProxySet`, D27)
+- [ ] Draw static batches in front-to-back order with the opaque list (the opaque pass lost ~25 % on lavapipe in the stress test)
+- [ ] World streaming for placed objects: proposal in [08-world-streaming.md](08-world-streaming.md)
+- [ ] Motion vectors for skinned meshes
+- [x] Audio low-pass cutoffs go to the audio thread (atomic target, applied in a custom node's process callback)
+- [x] One shared engine job pool (`ve/core/Jobs.hpp`): foliage, terrain LOD, grass bakes, navmesh tiles and shader compiles; no destructor waits for a cancelled bake
+- [ ] Fog: the sky ambient is the same for every pixel; compute it once on the CPU
+- [ ] Network join: `welcome()` sends several small messages per networked object
+- [x] Remembered objects are typed handles (`ObjectRef` / `ComponentRef`) across engine, effects and Savanna (incl. Campfire, Torch, Sunstone children)
+- [ ] `FoliageType` (scene-built foliage) bakes impostors with the neutral edge colour; expose `ImpostorSettings::backgroundAlbedo` as a field if fringes show

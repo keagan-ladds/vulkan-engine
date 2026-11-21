@@ -15,6 +15,14 @@ in C++ (the Unity split). Press **F2** in any game built on the engine.
 
 ## Design
 
+The editor is one class (`ve::Editor`) whose member functions are spread over
+one file per part: `Editor.cpp` (modes, menus, scene files),
+`EditorHierarchy.cpp`, `EditorInspector.cpp`, `EditorUndo.cpp` (snapshots,
+undo / redo) and `EditorViewport.cpp` (camera, picking, gizmo, terrain
+tools); shared private helpers live in `EditorInternal.hpp`. The panels share
+most of their state (selection, undo, the edit snapshot), so separate panel
+classes would add plumbing without hiding anything.
+
 ### Reflection (`ve/scene/Reflection.hpp`)
 - `TypeRegistry` maps type names to `TypeInfo`. A `TypeInfo` holds:
   - a factory for components or GameObject classes;
@@ -25,7 +33,8 @@ in C++ (the Unity split). Press **F2** in any game built on the engine.
 - A field is a name, a kind (bool, int, float, vec2/3/4, colour, string,
   enum, asset path) and an accessor, plus UI hints (range, step, tooltip).
 - Registration:
-  - engine types: `ve::registerBuiltinTypes()`, called by the Engine;
+  - engine types: each module's `registerXTypes(TypeRegistry&)` (scene types in
+    `registerBuiltinTypes()`), all called once by the Engine;
   - effects: `vfx::registerTypes()`, called by `addDefaultEffects`;
   - game types: `VE_REGISTER_TYPE(...)` in a game .cpp. The executable's
     object files are always linked, so static registrars work there.

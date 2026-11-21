@@ -80,6 +80,9 @@ public:
 
     uint32_t count() const { return static_cast<uint32_t>(m_data.size()); }
     uint32_t capacity() const { return m_capacity; }
+    // Hidden groups keep their instances but cull and draw nothing.
+    void setHidden(bool hidden) { m_hidden = hidden; }
+    bool hidden() const { return m_hidden; }
     const InstanceGroupDesc& desc() const { return m_desc; }
 
 private:
@@ -97,6 +100,8 @@ private:
     std::vector<Handle> m_freeHandles;
     uint32_t m_dirtyBegin = 0, m_dirtyEnd = 0; // slots to upload
     glm::vec4 m_localSphere{0.0f};
+    bool m_hidden = false;
+    uint32_t drawnCount() const { return m_hidden ? 0u : count(); } // what the GPU culls
 };
 
 struct InstanceStats {
@@ -196,6 +201,7 @@ private:
     uint32_t m_visiblePerView = 0;
     uint32_t m_activeViews = 1;
     uint32_t m_drawsThisFrame = 0;
+    std::vector<VkBufferCopy> m_copyRegions; // recordCulling scratch (reused every frame)
     float m_lodScale = 1.0f;
     std::array<uint32_t, kHiZLevels> m_hiz{};
     bool m_hizValid = false;

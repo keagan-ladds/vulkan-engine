@@ -26,7 +26,7 @@
 // biome and parameters); see Ambience.hpp.
 //
 // Parameters: named floats that ambience (and game code) reacts to. The
-// effects module sets "timeOfDay" (hours), "night" (0..1), "rain", "wind",
+// effects module sets "timeOfDay" (hours, AudioSystem::kTimeOfDay), "night" (0..1), "rain", "wind",
 // "storm"; the game can add its own ("danger"...):
 //   audio().setParameter("danger", 1.0f);
 //
@@ -38,6 +38,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -70,6 +71,24 @@ class AudioZone;
 class MusicPlayer;
 struct AudioFilter; // miniaudio low-pass node (internal)
 
+// Engine internal: owning handles for miniaudio objects (uninit, then delete),
+// so every exit path frees them. The deleters live in Audio.cpp (the types are
+// incomplete here). SoundPtr also holds sound groups (a group is an ma_sound).
+struct SoundDeleter {
+    void operator()(ma_sound* s) const;
+};
+struct FilterDeleter {
+    void operator()(AudioFilter* f) const;
+};
+struct EngineDeleter {
+    void operator()(ma_engine* e) const;
+};
+using SoundPtr = std::unique_ptr<ma_sound, SoundDeleter>;
+using FilterPtr = std::unique_ptr<AudioFilter, FilterDeleter>;
+// A sound from a file (MA_SOUND_FLAG_* flags) playing into `group` (null: the
+// engine's output); null if it can't be loaded.
+SoundPtr openSound(ma_engine* engine, const std::string& file, uint32_t flags, ma_sound* group);
+
 // A mixer bus: sounds -> low-pass -> output. Volume/lowpass are the game's
 // settings; zones apply on top.
 struct AudioBus {
@@ -80,8 +99,8 @@ struct AudioBus {
     float zoneVolume = 1.0f;
     float zoneLowpass = 20000.0f;
     float appliedLowpass = -1.0f;
-    ma_sound* group = nullptr;
-    AudioFilter* filter = nullptr;
+    FilterPtr filter;
+    SoundPtr group; // (declared last: freed first, before the filter it feeds)
 };
 
 // Optional settings for AudioSystem::playOneShot.
@@ -97,6 +116,9 @@ struct OneShotSettings {
 class AudioSystem {
 public:
     static constexpr float kNoFilter = 20000.0f;
+    // The parameter holding the time of day in hours (0..24). Set by the effects
+    // module's DayNightCycle; AmbientLayer::fromHour/toHour read it.
+    static constexpr const char* kTimeOfDay = "timeOfDay";
 
     AudioSystem();
     ~AudioSystem();
@@ -134,14 +156,14 @@ public:
 
     // Engine internal: frees finished one-shots, applies zones to buses.
     void update(float dt);
-    ma_engine* engine() const { return m_engine; }
+    ma_engine* engine() const { return m_engine.get(); }
     void addZone(AudioZone* zone) { m_zones.push_back(zone); }
     void removeZone(AudioZone* zone) { std::erase(m_zones, zone); }
     void onGui(); // bus volumes, zones, parameters, music
 
 private:
-    ma_engine* m_engine = nullptr;
-    std::vector<ma_sound*> m_oneShots; // owned; freed in update()/shutdown()
+    std::unique_ptr<ma_engine, EngineDeleter> m_engine;
+    std::vector<SoundPtr> m_oneShots; // freed in update() once done, or in shutdown()
     std::vector<std::unique_ptr<AudioBus>> m_buses;
     std::vector<AudioZone*> m_zones;
     std::map<std::string, float> m_parameters;
@@ -218,11 +240,14 @@ public:
 private:
     void release();
     void updateOcclusion(float dt);
-    ma_sound* m_sound = nullptr; // owned
-    AudioFilter* m_filter = nullptr; // occlusion low-pass (owned)
-    bool m_loaded = false;
+    SoundPtr m_sound;   // null until play() loaded it
+    FilterPtr m_filter; // occlusion low-pass
     float m_occluded = 0.0f, m_occlusionTarget = 0.0f, m_rayTimer = 0.0f;
     float m_appliedLowpass = -1.0f;
 };
+
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerAudioTypes(TypeRegistry& r);
 
 } // namespace ve

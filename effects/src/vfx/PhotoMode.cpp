@@ -88,14 +88,15 @@ void PhotoMode::enter()
     const glm::vec3 f = rot * glm::vec3(0, 0, -1);
     m_yaw = glm::degrees(std::atan2(-f.x, -f.z));
     m_pitch = glm::degrees(std::asin(std::clamp(f.y, -1.0f, 1.0f)));
-    m_camera = &scene().spawn("Photo camera");
-    m_camera->runInEditor = true;
-    m_camera->hideInHierarchy = true;
-    auto& c = m_camera->addComponent<ve::Camera>();
+    ve::GameObject& camera = scene().spawn("Photo camera");
+    m_camera = &camera;
+    camera.runInEditor = true;
+    camera.hideInHierarchy = true;
+    auto& c = camera.addComponent<ve::Camera>();
     c.priority = 1 << 20;
     c.fovDegrees = m_fov;
-    m_camera->transform().setPosition(pos);
-    m_camera->transform().setRotation(rot);
+    camera.transform().setPosition(pos);
+    camera.transform().setRotation(rot);
 
     ve::RenderGraph& g = renderer().graph();
     auto* dof = g.findPass<DepthOfFieldPass>();
@@ -118,8 +119,8 @@ void PhotoMode::exit()
     e.gamePaused = m_savedPaused;
     e.time().timeScale = m_savedTimeScale;
     input().setMouseCaptured(m_savedMouseCaptured);
-    if (m_camera) m_camera->destroy();
-    m_camera = nullptr;
+    if (ve::GameObject* cam = m_camera.get(scene())) cam->destroy();
+    m_camera.reset();
     ve::RenderGraph& g = renderer().graph();
     if (auto* dof = g.findPass<DepthOfFieldPass>()) {
         if (m_addedDof) g.removePass(dof->name());
@@ -156,10 +157,10 @@ void PhotoMode::setView(const glm::vec3& position, float yawDegrees, float pitch
 {
     m_yaw = yawDegrees;
     m_pitch = std::clamp(pitchDegrees, -89.0f, 89.0f);
-    if (m_camera) {
-        m_camera->transform().setPosition(position);
-        m_camera->transform().setRotation(glm::angleAxis(glm::radians(m_yaw), glm::vec3(0, 1, 0)) *
-                                          glm::angleAxis(glm::radians(m_pitch), glm::vec3(1, 0, 0)));
+    if (ve::GameObject* cam = m_camera.get(scene())) {
+        cam->transform().setPosition(position);
+        cam->transform().setRotation(glm::angleAxis(glm::radians(m_yaw), glm::vec3(0, 1, 0)) *
+                                     glm::angleAxis(glm::radians(m_pitch), glm::vec3(1, 0, 0)));
     }
 }
 
@@ -295,11 +296,11 @@ void PhotoMode::update(float)
     glm::vec3 delta = rot * move;
     if (in.keyDown(ve::Key::E)) delta.y += 1.0f;
     if (in.keyDown(ve::Key::Q)) delta.y -= 1.0f;
-    if (m_camera) {
+    if (ve::GameObject* cam = m_camera.get(scene())) {
         if (glm::dot(delta, delta) > 0.0f)
-            m_camera->transform().setPosition(m_camera->transform().position() + glm::normalize(delta) * speed * dt);
-        m_camera->transform().setRotation(rot);
-        if (auto* c = m_camera->getComponent<ve::Camera>()) c->fovDegrees = m_fov;
+            cam->transform().setPosition(cam->transform().position() + glm::normalize(delta) * speed * dt);
+        cam->transform().setRotation(rot);
+        if (auto* c = cam->getComponent<ve::Camera>()) c->fovDegrees = m_fov;
     }
 }
 
@@ -340,9 +341,10 @@ void PhotoMode::onGui()
             ImGui::Checkbox("Auto focus (screen centre)", &dof->autoFocus);
             ImGui::BeginDisabled(dof->autoFocus);
             ImGui::SliderFloat("Focus distance", &dof->focusDistance, 0.2f, 500.0f, "%.2f m", ImGuiSliderFlags_Logarithmic);
-            if (ImGui::Button("Focus on what's in the centre") && m_camera) {
-                const glm::vec3 p = m_camera->transform().position();
-                const glm::vec3 f = m_camera->transform().rotation() * glm::vec3(0, 0, -1);
+            const ve::GameObject* cam = m_camera.get(scene());
+            if (ImGui::Button("Focus on what's in the centre") && cam) {
+                const glm::vec3 p = cam->transform().position();
+                const glm::vec3 f = cam->transform().rotation() * glm::vec3(0, 0, -1);
                 if (auto hit = physics().raycast(p, f, 2000.0f)) dof->focusDistance = std::max(hit->distance, 0.2f);
             }
             ImGui::EndDisabled();

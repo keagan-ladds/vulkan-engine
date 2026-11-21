@@ -1,6 +1,8 @@
 #include "LoadingScreen.hpp"
 
 #include <ve/core/Engine.hpp>
+#include <ve/core/Env.hpp>
+#include <ve/render/Renderer.hpp>
 #include <ve/scene/GameObject.hpp>
 
 #include <imgui.h>
@@ -29,8 +31,8 @@ public:
     {
         m_t += dt;
         // SAVANNA_LOADING_SHOT=<png>: capture the loading screen once it's half way (tests / docs).
-        if (const char* shot = std::getenv("SAVANNA_LOADING_SHOT"); shot && !m_shot && engine().loadProgress() >= 0.5f) {
-            renderer().requestCapture(shot);
+        if (const auto shot = ve::env::get("SAVANNA_LOADING_SHOT"); shot && !m_shot && engine().loadProgress() >= 0.5f) {
+            renderer().requestCapture(std::string(*shot));
             m_shot = true;
         }
     }

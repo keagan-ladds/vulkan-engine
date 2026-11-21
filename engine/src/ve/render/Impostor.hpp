@@ -35,6 +35,10 @@ struct ImpostorSettings {
     uint32_t frames = 12;          // frames per atlas side (N x N views)
     uint32_t frameResolution = 128; // pixels per frame
     float alphaCutoff = 0.45f;
+    // Albedo of the atlas's empty texels (alpha 0). Mips and bilinear filtering
+    // blend it into the silhouette's edge, so set it near the object's average
+    // colour (e.g. the foliage tint) to avoid dark or off-colour fringes.
+    glm::vec3 backgroundAlbedo{0.3f, 0.3f, 0.3f};
 };
 
 class Impostor {

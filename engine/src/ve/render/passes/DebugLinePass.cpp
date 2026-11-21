@@ -1,7 +1,7 @@
 #include "ve/render/passes/DebugLinePass.hpp"
 
-#include "ve/debug/Debug.hpp"
 #include "ve/gfx/Pipeline.hpp"
+#include "ve/render/DebugLines.hpp"
 #include "ve/render/Renderer.hpp"
 
 #include <imgui.h>
@@ -22,6 +22,12 @@ LinePush alpha(float a)
 }
 } // namespace
 
+DebugLineBuffer& DebugLineBuffer::get()
+{
+    static DebugLineBuffer buffer;
+    return buffer;
+}
+
 DebugLinePass::~DebugLinePass()
 {
     Renderer& r = renderer();
@@ -37,13 +43,13 @@ void DebugLinePass::setup(RenderGraph&)
 {
     Renderer& r = renderer();
     for (auto& b : m_buffers)
-        b = r.device().createBuffer(sizeof(debug::Line) * kMaxLines, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, MemoryUsage::CpuToGpu,
+        b = r.device().createBuffer(sizeof(DebugLine) * kMaxLines, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, MemoryUsage::CpuToGpu,
                                     "debug lines");
-    const VkVertexInputBindingDescription binding{0, sizeof(debug::Line), VK_VERTEX_INPUT_RATE_INSTANCE};
+    const VkVertexInputBindingDescription binding{0, sizeof(DebugLine), VK_VERTEX_INPUT_RATE_INSTANCE};
     const VkVertexInputAttributeDescription attrs[3] = {
-        {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(debug::Line, a)},
-        {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(debug::Line, b)},
-        {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(debug::Line, color)},
+        {0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DebugLine, a)},
+        {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DebugLine, b)},
+        {2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(DebugLine, color)},
     };
     auto build = [&](bool test, VkCompareOp op) {
         VkShaderModule vs = r.loadShader("debug_line.vert");
@@ -69,14 +75,14 @@ void DebugLinePass::setup(RenderGraph&)
 void DebugLinePass::prepare(FrameData&)
 {
     m_tested = m_untested = 0;
-    const auto& lines = debug::lines();
+    const auto& lines = DebugLineBuffer::get().lines;
     if (lines.empty()) return;
-    m_slot = uint32_t(renderer().frameNumber() % 2);
-    auto* out = static_cast<debug::Line*>(m_buffers[m_slot].mapped);
+    m_slot = uint32_t(renderer().frameNumber() % Device::kFramesInFlight); // the renderer's frame slot
+    auto* out = static_cast<DebugLine*>(m_buffers[m_slot].mapped);
     // Depth-tested lines first, then the ones on top.
-    for (const debug::Line& l : lines)
+    for (const DebugLine& l : lines)
         if (l.b.w > 0.5f && m_tested < kMaxLines) out[m_tested++] = l;
-    for (const debug::Line& l : lines)
+    for (const DebugLine& l : lines)
         if (l.b.w <= 0.5f && m_tested + m_untested < kMaxLines) out[m_tested + m_untested++] = l;
 }
 

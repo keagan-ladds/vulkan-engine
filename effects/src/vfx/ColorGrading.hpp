@@ -5,7 +5,7 @@
 // addDefaultEffects):
 //
 //   auto& grade = renderer.graph().addPass<vfx::ColorGradingPass>();
-//   grade.settings = vfx::ColorGradingSettings::farCry2();   // or neutral(), or tweak fields
+//   grade.settings = vfx::ColorGradingSettings::sunBleached();   // or neutral(), or tweak fields
 //   grade.settings.lut = assets.loadTexture("textures/my_grade_lut.png", /*srgb*/ false); // optional
 //
 // Works on HDR SceneColor after bloom/DOF (RenderStage::PostProcess, last):
@@ -57,10 +57,10 @@ struct ColorGradingSettings {
     float lutContribution = 1.0f;
 
     static ColorGradingSettings neutral() { return {}; }
-    // Sun-bleached East African heat: warm white balance, golden highlights,
+    // Sun-bleached heat (a starting point for hot, dusty settings): warm white balance, golden highlights,
     // olive/teal shadows with hazy lifted blacks, punchy contrast, slightly
     // tamed saturation and a 2008-era filmic shoulder.
-    static ColorGradingSettings farCry2();
+    static ColorGradingSettings sunBleached();
 };
 
 class ColorGradingPass : public ve::FullscreenPass {

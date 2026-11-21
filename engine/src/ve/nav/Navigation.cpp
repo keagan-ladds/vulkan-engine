@@ -4,7 +4,6 @@
 #include "ve/core/Log.hpp"
 #include "ve/core/Profiler.hpp"
 #include "ve/debug/Debug.hpp"
-#include "ve/editor/Gizmo.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Scene.hpp"
@@ -43,6 +42,12 @@ uint32_t nextPow2(uint32_t v)
 const float* ptr(const glm::vec3& v) { return &v.x; }
 glm::vec3 vec(const float* p) { return {p[0], p[1], p[2]}; }
 
+// Tile builds are independent: a few jobs at a time on one navmesh's queue.
+size_t buildJobs()
+{
+    return std::clamp(std::max(2u, jobs::hardwareThreads()) / 2, 1u, 4u);
+}
+
 int borderCells(const NavMeshSettings& s) { return int(std::ceil(s.agentRadius / s.cellSize)) + 3; }
 
 // Detour wants a plain function for random numbers.
@@ -80,18 +85,15 @@ NavMeshSurface* NavMeshSurface::find(const Scene& scene)
 
 void NavMeshSurface::destroyNav()
 {
-    {
-        std::lock_guard lock(m_mutex);
-        m_quit = true;
+    // Tile builds only read their own TileJob: drop them, a build in flight
+    // finishes into the old queue (freed with it) without us waiting.
+    if (m_queue) {
+        std::lock_guard lock(m_queue->mutex);
+        m_queue->quit = true;
+        m_queue->jobs.clear();
     }
-    m_cv.notify_all();
-    for (std::thread& t : m_workers) t.join();
-    m_workers.clear();
-    m_quit = false;
-    m_jobs.clear();
-    for (TileResult& r : m_results) dtFree(r.data);
-    m_results.clear();
-    m_busy = 0;
+    m_drains.cancel();
+    m_queue.reset();
     if (m_crowd) dtFreeCrowd(m_crowd);
     if (m_query) dtFreeNavMeshQuery(m_query);
     if (m_nav) dtFreeNavMesh(m_nav);
@@ -127,6 +129,8 @@ void NavMeshSurface::build()
 {
     m_buildRequested = false;
     destroyNav();
+    m_bodies.clear();
+    m_foliageShapes.clear();
     m_built = settings;
     NavMeshSettings& s = m_built;
     s.tileSize = std::max(s.tileSize, s.cellSize * 16.0f);
@@ -161,10 +165,9 @@ void NavMeshSurface::build()
     m_crowd->init(kMaxAgents, std::max(1.0f, s.agentRadius * 3.0f), m_nav);
     ++m_generation;
 
-    // Workers (tile builds are independent).
-    const uint32_t cores = std::max(2u, std::thread::hardware_concurrency());
-    const uint32_t n = std::clamp(cores / 2, 1u, 4u);
-    for (uint32_t i = 0; i < n; ++i) m_workers.emplace_back([this] { workerLoop(); });
+    // Tile builds run as pool jobs (queueTile()) on this navmesh's queue.
+    m_queue = std::make_shared<BuildQueue>();
+    m_queue->settings = m_built;
 
     if (m_streaming) {
         m_lastFocus = glm::vec2(1e30f);
@@ -215,10 +218,10 @@ void NavMeshSurface::queueTile(int tx, int tz)
     m_tileVersion[tileKey(tx, tz)] = job.version;
     gather(job);
     {
-        std::lock_guard lock(m_mutex);
-        m_jobs.push_back(std::move(job));
+        std::lock_guard lock(m_queue->mutex);
+        m_queue->jobs.push_back(std::move(job));
     }
-    m_cv.notify_one();
+    m_drains.topUp(buildJobs(), [q = m_queue](const std::atomic<bool>& c) { drain(*q, c); });
 }
 
 // Collects the tile's input triangles (main thread: reads the scene).
@@ -272,14 +275,19 @@ void NavMeshSurface::gather(TileJob& job)
     }
 
     if (includeStaticBodies) {
+        ++m_gatherStamp;
         scene.forEach<Rigidbody>([&](Rigidbody& rb) {
             if (rb.type != BodyType::Static || !rb.isActive() || !rb.collider.valid()) return;
             if (dynamic_cast<Terrain*>(&rb.gameObject())) return; // sampled above
-            const uint64_t key = rb.gameObject().id() * 31u + uint64_t(reinterpret_cast<uintptr_t>(&rb) & 0xFFFF);
+            // By address, checked against the object id and the shape: a freed
+            // Rigidbody's address can be reused by a new one.
             const glm::mat4& m = rb.transform().worldMatrix();
-            BodyCache& cache = m_bodies[key];
-            if (cache.tris.empty() || cache.transform != m) {
+            BodyCache& cache = m_bodies[&rb];
+            cache.seen = m_gatherStamp;
+            if (cache.tris.empty() || cache.transform != m || cache.object != rb.gameObject().id() || cache.shape != rb.collider.impl) {
                 cache.transform = m;
+                cache.object = rb.gameObject().id();
+                cache.shape = rb.collider.impl;
                 cache.tris = rb.collider.triangles(m);
                 cache.lo = glm::vec3(1e30f);
                 cache.hi = glm::vec3(-1e30f);
@@ -291,24 +299,35 @@ void NavMeshSurface::gather(TileJob& job)
             if (!overlaps(cache.lo, cache.hi)) return;
             for (size_t i = 0; i + 2 < cache.tris.size(); i += 3) addTri(cache.tris[i], cache.tris[i + 1], cache.tris[i + 2], false);
         });
+        // Bodies gone (or no longer static / active) since the last gather.
+        std::erase_if(m_bodies, [&](const auto& entry) { return entry.second.seen != m_gatherStamp; });
+    } else {
+        m_bodies.clear();
     }
 
     if (includeFoliage) {
-        if (!m_foliage || !scene.findById(m_foliageId)) {
-            m_foliage = scene.findFirst<FoliageSystem>();
-            m_foliageId = m_foliage ? m_foliage->id() : 0;
+        FoliageSystem* foliage = m_foliage.get(scene);
+        if (!foliage) {
+            foliage = scene.findFirst<FoliageSystem>();
+            m_foliage = foliage;
             m_foliageListener = 0;
         }
-        if (m_foliage) {
+        if (foliage) {
             if (!m_foliageListener) {
                 // A tree was chopped (or grew back): the paths around it change.
-                m_foliageListener = m_foliage->addStateListener([this](FoliageInstanceId, const glm::vec3& p) {
+                m_foliageListener = foliage->addStateListener([this](FoliageInstanceId, const glm::vec3& p) {
                     rebuild({p.x - 2.0f, p.z - 2.0f, p.x + 2.0f, p.z + 2.0f});
                 });
             }
-            m_foliage->forEachCollider(area, [&](const Collider& c, const glm::mat4& m) {
-                const std::vector<glm::vec3> tris = c.triangles(m);
-                for (size_t i = 0; i + 2 < tris.size(); i += 3) addTri(tris[i], tris[i + 1], tris[i + 2], false);
+            // A few shapes shared by thousands of instances: triangulate each
+            // once (unplaced), then place the triangles per instance.
+            foliage->forEachCollider(area, [&](const Collider& c, const glm::mat4& m) {
+                auto it = std::find_if(m_foliageShapes.begin(), m_foliageShapes.end(), [&](const auto& f) { return f.first == c.impl; });
+                if (it == m_foliageShapes.end()) it = m_foliageShapes.insert(m_foliageShapes.end(), {c.impl, c.triangles(glm::mat4(1.0f))});
+                const std::vector<glm::vec3>& tris = it->second;
+                for (size_t i = 0; i + 2 < tris.size(); i += 3)
+                    addTri(glm::vec3(m * glm::vec4(tris[i], 1.0f)), glm::vec3(m * glm::vec4(tris[i + 1], 1.0f)),
+                           glm::vec3(m * glm::vec4(tris[i + 2], 1.0f)), false);
             });
         }
     }
@@ -432,33 +451,45 @@ NavMeshSurface::TileResult NavMeshSurface::buildTile(const NavMeshSettings& s, c
     return out;
 }
 
-void NavMeshSurface::workerLoop()
+NavMeshSurface::BuildQueue::~BuildQueue()
 {
-    const NavMeshSettings s = m_built;
+    for (TileResult& r : results) dtFree(r.data);
+}
+
+void NavMeshSurface::drain(BuildQueue& q, const std::atomic<bool>& cancelled)
+{
     for (;;) {
         TileJob job;
         {
-            std::unique_lock lock(m_mutex);
-            m_cv.wait(lock, [&] { return m_quit || !m_jobs.empty(); });
-            if (m_quit) return;
-            job = std::move(m_jobs.front());
-            m_jobs.pop_front();
-            ++m_busy;
+            std::lock_guard lock(q.mutex);
+            if (q.quit || cancelled || q.jobs.empty()) return;
+            job = std::move(q.jobs.front());
+            q.jobs.pop_front();
+            ++q.busy;
         }
-        TileResult r = buildTile(s, job);
-        std::lock_guard lock(m_mutex);
-        --m_busy;
-        m_results.push_back(r);
+        TileResult r = buildTile(q.settings, job);
+        {
+            std::lock_guard lock(q.mutex);
+            --q.busy;
+            q.results.push_back(r);
+        }
+        if (jobs::yieldSuggested()) return; // others are waiting: pump() submits again
     }
 }
 
 void NavMeshSurface::applyResults()
 {
     std::vector<TileResult> results;
+    size_t queued;
     {
-        std::lock_guard lock(m_mutex);
-        results.swap(m_results);
-        m_stats.pending = uint32_t(m_jobs.size()) + m_busy;
+        std::lock_guard lock(m_queue->mutex);
+        results.swap(m_queue->results);
+        queued = m_queue->jobs.size();
+        m_stats.pending = uint32_t(queued) + m_queue->busy;
+    }
+    // Drains that gave their worker back to other jobs: start them again.
+    if (queued > 0) {
+        m_drains.topUp(std::min(buildJobs(), queued), [q = m_queue](const std::atomic<bool>& c) { drain(*q, c); });
     }
     for (TileResult& r : results) {
         const uint64_t key = tileKey(r.tx, r.tz);
@@ -527,6 +558,10 @@ void NavMeshSurface::updateStreaming()
 
 void NavMeshSurface::pump()
 {
+    // Once per frame: update() and onGui() (which also runs while the editor pauses) both ask.
+    const uint64_t frame = engine().time().frameCount;
+    if (frame == m_pumpedFrame) return;
+    m_pumpedFrame = frame;
     if (m_buildRequested) build();
     if (!m_nav) return;
     applyResults();
@@ -552,13 +587,10 @@ void NavMeshSurface::update(float dt)
 
 void NavMeshSurface::onGui()
 {
-    pump(); // also while the editor pauses the world
-    if (!showDebug || !m_nav) return;
-    const CameraData& cam = renderer().frameData().camera;
-    const ImVec2 ds = ImGui::GetIO().DisplaySize;
-    const ViewProjector view = ViewProjector::from(cam, {ds.x, ds.y});
-    DebugDraw dd(ImGui::GetBackgroundDrawList(), view);
-    drawDebug(dd, cam.position, 60.0f);
+    pump(); // also while the editor pauses the world (a no-op if update() already did this frame)
+    // (The "Navmesh" debug channel draws it already: not twice.)
+    if (!showDebug || !m_nav || debug::enabled("Navmesh")) return;
+    drawDebugLines(renderer().frameData().camera.position, 60.0f);
 }
 
 void NavMeshSurface::inspectorGui()
@@ -566,32 +598,6 @@ void NavMeshSurface::inspectorGui()
     ImGui::Text("Tiles %u (%u pending), polygons %u, %.1f ms per tile", m_stats.tiles, m_stats.pending, m_stats.polygons, m_stats.lastTileMs);
     ImGui::Checkbox("Show navmesh", &showDebug);
     if (ImGui::Button("Rebuild")) build();
-}
-
-void NavMeshSurface::drawDebug(DebugDraw& dd, const glm::vec3& eye, float maxDistance) const
-{
-    if (!m_nav) return;
-    const dtNavMesh* nav = m_nav;
-    const glm::vec3 lift(0.0f, 0.08f, 0.0f);
-    for (int i = 0; i < nav->getMaxTiles(); ++i) {
-        const dtMeshTile* tile = nav->getTile(i);
-        if (!tile || !tile->header) continue;
-        const glm::vec3 lo = vec(tile->header->bmin), hi = vec(tile->header->bmax);
-        const glm::vec3 nearest = glm::clamp(eye, lo, hi);
-        if (glm::distance(nearest, eye) > maxDistance) continue;
-        for (int p = 0; p < tile->header->polyCount; ++p) {
-            const dtPoly& poly = tile->polys[p];
-            if (poly.getType() != DT_POLYTYPE_GROUND) continue;
-            const glm::vec3 first = vec(&tile->verts[poly.verts[0] * 3]);
-            if (glm::distance(first, eye) > maxDistance) continue;
-            for (int j = 0; j < poly.vertCount; ++j) {
-                const glm::vec3 a = vec(&tile->verts[poly.verts[j] * 3]) + lift;
-                const glm::vec3 b = vec(&tile->verts[poly.verts[(j + 1) % poly.vertCount] * 3]) + lift;
-                const bool edge = poly.neis[j] == 0; // boundary: a wall or the mesh's edge
-                dd.line(a, b, edge ? IM_COL32(40, 220, 255, 230) : IM_COL32(40, 160, 255, 90), edge ? 2.0f : 1.0f);
-            }
-        }
-    }
 }
 
 void NavMeshSurface::drawDebugLines(const glm::vec3& eye, float maxDistance) const
@@ -640,7 +646,7 @@ void NavAgent::drawDebug() const
 
 void NavMeshSurface::onDestroy()
 {
-    if (m_foliageListener && gameObject().scene().findById(m_foliageId)) m_foliage->removeStateListener(m_foliageListener);
+    if (FoliageSystem* foliage = m_foliageListener ? m_foliage.get(gameObject().scene()) : nullptr) foliage->removeStateListener(m_foliageListener);
     m_foliageListener = 0;
     destroyNav();
 }
@@ -743,10 +749,13 @@ void NavAgent::start()
     m_yawInit = true;
 }
 
-void NavAgent::applyParams()
+void NavAgent::applyParams(NavMeshSurface* s, bool force)
 {
-    NavMeshSurface* s = surface();
     if (!s || !s->crowd() || m_index < 0) return;
+    // Only when a setting changed: lateUpdate asks every frame, and they rarely do.
+    const PushedParams now{radius, height, acceleration, speed, avoidOthers};
+    if (!force && now == m_pushed) return;
+    m_pushed = now;
     dtCrowdAgentParams p{};
     p.radius = radius;
     p.height = height;
@@ -781,7 +790,7 @@ bool NavAgent::attach()
     m_index = s->crowd()->addAgent(ptr(pos), &p);
     if (m_index < 0) return false;
     m_generation = s->generation();
-    applyParams();
+    applyParams(s, true);
     if (m_pendingTarget || m_hasTarget) {
         m_pendingTarget = false;
         setDestination(m_target);
@@ -837,8 +846,12 @@ void NavAgent::warp(const glm::vec3& position)
 
 bool NavAgent::arrived() const
 {
+    return arrivedOn(m_hasTarget ? surface() : nullptr);
+}
+
+bool NavAgent::arrivedOn(const NavMeshSurface* s) const
+{
     if (!m_hasTarget) return true;
-    NavMeshSurface* s = surface();
     if (m_index < 0 || !s || !s->crowd()) return false;
     const dtCrowdAgent* ag = s->crowd()->getAgent(m_index);
     if (!ag || !ag->active || ag->targetState != DT_CROWDAGENT_TARGET_VALID) return false;
@@ -871,15 +884,17 @@ void NavAgent::lateUpdate(float dt)
 {
     NavMeshSurface* s = surface();
     if (m_index >= 0 && (!s || !s->crowd() || s->generation() != m_generation)) m_index = -1; // the navmesh was rebuilt
-    if (m_index < 0 && !attach()) {
-        m_velocity = glm::vec3(0.0f);
-        return;
+    if (m_index < 0) {
+        if (!attach()) {
+            m_velocity = glm::vec3(0.0f);
+            return;
+        }
+        s = surface(); // (attach may have found it)
     }
-    s = surface();
-    applyParams();
+    applyParams(s, false);
     const dtCrowdAgent* ag = s->crowd()->getAgent(m_index);
     if (!ag || !ag->active) return;
-    if (m_hasTarget && arrived()) {
+    if (m_hasTarget && arrivedOn(s)) {
         // Stop exactly: the crowd would otherwise creep the last bit.
         s->crowd()->resetMoveTarget(m_index);
         m_hasTarget = false;
@@ -902,6 +917,54 @@ void NavAgent::lateUpdate(float dt)
 void NavAgent::onDestroy()
 {
     detach();
+}
+
+} // namespace ve
+
+// -----------------------------------------------------------------------------
+// Reflection
+// -----------------------------------------------------------------------------
+
+#include "ve/scene/Reflection.hpp"
+
+namespace ve {
+
+void registerNavigationTypes(TypeRegistry& r)
+{
+    r.add<NavMeshSurface>("NavMeshSurface", [](TypeBuilder<NavMeshSurface>& t) {
+        t.category("Navigation");
+        t.field("size", &NavMeshSurface::size).tooltip("box centred on the object that agents can use");
+        auto setting = [&t](const char* name, float NavMeshSettings::*m, float lo, float hi, const char* tip) {
+            t.property(name, FieldKind::Float, [m](const NavMeshSurface& s) { return Json(s.settings.*m); },
+                       [m, lo, hi](NavMeshSurface& s, const Json& j) {
+                           if (j.is_number()) s.settings.*m = std::clamp(j.get<float>(), lo, hi);
+                       })
+                .tooltip(tip);
+        };
+        setting("agentRadius", &NavMeshSettings::agentRadius, 0.05f, 5.0f, "the navmesh keeps this far from walls");
+        setting("agentHeight", &NavMeshSettings::agentHeight, 0.1f, 10.0f, "headroom needed");
+        setting("agentMaxClimb", &NavMeshSettings::agentMaxClimb, 0.0f, 5.0f, "highest step");
+        setting("maxSlopeDegrees", &NavMeshSettings::maxSlopeDegrees, 0.0f, 89.0f, "steeper ground is not walkable");
+        setting("cellSize", &NavMeshSettings::cellSize, 0.05f, 2.0f, "voxel size (about agentRadius / 2)");
+        setting("tileSize", &NavMeshSettings::tileSize, 4.0f, 256.0f, "m; changes rebuild whole tiles");
+        setting("maxWaterDepth", &NavMeshSettings::maxWaterDepth, -1.0f, 100.0f, "deeper water is not walkable (< 0: no limit)");
+        t.field("includeTerrain", &NavMeshSurface::includeTerrain);
+        t.field("includeStaticBodies", &NavMeshSurface::includeStaticBodies);
+        t.field("includeFoliage", &NavMeshSurface::includeFoliage);
+        t.field("streamRadius", &NavMeshSurface::streamRadius).range(0.0f, 4000.0f).tooltip("> 0: only tiles this close to the camera exist (whole terrain)");
+        t.field("showDebug", &NavMeshSurface::showDebug);
+    });
+    r.add<NavAgent>("NavAgent", [](TypeBuilder<NavAgent>& t) {
+        t.category("Navigation");
+        t.field("speed", &NavAgent::speed).range(0.0f, 50.0f).speed(0.01f);
+        t.field("acceleration", &NavAgent::acceleration).range(0.0f, 200.0f);
+        t.field("angularSpeed", &NavAgent::angularSpeed).range(0.0f, 2000.0f);
+        t.field("radius", &NavAgent::radius).range(0.05f, 5.0f).speed(0.01f);
+        t.field("height", &NavAgent::height).range(0.1f, 10.0f);
+        t.field("stoppingDistance", &NavAgent::stoppingDistance).range(0.0f, 20.0f);
+        t.field("updateRotation", &NavAgent::updateRotation);
+        t.field("avoidOthers", &NavAgent::avoidOthers);
+    });
 }
 
 } // namespace ve

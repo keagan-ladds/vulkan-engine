@@ -25,25 +25,25 @@
 //
 // Geometry: the terrain (heights sampled directly, deep water left out),
 // static Rigidbodies and foliage colliders (trees, rocks; also in unloaded
-// cells). The navmesh is tiled: tiles build on worker threads (a loading
+// cells). The navmesh is tiled: tiles build on the job pool (a loading
 // task while a loading screen shows), and when a foliage instance changes
 // state (a tree is chopped) the tiles around it rebuild. Call rebuild(area)
 // after other changes (moved buildings, terrain edits). With streamRadius > 0
 // only the tiles around the camera (or `focus`) exist, for big worlds.
 // =============================================================================
 
+#include "ve/core/Jobs.hpp"
 #include "ve/scene/Components.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 
 #include <atomic>
-#include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
-#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -54,8 +54,8 @@ class dtCrowd;
 
 namespace ve {
 
-class DebugDraw;
 class FoliageSystem;
+class Rigidbody;
 
 struct NavMeshSettings {
     float cellSize = 0.25f;          // voxel size across (m): about agentRadius / 2
@@ -120,8 +120,7 @@ public:
     void onGui() override;
     void onDestroy() override;
     void inspectorGui();   // stats + rebuild button (F1 overlay, editor)
-    void drawDebug(DebugDraw& dd, const glm::vec3& eye, float maxDistance) const;
-    void drawDebugLines(const glm::vec3& eye, float maxDistance) const; // ve::debug ("Navmesh" channel)
+    void drawDebugLines(const glm::vec3& eye, float maxDistance) const; // ve::debug ("Navmesh" channel, showDebug)
 
     // Engine internal (NavAgent).
     dtCrowd* crowd() const { return m_crowd; }
@@ -144,6 +143,9 @@ private:
     };
     struct BodyCache {
         glm::mat4 transform;
+        uint64_t object = 0;                // the body's object id and shape (Collider::impl) when cached
+        std::shared_ptr<const void> shape;
+        uint32_t seen = 0;                  // m_gatherStamp of the last gather that met it
         std::vector<glm::vec3> tris;
         glm::vec3 lo, hi;
     };
@@ -154,7 +156,19 @@ private:
     void queueTile(int tx, int tz);
     void gather(TileJob& job);
     static TileResult buildTile(const NavMeshSettings& s, const TileJob& job);
-    void workerLoop();
+    // What the build jobs share with the main thread, for one dtNavMesh's
+    // lifetime. Owned jointly: destroyNav() drops it without waiting for a
+    // tile in flight (whose result then goes nowhere; ~BuildQueue frees it).
+    struct BuildQueue {
+        NavMeshSettings settings; // m_built when the navmesh was created
+        std::mutex mutex;
+        std::deque<TileJob> jobs;
+        std::vector<TileResult> results;
+        uint32_t busy = 0;
+        bool quit = false;
+        ~BuildQueue();
+    };
+    static void drain(BuildQueue& q, const std::atomic<bool>& cancelled); // a pool job
     void applyResults();
     void updateStreaming();
     glm::vec4 tileArea(int tx, int tz) const; // world x0, z0, x1, z1
@@ -173,21 +187,19 @@ private:
     std::unordered_map<uint64_t, uint32_t> m_tileVersion; // wanted tiles -> latest job version
     std::unordered_set<uint64_t> m_tilesBuilt;
     uint32_t m_nextVersion = 1;
-    std::unordered_map<uint64_t, BodyCache> m_bodies; // static Rigidbody object id -> world triangles
-    FoliageSystem* m_foliage = nullptr;
-    uint64_t m_foliageId = 0;
+    std::unordered_map<const Rigidbody*, BodyCache> m_bodies; // static Rigidbody -> world triangles
+    uint32_t m_gatherStamp = 0;
+    // Foliage collider shape -> its triangles, unplaced (kept alive, so the key can't be reused).
+    std::vector<std::pair<std::shared_ptr<const void>, std::vector<glm::vec3>>> m_foliageShapes;
+    uint64_t m_pumpedFrame = ~0ull;
+    ObjectRef<FoliageSystem> m_foliage; // whose colliders and chop events feed the navmesh
     uint32_t m_foliageListener = 0;
     bool m_buildRequested = false;
     std::mt19937 m_rng{1234u};
     Stats m_stats;
 
-    std::vector<std::thread> m_workers;
-    std::mutex m_mutex;
-    std::condition_variable m_cv;
-    std::deque<TileJob> m_jobs;
-    std::vector<TileResult> m_results;
-    uint32_t m_busy = 0;
-    bool m_quit = false;
+    std::shared_ptr<BuildQueue> m_queue; // null without a navmesh
+    jobs::DrainGroup m_drains;
 };
 
 class NavAgent : public Component {
@@ -222,7 +234,14 @@ private:
     NavMeshSurface* surface() const;
     bool attach();
     void detach();
-    void applyParams();
+    void applyParams(NavMeshSurface* s, bool force); // force: push even if nothing changed
+    bool arrivedOn(const NavMeshSurface* s) const;
+
+    struct PushedParams {
+        float radius, height, acceleration, speed;
+        bool avoidOthers;
+        bool operator==(const PushedParams&) const = default;
+    };
 
     uint64_t m_surface = 0;       // NavMeshSurface's object id
     uint32_t m_generation = 0;
@@ -233,6 +252,11 @@ private:
     bool m_pendingTarget = false; // set before the agent was on the navmesh
     float m_yaw = 0.0f;
     bool m_yawInit = false;
+    PushedParams m_pushed{};      // what applyParams last gave the crowd
 };
+
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerNavigationTypes(TypeRegistry& r);
 
 } // namespace ve

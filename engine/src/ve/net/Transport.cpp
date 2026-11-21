@@ -159,18 +159,28 @@ void Transport::send(ConnectionId c, Channel channel, std::span<const uint8_t> b
 {
     auto it = m->peers.find(c);
     if (it == m->peers.end() || it->second->state != ENET_PEER_STATE_CONNECTED) return;
-    enet_peer_send(it->second, uint8_t(channel), m->packet(channel, bytes));
+    ENetPacket* p = m->packet(channel, bytes);
+    // On failure ENet doesn't take the packet: it's still ours to free.
+    if (enet_peer_send(it->second, uint8_t(channel), p) != 0) {
+        enet_packet_destroy(p);
+        log::warn("Network: couldn't queue a {}-byte packet for connection {}", bytes.size(), c);
+    }
 }
 
-void Transport::broadcast(Channel channel, std::span<const uint8_t> bytes, ConnectionId except)
+void Transport::broadcast(std::span<const ConnectionId> to, Channel channel, std::span<const uint8_t> bytes)
 {
     if (!m->host) return;
     ENetPacket* p = nullptr;
-    for (auto& [id, peer] : m->peers) {
-        if (id == except || peer->state != ENET_PEER_STATE_CONNECTED) continue;
+    for (const ConnectionId c : to) {
+        auto it = m->peers.find(c);
+        if (it == m->peers.end() || it->second->state != ENET_PEER_STATE_CONNECTED) continue;
         if (!p) p = m->packet(channel, bytes);
-        enet_peer_send(peer, uint8_t(channel), p); // (ENet reference-counts the packet)
+        // (ENet reference-counts the packet: one copy of the bytes for everyone.)
+        if (enet_peer_send(it->second, uint8_t(channel), p) != 0)
+            log::warn("Network: couldn't queue a {}-byte packet for connection {}", bytes.size(), c);
     }
+    // Nobody took it (every send failed): it's still ours to free.
+    if (p && p->referenceCount == 0) enet_packet_destroy(p);
 }
 
 void Transport::flush()

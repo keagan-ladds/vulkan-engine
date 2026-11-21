@@ -3,11 +3,11 @@
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
+#include "ve/scene/Ids.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/scene/SceneSerializer.hpp"
 
 #include <fstream>
-#include <random>
 #include <unordered_map>
 
 namespace ve::prefab {
@@ -34,16 +34,15 @@ uint64_t mix(uint64_t x)
 // save game recreating the root with its id gets the same child ids).
 void assignIds(Json& j, uint64_t rootId, uint64_t& counter, bool root)
 {
-    j["id"] = SceneSerializer::idToString(root ? rootId : mix(rootId + 0x9e3779b97f4a7c15ull * ++counter));
+    j["id"] = idToHex(root ? rootId : mix(rootId + 0x9e3779b97f4a7c15ull * ++counter));
     if (auto it = j.find("children"); it != j.end() && it->is_array())
         for (Json& c : *it) assignIds(c, rootId, counter, false);
 }
 
 uint64_t freshId(const Scene& scene)
 {
-    static std::mt19937_64 rng{std::random_device{}()};
-    uint64_t id = 0;
-    while (id == 0 || scene.findById(id)) id = rng();
+    uint64_t id = newObjectId();
+    while (scene.findById(id)) id = newObjectId();
     return id;
 }
 
@@ -105,14 +104,15 @@ void clearCache()
 GameObject* instantiateJson(Scene& scene, const Json& prefabJson, const std::string& path, const glm::vec3& position,
                             const glm::quat& rotation, GameObject* parent, uint64_t id)
 {
-    Json o = prefabJson.value("object", Json::object());
+    const auto object = prefabJson.find("object");
+    Json o = object != prefabJson.end() ? *object : Json::object(); // (one copy: edited below)
     o["position"] = {position.x, position.y, position.z};
     o["rotation"] = {rotation.x, rotation.y, rotation.z, rotation.w};
     uint64_t counter = 0;
     assignIds(o, id && !scene.findById(id) ? id : freshId(scene), counter, true);
-    Json comps = o.value("components", Json::array());
+    Json& comps = o["components"];
+    if (!comps.is_array()) comps = Json::array();
     comps.push_back({{"type", "PrefabInstance"}, {"fields", {{"prefab", path}}}});
-    o["components"] = std::move(comps);
     return SceneSerializer::createObject(scene, o, parent, false);
 }
 

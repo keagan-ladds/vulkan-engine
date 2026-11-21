@@ -68,6 +68,11 @@ void InstanceCullPass::onGui()
     ImGui::Text("Indirect draws: %u", s.drawCalls);
     ImGui::Text("Camera per LOD: %u / %u / %u / %u", s.visibleLod[0], s.visibleLod[1], s.visibleLod[2], s.visibleLod[3]);
     RendererSettings& rs = renderer().settings();
+    // Static MeshRenderers as instances (StaticBatcher); off = drawn one by one (A/B).
+    const StaticBatcher& sb = renderer().staticBatcher();
+    ImGui::Checkbox("Static batching", &rs.staticBatching);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu renderers, %u groups", sb.size(), sb.groupCount());
     ImGui::SliderFloat("LOD bias", &rs.lodBias, 0.25f, 4.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
     int shadowBias = static_cast<int>(rs.shadowLodBias);
     if (ImGui::SliderInt("Shadow LOD bias", &shadowBias, 0, 3)) rs.shadowLodBias = static_cast<uint32_t>(shadowBias);
@@ -95,22 +100,48 @@ void ShadowPass::execute(RenderContext& ctx)
     const FrameData& frame = *ctx.frame;
     const RendererSettings& s = r.settings();
 
+    // Shadow casters, once per frame (not per view): the flag on the renderer
+    // and the shader's (unlit/transparent shaders cast nothing).
+    m_casters.clear();
+    for (uint32_t i = 0; i < frame.items.size(); ++i) {
+        const DrawItem& it = frame.items[i];
+        if (it.castShadows && it.material->shader().desc().castShadows) m_casters.push_back(i);
+    }
+    ++m_materialHashStamp;
+
+    uint32_t rangeLight = kInvalidIndex; // point light whose casters m_lightCasters holds
     for (const ShadowView& sv : frame.shadowViews) {
         // Cull shadow casters against this view (cascade box or cube face +
         // light range). Casters outside the camera view still matter here!
-        m_scratch.clear();
-        for (uint32_t i = 0; i < frame.items.size(); ++i) {
-            const DrawItem& it = frame.items[i];
-            if (!it.castShadows) continue;
-            if (sv.point) {
+        if (sv.point && sv.lightIndex != rangeLight) {
+            // A point light's 6 faces are consecutive: range-cull once per light.
+            rangeLight = sv.lightIndex;
+            m_lightCasters.clear();
+            for (uint32_t i : m_casters) {
+                const DrawItem& it = frame.items[i];
                 const glm::vec3 closest = glm::clamp(sv.lightPosition, it.bounds.min, it.bounds.max);
-                if (glm::length(closest - sv.lightPosition) > sv.range) continue;
+                if (glm::length(closest - sv.lightPosition) <= sv.range) m_lightCasters.push_back(i);
             }
-            if (!sv.frustum.intersects(it.bounds)) continue;
-            m_scratch.push_back(i);
+        }
+        m_scratch.clear();
+        for (uint32_t i : sv.point ? m_lightCasters : m_casters) {
+            // Batched statics: their instance groups draw them into cascades (below).
+            if (!sv.point && frame.items[i].instanced) continue;
+            if (sv.frustum.intersects(frame.items[i].bounds)) m_scratch.push_back(i);
         }
 
-        if (sv.point && s.cachePointShadows) {
+        // Faces with deforming (skinned) casters change even though the
+        // inputs hashed below don't: never cache those.
+        bool cacheable = sv.point && s.cachePointShadows;
+        if (cacheable) {
+            for (uint32_t i : m_scratch) {
+                if (frame.items[i].deforming) {
+                    cacheable = false;
+                    break;
+                }
+            }
+        }
+        if (cacheable) {
             // Same light, same casters in the same places as last time: the
             // cube face still holds exactly what we'd render. Keep it.
             FaceHash fh;
@@ -123,7 +154,7 @@ void ShadowPass::execute(RenderContext& ctx)
                 fh.add(reinterpret_cast<uintptr_t>(it.submesh));
                 fh.add(reinterpret_cast<uintptr_t>(&it.material->shader()));
                 fh.addBytes(&it.world, sizeof(it.world));
-                fh.addBytes(&r.materialData(it.material->gpuIndex()), sizeof(GpuMaterial)); // cutout textures/params
+                fh.add(materialHash(it.material->gpuIndex())); // cutout textures/params
             }
             const uint64_t hash = fh.h | 1; // never 0 (= nothing cached)
             if (m_pointFaceHash.size() <= sv.layer) m_pointFaceHash.resize(sv.layer + 1, 0);
@@ -158,6 +189,20 @@ void ShadowPass::execute(RenderContext& ctx)
         }
         ctx.endRendering();
     }
+}
+
+uint64_t ShadowPass::materialHash(uint32_t gpuIndex)
+{
+    // Hashed at most once per material per frame, however many faces use it.
+    if (m_materialHashes.size() <= gpuIndex) m_materialHashes.resize(gpuIndex + 1, {0, 0});
+    auto& [stamp, hash] = m_materialHashes[gpuIndex];
+    if (stamp != m_materialHashStamp) {
+        FaceHash fh;
+        fh.addBytes(&renderer().materialData(gpuIndex), sizeof(GpuMaterial));
+        stamp = m_materialHashStamp;
+        hash = fh.h;
+    }
+    return hash;
 }
 
 void ShadowPass::onGui()
@@ -355,10 +400,7 @@ void VelocityPass::execute(RenderContext& ctx)
         for (uint32_t idx : f.moving) {
             const DrawItem& item = f.items[idx];
             if (item.mesh != bound) {
-                VkBuffer vb = item.mesh->vertexBuffer();
-                VkDeviceSize offset = item.mesh->vertexOffset();
-                vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-                vkCmdBindIndexBuffer(ctx.cmd, item.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
+                item.mesh->bind(ctx.cmd);
                 bound = item.mesh;
             }
             ctx.push(VelocityPush{item.world, item.prevWorld});

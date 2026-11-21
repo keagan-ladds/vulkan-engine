@@ -38,8 +38,6 @@ std::atomic<uint64_t> g_terrainUid{1};
 
 constexpr int kTileSamples = TerrainData::kTileCells + 1; // per tile side (neighbours share their border)
 
-int64_t tileKey(int tx, int tz) { return (int64_t(tz) << 32) | int64_t(uint32_t(tx)); }
-
 int floorDiv(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
 
 } // namespace
@@ -113,8 +111,8 @@ void TerrainData::adoptTiles(const TerrainData& old, glm::vec4 changed)
     const float margin = 2.0f * cellSize, tileSize = float(kTileCells) * cellSize;
     std::scoped_lock lock(m_mutex, old.m_mutex);
     for (const auto& [key, cached] : old.m_tiles) {
-        const int tx = int(uint32_t(key)), tz = int(key >> 32);
-        const glm::vec2 lo = origin + glm::vec2(float(tx), float(tz)) * tileSize;
+        const glm::ivec2 t = terrainTileCoords(key);
+        const glm::vec2 lo = origin + glm::vec2(t) * tileSize;
         const bool touched = lo.x - margin <= changed.z && lo.x + tileSize + margin >= changed.x &&
                              lo.y - margin <= changed.w && lo.y + tileSize + margin >= changed.y;
         if (!touched) m_tiles.emplace(key, Cached{cached.tile, cached.lastUse});
@@ -286,7 +284,7 @@ std::shared_ptr<const TerrainData::Tile> TerrainData::tile(int tx, int tz) const
     };
     thread_local Memo memo[4];
     thread_local unsigned next = 0;
-    const int64_t key = tileKey(tx, tz);
+    const int64_t key = terrainTileKey(tx, tz);
     for (const Memo& m : memo)
         if (m.uid == m_uid && m.key == key) return m.tile;
 
@@ -698,7 +696,8 @@ Json Terrain::editsJson() const
         const TerrainEdits::Tile& t = *m_edits.tiles.at(k);
         std::vector<int16_t> cm(t.height.size());
         for (size_t i = 0; i < cm.size(); ++i) cm[i] = int16_t(std::clamp(std::lround(t.height[i] * 100.0f), -32767l, 32767l));
-        tiles.push_back({{"x", int(uint32_t(k))}, {"z", int(k >> 32)},
+        const glm::ivec2 c = terrainTileCoords(k);
+        tiles.push_back({{"x", c.x}, {"z", c.y},
                          {"height", str::base64Encode(cm.data(), cm.size() * sizeof(int16_t))},
                          {"biome", str::base64Encode(t.biome.data(), t.biome.size())},
                          {"paint", str::base64Encode(t.paint.data(), t.paint.size())}});
@@ -735,8 +734,8 @@ void Terrain::setEditsJson(const Json& j)
 
 void Terrain::onDestroy()
 {
-    if (m_nodeObject) m_nodeObject->destroy();
-    m_nodeObject = nullptr;
+    if (GameObject* nodes = m_nodeObject.get(scene())) nodes->destroy();
+    m_nodeObject.reset();
     m_nodeRenderers.clear();
     m_colliderTiles.clear(); // components die with this object
     m_lod.reset();
@@ -800,6 +799,15 @@ void Terrain::updateMaterials()
         } catch (const std::exception& e) {
             log::warn("Terrain: {}", e.what());
         }
+    }
+    if (!detail) {
+        // The shader always samples slot 0: mid-grey (0.5) is its neutral value.
+        if (!m_flatDetail) {
+            const uint8_t grey[4] = {128, 128, 128, 255};
+            m_flatDetail = Texture::create2D(r, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, grey, sizeof(grey), false,
+                                             SamplerType::LinearRepeat, "terrain flat detail");
+        }
+        detail = m_flatDetail;
     }
     // Splat layers (biomes, then rock): a row of parameters each in a small
     // float texture. Textures are loaded once and kept while in use.
@@ -870,21 +878,24 @@ void Terrain::updateNodes(bool preload)
 
     // The drawn nodes go to pooled MeshRenderers on a child object. Node
     // vertices are in world space, so the child keeps an identity transform.
-    if (!m_nodeObject) {
-        m_nodeObject = &scene().spawn("TerrainNodes");
-        m_nodeObject->hideInHierarchy = true;
-        m_nodeObject->setParent(this, false);
+    GameObject* nodes = m_nodeObject.get(scene());
+    if (!nodes) { // first time, or something deleted the child (and its renderers with it)
+        nodes = &scene().spawn("TerrainNodes");
+        nodes->hideInHierarchy = true;
+        nodes->setParent(this, false);
+        m_nodeObject = nodes;
+        m_nodeRenderers.clear();
     }
-    const glm::mat4& world = m_nodeObject->transform().worldMatrix();
+    const glm::mat4& world = nodes->transform().worldMatrix();
     if (world != glm::mat4(1.0f)) {
-        m_nodeObject->setParent(nullptr, false); // the terrain moved: back to the origin
-        m_nodeObject->transform().setLocalPosition(glm::vec3(0.0f));
-        m_nodeObject->transform().setLocalRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
-        m_nodeObject->transform().setLocalScale(glm::vec3(1.0f));
-        m_nodeObject->setParent(this, true);
+        nodes->setParent(nullptr, false); // the terrain moved: back to the origin
+        nodes->transform().setLocalPosition(glm::vec3(0.0f));
+        nodes->transform().setLocalRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+        nodes->transform().setLocalScale(glm::vec3(1.0f));
+        nodes->setParent(this, true);
     }
     const auto& drawn = m_lod->drawn();
-    while (m_nodeRenderers.size() < drawn.size()) m_nodeRenderers.push_back(&m_nodeObject->addComponent<MeshRenderer>());
+    while (m_nodeRenderers.size() < drawn.size()) m_nodeRenderers.push_back(&nodes->addComponent<MeshRenderer>());
     for (size_t i = 0; i < m_nodeRenderers.size(); ++i) {
         MeshRenderer& mr = *m_nodeRenderers[i];
         if (i < drawn.size()) {
@@ -910,7 +921,7 @@ void Terrain::updateColliders(bool force, const glm::vec4* area)
         // Brush edits: replace just the tiles under the brushed area.
         const float ts = float(TerrainData::kTileCells) * d->cellSize;
         for (auto it = m_colliderTiles.begin(); it != m_colliderTiles.end();) {
-            const glm::vec2 lo = d->origin + glm::vec2(float(int(uint32_t(it->first))), float(int(it->first >> 32))) * ts;
+            const glm::vec2 lo = d->origin + glm::vec2(terrainTileCoords(it->first)) * ts;
             if (lo.x <= area->z && lo.x + ts >= area->x && lo.y <= area->w && lo.y + ts >= area->y) {
                 removeComponent(it->second);
                 it = m_colliderTiles.erase(it);
@@ -919,33 +930,46 @@ void Terrain::updateColliders(bool force, const glm::vec4* area)
             }
         }
     }
-    // Ground is needed under the camera, every character and every dynamic body.
-    std::vector<glm::vec2> focus;
-    if (Camera* cam = scene().mainCamera()) {
-        const glm::vec3 p = cam->transform().position();
-        focus.push_back({p.x, p.z});
-    }
-    scene().forEach<CharacterController>([&](CharacterController& c) {
-        if (c.isActive()) focus.push_back({c.transform().position().x, c.transform().position().z});
-    });
-    scene().forEach<Rigidbody>([&](Rigidbody& rb) {
-        if (rb.isActive() && rb.type == BodyType::Dynamic) focus.push_back({rb.transform().position().x, rb.transform().position().z});
-    });
-
     const int cells = TerrainData::kTileCells;
     const float tileSize = float(cells) * d->cellSize;
     const int tiles = (d->res - 2) / cells + 1;
-    auto distToTile = [&](glm::vec2 p, int tx, int tz) {
+    auto tileOf = [&](glm::vec2 p) { return glm::ivec2(glm::floor((p - d->origin) / tileSize)); };
+
+    // Ground is needed under the camera, every character and every dynamic body.
+    // A pile of crates is hundreds of points: merge them per tile into a box
+    // (its distance to a tile is <= each point's, so nothing needed is missed).
+    struct Focus {
+        glm::vec2 lo, hi;
+    };
+    std::unordered_map<int64_t, Focus> focusByTile;
+    auto addFocus = [&](const glm::vec3& p3) {
+        const glm::vec2 p(p3.x, p3.z);
+        const glm::ivec2 t = tileOf(p);
+        auto [it, fresh] = focusByTile.try_emplace(terrainTileKey(t.x, t.y), Focus{p, p});
+        if (!fresh) it->second = {glm::min(it->second.lo, p), glm::max(it->second.hi, p)};
+    };
+    if (Camera* cam = scene().mainCamera()) addFocus(cam->transform().position());
+    scene().forEach<CharacterController>([&](CharacterController& c) {
+        if (c.isActive()) addFocus(c.transform().position());
+    });
+    scene().forEach<Rigidbody>([&](Rigidbody& rb) {
+        if (rb.isActive() && rb.type == BodyType::Dynamic) addFocus(rb.transform().position());
+    });
+    std::vector<Focus> focus;
+    focus.reserve(focusByTile.size());
+    for (const auto& [key, f] : focusByTile) focus.push_back(f);
+
+    auto distToTile = [&](const Focus& f, int tx, int tz) {
         const glm::vec2 lo = d->origin + glm::vec2(float(tx), float(tz)) * tileSize;
-        const glm::vec2 q = glm::max(glm::max(lo - p, p - (lo + tileSize)), glm::vec2(0.0f));
+        const glm::vec2 q = glm::max(glm::max(lo - f.hi, f.lo - (lo + tileSize)), glm::vec2(0.0f));
         return glm::length(q);
     };
     const float keep = colliderDistance * 1.25f; // hysteresis
     // Drop tiles nothing is near any more.
     for (auto it = m_colliderTiles.begin(); it != m_colliderTiles.end();) {
-        const int tx = int(uint32_t(it->first)), tz = int(it->first >> 32);
+        const glm::ivec2 t = terrainTileCoords(it->first);
         bool needed = false;
-        for (glm::vec2 p : focus) needed = needed || distToTile(p, tx, tz) < keep;
+        for (const Focus& f : focus) needed = needed || distToTile(f, t.x, t.y) < keep;
         if (needed) {
             ++it;
         } else {
@@ -953,26 +977,40 @@ void Terrain::updateColliders(bool force, const glm::vec4* area)
             it = m_colliderTiles.erase(it);
         }
     }
-    // Add the ones within range.
+    // Missing tiles within range, nearest first.
     const int reach = int(std::ceil(colliderDistance / tileSize)) + 1;
-    for (glm::vec2 p : focus) {
-        const int cx = int(std::floor((p.x - d->origin.x) / tileSize)), cz = int(std::floor((p.y - d->origin.y) / tileSize));
-        for (int tz = std::max(0, cz - reach); tz <= std::min(tiles - 1, cz + reach); ++tz) {
-            for (int tx = std::max(0, cx - reach); tx <= std::min(tiles - 1, cx + reach); ++tx) {
-                const int64_t key = (int64_t(tz) << 32) | int64_t(uint32_t(tx));
-                if (m_colliderTiles.count(key) || distToTile(p, tx, tz) >= colliderDistance) continue;
-                // 65 x 65 samples (heights relative to this object, which the body follows).
-                const int n = cells + 1;
-                std::vector<float> rel(size_t(n) * n);
-                for (int j = 0; j < n; ++j)
-                    for (int i = 0; i < n; ++i) rel[size_t(j) * n + i] = d->sampleHeight(tx * cells + i, tz * cells + j) - centre.y;
-                const glm::vec2 lo = d->samplePosition(tx * cells, tz * cells);
-                auto& rb = addComponent<Rigidbody>(Collider::heightfield(rel, uint32_t(n), d->cellSize, {lo.x - centre.x, 0.0f, lo.y - centre.z}),
-                                                   BodyType::Static);
-                rb.surface = "Terrain"; // (games look up the biome at the point for grass / sand / mud)
-                m_colliderTiles[key] = &rb;
+    std::vector<std::pair<float, int64_t>> wanted;
+    for (const Focus& f : focus) {
+        const glm::ivec2 c0 = tileOf(f.lo), c1 = tileOf(f.hi);
+        for (int tz = std::max(0, c0.y - reach); tz <= std::min(tiles - 1, c1.y + reach); ++tz) {
+            for (int tx = std::max(0, c0.x - reach); tx <= std::min(tiles - 1, c1.x + reach); ++tx) {
+                const int64_t key = terrainTileKey(tx, tz);
+                const float dist = distToTile(f, tx, tz);
+                if (m_colliderTiles.count(key) || dist >= colliderDistance) continue;
+                wanted.push_back({dist, key});
             }
         }
+    }
+    std::sort(wanted.begin(), wanted.end());
+    // Building a heightfield body is costly: a few per call (this runs every
+    // 0.1 s), except tiles something stands on, which can't wait.
+    constexpr int kMaxNewTiles = 4;
+    int created = 0;
+    for (const auto& [dist, key] : wanted) {
+        if (m_colliderTiles.count(key)) continue; // wanted by two focus boxes
+        if (dist > 0.0f && created >= kMaxNewTiles) break;
+        const glm::ivec2 t = terrainTileCoords(key);
+        // 65 x 65 samples (heights relative to this object, which the body follows).
+        const int n = cells + 1;
+        std::vector<float> rel(size_t(n) * n);
+        for (int j = 0; j < n; ++j)
+            for (int i = 0; i < n; ++i) rel[size_t(j) * n + i] = d->sampleHeight(t.x * cells + i, t.y * cells + j) - centre.y;
+        const glm::vec2 lo = d->samplePosition(t.x * cells, t.y * cells);
+        auto& rb = addComponent<Rigidbody>(Collider::heightfield(rel, uint32_t(n), d->cellSize, {lo.x - centre.x, 0.0f, lo.y - centre.z}),
+                                           BodyType::Static);
+        rb.surface = "Terrain"; // (games look up the biome at the point for grass / sand / mud)
+        m_colliderTiles[key] = &rb;
+        ++created;
     }
 }
 

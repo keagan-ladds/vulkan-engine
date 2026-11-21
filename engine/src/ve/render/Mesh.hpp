@@ -84,6 +84,8 @@ public:
 
     VkBuffer vertexBuffer() const { return m_sharedVertices ? m_sharedVertices : m_vertices.handle; }
     VkDeviceSize vertexOffset() const { return m_vertexOffset; } // bind the vertex buffer at this byte offset
+    // Binds the vertex buffer (at vertexOffset()) to binding 0 and the 32-bit index buffer.
+    void bind(VkCommandBuffer cmd) const;
     // Moving geometry (skinning): every submesh gets these bounds.
     void setBounds(const AABB& bounds);
     VkBuffer indexBuffer() const { return m_indices.handle; }
@@ -95,6 +97,8 @@ public:
 
 private:
     Mesh() = default;
+    // Stores the submeshes (one covering everything if empty) with bounds from `data`.
+    void setSubmeshes(const MeshData& data, std::vector<Submesh> submeshes);
 
     Renderer* m_renderer = nullptr;
     Buffer m_vertices;

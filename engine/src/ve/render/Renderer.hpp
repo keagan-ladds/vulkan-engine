@@ -7,11 +7,18 @@
 // descriptor set + pipeline layout shared by all shaders, per-frame buffers,
 // built-in shaders and the RenderGraph. Each frame (render()):
 //
-//   1. wait for the frame slot, acquire a swapchain image
-//   2. gather camera / draw items / lights from the scene, cull, sort
-//   3. assign shadow maps and compute cascade + cube face matrices
-//   4. let passes prepare(), upload FrameGlobals/LightBuffer/MaterialBuffer
-//   5. record the RenderGraph, submit, present
+//   1. acquire: wait for the frame slot, acquire a swapchain image
+//   2. prepare: gather camera / draw items / lights from the scene, cull,
+//      sort (SceneGatherer; static renderers are batched once into instance
+//      groups by StaticBatcher), shadow cascades + cube faces (ShadowSetup),
+//      light clusters (LightClusterer); let passes prepare(), upload
+//      FrameGlobals/LightBuffer/MaterialBuffer
+//   3. record the RenderGraph (FrameCapture reads the image back if asked)
+//   4. submit, present
+//
+// The per-frame CPU work lives in those focused parts (members of Renderer);
+// Renderer itself keeps the frame loop, the pipeline / material / shader
+// registries and the GPU objects shared by every pass.
 //
 // See docs/01-architecture.md §5 for the full picture.
 // =============================================================================
@@ -20,25 +27,29 @@
 #include "ve/gfx/Device.hpp"
 #include "ve/gfx/Samplers.hpp"
 #include "ve/gfx/Swapchain.hpp"
+#include "ve/render/FrameCapture.hpp"
 #include "ve/render/FrameData.hpp"
 #include "ve/render/Instancing.hpp"
+#include "ve/render/LightClusterer.hpp"
+#include "ve/render/SceneGatherer.hpp"
+#include "ve/render/ShadowSetup.hpp"
+#include "ve/render/StaticBatcher.hpp"
 #include "ve/render/Skinning.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/PipelineHandle.hpp"
 #include "ve/render/ShaderHotReload.hpp"
 #include "ve/render/RenderGraph.hpp"
+#include "ve/render/RendererSettings.hpp"
 
 #include <array>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
-#include <unordered_map>
 #include <vector>
 
 namespace ve {
 
 class Renderer;
-class MeshRenderer;
 class Window;
 class Scene;
 class Texture;
@@ -46,68 +57,6 @@ class TemporalAAPass;
 class Mesh;
 struct Time;
 
-struct RendererSettings {
-    bool vsync = true;
-    // Render into an offscreen image instead of presenting (window hidden):
-    // automated tests that shouldn't take over the screen. Env: VE_HEADLESS=1.
-    bool headless = false;
-    // --- Directional (sun/moon) shadows: cascaded shadow maps ---
-    uint32_t maxShadowedDirectionalLights = 2; // 0..kMaxDirectionalLights
-    uint32_t cascadeCount = 4;                 // 1..kMaxCascades
-    uint32_t directionalShadowResolution = 2048;
-    float cascadeSplitLambda = 0.8f; // 0 = uniform splits, 1 = logarithmic
-    float maxShadowDistance = 200.0f;
-    // Tallest instanced geometry (trees) above the highest regular mesh: bounds
-    // how far towards the sun directional shadow casters are gathered.
-    float shadowInstanceHeight = 40.0f;
-    // Directional shadows: casters are gathered at most this far towards the
-    // sun beyond each cascade (distant mountains at sunset within it still
-    // shadow the scene). Larger = longer sunset shadows, more overdraw.
-    float shadowCasterReach = 600.0f;
-    // > 0: directional shadows are rendered from the light direction snapped
-    // to steps of this many degrees, so a moving sun doesn't make shadow edges
-    // crawl every frame; they jump in visible steps instead. 0 = continuous
-    // (TAA hides most of the crawl).
-    float shadowDirectionStep = 0.0f;
-    // --- Point light shadows: cube maps ---
-    uint32_t maxShadowedPointLights = 4;
-    uint32_t pointShadowResolution = 512;
-    // Re-render a point light's cube face only when something it depends on
-    // changed (light position/range, or any caster in range moved, appeared or
-    // changed material). Static lights over a static camp then cost nothing;
-    // intensity flicker doesn't affect the depth cubes.
-    bool cachePointShadows = true;
-    // --- Bias (tweak in the F1 overlay) ---
-    float shadowNormalBias = 1.5f;   // in shadow texels
-    float shadowDepthBiasConstant = 1.0f;
-    float shadowDepthBiasSlope = 2.0f;
-    float shadowPcfRadius = 1.0f;    // in texels
-    bool debugCascades = false;
-    // --- GPU instancing (InstanceGroup) ---
-    float shadowMinCasterTexels = 2.0f;           // instances smaller than this (in cascade texels) cast no shadow there
-    // --- Instance LOD ---
-    float lodBias = 1.0f;          // > 1 = higher detail further away (quality slider)
-    uint32_t shadowLodBias = 1;    // shadows use this many LODs coarser than the camera
-    bool lodCrossfade = true;      // dithered transitions instead of popping
-    float lodFadeBand = 0.15f;     // transition width, fraction of the LOD threshold
-    // Point lights are binned into screen/depth clusters so each pixel only
-    // evaluates the lights that reach it (off = every pixel loops over all).
-    bool clusteredLights = true;
-    // Instances (trees, rocks...) hidden behind what was drawn last frame are
-    // skipped (Hi-Z occlusion culling of the camera view; HiZPass). Something
-    // that comes into view from behind cover can appear a frame late.
-    bool occlusionCulling = true;
-    // --- Anti-aliasing ---
-    // Temporal AA: the camera jitters by a sub-pixel offset every frame and
-    // TemporalAAPass blends each frame into a reprojected history. Smooths
-    // edges, foliage cutouts and dithering; moving objects can smear slightly.
-    bool temporalAA = false;
-    uint32_t maxInstances = 262144;               // total across all groups (64 B each)
-    uint32_t maxVisibleInstancesPerView = 1u << 20; // sum over batches of group capacity (4 B each, per cull view)
-    // --- GPU skinning (SkinnedMeshRenderer) ---
-    uint32_t maxSkinnedVertices = 262144; // rest + output vertices of all skinned meshes (64 B each, twice)
-    uint32_t maxSkinJoints = 8192;        // joint matrices per frame (64 B each, per frame in flight)
-};
 
 // Hemispherical ambient light. Effects (e.g. vfx::AtmospherePass) usually
 // drive this each frame from the sky.
@@ -201,6 +150,8 @@ public:
     // Thousands of copies of a mesh, culled and drawn on the GPU (see Instancing.hpp).
     std::shared_ptr<InstanceGroup> createInstanceGroup(InstanceGroupDesc desc, uint32_t capacity);
     InstanceSystem& instances() { return *m_instances; }
+    // Static MeshRenderers batched into instance groups (RendererSettings::staticBatching).
+    StaticBatcher& staticBatcher() { return m_staticBatcher; }
     void addShadowCaster(ShadowCaster* caster) { m_shadowCasters.push_back(caster); }
     void removeShadowCaster(ShadowCaster* caster) { std::erase(m_shadowCasters, caster); }
     const std::vector<ShadowCaster*>& shadowCasters() const { return m_shadowCasters; }
@@ -249,6 +200,7 @@ public:
     uint32_t allocateMaterialSlot();
     void freeMaterialSlot(uint32_t index);
     GpuMaterial& materialData(uint32_t index) { return m_materials[index]; }
+    void markMaterialDirty(uint32_t index) { m_materialDirty.mark(index); }
     void bindGlobalSets(VkCommandBuffer cmd);
     // Copies all material parameters to the GPU now (normally done per frame);
     // for GPU work at load time that reads materials, e.g. impostor baking.
@@ -256,7 +208,7 @@ public:
     uint64_t frameNumber() const { return m_frameNumber; }
     // Headless only: write the next rendered frame to a PNG (tests / CI).
     // Env: VE_CAPTURE=out.png [VE_CAPTURE_FRAME=N, default 150].
-    void requestCapture(const std::string& pngPath) { m_capturePath = pngPath; }
+    void requestCapture(const std::string& pngPath) { m_capture.requestCapture(pngPath); }
 
     // --- Photo capture -------------------------------------------------------------
     // Renders the next frames offscreen at width x height (0 = the window's
@@ -265,16 +217,11 @@ public:
     // effects settle), then writes a PNG. Anti-aliases edges and converges the
     // noisy effects (fog, clouds, SSGI). The UI (RenderStage::Overlay) is left
     // out. Each frame waits for the GPU and the window isn't updated meanwhile.
-    struct PhotoCaptureSettings {
-        uint32_t width = 0, height = 0;
-        uint32_t samples = 64;
-        uint32_t warmupFrames = 12;
-        std::string path = "photo.png";
-    };
-    void beginPhotoCapture(const PhotoCaptureSettings& settings);
-    bool photoCaptureActive() const { return m_photo.active; }
-    float photoCaptureProgress() const;
-    const std::string& lastPhotoPath() const { return m_photo.lastPath; } // empty until one was written
+    using PhotoCaptureSettings = ve::PhotoCaptureSettings; // see FrameCapture.hpp
+    void beginPhotoCapture(const PhotoCaptureSettings& settings) { m_capture.beginPhoto(settings); }
+    bool photoCaptureActive() const { return m_capture.photoActive(); }
+    float photoCaptureProgress() const { return m_capture.photoProgress(); }
+    const std::string& lastPhotoPath() const { return m_capture.lastPhotoPath(); } // empty until one was written
     // The size the scene is rendered at (the window, or a photo being captured).
     VkExtent2D renderExtent() const;
 
@@ -302,6 +249,7 @@ private:
     };
     static constexpr uint32_t kMaxTimestamps = 128;
     float m_timestampPeriodNs = 0.0f;
+    std::vector<uint64_t> m_timestampScratch; // readback of one slot's queries (reused)
 
     void createGlobalLayout();
     void createFrameSlots();
@@ -313,13 +261,17 @@ private:
     void createDefaultPasses();
     bool recreateSwapchain();
 
+    // The steps of render(), in order.
+    bool acquireFrame(FrameSlot& slot, uint32_t slotIndex, bool offscreen, uint32_t& imageIndex);
+    void readGpuTimings(FrameSlot& slot);
+    void prepareFrame(Scene& scene, const Time& time, FrameSlot& slot, uint32_t slotIndex, bool photo);
+    void recordFrame(FrameSlot& slot, uint32_t slotIndex, uint32_t imageIndex, bool photo, bool offscreen);
+    void submitFrame(FrameSlot& slot, uint32_t imageIndex, bool offscreen);
+
+    void updateJitter(bool photo);
     void gatherScene(Scene& scene);
-    void setupCamera(Scene& scene);
-    void gatherLights(Scene& scene);
-    void buildLightClusters(uint32_t pointLights);
-    glm::vec3 shadowDirection(const glm::vec3& lightDirection) const;
-    void buildCascades(const glm::vec3& lightDir, uint32_t lightIndex, uint32_t shadowSlot, GpuDirectionalLight& gpu);
     void fillGlobals(const Time& time);
+    void uploadFrameData(FrameSlot& slot, uint32_t slotIndex);
     VkPipeline buildFullscreenPipeline(const FullscreenPipelineDesc& desc);
     VkPipeline buildComputePipeline(const std::string& shaderName);
 
@@ -359,42 +311,26 @@ private:
     TextureId m_sceneDepth = kNoTexture;
     TextureId m_sceneNormal = kNoTexture;
     Image m_headlessTarget; // headless: stands in for the swapchain image
-    Buffer m_captureBuffer;
-    std::string m_capturePath;
-    struct PhotoState {
-        bool active = false;
-        bool started = false;
-        PhotoCaptureSettings settings;
-        uint32_t frame = 0;
-        Image target;
-        Buffer readback;
-        std::vector<float> accum; // linear RGB sums
-        std::string lastPath;
-    };
-    PhotoState m_photo;
     glm::vec2 m_jitter{0.0f}; // sub-pixel camera offset this frame (pixels)
-    void photoBegin();
-    void photoAccumulate();
-    void photoFinish();
-    void saveCapture(); // headless VE_CAPTURE / requestCapture: m_captureBuffer -> PNG
-    uint64_t m_envCaptureFrame = 0; // counted in world frames (not loading screens)
-    uint64_t m_worldFrames = 0;
     bool m_loadingFrames = false;
     glm::vec4 m_loadingClear{0.0f, 0.0f, 0.0f, 1.0f};
-    uint64_t m_envCaptureCount = 1;
-    std::string m_envCapturePath;
     TextureId m_dirShadowMap = kNoTexture;
     TextureId m_pointShadowMap = kNoTexture;
     TextureId m_backbuffer = kNoTexture;
 
-    std::vector<GpuMaterial> m_materials; // CPU copy, uploaded every frame
+    std::vector<GpuMaterial> m_materials; // CPU copy; changed slots are uploaded per frame
     std::vector<uint32_t> m_freeMaterials;
     uint32_t m_materialHighWater = 0;
+    MaterialDirtySet m_materialDirty;             // changed slots not yet in every frame slot's buffer
 
     std::unique_ptr<SkinningSystem> m_skinning;
     std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
-    std::unordered_map<const MeshRenderer*, glm::mat4> m_prevWorlds; // motion vectors
-    uint32_t m_clusterWords = 0;          // used words of LightBuffer::clusterLights
+    // The per-frame parts (see the header comment).
+    SceneGatherer m_sceneGatherer;
+    StaticBatcher m_staticBatcher;
+    ShadowSetup m_shadowSetup;
+    LightClusterer m_lightClusterer;
+    FrameCapture m_capture;
     TemporalAAPass* m_taaPass = nullptr;  // the camera only jitters while it runs
     FrameData m_frame;
     glm::mat4 m_prevViewProj{1.0f};
@@ -402,7 +338,6 @@ private:
     float m_lastGpuFrameMs = 0.0f;
     float m_lastFenceWaitMs = 0.0f;
     float m_lastSubmitMs = 0.0f;
-    float m_sceneTop = 0.0f; // highest point of this frame's draw items
     uint64_t m_contentEpoch = 1;
 
     std::array<std::shared_ptr<Shader>, size_t(BuiltinShader::Count)> m_builtinShaders;

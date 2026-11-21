@@ -2,17 +2,21 @@
 
 #include "Building.hpp"
 #include "GameUi.hpp"
+#include "Hud.hpp"
 #include "Inventory.hpp"
 #include "Player.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
+#include "SceneLookup.hpp"
 #include "World.hpp"
 
 #include <ve/audio/Audio.hpp>
 #include <ve/core/Engine.hpp>
+#include <ve/core/Env.hpp>
 #include <ve/net/Network.hpp>
 #include <ve/core/Input.hpp>
 #include <ve/core/Log.hpp>
+#include <ve/core/Strings.hpp>
 #include <ve/core/Time.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
@@ -27,7 +31,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <format>
-#include <fstream>
 
 namespace savanna {
 
@@ -57,7 +60,7 @@ void MainMenu::start()
 
 void MainMenu::onDestroy()
 {
-    if (ve::GameObject* cam = scene().findById(m_camera)) cam->destroy();
+    if (ve::GameObject* cam = m_camera.get(scene())) cam->destroy();
     engine().time().timeScale = 1.0f;
 }
 
@@ -75,13 +78,13 @@ void MainMenu::toTitle()
     showPanel("");
     engine().time().timeScale = 1.0f;
     // A camera of its own, above the camp looking west into the sunset.
-    if (!scene().findById(m_camera)) {
+    if (!m_camera.get(scene())) {
         auto& cam = scene().spawn("Title camera");
         auto& c = cam.addComponent<ve::Camera>();
         c.priority = 100;
         c.fovDegrees = 48.0f;
         c.farPlane = 6000.0f;
-        m_camera = cam.id();
+        m_camera = &cam;
     }
     if (auto* weather = scene().findFirst<vfx::Weather>()) weather->setWeather(vfx::Weather::Type::Clear, 0.5f);
     m_title->focus(nullptr);
@@ -97,8 +100,8 @@ void MainMenu::enterPlaying()
     m_pause->visible = false;
     showPanel("");
     engine().time().timeScale = 1.0f;
-    if (ve::GameObject* cam = scene().findById(m_camera)) cam->destroy();
-    m_camera = 0;
+    if (ve::GameObject* cam = m_camera.get(scene())) cam->destroy();
+    m_camera.reset();
     input().setMouseCaptured(true);
 }
 
@@ -162,12 +165,12 @@ void MainMenu::showPanel(const std::string& name)
 void MainMenu::update(float dt)
 {
     m_t += dt;
-    if (Hud* hud = scene().findFirst<Hud>()) hud->setVisible(m_screen == Screen::Playing);
+    if (Hud* hud = findCached(scene(), m_hud)) hud->setVisible(m_screen == Screen::Playing);
 
     if (m_screen == Screen::Title) {
         // Hold the light at dusk and drift the camera slowly along the camp's edge.
-        if (auto* dn = scene().findFirst<vfx::DayNightCycle>(); dn && m_leaving < 0.0f) dn->timeOfDay = kTitleTime;
-        if (ve::GameObject* cam = scene().findById(m_camera)) {
+        if (auto* dn = findCached(scene(), m_dayNight); dn && m_leaving < 0.0f) dn->timeOfDay = kTitleTime;
+        if (ve::GameObject* cam = m_camera.get(scene())) {
             const float s = std::sin(m_t * 0.05f), c = std::cos(m_t * 0.037f);
             const glm::vec2 base = layout::kCamp + glm::vec2(34.0f + 4.0f * s, 4.0f + 6.0f * c);
             const ve::Terrain* t = ve::Terrain::find(scene());
@@ -198,7 +201,7 @@ void MainMenu::update(float dt)
     if (m_screen == Screen::Playing) {
         // Escape (unless building: it stops building) / pad Start: pause.
         const bool escape = input().keyPressed(ve::Key::Escape) || input().gamepadPressed(ve::GamepadButton::Start);
-        const Builder* b = scene().findFirst<Builder>();
+        const Builder* b = findCached(scene(), m_builder);
         if (escape && !(b && (b->active() || b->justStopped()))) pause();
     }
 }
@@ -244,7 +247,7 @@ void MainMenu::buildTitle()
     gui::menuButton(list, "Multiplayer", [this] { showPanel("multiplayer"); });
     gui::menuButton(list, "Settings", [this] { showPanel("settings"); });
     gui::menuButton(list, "Controls", [this] { showPanel("controls"); });
-    gui::menuButton(list, "Quit", [this] { engine().quit(); });
+    gui::menuButton(list, "Quit", [] { engine().quit(); });
 
     auto& foot = gui::label(root, "Made with vulkan-engine", gui::font::body, 20.0f, ui::withAlpha(gui::color::dim, 0.8f));
     foot.anchor({0.0f, 1.0f}).pivot({0.0f, 1.0f}).at({140.0f, -36.0f}).size({600.0f, 26.0f});
@@ -285,7 +288,7 @@ void MainMenu::buildPause()
     centred(gui::menuButton(list, "Settings", [this] { showPanel("settings"); }, 32.0f));
     centred(gui::menuButton(list, "Controls", [this] { showPanel("controls"); }, 32.0f));
     centred(gui::menuButton(list, "Main menu", [this] { toTitle(); }, 32.0f));
-    centred(gui::menuButton(list, "Quit game", [this] { engine().quit(); }, 32.0f));
+    centred(gui::menuButton(list, "Quit game", [] { engine().quit(); }, 32.0f));
 }
 
 void MainMenu::buildPanels()
@@ -339,7 +342,7 @@ void MainMenu::buildLoad(ui::Element& content)
         } catch (...) {
         }
         const std::string slot = s.name;
-        auto& b = gui::boxButton(list, slot + "      " + when, [this, slot] {
+        auto& b = gui::boxButton(list, slot + "      " + when, [slot] {
             s_played = true;
             loadProgress(slot);
         }, 22.0f);
@@ -411,14 +414,12 @@ void MainMenu::buildControls(ui::Element& content)
         name.anchor({0.0f, 0.5f}).pivot({0.0f, 0.5f}).at({14.0f, 0.0f}).size({230.0f, 40.0f});
         auto& keys = gui::label(row, "", gui::font::body, 20.0f, gui::color::dim);
         keys.anchors({0.0f, 0.5f}, {1.0f, 0.5f}).pivot({0.0f, 0.5f}).at({250.0f, 0.0f}).size({150.0f, 40.0f});
-        keys.bind = [this, action] {
+        keys.bind = [action] {
             ve::Input& in = input();
             if (in.rebinding() == action) return std::string("Press a key or button...  (Esc cancels)");
-            std::string s;
-            for (const std::string& n : in.bindingNames(action)) s += (s.empty() ? "" : ",  ") + n;
-            return s;
+            return in.bindingText(action, ",  ");
         };
-        auto& rebind = gui::boxButton(row, "Rebind", [this, action] { input().startRebind(action); }, 18.0f);
+        auto& rebind = gui::boxButton(row, "Rebind", [action] { input().startRebind(action); }, 18.0f);
         rebind.anchor({1.0f, 0.5f}).pivot({1.0f, 0.5f}).at({-8.0f, 0.0f}).size({120.0f, 36.0f});
     }
 }
@@ -457,15 +458,11 @@ void MainMenu::buildSave(ui::Element& content)
 
 void MainMenu::saveAs(const std::string& raw)
 {
-    std::string name = raw;
-    while (!name.empty() && name.back() == ' ') name.pop_back();
-    while (!name.empty() && name.front() == ' ') name.erase(name.begin());
+    std::string name = ve::str::trim(raw);
     if (name.empty()) name = "quick";
     const bool ok = saveProgress(scene(), name);
     m_lastSave = name;
-    GameState& gs = gameState();
-    gs.message = ok ? "Saved \"" + name + "\"" : "Couldn't save \"" + name + "\"";
-    gs.messageTimer = 2.5f;
+    notify(ok ? "Saved \"" + name + "\"" : "Couldn't save \"" + name + "\"");
     showPanel("");
     if (m_screen == Screen::Paused) resume();
 }
@@ -507,9 +504,7 @@ void MainMenu::buildMultiplayer(ui::Element& content)
         ve::net::Network& n = net();
         n.playerName = m_settings.playerName.empty() ? "Host" : m_settings.playerName;
         if (!n.host(uint16_t(m_settings.port))) return;
-        GameState& gs = gameState();
-        gs.message = "Hosting on port " + std::to_string(m_settings.port);
-        gs.messageTimer = 3.0f;
+        notify("Hosting on port " + std::to_string(m_settings.port), 3.0f);
         if (m_screen == Screen::Title) newGame();
         else resume();
     };
@@ -529,7 +524,7 @@ void MainMenu::buildMultiplayer(ui::Element& content)
     status.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({0.0f, 310.0f}).size({0.0f, 80.0f});
     status.wrap = true;
     status.alignY = ui::Align::Start;
-    status.bind = [this] {
+    status.bind = [] {
         const ve::net::Network& n = net();
         switch (n.status()) {
         case ve::net::Status::Hosting: return "Hosting: " + std::to_string(n.peers().size()) + " player(s) in the game.";
@@ -556,12 +551,12 @@ void MainMenu::applySettings()
     a.setBusVolume("UI", m_settings.effects);
     a.setBusVolume("Ambient", m_settings.ambience);
     a.setBusVolume("Weather", m_settings.ambience);
-    if (!std::getenv("SAVANNA_TAA")) renderer().settings().temporalAA = m_settings.taa; // (tests choose)
-    if (auto* player = dynamic_cast<Player*>(scene().find("Player"))) {
+    if (!ve::env::get("SAVANNA_TAA")) renderer().settings().temporalAA = m_settings.taa; // (tests choose)
+    if (Player* player = localPlayer(scene())) {
         player->mouseSensitivity = glm::mix(0.0008f, 0.0043f, m_settings.mouse);
         if (ve::Camera* cam = player->camera()) cam->fovDegrees = glm::mix(55.0f, 95.0f, m_settings.fov);
     }
-    if (Hud* hud = scene().findFirst<Hud>()) hud->setShowHelp(m_settings.help);
+    if (Hud* hud = findCached(scene(), m_hud)) hud->setShowHelp(m_settings.help);
 }
 
 void MainMenu::saveSettings() const
@@ -569,18 +564,15 @@ void MainMenu::saveSettings() const
     const ve::Json j{{"master", m_settings.master}, {"music", m_settings.music}, {"effects", m_settings.effects}, {"ambience", m_settings.ambience},
                      {"mouse", m_settings.mouse},   {"fov", m_settings.fov},     {"taa", m_settings.taa},         {"help", m_settings.help},
                      {"playerName", m_settings.playerName}, {"address", m_settings.address}, {"port", m_settings.port}};
-    std::error_code ec;
-    std::filesystem::create_directories(ve::save::folder(), ec);
-    std::ofstream(ve::save::folder() / "settings.json") << j.dump(2) << '\n';
+    ve::save::writeConfig("settings", j);
 }
 
 void MainMenu::loadSettings()
 {
-    std::ifstream in(ve::save::folder() / "settings.json");
-    if (!in) return;
+    const auto config = ve::save::readConfig("settings");
+    if (!config) return;
     try {
-        ve::Json j;
-        in >> j;
+        const ve::Json& j = *config;
         m_settings.master = j.value("master", m_settings.master);
         m_settings.music = j.value("music", m_settings.music);
         m_settings.effects = j.value("effects", m_settings.effects);

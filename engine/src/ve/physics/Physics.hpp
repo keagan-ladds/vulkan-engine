@@ -33,6 +33,7 @@
 // =============================================================================
 
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 #include "ve/scene/SaveGame.hpp"
 
 #include <glm/glm.hpp>
@@ -49,6 +50,7 @@
 namespace ve {
 
 struct MeshData;
+class Mesh;
 class Scene;
 class Rigidbody;
 class CharacterController;
@@ -199,15 +201,22 @@ public:
     bool paused = false;
     float lastStepMs = 0.0f; // CPU time of the last step (shown in the F1 overlay)
 
+    // An exact static mesh collider (Collider::mesh(data)) for a shared mesh,
+    // built on first use and shared by every caller while the mesh lives (e.g.
+    // every instance of a model with staticColliders). `data` is its CPU copy.
+    Collider meshCollider(const std::shared_ptr<const Mesh>& mesh, const MeshData& data);
+
     // --- Engine internal ---------------------------------------------------------
     void step(Scene& scene, float dt);           // once per fixed update
     void interpolate(Scene& scene, float alpha); // after the fixed updates of a frame
 
-    struct Impl;
+    struct Impl; // (Jolt state: ve/physics/JoltInternal.hpp, physics .cpp files only)
     Impl& impl() { return *m_impl; }
 
 private:
     std::unique_ptr<Impl> m_impl;
+    struct MeshColliderCache; // meshCollider()'s (PhysicsWorld.cpp)
+    std::shared_ptr<MeshColliderCache> m_meshColliders;
 };
 
 // Simple collider shapes described by numbers (editable in the editor and
@@ -396,14 +405,16 @@ public:
     void drawDebug() const;
 
 protected:
-    explicit Joint(Type t); // (out of line: Impl is complete only in Physics.cpp)
+    explicit Joint(Type t); // (out of line: Impl is complete only in Joints.cpp)
 
 private:
     bool attach();
     void applyMotor();
+    GameObject* connectedObject() const; // the remembered other object, if it's still alive
     Type m_type;
-    uint64_t m_connectedId = 0;
+    ObjectRef<> m_connected; // the other object once found (connect() or by name); empty = none / the world
     bool m_broken = false;
+    uint8_t m_findWait = 0; // fixed steps until attach() searches for `connectedTo` by name again
     float m_force = 0.0f, m_torque = 0.0f;
     std::unique_ptr<Impl> m_impl;
 };
@@ -424,4 +435,9 @@ class DistanceJoint : public Joint {
 public:
     DistanceJoint() : Joint(Type::Distance) {}
 };
+
+class TypeRegistry;
+// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+void registerPhysicsTypes(TypeRegistry& r);
+
 } // namespace ve

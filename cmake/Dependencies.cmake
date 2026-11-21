@@ -1,8 +1,12 @@
 # =============================================================================
 # Third-party dependencies
 #
-# System packages (install via apt / Vulkan SDK):
-#   Vulkan headers + loader + glslc, SDL2, glm
+# System packages:
+#   Vulkan headers + loader + glslc  (Linux: apt; Windows: the LunarG Vulkan SDK)
+#   SDL2                             (Linux: apt libsdl2-dev; elsewhere, if no
+#                                     SDL2 CMake package is found, it's built
+#                                     from source, statically: nothing to install)
+#   glm                              (fetched if not installed)
 #
 # Fetched automatically at configure time (pinned versions):
 #   Vulkan Memory Allocator, Dear ImGui, cgltf, stb, miniaudio, nlohmann/json,
@@ -15,8 +19,37 @@
 # =============================================================================
 include(FetchContent)
 
+# CMake 4 refuses projects whose cmake_minimum_required is below 3.5 (Recast,
+# ENet) and warns below 3.10 (glm, meshoptimizer). Raise those fetched
+# projects' minimum to 3.10; projects already above it are unaffected.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+endif()
+
 find_package(Vulkan REQUIRED COMPONENTS glslc)
-find_package(SDL2 REQUIRED)
+
+# SDL2: the system's (apt, vcpkg, an SDL2 development package on
+# CMAKE_PREFIX_PATH), else built from source. Windows has no system SDL2, so
+# a plain checkout configures there with nothing but the Vulkan SDK installed.
+find_package(SDL2 CONFIG QUIET)
+if(NOT SDL2_FOUND)
+    message(STATUS "SDL2 not found: building it from source (static)")
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_SDL2MAIN ON CACHE BOOL "" FORCE) # the engine has its own main (SDL_MAIN_HANDLED)
+    set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC_PIC ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(SDL2
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG release-2.30.9
+        GIT_SHALLOW TRUE
+        SYSTEM)
+    FetchContent_MakeAvailable(SDL2)
+endif()
+if(NOT TARGET SDL2::SDL2)
+    add_library(SDL2::SDL2 ALIAS SDL2-static) # the static build's target, under the usual name
+endif()
 
 find_package(glm CONFIG QUIET)
 if(NOT glm_FOUND)
@@ -73,6 +106,9 @@ set(FLOATING_POINT_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
 set(ENABLE_OBJECT_STREAM OFF CACHE BOOL "" FORCE)
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
 set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+# MSVC: Jolt defaults to the static C runtime (/MT); everything else uses the
+# DLL runtime (/MD), and mixing them fails to link (LNK2038).
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
 foreach(opt USE_AVX USE_AVX2 USE_AVX512 USE_LZCNT USE_TZCNT USE_F16C USE_FMADD)
     set(${opt} OFF CACHE BOOL "" FORCE)
 endforeach()
@@ -128,7 +164,9 @@ else()
 endif()
 target_include_directories(enet SYSTEM INTERFACE ${enet_SOURCE_DIR}/include)
 if(WIN32)
-    target_link_libraries(enet PUBLIC ws2_32 winmm)
+    # Plain signature: ENet's own CMake links these with it under MinGW, and the
+    # two signatures can't be mixed on one target. (MSVC: only this call.)
+    target_link_libraries(enet ws2_32 winmm)
 endif()
 
 add_library(ve_thirdparty STATIC

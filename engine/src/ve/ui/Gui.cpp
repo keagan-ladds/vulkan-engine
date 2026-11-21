@@ -4,7 +4,6 @@
 #include "ve/core/Engine.hpp"
 #include "ve/core/Input.hpp"
 #include "ve/core/Log.hpp"
-#include "ve/editor/Editor.hpp"
 #include "ve/gfx/Samplers.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/render/Texture.hpp"
@@ -207,7 +206,11 @@ bool Element::shown() const
 
 void Element::click()
 {
-    if (enabled && onClick) onClick();
+    // Call a copy: a handler that rebuilds the UI destroys this element, and
+    // with it the stored std::function that is still running.
+    if (!enabled || !onClick) return;
+    const std::function<void()> fn = onClick;
+    fn();
 }
 
 void Element::arrange(const Rect& parent)
@@ -292,9 +295,10 @@ Button::Button(std::string text, std::string name) : Panel(name.empty() ? text :
     m_label = &add<Label>(std::move(text), "label");
     m_label->fill();
     m_label->alignX = Align::Center;
-    normal = rgba(0x2a221ccc);
-    hover = rgba(0x4a3a2aee);
-    down = rgba(0x6a4a2aff);
+    // Neutral greys: games set their own look (see the sandbox's gui:: helpers).
+    normal = rgba(0x262626cc);
+    hover = rgba(0x404040ee);
+    down = rgba(0x5a5a5aff);
     disabled = rgba(0x1a1a1a99);
 }
 
@@ -336,7 +340,10 @@ void Slider::set(float v)
     v = std::clamp(v, 0.0f, 1.0f);
     if (v == value) return;
     value = v;
-    if (onChanged) onChanged(value);
+    if (onChanged) {
+        const std::function<void(float)> fn = onChanged; // (the handler may destroy this slider)
+        fn(v);
+    }
 }
 
 void Slider::onPointer(glm::vec2 p)
@@ -495,8 +502,14 @@ void TextInput::edit(const Input& in, float dt)
     if (in.keyTyped(Key::End)) cur = text.size();
     m_cursor = cur;
     m_blink = (text != before || in.keyTyped(Key::Left) || in.keyTyped(Key::Right)) ? 0.0f : m_blink + dt;
-    if (text != before && onChanged) onChanged(text);
-    if (in.keyPressed(Key::Enter) && onSubmit) onSubmit(text);
+    // Copies of the handlers and the text: onChanged may rebuild the UI and
+    // destroy this field, so nothing below may touch a member after it runs.
+    const bool changed = text != before, submit = in.keyPressed(Key::Enter);
+    const std::function<void(const std::string&)> changedFn = changed ? onChanged : nullptr;
+    const std::function<void(const std::string&)> submitFn = submit ? onSubmit : nullptr;
+    const std::string value = (changedFn || submitFn) ? text : std::string();
+    if (changedFn) changedFn(value);
+    if (submitFn) submitFn(value);
 }
 
 void TextInput::onPointer(glm::vec2 p)
@@ -692,6 +705,7 @@ void System::remove(Canvas* c)
 
 void System::forget(const Element* e)
 {
+    ++m_forgotten;
     if (m_down == e) m_down = nullptr;
     if (m_dragging == e) m_dragging = nullptr;
     if (m_hover == e) m_hover = nullptr;
@@ -706,7 +720,7 @@ void System::forget(const Element* e)
 bool System::shownNow(const Canvas& c, Engine& engine) const
 {
     if (!c.visible || c.fade <= 0.01f || !c.isActive()) return false;
-    if (c.hideInEditor && engine.editor() && engine.editor()->paused()) return false;
+    if (c.hideInEditor && engine.editorPaused()) return false;
     return true;
 }
 
@@ -757,17 +771,39 @@ ImFont* System::font(const std::string& name, float pixelSize) const
 
 void* System::textureId(const std::shared_ptr<Texture>& texture)
 {
-    for (auto& [t, id] : m_textures)
-        if (t == texture) return id;
+    const uint64_t frame = Engine::get().renderer().frameNumber();
+    if (auto it = m_textures.find(texture.get()); it != m_textures.end()) {
+        it->second.lastUsed = frame;
+        return it->second.id;
+    }
     const VkSampler sampler = Engine::get().renderer().samplers().get(SamplerType::LinearClamp);
     VkDescriptorSet set = ImGui_ImplVulkan_AddTexture(sampler, texture->image().view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    m_textures.push_back({texture, reinterpret_cast<void*>(set)});
+    m_textures[texture.get()] = {texture, reinterpret_cast<void*>(set), frame};
     return reinterpret_cast<void*>(set);
+}
+
+void System::evictTextures()
+{
+    // A cached descriptor set keeps its texture alive. Once only the cache holds
+    // the texture and no frame drew it for a while, drop both. During frame N's
+    // GUI, frames up to N - kFramesInFlight - 1 have finished on the GPU (the
+    // renderer waited on their fences, see Device::collectGarbage), so a set
+    // last used by one of those can be freed right away.
+    const uint64_t frame = Engine::get().renderer().frameNumber();
+    for (auto it = m_textures.begin(); it != m_textures.end();) {
+        const TextureEntry& e = it->second;
+        if (e.texture.use_count() == 1 && frame > e.lastUsed + Device::kFramesInFlight) {
+            ImGui_ImplVulkan_RemoveTexture(reinterpret_cast<VkDescriptorSet>(e.id));
+            it = m_textures.erase(it); // (the Texture defers its own GPU destruction)
+        } else {
+            ++it;
+        }
+    }
 }
 
 void System::releaseTextures()
 {
-    for (auto& [t, id] : m_textures) ImGui_ImplVulkan_RemoveTexture(reinterpret_cast<VkDescriptorSet>(id));
+    for (auto& [key, e] : m_textures) ImGui_ImplVulkan_RemoveTexture(reinterpret_cast<VkDescriptorSet>(e.id));
     m_textures.clear();
 }
 
@@ -810,16 +846,31 @@ void System::route(Engine& engine)
             }
         }
     }
+    // Handlers may rebuild the UI (an inventory refreshing its slots): they run
+    // on a copy of the std::function, and when any element was destroyed
+    // meanwhile, the element pointers held here are dropped until next frame.
+    const auto invoke = [this](const auto& fn, auto&&... args) {
+        const std::remove_cvref_t<decltype(fn)> copy = fn;
+        const uint64_t before = m_forgotten;
+        copy(std::forward<decltype(args)>(args)...);
+        return m_forgotten != before; // true: something went away
+    };
     if (hover != m_hover) {
         if (m_hover) {
             m_hover->m_hovered = false;
-            if (m_hover->onHover) m_hover->onHover(false);
+            if (m_hover->onHover && invoke(m_hover->onHover, false)) {
+                hover = nullptr;
+                hoverCanvas = nullptr;
+            }
         }
         m_hover = hover;
         m_hoverTime = 0.0f;
         if (m_hover) {
             m_hover->m_hovered = true;
-            if (m_hover->onHover) m_hover->onHover(true);
+            if (m_hover->onHover && invoke(m_hover->onHover, true) && !m_hover) {
+                hover = nullptr;
+                hoverCanvas = nullptr;
+            }
         }
     }
     m_hoverTime += dt;
@@ -844,11 +895,11 @@ void System::route(Engine& engine)
             m_dragging = nullptr;
             for (Element* t = hover; t; t = t->m_parent)
                 if (t->onDrop && t != dragged) {
-                    t->onDrop(*dragged);
+                    if (invoke(t->onDrop, *dragged)) hover = nullptr;
                     break;
                 }
         } else if (down == hover && down->enabled && down->onClick) {
-            down->onClick();
+            if (invoke(down->onClick)) hover = nullptr;
         }
     }
 
@@ -865,14 +916,17 @@ void System::route(Engine& engine)
     m_editingCanvas = nullptr;
     for (Canvas* c : shown)
         if (c->m_focus && c->m_focus->wantsText() && c->m_focus->visible && c->m_focus->enabled) {
-            m_editing = static_cast<TextInput*>(c->m_focus);
-            m_editingCanvas = c;
-            break;
+            // (wantsText() is virtual: a custom element may claim it without being a TextInput)
+            if (auto* field = dynamic_cast<TextInput*>(c->m_focus)) {
+                m_editing = field;
+                m_editingCanvas = c;
+                break;
+            }
         }
     const bool typing = m_editing != nullptr;
     if (typing) {
-        m_editing->edit(in, dt);
-        if (in.keyPressed(Key::Escape)) { // stop editing (not "back")
+        m_editing->edit(in, dt); // (its handlers may destroy it: forget() clears m_editing*)
+        if (m_editingCanvas && in.keyPressed(Key::Escape)) { // stop editing (not "back")
             m_editingCanvas->focus(nullptr);
             m_editing = nullptr;
         }
@@ -937,7 +991,7 @@ void System::route(Engine& engine)
         // While typing, keys are text: no clicks on Space, no Escape = back, no letter shortcuts.
         if (!typing) {
             if (modal->m_focus && (key(Key::Enter) || key(Key::Space) || pad(GamepadButton::A))) modal->m_focus->click();
-            if (modal->onBack && (key(Key::Escape) || pad(GamepadButton::B))) modal->onBack();
+            if (modal->onBack && (key(Key::Escape) || pad(GamepadButton::B))) invoke(modal->onBack);
             for (const Canvas::Shortcut& sc : std::vector<Canvas::Shortcut>(modal->shortcuts)) // (an action may change the list)
                 if (sc.action && ((sc.key != Key::Unknown && key(sc.key)) || (sc.pad != GamepadButton::Count && pad(sc.pad)))) {
                     sc.action();
@@ -955,6 +1009,7 @@ void System::route(Engine& engine)
 
 void System::draw(Engine& engine)
 {
+    evictTextures();
     ImGuiIO& io = ImGui::GetIO();
     std::vector<Canvas*> shown;
     for (Canvas* c : m_canvases)

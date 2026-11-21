@@ -12,6 +12,7 @@
 // Placed in scenes/savanna.json; the level's NavMeshSurface covers the camp.
 
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 
 #include <glm/glm.hpp>
 
@@ -44,34 +45,35 @@ public:
 
     Mode mode() const { return m_mode; }
     bool walking() const { return m_walking; }
-    ve::Animator* animator() const { return m_animator; }
+    // The model instance (a child) and the parts on it; null once the editor deleted it.
+    ve::Animator* animator() const;
     ve::NavAgent& agent() const { return *m_agent; }
     void follow(ve::GameObject& who); // starts following (as if the player asked)
     void goHome();
     void wave(float seconds = 2.4f);  // raises the right arm (an animation layer over Idle / Walk)
     void pointAt(const glm::vec3& at, float seconds = 3.0f); // the right arm points (aim IK)
-    ve::AimIK* pointer() const { return m_point; }
-    ve::LookAtIK* looker() const { return m_look; }
+    ve::AimIK* pointer() const;
+    ve::LookAtIK* looker() const;
     int steps() const { return m_steps; } // footsteps so far (Walk clip events)
-    ve::GameObject* body() const { return m_body; }
+    ve::GameObject* body() const;
 
 private:
     void setMode(Mode m);
     void pickWanderTarget();
 
-    ve::GameObject* m_body = nullptr; // the model instance (child)
-    ve::Animator* m_animator = nullptr;
-    ve::NavAgent* m_agent = nullptr;
+    ve::ObjectRef<> m_body; // the model instance (child)
+    ve::ComponentRef<ve::Animator> m_animator;
+    ve::NavAgent* m_agent = nullptr; // on this object, added in code (the editor can't remove it)
     glm::vec3 m_home{0.0f};
     Mode m_mode = Mode::Idle;
     float m_timer = 0.0f;    // rest / follow time left
     float m_repath = 0.0f;   // follow: seconds to the next destination update
-    uint64_t m_leader = 0;   // who we follow (object id)
+    ve::ObjectRef<> m_leader; // who we follow
     bool m_walking = false;
     std::mt19937 m_rng;
     int m_waveLayer = -1;
-    ve::AimIK* m_point = nullptr;
-    ve::LookAtIK* m_look = nullptr;
+    ve::ComponentRef<ve::AimIK> m_point;
+    ve::ComponentRef<ve::LookAtIK> m_look;
     float m_pointTimer = 0.0f;
     bool m_hintAfterWave = false; // point at a sunstone once the greeting wave is done
     float m_waveTimer = 0.0f;

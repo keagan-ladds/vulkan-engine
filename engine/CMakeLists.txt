@@ -15,6 +15,17 @@ target_compile_definitions(ve_engine PUBLIC
     GLM_FORCE_DEPTH_ZERO_TO_ONE   # Vulkan clip-space depth is [0, 1]
     GLM_ENABLE_EXPERIMENTAL       # glm/gtx/* (quaternion helpers, matrix_decompose)
     SDL_MAIN_HANDLED)
+if(WIN32)
+    # windows.h (pulled in by SDL, miniaudio...) must not define min/max
+    # macros or the rarely used APIs; the CRT's "use the _s functions" warnings
+    # (getenv, fopen, localtime) aren't portable advice.
+    target_compile_definitions(ve_engine PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
+endif()
+if(MSVC)
+    # Engine headers are UTF-8 (comments, symbols): games compiling them need it too.
+    # /permissive- and /Zc:__cplusplus: standard C++ behaviour, as on GCC / Clang.
+    target_compile_options(ve_engine PUBLIC /utf-8 /permissive- /Zc:__cplusplus)
+endif()
 ve_set_warnings(ve_engine)
 
 # Engine shaders; the include folder is exported for effects and games.

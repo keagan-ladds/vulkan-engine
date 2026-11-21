@@ -93,7 +93,10 @@ float fwd = in.axisValue("MoveY");                       // strongest source win
   `in.startRebind(action)`; the next key, mouse button or pad button/trigger
   replaces that device's bindings (Escape cancels, `rebinding()` tells you it
   is waiting). Persist with `saveBindings()` / `loadBindings(json)`. The
-  savanna's F10 window does this and keeps `controls.json` in the save folder.
+  savanna's F10 window does this and keeps it with
+  `ve::save::writeConfig("controls", ...)` (`<save folder>/config/controls.json`,
+  so settings files never show up as save slots); `in.bindingText(action)` gives
+  the names joined for display.
 - Tests: `attachVirtualGamepad()` + `setVirtualGamepadAxis/Button` drive an SDL
   virtual controller (works headless).
 
@@ -544,6 +547,21 @@ if (agent.arrived())
   static geometry call `rebuild(area)`; chopped trees rebuild by themselves.
 - Big worlds: `streamRadius` keeps only tiles around the camera (or `focus`).
 
+### Things that never move: static renderers
+
+```cpp
+building.setStatic(true);                        // every MeshRenderer below it
+mr.isStatic = true;                              // or one renderer (also "static" in the editor)
+mr.materials[0] = burntMaterial; mr.refresh();   // changed a static renderer's fields from code
+```
+
+Static renderers become GPU instances (culled on the GPU, one draw per
+mesh / material batch) instead of being gathered every frame. Moving,
+hiding, enabling or destroying them is tracked automatically; only direct
+field changes (mesh, materials, visible, castShadows, enabled) need
+`refresh()`. Not for skinned meshes or transparent materials (they stay on
+the normal path).
+
 ### Thousands of props: instancing
 
 ```cpp
@@ -573,6 +591,19 @@ auto imp = ve::Impostor::bake(renderer, *mesh0, {material});   // load time, a f
 desc.lods.push_back(imp->lod());                                // last LOD
 ```
 
+Or let `ve::buildLodChain` (`ve/world/LodModel.hpp`) do the simplify / optimize /
+upload / impostor steps (FoliageType, Savanna's props and the template use it):
+
+```cpp
+ve::LodChainDesc chain;
+chain.name = "tree";
+chain.levels = {{tree, {}, {mat}}};                          // MeshData, submeshes (none: one), materials
+chain.simplify = {{.ratio = 0.35f, .faceted = true}, {.ratio = 0.10f, .sloppy = true, .faceted = true}};
+chain.switches = {{.screenSize = 0.10f}, {.screenSize = 0.035f}}; // per level; others keep defaults
+chain.impostor = true;                                        // last level
+desc.lods = ve::buildLodChain(renderer, std::move(chain));
+```
+
 Custom material shaders: forward `veInstanceLodFade()` in a `flat` varying and
 call `veLodDither(fade)` at the start of the fragment shader to get crossfades
 (see `standard.vert/frag`).
@@ -590,7 +621,8 @@ For anything scattered by rules rather than placed by hand, use
 ```cpp
 ve::FoliageWorld world;
 world.boundsMin = {-2000, -2000}; world.boundsMax = {2000, 2000};
-world.height = [&](glm::vec2 p) { return terrain.height(p.x, p.y); }; // called on a worker thread
+auto td = terrain.data(); // an immutable snapshot the jobs can keep alive
+world.height = [td](glm::vec2 p) { return td->height(p.x, p.y); }; // runs on pool jobs, several at once
 auto& foliage = scene.spawn<ve::FoliageSystem>(world);
 foliage.addExclusion(campCentre, 25.0f);
 
@@ -608,11 +640,42 @@ const uint32_t treeLayer = foliage.addLayer(trees);
 ve::FoliageLayer bushes = /* ... */;
 bushes.avoid = {{treeLayer, 2.5f}};            // keep clear of trunks
 foliage.addLayer(bushes);
-foliage.colliderFocus = &player;
+foliage.setColliderFocus(&player);
 foliage.preload(player.transform().position());
 ```
 Rules are deterministic, so the same world appears every run without saving
 anything.
+
+### Thousands of pickups: proxy sets
+
+Loose stones, sticks, loot, resource nodes: things there are many of, that sit
+still until the player touches them. Don't make each one a GameObject; keep
+them as entries in a `ve::ProxySet` (drawn instanced, saved as one block) and
+let the set turn the ones near the player into real objects:
+
+```cpp
+auto& pickups = scene.spawn<ve::ProxySet>("Pickups");
+ve::ProxyType stone;
+stone.name = "stone";
+stone.lods = {{stoneMesh, {material}}};          // or ve::buildLodChain(...)
+stone.promoteDistance = 6.0f;                    // a GameObject within 6 m of the focus
+stone.promote = [](ve::Scene& s, const ve::ProxyEntry& e) {
+    auto& o = s.spawn("Stone");                  // (or set `prefab` instead)
+    o.addComponent<ve::Interactable>().prompt = "Pick up stone";
+    return &o;                                   // the set positions it and adds a ProxyLink
+};
+const uint32_t type = pickups.addType(stone);
+pickups.add(type, position, rotation);           // thousands of these
+pickups.focus = &player;                         // default: the main camera
+```
+
+- Picked up: destroy the promoted object; its entry goes away (and stays gone
+  in save games).
+- State on the promoted object (its `ve::Saveable`s, or `ProxyLink::setState`
+  / `setData`) survives demotion and promotion.
+- Add entries before the set's `start()` for level content (stable ids, saves
+  store only what changed); `add()` later for runtime spawns (a dropped item).
+- Savanna's `Pickups.cpp` is a complete example.
 
 ### Interactive foliage: chop trees, pick fruit
 
@@ -705,7 +768,7 @@ Set `bus` and `occlusion` before the sound first plays.
 #include <vfx/ColorGrading.hpp>
 auto& grade = renderer.graph().addPass<vfx::ColorGradingPass>();
 grade.settings.tonemapper = vfx::ColorGradingSettings::Tonemapper::AgX;
-grade.settings.temperature = 10.0f; grade.settings.contrast = 1.15f;   // or a preset: ...::farCry2()
+grade.settings.temperature = 10.0f; grade.settings.contrast = 1.15f;   // or a preset: ...::sunBleached()
 grade.settings.lut = assets.loadTexture("textures/my_lut.png", /*srgb*/ false); // optional strip LUT
 ```
 Tweak everything live in F1 > Render passes > Color grading. Night brightness

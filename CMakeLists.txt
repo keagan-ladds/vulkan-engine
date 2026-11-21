@@ -15,7 +15,7 @@
 #        ve_setup_game(mygame ASSETS assets SHADERS ${MY_SHADERS})
 #     The sandbox is not built in that case (VE_BUILD_SANDBOX defaults to OFF).
 # =============================================================================
-cmake_minimum_required(VERSION 3.25) # 3.25: FetchContent SYSTEM
+cmake_minimum_required(VERSION 3.26) # 3.25: FetchContent SYSTEM; 3.26: copy_directory_if_different
 project(VulkanEngine VERSION 0.1.0 LANGUAGES C CXX)
 
 option(VE_BUILD_SANDBOX "Build the savanna test scene" ${PROJECT_IS_TOP_LEVEL})
@@ -24,6 +24,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# MSVC (Visual Studio, Windows) for everything built in this tree, third-party
+# code included: sources are UTF-8, and big translation units (JSON, Jolt) need
+# more sections than the default; /MP compiles files in parallel with the
+# Visual Studio generator. (Games get /utf-8 through ve_engine's PUBLIC options.)
+if(MSVC)
+    add_compile_options(/utf-8 /bigobj /MP)
+endif()
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)

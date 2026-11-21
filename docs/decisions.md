@@ -169,3 +169,154 @@ because single-player-only systems (direct world changes) are what make
 networking expensive to add later.
 **Cost:** clients feel the round trip on actions until prediction is added
 (N3); the host's machine and connection carry the session.
+
+### D20. Removed components leave the object at once, freed at end of frame (2026-11 review)
+**Chosen:** `removeComponent` unregisters the component, runs its
+`onDestroy()` (if it started) and moves its `unique_ptr` out of the object's
+list into a scene-owned list freed in `flushDestroyed`. Hook loops iterate a
+snapshot of the component pointers.
+**Alternatives:** erase immediately (a component removing itself inside its
+own hook freed the code that was running: use-after-free); flag in place and
+erase later (every loop over `components()` in engine and game code would
+have to remember to skip flagged ones).
+**Why:** no dangling `this` inside hooks, and `components()` stays the plain
+list callers expect. **Cost:** a removed component lives until the end of the
+frame (`isRemoved()` tells a remembered pointer apart).
+
+### D21. Platform-independent default seeds; persistent pipeline cache (2026-11 review)
+- A `FoliageType` without a seed derives it with FNV-1a over its name (was
+  `std::hash<std::string>`, which differs between standard libraries): the
+  same scene places the same trees with every compiler, which saves
+  (`FoliageInstanceId` overrides) and co-op between platforms (D19) rely on.
+  **Cost:** default placement changed once; saves made earlier with chopped
+  or picked instances in seedless layers refer to the old layout.
+- `Device` keeps a `VkPipelineCache` on disk (`pipeline_cache.bin` next to the
+  executable). Header fields are checked before use; a mismatch or a damaged
+  file just starts an empty cache.
+
+### D22. Remembered objects and components are typed handles (2026-11)
+**Chosen:** `ObjectRef<T>` (just the id; `get(scene)` = `Scene::findById` plus
+a checked cast) and `ComponentRef<T>` (owner id, address and a never-reused
+`Component::serial()`, checked against the owner's live components before the
+address is trusted). Neither converts back to a pointer by itself.
+**Alternatives:** raw pointers + `isDestroyed()` (reads freed memory); bare
+`uint64_t` ids with hand-written `findById` + casts (worked, but nothing
+enforced it, and checking components by address alone breaks when an address
+is reused); a generation-indexed handle table (more machinery than needed).
+**Why:** the editor can delete any object at any time, and most bugs the
+2026-11 review found were remembered raw pointers. The type now makes the
+safe pattern the easy one. **Cost:** a hash lookup (plus a short component
+scan) per use; `get()` without a scene only sees the main scene.
+
+### D23. Module layering is enforced, with extension points instead of upward includes (2026-11)
+**Chosen:** `tools/check_layering.py` encodes which engine module may include
+which, plus a short list of known exceptions with reasons, and fails on
+anything else. Lower modules expose extension points that the composition
+root (`Engine`) wires up: each module's `registerXTypes(TypeRegistry&)`,
+`SkinningSystem::addGatherer` (anim feeds skinning without render including
+anim), render's `DebugLineBuffer` (debug pushes lines into it),
+`Engine::atShutdown` (world's mesh cache), `Engine::editorPaused`. The model
+collider cache moved from `Model` (assets) to `PhysicsWorld::meshCollider`.
+**Why:** the module-level rule (engine ← effects ← game) was clean, but inside
+the engine includes had drifted sideways and upwards, which makes splitting
+the engine or a server build harder. A script keeps it honest; the exception
+list should shrink over time.
+
+### D24. One engine job pool (2026-11)
+**Chosen:** `ve::jobs` (`ve/core/Jobs.hpp`): hardware threads − 1 workers
+(max 15), Normal and Background lanes, cancellable handles, `parallelFor`,
+`DrainGroup` for systems that keep their own priority queue (foliage keeps
+nearest-first ordering). World systems submit jobs instead of owning threads.
+Jobs own their inputs and results (`shared_ptr`), so owners cancel and drop
+them without blocking; only jobs that read their owner (foliage) cancel and
+wait, bounded by one item. Jolt keeps its own pool, sized by
+`jobs::physicsThreadCount()`; it only runs while the main thread waits on a
+step.
+**Alternatives:** per-system threads (oversubscribed the CPU: foliage alone
+started cores − 1 threads per system); a work-stealing scheduler with fibers
+(more than this engine needs).
+
+### D25. Asynchronous buffer uploads; dirty-only material uploads; audio filter on the audio thread (2026-11)
+- `Device::uploadBuffers` stages into a per-frame ring and queues the copy;
+  `flushUploads` records queued copies at the start of the next frame (after a
+  barrier against earlier reads and writes, before a transfer → read barrier),
+  and `immediateSubmit` flushes them first. Staging blocks are reused under the
+  deferred-deletion rule (F + `kFramesInFlight`); deferred destructions still
+  pending when copies are flushed move to the flushing frame.
+  `uploadBuffersNow` blocks. **Why:** every streamed terrain node, skinned
+  mesh and prop used to stall the main thread on the GPU. **Cost:** data is on
+  the GPU from the next frame's command buffer on; a pass that creates a
+  mesh and draws it in the same frame must use `uploadBuffersNow`.
+- Materials copy only dirty slots into each frame's material buffer
+  (`MaterialDirtySet`), instead of the whole table every frame.
+- Low-pass cutoffs are handed to the audio thread through an atomic and
+  applied in a custom miniaudio node's process callback (the main thread used
+  to re-initialise a filter the audio thread was running).
+
+### D26. A composition root above the modules; big classes split by concern (2026-11)
+**Chosen:** `Engine`'s implementation, which creates every module, wires
+their extension points and runs the loop, lives in `ve/app/Engine.cpp`, the
+top layer. `ve/core/Engine.hpp` stays where every module can include it as
+the service locator, but only forward-declares the subsystems
+(`RendererSettings` moved to its own plain-data header for `EngineConfig`).
+**Alternatives:** moving the whole `Engine` (header included) to `app/`: every
+module that calls `Engine::get()` would then include upwards; replacing the
+locator with injected dependencies (a large API change for games).
+**Also:** classes that had grown past what one person can hold in mind are
+split by concern without API changes: `Renderer` owns `SceneGatherer`,
+`ShadowSetup`, `LightClusterer` and `FrameCapture`; the `Editor` is one class
+across `Editor*.cpp` files per panel (the panels share most state); physics is
+one file per component plus `JoltInternal.hpp`, which keeps D13's rule (Jolt
+only in `ve/physics/*.cpp`, now checked by `tools/check_layering.py`).
+
+### D27. Proxy sets: data far away, objects up close; saves store the difference (2026-11)
+**Chosen:** `ve::ProxySet` holds stored things as entries with stable ids
+(sequential for level content, random for runtime spawns), draws them
+instanced, and promotes those near a focus into GameObjects carrying a
+`ProxyLink`; demotion captures the object's transform and Saveable state back
+into the entry. Save games hold removed ids plus changed or added entries,
+against the level's entries as they were at `start()`.
+**Alternatives:** one GameObject per item (thousands of objects, per-object
+saves); saving the whole list (large saves for untouched levels); dirty flags
+(miss changes made through promoted objects).
+**Why:** the same pattern foliage already proved, made generic, and the
+building block for streaming placed objects (docs/08-world-streaming.md).
+**Cost:** a copy of the level's entries in memory; an entry whose object has
+Saveable state counts as changed once it has been promoted. Not replicated
+over the network yet (N2).
+
+### D28. Static renderers become GPU instances (2026-11)
+**Chosen:** `MeshRenderer::isStatic` puts a renderer into an InstanceGroup per
+(mesh, materials, castShadows) owned by the Renderer's `StaticBatcher`. The
+Scene reports changes (transform dirtying only for objects with batched
+renderers, `setActive`, destroy, reparenting, removal, `refresh()`); there is
+no per-frame scan. Point-light cube faces get the batched entries in range as
+draw items, so the face cache (D16) still hashes what it draws; editor
+picking draws them from the batcher.
+**Alternatives:** per-frame dirty checks over all statics (the cost being
+removed); merging static meshes (breaks per-object picking, removal and
+colliders); automatic detection of unmoving renderers (needs the per-frame
+scan again).
+**Why:** player buildings are thousands of pieces that never move: 3,000
+pieces cost ~16 ms of main thread and ~10k draws, now ~10 ms and ~1k, with
+the same image. **Cost:** changing a static renderer's fields from code
+needs `refresh()`; batched statics have no motion vectors and lose
+front-to-back ordering against the per-item opaque list (the opaque pass was
+~25 % slower on lavapipe in the stress test); `staticBatching = false`
+restores the old path.
+
+### D29. Windows: Vulkan SDK + MSVC, SDL2 from source when missing, UTF-8 process code page (2026-11)
+**Chosen:** on Windows the only prerequisites are the LunarG Vulkan SDK and a
+compiler (Visual Studio 2022 / Build Tools; MinGW-w64 also works). If no SDL2
+CMake package is found, `cmake/Dependencies.cmake` builds SDL2 from source as a
+static library, so there's no DLL to ship. MSVC builds use `/utf-8` (sources
+are UTF-8), `/bigobj`, `/permissive-`, the DLL C runtime everywhere (Jolt
+would default to the static one, which fails to link), and `NOMINMAX` /
+`WIN32_LEAN_AND_MEAN`. Every game executable gets a manifest whose
+`activeCodePage` is UTF-8 (Windows 10 1903+): `char*` file APIs in stb,
+cgltf, miniaudio and `std::filesystem` then take UTF-8 paths as on Linux.
+**Alternatives:** requiring vcpkg (another tool to install); converting every
+path to wide strings at each C API (40-odd call sites and the third-party
+loaders); requiring SDL2 development packages (manual setup, DLL copying).
+**Cost:** Windows builds compile SDL2 once (about a minute); Windows versions
+before 10 1903 would treat non-ASCII paths in the old code page.

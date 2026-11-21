@@ -79,27 +79,31 @@ void PickingPass::execute(RenderContext& ctx)
 
     m_owners.clear();
     const Mesh* bound = nullptr;
+    auto draw = [&](const Mesh& mesh, const Submesh& sm, const glm::mat4& world, const GameObject* owner) {
+        if (!owner) return;
+        if (&mesh != bound) {
+            mesh.bind(ctx.cmd);
+            bound = &mesh;
+        }
+        m_owners.push_back(owner->id());
+        DrawPush push{};
+        push.model = world;
+        push.viewIndex = static_cast<uint32_t>(m_owners.size()); // 1-based
+        vkCmdPushConstants(ctx.cmd, r.pipelineLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DrawPush), &push);
+        vkCmdDrawIndexed(ctx.cmd, sm.indexCount, 1, sm.firstIndex, 0, 0);
+    };
     auto drawList = [&](const std::vector<uint32_t>& list) {
         for (uint32_t idx : list) {
             const DrawItem& it = frame.items[idx];
-            if (!it.owner) continue;
-            if (it.mesh != bound) {
-                VkBuffer vb = it.mesh->vertexBuffer();
-                VkDeviceSize offset = it.mesh->vertexOffset();
-                vkCmdBindVertexBuffers(ctx.cmd, 0, 1, &vb, &offset);
-                vkCmdBindIndexBuffer(ctx.cmd, it.mesh->indexBuffer(), 0, VK_INDEX_TYPE_UINT32);
-                bound = it.mesh;
-            }
-            m_owners.push_back(it.owner->id());
-            DrawPush push{};
-            push.model = it.world;
-            push.viewIndex = static_cast<uint32_t>(m_owners.size()); // 1-based
-            vkCmdPushConstants(ctx.cmd, r.pipelineLayout(), VK_SHADER_STAGE_ALL, 0, sizeof(DrawPush), &push);
-            vkCmdDrawIndexed(ctx.cmd, it.submesh->indexCount, 1, it.submesh->firstIndex, 0, 0);
+            draw(*it.mesh, *it.submesh, it.world, it.owner);
         }
     };
     drawList(frame.opaque);
     drawList(frame.transparent);
+    // Batched static renderers aren't draw items: draw the ones in view one
+    // by one here (a pick is rare; the scissor keeps it to one pixel).
+    if (const StaticBatcher& statics = r.staticBatcher(); !statics.hidden())
+        statics.forEachInFrustum(frame.camera.frustum, draw);
     ctx.endRendering();
 
     g.transition(ctx.cmd, m_ids, Access::TransferSrc);

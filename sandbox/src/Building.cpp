@@ -3,7 +3,9 @@
 #include <ve/net/Network.hpp>
 
 #include "GameUi.hpp"
+#include "Player.hpp"
 #include "Props.hpp"
+#include "SceneLookup.hpp"
 
 #include <ve/assets/AssetManager.hpp>
 #include <ve/core/Engine.hpp>
@@ -370,7 +372,10 @@ BuildPiece* BuildPiece::of(ve::GameObject* o)
 void BuildPiece::start()
 {
     Builder3 b;
-    addComponent<ve::MeshRenderer>(pieceMesh(kind, material, b), propMaterial());
+    const bool ghost = ve::PlacementGhost::is(*this);
+    // Placed pieces never move: static, batched on the GPU (a door's leaf
+    // swings: its own, non-static renderer). The ghost follows the aim.
+    addComponent<ve::MeshRenderer>(pieceMesh(kind, material, b), propMaterial()).isStatic = !ghost;
     for (const PieceSnap& p : snapPoints(kind)) {
         auto& sp = addComponent<ve::SnapPoint>();
         sp.offset = p.offset;
@@ -378,7 +383,6 @@ void BuildPiece::start()
         sp.accepts = p.accepts;
         sp.alignRotation = p.align; // fittings turn to match their opening
     }
-    const bool ghost = ve::PlacementGhost::is(*this);
     // A door's leaf swings on a hinge: its own object, its own (moving) collider.
     Builder3 leaf;
     ve::GameObject* leafObject = nullptr;
@@ -459,7 +463,7 @@ void BuildPiece::start()
 void DoorHinge::update(float dt)
 {
     // The physical leaf: its hinge motor swings it there.
-    if (ve::GameObject* leaf = m_leaf ? gameObject().scene().findById(m_leaf) : nullptr)
+    if (ve::GameObject* leaf = m_leaf.get(gameObject().scene()))
         if (auto* joint = leaf->getComponent<ve::HingeJoint>()) {
             joint->motorTarget = m_open ? -openAngle : 0.0f;
             return;
@@ -468,7 +472,7 @@ void DoorHinge::update(float dt)
     if (m_t == target) return;
     m_t = m_t < target ? std::min(target, m_t + dt * speed) : std::max(target, m_t - dt * speed);
     const float e = m_t * m_t * (3.0f - 2.0f * m_t);
-    if (ve::GameObject* leaf = m_leaf ? gameObject().scene().findById(m_leaf) : nullptr)
+    if (ve::GameObject* leaf = m_leaf.get(gameObject().scene()))
         leaf->transform().setLocalRotation(glm::angleAxis(glm::radians(-openAngle * e), glm::vec3(0, 1, 0)));
 }
 
@@ -507,9 +511,8 @@ void Builder::start()
     // The cards' pictures: during the loading screen if there is one.
     if (engine().loading()) {
         ve::Scene* sc = &scene();
-        const uint64_t id = this->id();
-        engine().addLoadStep("Preparing the build kit", [sc, id] {
-            if (auto* b = dynamic_cast<Builder*>(sc->findById(id))) b->bakeIcons();
+        engine().addLoadStep("Preparing the build kit", [sc, self = ve::ObjectRef<Builder>(this)] {
+            if (Builder* b = self.get(*sc)) b->bakeIcons();
         });
     } else {
         bakeIcons();
@@ -551,7 +554,8 @@ void Builder::loadCatalogue()
 
 bool Builder::building(const ve::Scene& scene)
 {
-    const Builder* b = scene.findFirst<Builder>();
+    static ve::ObjectRef<Builder> s_builder; // (asked several times a frame: remembered, not searched for)
+    const Builder* b = findCached(scene, s_builder);
     return b && b->active();
 }
 
@@ -560,7 +564,7 @@ void Builder::setActive(bool on)
     if (m_active == on) return;
     m_active = on;
     // The player's own Use / Throw step aside while building.
-    if (ve::GameObject* player = scene().find("Player"))
+    if (Player* player = localPlayer(scene()))
         if (auto* who = player->getComponent<ve::Interactor>()) who->enabled = !on;
     if (!on) m_preview.hide();
 }
@@ -659,9 +663,9 @@ ve::GameObject* Builder::place()
     w.writeString(m_catalogue[size_t(m_index)].prefab);
     w.write(m_pos);
     w.writeRotation(m_rot);
-    m_placed = nullptr;
-    net().toServer("build.place", w);
-    return m_placed;
+    m_placed.reset();
+    net().toServer("build.place", w); // (offline the handler below runs right away)
+    return m_placed.get(scene());
 }
 
 void Builder::registerRequests()
@@ -679,8 +683,9 @@ void Builder::registerRequests()
             return;
         }
         // (A real game re-checks the fit and the player's materials / reach here.)
-        m_placed = net().spawn(prefab, pos, rot);
-        if (m_placed) {
+        ve::GameObject* placed = net().spawn(prefab, pos, rot);
+        m_placed = placed;
+        if (placed) {
             rebuildNavigation(pos);
             ve::net::Writer at;
             at.write(pos);

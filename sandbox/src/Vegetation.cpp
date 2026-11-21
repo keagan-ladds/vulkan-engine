@@ -5,11 +5,11 @@
 
 #include <ve/core/Log.hpp>
 #include <ve/physics/Physics.hpp>
-#include <ve/render/Impostor.hpp>
 #include <ve/render/Instancing.hpp>
 #include <ve/render/Mesh.hpp>
 #include <ve/render/Primitives.hpp>
 #include <ve/render/Renderer.hpp>
+#include <ve/world/LodModel.hpp>
 #include <ve/world/Vegetation.hpp>
 
 #include <glm/gtc/constants.hpp>
@@ -326,21 +326,21 @@ using SO = ve::SimplifyOptions;
 void addVariant(ve::Renderer& r, ve::FoliageMeshes& set, const MeshData& md, const char* name,
                 std::vector<std::pair<SO, float>> levels, float lod0ScreenSize, bool impostor)
 {
-    const auto material = propMaterial();
-    MeshData lod0 = md;
-    lod0.optimize();
-    auto mesh0 = ve::Mesh::create(r, lod0, {}, name);
-    std::vector<ve::InstanceLod> chain{{mesh0, {material}, lod0ScreenSize}};
-    std::string tris = std::to_string(lod0.triangleCount());
+    ve::LodChainDesc c;
+    c.name = name;
+    c.levels = {{md, {}, {propMaterial()}}};
+    c.switches = {{.screenSize = lod0ScreenSize}};
     for (const auto& [options, screenSize] : levels) {
-        MeshData lod = md.simplified(options);
-        lod.optimize();
-        tris += " / " + std::to_string(lod.triangleCount());
-        chain.push_back({ve::Mesh::create(r, lod, {}, name), {material}, screenSize});
+        c.simplify.push_back(options);
+        c.switches.push_back({.screenSize = screenSize});
     }
-    if (impostor) {
-        chain.push_back(ve::Impostor::bake(r, *mesh0, {material})->lod());
-        tris += " / impostor";
+    c.impostor = impostor;
+    c.impostorSettings.backgroundAlbedo = {0.35f, 0.33f, 0.2f}; // dry foliage: no dark fringes on the cards
+    std::vector<ve::InstanceLod> chain = ve::buildLodChain(r, std::move(c));
+    std::string tris;
+    for (const ve::InstanceLod& l : chain) {
+        if (!tris.empty()) tris += " / ";
+        tris += impostor && &l == &chain.back() ? std::string("impostor") : std::to_string(l.mesh->indexCount() / 3);
     }
     if (set.variants.empty()) ve::log::info("LODs {}: {} triangles", name, tris);
     set.variants.push_back(std::move(chain));

@@ -13,12 +13,16 @@
 #include "World.hpp"
 #include "Building.hpp"
 #include "Player.hpp"
+#include "AutoTest.hpp"
 #include "Harvest.hpp"
+#include "Hud.hpp"
 #include "Inventory.hpp"
 #include "MainMenu.hpp"
 #include "Multiplayer.hpp"
+#include "Pickups.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
+#include "Stress.hpp"
 #include "Vegetation.hpp"
 
 #include <ve/debug/Debug.hpp>
@@ -29,6 +33,8 @@
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/scene/SceneSerializer.hpp>
+#include <ve/core/Env.hpp>
+#include <ve/core/MathUtil.hpp>
 #include <ve/ve.hpp>
 #include <vfx/Atmosphere.hpp>
 #include <vfx/Bloom.hpp>
@@ -65,8 +71,7 @@ public:
         if (m_placed || !cam) return;
         m_placed = true;
         const glm::vec3 eye = cam->transform().position();
-        glm::vec3 f = cam->transform().forward();
-        f = glm::normalize(glm::vec3(f.x, 0.0f, f.z));
+        const glm::vec3 f = ve::math::flat(cam->transform().forward());
         const glm::vec3 r(-f.z, 0.0f, f.x);
         const glm::vec3 c = eye + f * m_ahead + r * m_side;
         for (int i = 0; i < 5; ++i) {
@@ -92,8 +97,7 @@ public:
         ve::Camera* cam = scene().mainCamera();
         if (m_done || !cam || m_terrain->version() == 0) return;
         m_done = true;
-        glm::vec3 f = cam->transform().forward();
-        f = glm::normalize(glm::vec3(f.x, 0.0f, f.z));
+        const glm::vec3 f = ve::math::flat(cam->transform().forward());
         const glm::vec3 r(-f.z, 0.0f, f.x), eye = cam->transform().position();
         const glm::vec3 hill = eye + f * 28.0f + r * 6.0f, sand = eye + f * 14.0f - r * 6.0f;
         ve::Terrain::Brush raise;
@@ -152,7 +156,7 @@ public:
         if (!cam) return;
         if (!m_started) {
             m_started = true;
-            const glm::vec3 f = glm::normalize(glm::vec3(cam->transform().forward().x, 0.0f, cam->transform().forward().z));
+            const glm::vec3 f = ve::math::flat(cam->transform().forward());
             m_right = glm::vec3(-f.z, 0.0f, f.x);
             m_centre = cam->transform().position() + f * 5.0f - glm::vec3(0.0f, 0.4f, 0.0f);
             auto& box = addComponent<ve::PrimitiveRenderer>();
@@ -189,7 +193,7 @@ public:
             // A fixed view of the camp (the headless player's view isn't stable).
             const glm::vec3 eye(layout::kCamp.x - 8.0f, 4.8f, layout::kCamp.y + 12.0f);
             const glm::vec3 d = glm::vec3(layout::kCamp.x, 3.6f, layout::kCamp.y) - eye;
-            m_pm.setView(eye, glm::degrees(std::atan2(-d.x, -d.z)), glm::degrees(std::asin(d.y / glm::length(d))));
+            m_pm.setView(eye, glm::degrees(ve::math::yawOf(d)), glm::degrees(ve::math::pitchOf(d)));
             if (m_aperture > 0.0f)
                 if (auto* dof = renderer().graph().findPass<vfx::DepthOfFieldPass>()) {
                     dof->enabled = true;
@@ -226,6 +230,9 @@ private:
     int m_state = 0;
 };
 
+// The loading screen's label while the level builds (first load and reloads).
+constexpr const char* kLevelStep = "Loading the savanna";
+
 void buildEffects(ve::Engine& engine)
 {
     ve::Renderer& r = engine.renderer();
@@ -237,15 +244,14 @@ void buildEffects(ve::Engine& engine)
     fx.bloom->intensity = 0.05f;
     // Optional screen-space passes (toggle each in the F1 render-pass list).
     // SAVANNA_SSFX=0 starts with SSGI/SSR off (SAVANNA_SSGI=0 / SAVANNA_SSR=0 for one); SAVANNA_DOF=1 starts with depth of field on.
-    const bool ssfx = !std::getenv("SAVANNA_SSFX") || std::string(std::getenv("SAVANNA_SSFX")) != "0";
-    auto envOff = [](const char* name) { return std::getenv(name) && std::string(std::getenv(name)) == "0"; };
-    r.graph().addPass<vfx::ScreenSpaceGIPass>().enabled = ssfx && !envOff("SAVANNA_SSGI");
-    r.graph().addPass<vfx::ScreenSpaceReflectionsPass>().enabled = ssfx && !envOff("SAVANNA_SSR");
-    r.graph().addPass<vfx::DepthOfFieldPass>().enabled = std::getenv("SAVANNA_DOF") != nullptr;
+    const bool ssfx = ve::env::flag("SAVANNA_SSFX", true);
+    r.graph().addPass<vfx::ScreenSpaceGIPass>().enabled = ssfx && ve::env::flag("SAVANNA_SSGI", true);
+    r.graph().addPass<vfx::ScreenSpaceReflectionsPass>().enabled = ssfx && ve::env::flag("SAVANNA_SSR", true);
+    r.graph().addPass<vfx::DepthOfFieldPass>().enabled = ve::env::flag("SAVANNA_DOF");
     // Colour grading + tonemapping (off by default: the composite's plain ACES).
     // Turn it on in F1 > Render passes > Color grading and pick a preset, or SAVANNA_GRADE=1.
     auto& grading = r.graph().addPass<vfx::ColorGradingPass>();
-    grading.enabled = std::getenv("SAVANNA_GRADE") && std::string(std::getenv("SAVANNA_GRADE")) == "1";
+    grading.enabled = ve::env::flag("SAVANNA_GRADE");
 }
 
 // A lantern hanging on a short rope from a post by the fire (joints: thrown
@@ -258,12 +264,14 @@ void spawnLantern(ve::Scene& scene, const ve::Terrain& terrain, glm::vec2 at)
     auto& pr = post.addComponent<ve::PrimitiveRenderer>();
     pr.size = {0.12f, 2.2f, 0.12f};
     pr.color = {0.35f, 0.25f, 0.16f, 1.0f};
+    pr.isStatic = true; // (the post and its arm never move)
     post.addComponent<ve::Rigidbody>(ve::Collider::box({0.06f, 1.1f, 0.06f}), ve::BodyType::Static).surface = "Wood";
     auto& arm = scene.spawn("Lantern arm");
     arm.transform().setPosition({at.x + 0.35f, g + 2.15f, at.y});
     auto& ar = arm.addComponent<ve::PrimitiveRenderer>();
     ar.size = {0.7f, 0.08f, 0.08f};
     ar.color = pr.color;
+    ar.isStatic = true;
     const glm::vec3 hook{at.x + 0.66f, g + 2.1f, at.y};
     ve::GameObject* prev = nullptr;
     for (int i = 0; i < 2; ++i) { // two rope links, then the lantern
@@ -319,13 +327,16 @@ void buildLevel(ve::Engine& engine)
     // FoliageType per prop (meshes from the MeshLibrary, registered first),
     // GrassLayers for grass and reeds, FoliageExclusions around the camp and huts.
     registerPropMeshes();
-    const char* sceneFile = std::getenv("SAVANNA_SCENE"); // another scene file (tests)
-    std::vector<ve::GameObject*> level = ve::SceneSerializer::load(scene, sceneFile ? sceneFile : "scenes/savanna.json");
+    const std::string sceneFile(ve::env::get("SAVANNA_SCENE").value_or("scenes/savanna.json")); // another scene file (tests)
+    std::vector<ve::GameObject*> level = ve::SceneSerializer::load(scene, sceneFile);
     ve::Terrain* terrainPtr = ve::Terrain::find(scene);
     for (ve::GameObject* o : level) {
         if (!terrainPtr) terrainPtr = dynamic_cast<ve::Terrain*>(o);
     }
-    if (!terrainPtr) terrainPtr = &scene.spawn<ve::Terrain>(); // a scene without terrain: default one
+    if (!terrainPtr) { // a scene without terrain: a default one, with the savanna's ground detail
+        terrainPtr = &scene.spawn<ve::Terrain>();
+        terrainPtr->detailTexture = "textures/ground_detail.png";
+    }
     ve::Terrain& terrain = *terrainPtr;
 
     // --- Collision layers: loose debris (thrown rocks) doesn't block the Use ray --------------
@@ -354,8 +365,9 @@ void buildLevel(ve::Engine& engine)
     spawnLantern(scene, terrain, layout::kCamp + glm::vec2(2.6f, -2.4f)); // (joints)
     scene.spawn<InventoryScreen>(); // Tab / I (Inventory.hpp)
     scene.spawn<Multiplayer>();     // avatars, the host's world for joiners (Multiplayer.hpp)
-    if (const char* nt = std::getenv("SAVANNA_NETTEST")) scene.spawn<NetTest>(std::string(nt) == "host");
+    if (const auto nt = ve::env::get("SAVANNA_NETTEST")) scene.spawn<NetTest>(*nt == "host");
     scene.spawn<Regrowth>(); // berry bushes grow back (Harvest.hpp)
+    spawnPickups(scene, terrain, player); // stones and sticks lying around (Pickups.hpp)
     auto& photoMode = scene.spawn<vfx::PhotoMode>(); // F12: free camera, DOF, max-quality screenshots
 
     // Environment objects from the scene file (Weather, DayNightCycle, Water).
@@ -368,14 +380,14 @@ void buildLevel(ve::Engine& engine)
 
     // Test hooks (handy for screenshots / automated checks):
     //   SAVANNA_TIME=21.5  SAVANNA_WEATHER=0..4 (4 = thunderstorm)  SAVANNA_DEBUG=1  SAVANNA_CONTROLS=1  SAVANNA_POSE=x,y,z,yawDeg,pitchDeg
-    if (const char* t = std::getenv("SAVANNA_TIME"); t && dayNight) dayNight->timeOfDay = std::strtof(t, nullptr);
-    if (const char* w = std::getenv("SAVANNA_WEATHER"); w && weather) {
-        weather->setWeather(static_cast<vfx::Weather::Type>(std::atoi(w) % int(vfx::Weather::Type::Count)), 0.01f);
+    if (dayNight) dayNight->timeOfDay = ve::env::number("SAVANNA_TIME", dayNight->timeOfDay);
+    if (weather && ve::env::get("SAVANNA_WEATHER")) {
+        weather->setWeather(static_cast<vfx::Weather::Type>(ve::env::integer("SAVANNA_WEATHER", 0) % int(vfx::Weather::Type::Count)), 0.01f);
     }
-    if (std::getenv("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
+    if (ve::env::flag("SAVANNA_DEBUG")) engine.ui().debugOverlay = true;
     // SAVANNA_DRAW=colliders,terrain,characters,navmesh,agents,villagers,shapes: debug-draw channels (F1 > Debug draw).
-    if (const char* d = std::getenv("SAVANNA_DRAW")) {
-        const std::string on = d;
+    if (const auto d = ve::env::get("SAVANNA_DRAW")) {
+        const std::string on(*d);
         auto has = [&](const char* w) { return on.find(w) != std::string::npos; };
         if (has("colliders")) ve::debug::setChannel("Physics colliders", true);
         if (has("terrain")) ve::debug::setChannel("Physics terrain", true);
@@ -385,30 +397,34 @@ void buildLevel(ve::Engine& engine)
         if (has("villagers")) ve::debug::setChannel("Villagers", true);
         if (has("shapes")) scene.spawn<DebugShapes>();
     }
-    if (const char* b = std::getenv("SAVANNA_LODBIAS")) r.settings().lodBias = std::strtof(b, nullptr); // <1 = coarser
+    r.settings().lodBias = ve::env::number("SAVANNA_LODBIAS", r.settings().lodBias); // <1 = coarser
     r.settings().temporalAA = true;
-    if (const char* o = std::getenv("SAVANNA_OCCLUSION")) r.settings().occlusionCulling = o[0] == '1'; // occlusion culling on/off
+    r.settings().occlusionCulling = ve::env::flag("SAVANNA_OCCLUSION", r.settings().occlusionCulling); // occlusion culling on/off
+    // SAVANNA_STATIC=0: static renderers drawn one by one like the rest (A/B; F1 > Instance culling).
+    r.settings().staticBatching = ve::env::flag("SAVANNA_STATIC", r.settings().staticBatching);
+    // SAVANNA_STRESS=pieces:<n>: n static building pieces in a grid by the camp (Stress.hpp).
+    if (const auto st = ve::env::get("SAVANNA_STRESS")) spawnStress(scene, terrain, *st);
     // SAVANNA_SCULPT=1: brush a hill and a desert patch in front of the camera.
-    if (std::getenv("SAVANNA_SCULPT")) scene.spawn<SculptTest>(terrainPtr);
+    if (ve::env::flag("SAVANNA_SCULPT")) scene.spawn<SculptTest>(terrainPtr);
     // SAVANNA_MOVER=1: a textured box sliding sideways 5 m in front of the camera.
     // SAVANNA_VELOCITY=0 turns the motion vector pass off (TAA uses camera motion only).
-    if (std::getenv("SAVANNA_MOVER")) scene.spawn<Mover>();
-    if (const char* v = std::getenv("SAVANNA_VELOCITY"); v && v[0] == '0') {
+    if (ve::env::flag("SAVANNA_MOVER")) scene.spawn<Mover>();
+    if (!ve::env::flag("SAVANNA_VELOCITY", true)) {
         if (auto* p = r.graph().findPass<ve::VelocityPass>()) p->enabled = false;
     }
     // SAVANNA_BENDERS=ahead,side: a ring of grass benders (radius 0.4..1.6 m) on the
     // ground `ahead` m in front of the camera and `side` m to its right (screenshots).
-    if (const char* b = std::getenv("SAVANNA_BENDERS")) {
+    if (const auto b = ve::env::get("SAVANNA_BENDERS")) {
         float ahead = 8.0f, side = 0.0f;
-        std::sscanf(b, "%f,%f", &ahead, &side);
+        std::sscanf(std::string(*b).c_str(), "%f,%f", &ahead, &side);
         scene.spawn<BenderRing>(terrainPtr, ahead, side);
     }
-    if (const char* s = std::getenv("SAVANNA_SUNSTEP")) r.settings().shadowDirectionStep = std::strtof(s, nullptr); // degrees, 0 = continuous
+    r.settings().shadowDirectionStep = ve::env::number("SAVANNA_SUNSTEP", r.settings().shadowDirectionStep); // degrees, 0 = continuous
     // SAVANNA_LIGHTS=<n>[,0]: n small coloured point lights scattered around the camp
     // (clustered lighting test; ",0" turns the clusters off for comparison).
-    if (const char* l = std::getenv("SAVANNA_LIGHTS")) {
+    if (const auto l = ve::env::get("SAVANNA_LIGHTS")) {
         int count = 0, clustered = 1;
-        std::sscanf(l, "%d,%d", &count, &clustered);
+        std::sscanf(std::string(*l).c_str(), "%d,%d", &count, &clustered);
         r.settings().clusteredLights = clustered != 0;
         std::mt19937 rng(7);
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
@@ -422,52 +438,56 @@ void buildLevel(ve::Engine& engine)
             pl.range = 6.0f + u(rng) * 6.0f;
         }
     }
-    if (const char* a = std::getenv("SAVANNA_TAA")) r.settings().temporalAA = a[0] == '1'; // SAVANNA_TAA=0 turns it off
-    if (const char* at = std::getenv("SAVANNA_AUTOTEST")) {
+    r.settings().temporalAA = ve::env::flag("SAVANNA_TAA", r.settings().temporalAA); // SAVANNA_TAA=0 turns it off
+    if (ve::env::get("SAVANNA_AUTOTEST")) {
         // SAVANNA_AUTOTEST=<step>: start at that step (e.g. 23 = navigation only).
-        if (std::atoi(at) > 1) AutoTest::startAt(std::atoi(at));
+        if (const int step = ve::env::integer("SAVANNA_AUTOTEST", 1); step > 1) AutoTest::startAt(step);
         scene.spawn<AutoTest>(terrain);
     }
     // SAVANNA_PHOTO=<samples>[,<resolution 0..4>[,<dof aperture>]]: take a photo-mode shot of the start view and quit.
-    if (const char* p = std::getenv("SAVANNA_PHOTO")) {
+    if (const auto p = ve::env::get("SAVANNA_PHOTO")) {
         int samples = 32, res = 0;
         float aperture = 0.0f;
-        std::sscanf(p, "%d,%d,%f", &samples, &res, &aperture);
+        std::sscanf(std::string(*p).c_str(), "%d,%d,%f", &samples, &res, &aperture);
         scene.spawn<PhotoShot>(photoMode, samples, res, aperture);
     }
     // The title screen (MainMenu.hpp): a sunset over the savanna with the menu,
     // when the game is played (not tests / tools), and only before the first
     // game of the run; SAVANNA_MENU=1 forces it (screenshots).
-    const bool tools = std::getenv("SAVANNA_AUTOTEST") || std::getenv("SAVANNA_EDITOR") || std::getenv("SAVANNA_EDITORTEST") ||
-                       std::getenv("SAVANNA_PHOTO") || std::getenv("VE_BENCH") || std::getenv("SAVANNA_POSE") ||
-                       std::getenv("SAVANNA_NET");
-    const bool forced = std::getenv("SAVANNA_MENU") && std::string(std::getenv("SAVANNA_MENU")) == "1";
-    scene.spawn<MainMenu>(forced || (!tools && !MainMenu::s_played));
-    if (const char* f = std::getenv("SAVANNA_POSE")) {
+    // (set at all: these carry values, e.g. SAVANNA_AUTOTEST=23, SAVANNA_NET=host)
+    const bool tools = ve::env::get("SAVANNA_AUTOTEST") || ve::env::flag("SAVANNA_EDITOR") || ve::env::get("SAVANNA_EDITORTEST") ||
+                       ve::env::get("SAVANNA_PHOTO") || ve::env::get("VE_BENCH") || ve::env::get("SAVANNA_POSE") ||
+                       ve::env::get("SAVANNA_NET");
+    scene.spawn<MainMenu>(ve::env::flag("SAVANNA_MENU") || (!tools && !MainMenu::s_played));
+    if (const auto f = ve::env::get("SAVANNA_POSE")) {
         float x, y, z, yaw, pitch;
-        if (std::sscanf(f, "%f,%f,%f,%f,%f", &x, &y, &z, &yaw, &pitch) == 5) player.setPose({x, y, z}, yaw, pitch);
+        if (std::sscanf(std::string(*f).c_str(), "%f,%f,%f,%f,%f", &x, &y, &z, &yaw, &pitch) == 5) player.setPose({x, y, z}, yaw, pitch);
     }
+}
+
+
+// Behind the loading screen: leave the current level, build it again as the
+// scene file has it (whatever changed, e.g. collected pickups, comes back),
+// then `then` on top (the game state: new or from a save).
+void reloadLevel(ve::Engine& engine, const char* thenLabel, std::function<void()> then)
+{
+    engine.beginLoading(makeLoadingScene(), 0.3f);
+    engine.addLoadStep("Leaving", [&engine] { engine.scene().clear(); });
+    engine.addLoadStep(kLevelStep, [&engine] { buildLevel(engine); });
+    engine.addLoadStep(thenLabel, std::move(then));
 }
 
 } // namespace
 
 namespace savanna {
 
-void buildWorld(ve::Engine& engine)
-{
-    buildLevel(engine);
-}
-
 void reloadFresh(ve::Engine& engine)
 {
-    engine.beginLoading(makeLoadingScene(), 0.3f);
-    engine.addLoadStep("Leaving", [&engine] { engine.scene().clear(); });
-    engine.addLoadStep("Loading the savanna", [&engine] {
+    reloadLevel(engine, "Starting a new game", [] {
         GameState& gs = gameState();
         gs.collected = 0;
         gs.inventory.clear();
         gs.message.clear();
-        buildLevel(engine);
     });
 }
 
@@ -475,12 +495,7 @@ bool reloadWithSave(ve::Engine& engine, const std::string& slot)
 {
     auto save = ve::save::read(slot);
     if (!save) return false;
-    // Behind the loading screen: a fresh level (whatever changed since the
-    // save, e.g. collected pickups, comes back), then the save on top.
-    engine.beginLoading(makeLoadingScene(), 0.3f);
-    engine.addLoadStep("Leaving", [&engine] { engine.scene().clear(); });
-    engine.addLoadStep("Loading the savanna", [&engine] { buildLevel(engine); });
-    engine.addLoadStep("Restoring your game", [&engine, save = std::move(*save)] {
+    reloadLevel(engine, "Restoring your game", [&engine, save = std::move(*save)] {
         ve::save::apply(engine.scene(), save);
         applyGameData(save.value("game", ve::Json::object()));
     });
@@ -503,7 +518,7 @@ int main()
         // ~150k foliage instances in the 4 km world, and the editor briefly
         // holds the old and the new set while it reopens a scene.
         config.renderer.maxInstances = 1u << 19;
-        if (const char* v = std::getenv("VE_VALIDATION")) config.validation = v[0] == '1';
+        config.validation = ve::env::flag("VE_VALIDATION", config.validation);
 
         ve::Engine engine(config);
         // A loading screen (its own small scene, LoadingScreen.hpp) until the
@@ -511,15 +526,15 @@ int main()
         // SAVANNA_EDITOR=1: start in the editor (same as pressing F2). Asked for
         // before loading, so the editor shows the progress instead of the
         // game's loading screen (the switch happens once the level is built).
-        if (std::getenv("SAVANNA_EDITOR") && engine.editor()) engine.editor()->setMode(ve::Editor::Mode::Edit);
+        if (ve::env::flag("SAVANNA_EDITOR") && engine.editor()) engine.editor()->setMode(ve::Editor::Mode::Edit);
         // SAVANNA_NET=host / join:<address>: a multiplayer session (Multiplayer.hpp).
         // Started before loading: a joining client's world waits for the load.
         savanna::Multiplayer::startFromEnvironment(engine);
         engine.beginLoading(savanna::makeLoadingScene(), 0.5f);
         engine.addLoadStep("Preparing the sky", [&] { buildEffects(engine); });
-        engine.addLoadStep("Loading the savanna", [&] { buildLevel(engine); });
+        engine.addLoadStep(kLevelStep, [&] { buildLevel(engine); });
         engine.addLoadStep("Waking up the camp", [&] {
-            if (std::getenv("SAVANNA_EDITORTEST")) engine.scene().spawn<savanna::EditorTest>();
+            if (ve::env::get("SAVANNA_EDITORTEST")) engine.scene().spawn<savanna::EditorTest>();
         });
         engine.run();
     } catch (const std::exception& e) {

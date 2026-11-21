@@ -13,6 +13,7 @@
 // =============================================================================
 
 #include "ve/scene/GameObject.hpp"
+#include "ve/scene/ObjectRef.hpp"
 
 #include <glm/glm.hpp>
 
@@ -27,17 +28,17 @@ class StandardMaterial;
 class ModelInstance : public Component {
 public:
     std::string path;             // e.g. "models/rondavel.gltf"
-    bool staticColliders = false; // exact mesh colliders on every node (buildings)
+    bool staticColliders = false; // exact mesh colliders on every node, static renderers (buildings)
     std::string hiddenNodes;      // comma-separated node names to leave out (e.g. "Door")
     std::string animation;        // animated models: the clip to loop (empty = the first)
 
     void start() override { rebuild(); }
     void onDestroy() override;
     void rebuild();
-    GameObject* instanceRoot() const { return m_root; }
+    GameObject* instanceRoot() const; // null until started / if it was destroyed
 
 private:
-    GameObject* m_root = nullptr;
+    ObjectRef<> m_root; // the editor or game may destroy the spawned nodes
 };
 
 class PrimitiveRenderer : public Component {
@@ -51,13 +52,15 @@ public:
     std::string texture;                // optional albedo texture path
     glm::vec2 uvScale{1.0f};
     bool castShadows = true;
+    bool isStatic = false;              // never moves: its MeshRenderer is static (batched on the GPU)
 
     void start() override { rebuild(); }
     void onDestroy() override;
     void rebuild();
 
 private:
-    MeshRenderer* m_renderer = nullptr;
+    // The MeshRenderer this added next to itself (the editor may remove it).
+    ComponentRef<MeshRenderer> m_renderer;
     std::shared_ptr<StandardMaterial> m_material;
 };
 
