@@ -66,6 +66,7 @@ public:
     GameObject& gameObject() const { return *m_owner; }
 
 private:
+    friend class Scene;
     void markDirty();
 
     GameObject* m_owner;
@@ -76,6 +77,10 @@ private:
     glm::vec3 m_scale{1.0f};
     mutable glm::mat4 m_world{1.0f};
     mutable bool m_dirty = true;
+    // Batched static MeshRenderers on this object (Scene::setStaticEntry).
+    // Only while there are any does becoming dirty notify the scene, so the
+    // renderer moves their instances; every other transform pays one compare.
+    uint32_t m_staticEntries = 0;
 };
 
 } // namespace ve

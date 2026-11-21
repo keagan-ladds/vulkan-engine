@@ -22,6 +22,7 @@
 namespace ve {
 
 class Camera;
+class MeshRenderer;
 class Model;
 
 class Scene {
@@ -101,6 +102,41 @@ public:
     const std::vector<uint64_t>& levelObjects() const { return m_levelObjects; }
     void addLevelObject(uint64_t id) { m_levelObjects.push_back(id); }
 
+    // --- Static renderers (MeshRenderer::isStatic) -------------------------------------
+    // The renderer batches static renderers into GPU instance groups once
+    // (render/StaticBatcher) instead of gathering them every frame. Instead of
+    // scanning them, it learns what changed from here: SceneGatherer drains
+    // this every frame. The scene fills it from its hooks: a static renderer
+    // starting or calling refresh(), a Transform with batched renderers
+    // becoming dirty (itself or through a parent), setActive / destroy of an
+    // object above static renderers, and unregistering (removeComponent,
+    // destroy, clear).
+    struct StaticChanges {
+        std::vector<MeshRenderer*> dirty; // to re-check (null: unregistered since it was queued)
+        std::vector<uint32_t> released;   // batch entries of static renderers that left the scene
+        uint32_t entries = 0;             // static renderers that have a batch entry now
+        uint32_t known = 0;               // static renderers seen so far (still registered)
+        // The renderer keeps a weak_ptr to notice when this scene is gone.
+        std::shared_ptr<const int> alive = std::make_shared<const int>(0);
+    };
+    StaticChanges& staticChanges() { return m_static; }
+    // Queue a renderer for a re-check (static, or not static any more but still batched).
+    void queueStaticRenderer(MeshRenderer& renderer);
+    // MeshRenderer::refresh(): the same, if its object is in a scene yet.
+    static void refreshStatic(MeshRenderer& renderer);
+    // The static renderers on `o` (and with `recursive`, below it) need a re-check.
+    void staticObjectChanged(GameObject& o, bool recursive);
+    // SceneGatherer: takes the queued renderers (swapped into `out`, cleared first).
+    void takeStaticDirty(std::vector<MeshRenderer*>& out);
+    // SceneGatherer: a renderer got / lost its batch entry (kNoStaticEntry = none).
+    void setStaticEntry(MeshRenderer& renderer, uint32_t entry);
+    // SceneGatherer: the batcher was cleared (static batching turned off):
+    // forget every entry. queueAllStatic(): one scan queueing every static
+    // renderer (static batching turned on, or the renderer starts batching
+    // this scene).
+    void resetStaticEntries();
+    void queueAllStatic();
+
     // --- Engine internal -----------------------------------------------------------
     void startPending();
     void fixedUpdate(float dt);
@@ -167,6 +203,7 @@ private:
     mutable std::unordered_map<std::type_index, Query> m_queries;
     uint64_t m_generation = 1; // bumped when a bucket goes from empty to non-empty
     bool m_hasDestroyed = false;
+    StaticChanges m_static;
 };
 
 } // namespace ve
