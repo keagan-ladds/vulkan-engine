@@ -5,6 +5,7 @@
 #include "Hud.hpp"
 #include "Inventory.hpp"
 #include "MainMenu.hpp"
+#include "Pickups.hpp"
 #include "Player.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
@@ -22,6 +23,7 @@
 #include <ve/debug/Debug.hpp>
 #include <ve/gameplay/Interaction.hpp>
 #include <ve/gameplay/Placement.hpp>
+#include <ve/gameplay/ProxySet.hpp>
 #include <ve/nav/Navigation.hpp>
 #include <ve/physics/Physics.hpp>
 #include <ve/render/Instancing.hpp>
@@ -78,6 +80,21 @@ public:
 // A PointLight subclass added under its own type: Scene::forEach<PointLight>
 // (which the renderer uses) must still find it.
 class ProbeLight : public ve::PointLight {};
+
+// Saveable state on a promoted pickup: the ProxySet must capture it when the
+// pickup goes back to being data, and give it back (re-adding the component)
+// when it's promoted again.
+class ProbeState : public ve::Component, public ve::Saveable {
+public:
+    int value = 0;
+    void saveState(ve::Json& out) const override { out["value"] = value; }
+    void loadState(const ve::Json& in) override { value = in.value("value", 0); }
+};
+VE_REGISTER_TYPE(ProbeState, "AutoTestProbeState")
+{
+    t.category("Tests");
+    t.field("value", &ProbeState::value);
+}
 
 // Spawns another object from onDestroy() (Scene::flushDestroyed must cope).
 class SpawnOnDestroy : public ve::GameObject {
@@ -850,8 +867,10 @@ void AutoTest::update(float dt)
         shot("7-building");
         if (m_t > 2.0f) {
             m_t = 0.0f;
-            m_step = 70; // physics layers / surfaces, then the UI
+            m_step = 63; // pickups (a ProxySet), then physics layers / surfaces, then the UI
         }
+    } else if (m_step >= 63 && m_step <= 69) {
+        pickupSteps(log);
     } else if (m_step >= 70) {
         physicsSteps(log);
     } else if (m_step >= 47) {
@@ -1371,4 +1390,153 @@ void AutoTest::uiSteps(const std::function<void(const std::string&)>& log)
     default: break;
     }
 }
+
+void AutoTest::faceGround(const glm::vec3& target, float distance)
+{
+    // From the east, looking west and down at the point (the Interactor's view cone).
+    Player* player = localPlayer(scene());
+    const glm::vec3 feet = groundAt({target.x + distance, target.z});
+    const glm::vec3 d = target - (feet + glm::vec3(0.0f, player->eyeHeight, 0.0f));
+    player->setPose(feet, glm::degrees(ve::math::yawOf(d)), glm::degrees(ve::math::pitchOf(d)));
+}
+
+// Pickups: stones and sticks held as data in a ve::ProxySet, promoted to
+// Pickup objects near the player (Pickups.hpp).
+void AutoTest::pickupSteps(const std::function<void(const std::string&)>& log)
+{
+    ve::ProxySet* set = findPickups(scene());
+    if (!set) {
+        log("pickups: NO set");
+        engine().quit();
+        m_step = 100;
+        return;
+    }
+    auto yes = [](bool b) { return std::string(b ? "yes" : "NO"); };
+    const glm::vec3 start = groundAt(layout::kCamp + glm::vec2(9.0f, 5.0f));
+    const int stoneType = set->typeIndex("stone");
+    switch (m_step) {
+    case 63: {
+        if (m_t < 0.3f) break;
+        // Only the few near the player are objects; every promoted one has its link.
+        int links = 0;
+        scene().forEach<ve::ProxyLink>([&](ve::ProxyLink&) { ++links; });
+        log("pickups: " + std::to_string(set->size()) + " entries, " + std::to_string(set->promotedCount()) + " promoted (bounded: " +
+            yes(set->promotedCount() <= 40 && set->size() > 1000) + "), links " + std::to_string(links) + " (match: " +
+            yes(links == int(set->promotedCount())) + ")");
+        const ve::ProxyEntry* stone = set->nearest(start, 40.0f, stoneType);
+        if (!stone) {
+            log("pickups: NO stone near the camp");
+            m_step = 69;
+            break;
+        }
+        s_expect.pickupGone = stone->id;
+        faceGround(stone->position, 1.3f);
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 64: {
+        if (m_t < 0.5f) break;
+        auto* pickup = dynamic_cast<Pickup*>(set->promoted(s_expect.pickupGone));
+        auto* who = localPlayer(scene())->getComponent<ve::Interactor>();
+        const int before = gameState().inventory.count("stone");
+        const std::string prompt = who ? who->prompt() : std::string();
+        const bool used = who && who->interact();
+        log("pickups: the stone is a Pickup object: " + yes(pickup != nullptr) + ", prompt '" + prompt + "', used " + yes(used) +
+            ", stones " + std::to_string(before) + " -> " + std::to_string(gameState().inventory.count("stone")) + " (+1: " +
+            yes(gameState().inventory.count("stone") == before + 1) + ")");
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 65: {
+        if (m_t < 0.3f) break;
+        log("pickups: the picked entry is gone: " + yes(!set->find(s_expect.pickupGone)) + " (consumed " +
+            std::to_string(set->stats().consumed) + ")");
+        // Another one, to change while it's an object and walk away from.
+        const glm::vec3 near = groundAt(layout::kCamp + glm::vec2(30.0f, -30.0f));
+        const ve::ProxyEntry* kept = set->nearest(near, 60.0f);
+        if (!kept) {
+            log("pickups: NO second entry");
+            m_step = 69;
+            break;
+        }
+        s_expect.pickupKept = kept->id;
+        faceGround(kept->position, 1.5f);
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 66: {
+        if (m_t < 0.5f) break;
+        ve::GameObject* obj = set->promoted(s_expect.pickupKept);
+        auto* link = obj ? obj->getComponent<ve::ProxyLink>() : nullptr;
+        if (link) {
+            link->setState(7);
+            link->setData({{"mark", "autotest"}});
+            obj->addComponent<ProbeState>().value = 42;
+        }
+        log("pickups: second entry promoted with a link: " + yes(link != nullptr) + "; state 7, a payload and a Saveable component set");
+        localPlayer(scene())->teleport(groundAt({1200.0f, -300.0f}), 0.0f); // far away: it goes back to data
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 67: {
+        if (m_t < 1.0f) break;
+        const ve::ProxyEntry* e = set->find(s_expect.pickupKept);
+        const bool captured = e && e->objectState.is_object() && e->objectState.value("components", ve::Json::object()).value("AutoTestProbeState", ve::Json::object()).value("value", 0) == 42;
+        log("pickups: far away: demoted " + yes(e && !set->promoted(e->id)) + ", " + std::to_string(set->promotedCount()) +
+            " promoted, state kept " + yes(e && e->state == 7) + ", payload kept " + yes(e && e->data.value("mark", "") == "autotest") +
+            ", Saveable state captured " + yes(captured));
+        if (e) faceGround(e->position, 1.5f);
+        m_t = 0.0f;
+        ++m_step;
+        break;
+    }
+    case 68: {
+        if (m_t < 1.0f) break;
+        ve::GameObject* obj = set->promoted(s_expect.pickupKept);
+        auto* link = obj ? obj->getComponent<ve::ProxyLink>() : nullptr;
+        auto* probe = obj ? obj->getComponent<ProbeState>() : nullptr;
+        log("pickups: back again: promoted " + yes(obj != nullptr) + ", link state " + std::to_string(link ? link->state() : 0) + " (7: " +
+            yes(link && link->state() == 7) + "), Saveable state restored " + yes(probe && probe->value == 42));
+        // Save, load (the level rebuilt): the picked stone stays picked, the marked one marked.
+        s_expect.pickupStones = gameState().inventory.count("stone");
+        s_expect.pickupEntries = set->size();
+        log("pickups: saved " + yes(saveProgress(scene(), "pickuptest")));
+        s_resume = 69;
+        log(std::string("pickups: loading the save: ") + (loadProgress("pickuptest") ? "started" : "NO SAVE"));
+        ++m_step;
+        break;
+    }
+    case 69: {
+        if (m_t < 3.0f) break;
+        if (!m_pickupLogged) {
+            m_pickupLogged = true;
+            const ve::ProxyEntry* kept = set->find(s_expect.pickupKept);
+            log("pickups: after loading: picked stone still gone " + yes(s_expect.pickupGone && !set->find(s_expect.pickupGone)) +
+                ", marked entry state 7 " + yes(kept && kept->state == 7) + ", payload " +
+                yes(kept && kept->data.value("mark", "") == "autotest") + ", entries " + std::to_string(set->size()) + " (" +
+                std::to_string(s_expect.pickupEntries) + "), stones in the inventory " + std::to_string(gameState().inventory.count("stone")) +
+                " (" + std::to_string(s_expect.pickupStones) + ")");
+            ve::save::remove("pickuptest");
+            // The screenshot: stones and sticks in the grass by the camp.
+            if (const ve::ProxyEntry* e = set->nearest(start, 40.0f)) {
+                const glm::vec3 eye = groundAt({e->position.x + 3.5f, e->position.z + 2.0f}) + glm::vec3(0.0f, 0.4f, 0.0f);
+                const glm::vec3 d = e->position - (eye + glm::vec3(0.0f, localPlayer(scene())->eyeHeight, 0.0f));
+                localPlayer(scene())->setPose(eye, glm::degrees(ve::math::yawOf(d)), glm::degrees(ve::math::pitchOf(d)));
+            }
+        }
+        if (m_t < 4.5f) break;
+        shot("7a-pickups");
+        if (m_t < 5.0f) break;
+        m_t = 0.0f;
+        m_step = 70; // physics layers / surfaces, then the UI
+        break;
+    }
+    default: break;
+    }
+}
+
 } // namespace savanna
