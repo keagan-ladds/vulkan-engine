@@ -547,6 +547,21 @@ if (agent.arrived())
   static geometry call `rebuild(area)`; chopped trees rebuild by themselves.
 - Big worlds: `streamRadius` keeps only tiles around the camera (or `focus`).
 
+### Things that never move: static renderers
+
+```cpp
+building.setStatic(true);                        // every MeshRenderer below it
+mr.isStatic = true;                              // or one renderer (also "static" in the editor)
+mr.materials[0] = burntMaterial; mr.refresh();   // changed a static renderer's fields from code
+```
+
+Static renderers become GPU instances (culled on the GPU, one draw per
+mesh / material batch) instead of being gathered every frame. Moving,
+hiding, enabling or destroying them is tracked automatically; only direct
+field changes (mesh, materials, visible, castShadows, enabled) need
+`refresh()`. Not for skinned meshes or transparent materials (they stay on
+the normal path).
+
 ### Thousands of props: instancing
 
 ```cpp

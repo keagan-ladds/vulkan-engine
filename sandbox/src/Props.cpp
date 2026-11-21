@@ -122,7 +122,7 @@ void Campfire::start()
         md.append(ve::primitives::cylinder(0.08f, 0.07f, 1.0f, 6), t, {0.22f, 0.14f, 0.08f, 1.0f});
     }
     md.makeFlatShaded();
-    addComponent<ve::MeshRenderer>(ve::Mesh::create(r, md, {}, "campfire"), m_material);
+    addComponent<ve::MeshRenderer>(ve::Mesh::create(r, md, {}, "campfire"), m_material).isStatic = true; // never moves: batched
 
     // Light: the fire's glow, with cube-map shadows.
     auto& lightObj = s.spawn("FireLight");
@@ -220,7 +220,7 @@ void Torch::start()
     md.append(ve::primitives::cylinder(0.09f, 0.11f, 0.25f, 6), glm::translate(glm::mat4(1.0f), {0, 1.85f, 0}),
               {0.12f, 0.09f, 0.07f, 1.0f});
     md.makeFlatShaded();
-    addComponent<ve::MeshRenderer>(ve::Mesh::create(renderer(), md, {}, "torch"), m_material);
+    addComponent<ve::MeshRenderer>(ve::Mesh::create(renderer(), md, {}, "torch"), m_material).isStatic = true;
 
     auto& flame = scene().spawn("TorchFlame");
     flame.setParent(this, false);
@@ -359,7 +359,7 @@ void ReedScreen::start()
         material = m;
         sharedMaterial = material;
     }
-    addComponent<ve::MeshRenderer>(mesh, material);
+    addComponent<ve::MeshRenderer>(mesh, material).isStatic = true;
     addComponent<ve::Rigidbody>(ve::Collider::box({1.3f, 0.95f, 0.03f}).offset({0.0f, 0.95f, 0.0f}), ve::BodyType::Static);
 }
 

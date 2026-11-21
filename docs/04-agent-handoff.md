@@ -80,6 +80,10 @@ north (-Z), 90 looks west (-X).
 
 ## 5. Gotchas (learned the hard way)
 
+- **Static renderers need `refresh()` after code changes their fields**
+  (mesh, materials, visible, castShadows, enabled): they're GPU instances
+  and nothing re-reads them per frame. Transform, `setActive` and destroy are
+  tracked automatically.
 - **Remember other objects with `ve::ObjectRef<T>` / `ve::ComponentRef<T>`**
   (`ve/scene/ObjectRef.hpp`), never a `GameObject*` / `Component*` member.
   The editor can delete or replace any object; a stored raw pointer then

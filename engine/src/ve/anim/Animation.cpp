@@ -641,6 +641,7 @@ void AimIK::solve(float dt)
 void SkinnedMeshRenderer::bind(std::shared_ptr<const SkinnedMeshSource> source, const std::vector<GameObject*>& joints,
                                std::vector<glm::mat4> inverseBind)
 {
+    isStatic = false; // its vertices change every frame: never batched as a static instance
     release();
     m_source = std::move(source);
     m_joints.clear();

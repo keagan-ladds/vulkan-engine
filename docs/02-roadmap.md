@@ -507,6 +507,9 @@ for later (bigger changes, or behaviour worth deciding deliberately):
 - [ ] Shrink the layering exceptions listed in `tools/check_layering.py` (scene → assets / anim / physics in a few files, physics / nav ↔ debug, audio → world, world → gameplay / ui)
 - [x] Async uploads: a per-frame staging ring flushed at the start of the frame (`Device::flushUploads`); no GPU wait per streamed mesh
 - [x] Upload only changed material slots (`MaterialDirtySet`)
+- [x] Static renderers as GPU instances (`StaticBatcher`, D28) and proxy sets for many simple things (`ve::ProxySet`, D27)
+- [ ] Draw static batches in front-to-back order with the opaque list (the opaque pass lost ~25 % on lavapipe in the stress test)
+- [ ] World streaming for placed objects: proposal in [08-world-streaming.md](08-world-streaming.md)
 - [ ] Motion vectors for skinned meshes
 - [x] Audio low-pass cutoffs go to the audio thread (atomic target, applied in a custom node's process callback)
 - [x] One shared engine job pool (`ve/core/Jobs.hpp`): foliage, terrain LOD, grass bakes, navmesh tiles and shader compiles; no destructor waits for a cancelled bake

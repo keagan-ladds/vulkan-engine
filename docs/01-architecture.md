@@ -350,7 +350,8 @@ The command buffer starts with `Device::flushUploads` (queued buffer
 uploads), and only dirty material slots are copied (D25).
 
 1. Find the main camera and build view/projection (reversed-Z, Vulkan Y-flip).
-2. Gather `MeshRenderer`s → draw items (world matrix, world AABB, submesh,
+2. Apply the scene's queued static changes to the `StaticBatcher` (D28); gather
+   the other `MeshRenderer`s → draw items (world matrix, world AABB, submesh,
    material). Frustum-cull for the main view. Split into opaque (sorted by
    pipeline, then front-to-back) and transparent (back-to-front) queues.
 3. Gather lights. Assign directional shadow slots (up to
@@ -446,7 +447,18 @@ For things there are thousands of (trees, rocks, bushes, later foliage) use
   for every possible cascade (`kMaxDirectionalLights × kMaxCascades`). The
   visible buffer holds active views × the sum of batch capacities and grows
   when groups are added. Point-light shadows and transparent materials don't
-  draw instances.
+  draw instances (batched static renderers still reach point-light cube faces:
+  the ones in a shadowed light's range are added as draw items, D28).
+- **Static renderers** (`MeshRenderer::isStatic`, `GameObject::setStatic`, D28).
+  The Renderer's `StaticBatcher` keeps every eligible static renderer (active,
+  visible, opaque or cutout, not skinned) as an instance in a group per
+  (mesh, materials, castShadows); groups double when full. The Scene queues
+  changes (start, `refresh()`, transform dirtying of objects with batched
+  renderers, `setActive`, reparenting, destroy, removal), so nothing walks the
+  statics per frame. A 16 m grid of their bounds feeds point-light cube faces
+  and editor picking. `RendererSettings::staticBatching` (F1) turns it off.
+  Savanna: 3,000 building pieces went from ~16 ms main thread and ~10k draws
+  to ~10 ms and ~1k draws (lavapipe, Release), with identical images.
 - Stats (visible camera/shadow instance draws) are read back from the GPU one
   frame-slot later and shown in the F1 overlay.
 - Cutout materials (`StandardMaterial::Mode::Cutout`) use `shadow_cutout.frag` /

@@ -265,6 +265,9 @@ bool PlacementPreview::show(Scene& scene, const std::string& prefabPath)
     m_scene = &scene;
     GameObject* o = prefab::instantiate(scene, prefabPath);
     if (!o) return false;
+    // The ghost follows the cursor and swaps materials every frame: never batch
+    // it as static, even if the prefab says its pieces are.
+    o->setStatic(false);
     m_id = o->id();
     m_prefab = prefabPath;
     m_measured = false;

@@ -193,6 +193,9 @@ void Engine::benchFrame(float cpuMs)
               n, b.threadMs / n, b.cpuMs / n, b.cpuMax, b.waitMs / n, b.submitMs / n, b.physicsMs / n, b.gpuMs / n);
     const InstanceStats& is = m_renderer->instances().stats();
     log::info("[bench] instances {} (camera draws {}, shadow draws {})", is.instances, is.visibleCamera, is.visibleShadow);
+    const RenderStats& rs = m_renderer->stats();
+    log::info("[bench] draw calls {} (shadow {}, indirect {}), objects {} ({} batched static)", rs.drawCalls, rs.shadowDrawCalls,
+              is.drawCalls, rs.totalObjects, rs.staticObjects);
     for (const auto& [name, ms] : b.passMs) log::info("[bench]   {:<28} {:8.3f} ms", name, ms / n);
     for (const Profiler::Zone& z : Profiler::get().zones())
         log::info("[bench] cpu {}{:<28} {:8.3f} ms", std::string(size_t(z.depth) * 2, ' '), z.name, z.avgMs);

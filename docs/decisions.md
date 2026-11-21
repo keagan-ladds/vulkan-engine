@@ -284,3 +284,23 @@ building block for streaming placed objects (docs/08-world-streaming.md).
 **Cost:** a copy of the level's entries in memory; an entry whose object has
 Saveable state counts as changed once it has been promoted. Not replicated
 over the network yet (N2).
+
+### D28. Static renderers become GPU instances (2026-11)
+**Chosen:** `MeshRenderer::isStatic` puts a renderer into an InstanceGroup per
+(mesh, materials, castShadows) owned by the Renderer's `StaticBatcher`. The
+Scene reports changes (transform dirtying only for objects with batched
+renderers, `setActive`, destroy, reparenting, removal, `refresh()`); there is
+no per-frame scan. Point-light cube faces get the batched entries in range as
+draw items, so the face cache (D16) still hashes what it draws; editor
+picking draws them from the batcher.
+**Alternatives:** per-frame dirty checks over all statics (the cost being
+removed); merging static meshes (breaks per-object picking, removal and
+colliders); automatic detection of unmoving renderers (needs the per-frame
+scan again).
+**Why:** player buildings are thousands of pieces that never move: 3,000
+pieces cost ~16 ms of main thread and ~10k draws, now ~10 ms and ~1k, with
+the same image. **Cost:** changing a static renderer's fields from code
+needs `refresh()`; batched statics have no motion vectors and lose
+front-to-back ordering against the per-item opaque list (the opaque pass was
+~25 % slower on lavapipe in the stress test); `staticBatching = false`
+restores the old path.
