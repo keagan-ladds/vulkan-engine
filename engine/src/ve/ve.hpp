@@ -37,6 +37,7 @@
 #include "ve/gameplay/Inventory.hpp"
 #include "ve/gameplay/Interaction.hpp"
 #include "ve/gameplay/Placement.hpp"
+#include "ve/gameplay/ProxySet.hpp"
 #include "ve/scene/Prefab.hpp"
 #include "ve/scene/MeshComponents.hpp"
 #include "ve/scene/Reflection.hpp"

@@ -659,6 +659,19 @@ stores nothing per blade.
   Settings files (`save::readConfig` / `writeConfig`) live in
   `<save folder>/config/`, so they never appear in `save::slots()`.
 
+- **Proxy sets** (`ve/gameplay/ProxySet.hpp`, D27). The generic form of
+  foliage promotion, for stored (not procedural) things: a `ProxySet` holds
+  entries (stable id, type, transform, a `uint32` state, a small JSON
+  payload) drawn through one InstanceGroup chain per `ProxyType`. Within the
+  type's `promoteDistance` of the focus (an `ObjectRef`, else the camera) an
+  entry becomes a GameObject (factory, prefab, or a plain object with the
+  first LOD) carrying a `ProxyLink`; on demotion its transform and Saveable
+  state go back into the entry; if gameplay destroys it, the entry is
+  removed. Budgeted per frame; a 16 m grid answers `query` / `nearest`. Level
+  entries (added before `start()`) get sequential ids; save games store only
+  the difference to them. Scene files keep entries in a hidden `entries`
+  field. Not yet: painting entries in the editor, network replication.
+
 - **Inventory** (`ve/gameplay/Inventory.hpp`). `ve::Inventory`: a fixed number
   of slots of `{item, count}` with stacking (per-item max stack from a
   callback, `kDefaultMaxStack` otherwise), add / remove / count / move-or-swap
@@ -1064,6 +1077,7 @@ Optional add-ons built only on public engine APIs:
 | `Hud.*` | HUD (ve::ui canvas: health / stamina, hotbar, clock, prompts), save / load of progress, controls file (`ve::save::readConfig` / `writeConfig`) |
 | `AutoTest.*` | The `SAVANNA_AUTOTEST` smoke test and its probe components |
 | `SceneLookup.hpp`, `Footsteps.hpp` | Cached by-id lookups (`localPlayer`, `findCached<T>`: no per-frame scene scans or name lookups), footstep sound by surface for the player and villagers |
+| `Pickups.*` | About 3,500 stones and sticks in one `ve::ProxySet` (deterministic scatter), promoted near the player into `Interactable` pickups that go into the inventory |
 | `Villager.*` | Navmesh agents with animation: Idle / Walk crossfades, a "Wave" layer on the right arm (greeting the player), footstep events of the Walk clip (sounds by surface), FootIK on slopes, a "Villagers" debug-draw channel |
 | `Multiplayer.*` | On `ve/net`: host / join from `SAVANNA_NET`, player avatars (NetworkObject + NetworkTransform + replicated name), the host's world snapshot without its own player, clock / weather sync, `NetTest` (two-process test, `tools/nettest.sh`); building requests live in `Building.cpp` |
 | `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop; the container itself is the engine's `ve::Inventory`) |

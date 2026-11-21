@@ -631,6 +631,37 @@ foliage.preload(player.transform().position());
 Rules are deterministic, so the same world appears every run without saving
 anything.
 
+### Thousands of pickups: proxy sets
+
+Loose stones, sticks, loot, resource nodes: things there are many of, that sit
+still until the player touches them. Don't make each one a GameObject; keep
+them as entries in a `ve::ProxySet` (drawn instanced, saved as one block) and
+let the set turn the ones near the player into real objects:
+
+```cpp
+auto& pickups = scene.spawn<ve::ProxySet>("Pickups");
+ve::ProxyType stone;
+stone.name = "stone";
+stone.lods = {{stoneMesh, {material}}};          // or ve::buildLodChain(...)
+stone.promoteDistance = 6.0f;                    // a GameObject within 6 m of the focus
+stone.promote = [](ve::Scene& s, const ve::ProxyEntry& e) {
+    auto& o = s.spawn("Stone");                  // (or set `prefab` instead)
+    o.addComponent<ve::Interactable>().prompt = "Pick up stone";
+    return &o;                                   // the set positions it and adds a ProxyLink
+};
+const uint32_t type = pickups.addType(stone);
+pickups.add(type, position, rotation);           // thousands of these
+pickups.focus = &player;                         // default: the main camera
+```
+
+- Picked up: destroy the promoted object; its entry goes away (and stays gone
+  in save games).
+- State on the promoted object (its `ve::Saveable`s, or `ProxyLink::setState`
+  / `setData`) survives demotion and promotion.
+- Add entries before the set's `start()` for level content (stable ids, saves
+  store only what changed); `add()` later for runtime spawns (a dropped item).
+- Savanna's `Pickups.cpp` is a complete example.
+
 ### Interactive foliage: chop trees, pick fruit
 
 The engine keeps per-instance state; what it means is up to the game.

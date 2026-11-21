@@ -268,3 +268,19 @@ split by concern without API changes: `Renderer` owns `SceneGatherer`,
 across `Editor*.cpp` files per panel (the panels share most state); physics is
 one file per component plus `JoltInternal.hpp`, which keeps D13's rule (Jolt
 only in `ve/physics/*.cpp`, now checked by `tools/check_layering.py`).
+
+### D27. Proxy sets: data far away, objects up close; saves store the difference (2026-11)
+**Chosen:** `ve::ProxySet` holds stored things as entries with stable ids
+(sequential for level content, random for runtime spawns), draws them
+instanced, and promotes those near a focus into GameObjects carrying a
+`ProxyLink`; demotion captures the object's transform and Saveable state back
+into the entry. Save games hold removed ids plus changed or added entries,
+against the level's entries as they were at `start()`.
+**Alternatives:** one GameObject per item (thousands of objects, per-object
+saves); saving the whole list (large saves for untouched levels); dirty flags
+(miss changes made through promoted objects).
+**Why:** the same pattern foliage already proved, made generic, and the
+building block for streaming placed objects (docs/08-world-streaming.md).
+**Cost:** a copy of the level's entries in memory; an entry whose object has
+Saveable state counts as changed once it has been promoted. Not replicated
+over the network yet (N2).
