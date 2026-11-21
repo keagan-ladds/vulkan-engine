@@ -10,10 +10,13 @@
 //
 //   1. camera matrices + frustum (with the TAA / photo sub-pixel jitter)
 //   2. skinned meshes (SkinningSystem gatherers) -> `deforming` flags
-//   3. one DrawItem per MeshRenderer submesh, with last frame's world matrix
-//      (motion vectors); camera-culled, sorted opaque / transparent lists
-//   4. directional + point lights into the LightBuffer, shadow views via
-//      ShadowSetup
+//   3. static renderers: applies what the scene reports changed
+//      (Scene::StaticChanges) to the StaticBatcher; batched ones are skipped
+//      below (their instance groups draw them)
+//   4. one DrawItem per other MeshRenderer submesh, with last frame's world
+//      matrix (motion vectors); camera-culled, sorted opaque / transparent lists
+//   5. directional + point lights into the LightBuffer, shadow views via
+//      ShadowSetup; batched statics near shadowed point lights as DrawItems
 //
 // It keeps last frame's world matrix per renderer and its scratch lists
 // between frames (no per-frame allocations once warmed up).
@@ -24,6 +27,7 @@
 #include "ve/gfx/Vk.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -36,6 +40,7 @@ class DirectionalLight;
 class PointLight;
 class SkinningSystem;
 class ShadowSetup;
+class StaticBatcher;
 struct RendererSettings;
 
 class SceneGatherer {
@@ -47,6 +52,7 @@ public:
         Material* fallbackMaterial = nullptr; // for MeshRenderers without a material
         const RendererSettings* settings = nullptr;
         const ShadowSetup* shadows = nullptr;
+        StaticBatcher* statics = nullptr;
     };
 
     // Resets `frame`'s per-frame lists and stats and fills them from `scene`
@@ -58,6 +64,10 @@ private:
     void setupCamera(Scene& scene, const Inputs& in, CameraData& cam) const;
     void gatherDrawItems(Scene& scene, const Inputs& in, FrameData& frame);
     uint32_t gatherLights(Scene& scene, const Inputs& in, FrameData& frame);
+    // Static batching: binds the batcher to a scene, applies its changes.
+    // False: nothing of `scene` is batched this frame (all drawn per item).
+    bool updateStatics(Scene& scene, const Inputs& in);
+    void updateStatic(Scene& scene, MeshRenderer& mr, const Inputs& in);
 
     struct PrevWorld {
         glm::mat4 world;
@@ -67,6 +77,15 @@ private:
     uint64_t m_prevWorldStamp = 0;
     std::vector<const MeshRenderer*> m_deforming; // this frame's skinned renderers, sorted
     float m_sceneTop = 0.0f; // highest point of this frame's draw items
+
+    // Static batching: the scene whose renderers have batch entries (null =
+    // none) and its token (expired = that scene is gone, entries with it).
+    Scene* m_staticScene = nullptr;
+    std::weak_ptr<const int> m_staticSceneAlive;
+    bool m_staticsActive = false;            // this frame's scene is the batched one
+    uint64_t m_staticStamp = 0;              // per gather (point-shadow casters appended once)
+    std::vector<MeshRenderer*> m_staticDirty; // scratch: the scene's queued renderers
+    bool m_staticFullWarned = false;
 
     // Per-frame scratch of gatherLights (reused, no allocations).
     struct PointCandidate {

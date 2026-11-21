@@ -21,6 +21,17 @@
 namespace ve {
 
 // -----------------------------------------------------------------------------
+// MeshRenderer (Components.hpp): static renderers
+// -----------------------------------------------------------------------------
+
+void MeshRenderer::refresh()
+{
+    // Not spawned yet: start() queues it. Otherwise the renderer re-checks it
+    // (batch it, move it to another batch, or draw it the normal way again).
+    Scene::refreshStatic(*this);
+}
+
+// -----------------------------------------------------------------------------
 // ModelInstance
 // -----------------------------------------------------------------------------
 
@@ -49,7 +60,11 @@ void ModelInstance::rebuild()
             };
             hide(root->transform());
         }
-        if (auto* animator = root->getComponent<Animator>(); animator && !animation.empty()) animator->clip = animation;
+        auto* animator = root->getComponent<Animator>();
+        if (animator && !animation.empty()) animator->clip = animation;
+        // Buildings (exact static colliders) never move: their nodes' renderers
+        // are batched on the GPU (MeshRenderer::isStatic). Animated models move.
+        if (staticColliders && !animator) root->setStatic(true);
     } catch (const std::exception& e) {
         log::warn("ModelInstance on '{}': {}", gameObject().name(), e.what());
     }
@@ -107,6 +122,8 @@ void PrimitiveRenderer::rebuild()
     mr->mesh = mesh;
     mr->materials = {m_material};
     mr->castShadows = castShadows;
+    mr->isStatic = isStatic;
+    mr->refresh(); // (a static one's mesh or material may have changed)
 }
 
 void PrimitiveRenderer::onDestroy()

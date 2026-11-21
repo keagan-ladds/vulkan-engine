@@ -1,5 +1,8 @@
 #include "ve/scene/Transform.hpp"
 
+#include "ve/scene/GameObject.hpp"
+#include "ve/scene/Scene.hpp"
+
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/quaternion.hpp>
 
@@ -20,6 +23,9 @@ void Transform::markDirty()
     // an already-dirty one has nothing left to propagate.
     if (m_dirty) return;
     m_dirty = true;
+    // Batched static renderers here: the renderer re-reads the matrix next
+    // frame (cleaning it, so the next change notifies again).
+    if (m_staticEntries) m_owner->scene().staticObjectChanged(*m_owner, false);
     for (Transform* c : m_children) c->markDirty();
 }
 
@@ -144,6 +150,9 @@ void Transform::setParent(Transform* parent, bool keepWorld)
     }
     m_dirty = false;
     markDirty();
+    // A new parent can make static renderers below active or inactive in the
+    // hierarchy (markDirty only reports the ones already batched).
+    if (m_owner->m_scene && !m_owner->m_destroyed) m_owner->m_scene->staticObjectChanged(*m_owner, true);
 }
 
 } // namespace ve

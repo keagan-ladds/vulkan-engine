@@ -22,6 +22,7 @@
 #include "Pickups.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
+#include "Stress.hpp"
 #include "Vegetation.hpp"
 
 #include <ve/debug/Debug.hpp>
@@ -263,12 +264,14 @@ void spawnLantern(ve::Scene& scene, const ve::Terrain& terrain, glm::vec2 at)
     auto& pr = post.addComponent<ve::PrimitiveRenderer>();
     pr.size = {0.12f, 2.2f, 0.12f};
     pr.color = {0.35f, 0.25f, 0.16f, 1.0f};
+    pr.isStatic = true; // (the post and its arm never move)
     post.addComponent<ve::Rigidbody>(ve::Collider::box({0.06f, 1.1f, 0.06f}), ve::BodyType::Static).surface = "Wood";
     auto& arm = scene.spawn("Lantern arm");
     arm.transform().setPosition({at.x + 0.35f, g + 2.15f, at.y});
     auto& ar = arm.addComponent<ve::PrimitiveRenderer>();
     ar.size = {0.7f, 0.08f, 0.08f};
     ar.color = pr.color;
+    ar.isStatic = true;
     const glm::vec3 hook{at.x + 0.66f, g + 2.1f, at.y};
     ve::GameObject* prev = nullptr;
     for (int i = 0; i < 2; ++i) { // two rope links, then the lantern
@@ -397,6 +400,10 @@ void buildLevel(ve::Engine& engine)
     r.settings().lodBias = ve::env::number("SAVANNA_LODBIAS", r.settings().lodBias); // <1 = coarser
     r.settings().temporalAA = true;
     r.settings().occlusionCulling = ve::env::flag("SAVANNA_OCCLUSION", r.settings().occlusionCulling); // occlusion culling on/off
+    // SAVANNA_STATIC=0: static renderers drawn one by one like the rest (A/B; F1 > Instance culling).
+    r.settings().staticBatching = ve::env::flag("SAVANNA_STATIC", r.settings().staticBatching);
+    // SAVANNA_STRESS=pieces:<n>: n static building pieces in a grid by the camp (Stress.hpp).
+    if (const auto st = ve::env::get("SAVANNA_STRESS")) spawnStress(scene, terrain, *st);
     // SAVANNA_SCULPT=1: brush a hill and a desert patch in front of the camera.
     if (ve::env::flag("SAVANNA_SCULPT")) scene.spawn<SculptTest>(terrainPtr);
     // SAVANNA_MOVER=1: a textured box sliding sideways 5 m in front of the camera.

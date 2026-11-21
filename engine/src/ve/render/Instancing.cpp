@@ -355,7 +355,7 @@ void InstanceSystem::prepare(uint32_t slotIndex, FrameData& frame)
         gpu = GpuInstanceGroup{};
         gpu.localSphere = g->m_localSphere;
         gpu.firstInstance = g->m_firstInstance;
-        gpu.count = g->count();
+        gpu.count = g->drawnCount();
         gpu.lodCount = static_cast<uint32_t>(g->m_desc.lods.size());
         const bool screenSize = g->m_desc.lods[0].screenSize > 0.0f;
         gpu.flags = (g->m_desc.castShadows ? 1u : 0u) | (screenSize ? 2u : 0u);
@@ -447,7 +447,7 @@ void InstanceSystem::recordCulling(VkCommandBuffer cmd, uint32_t slotIndex)
     // 3. Cull: one dispatch per group, one thread per instance (it tests every view).
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_cullPipeline);
     for (uint32_t gi = 0; gi < m_groups.size(); ++gi) {
-        const uint32_t count = m_groups[gi]->count();
+        const uint32_t count = m_groups[gi]->drawnCount();
         if (count == 0) continue;
         const RendererSettings& rs = m_renderer->settings();
         CullPush push{gi,          s.batchCount, m_lodScale, rs.lodBias, rs.shadowLodBias,
@@ -474,7 +474,7 @@ void InstanceSystem::draw(RenderContext& ctx, uint32_t cullView, PassKind kind, 
     const Mesh* boundMesh = nullptr;
     for (uint32_t b : kind == PassKind::Forward ? m_forwardBatches : m_shadowBatches) {
         const Batch& bt = m_batches[b];
-        if (bt.group->count() == 0) continue;
+        if (bt.group->drawnCount() == 0) continue;
 
         VkPipeline p = bt.material->shader().pipeline(kind);
         if (p != bound) {

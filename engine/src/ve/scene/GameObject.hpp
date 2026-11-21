@@ -141,7 +141,7 @@ public:
     const Transform& transform() const { return m_transform; }
     bool activeSelf() const { return m_active; }
     bool activeInHierarchy() const;
-    void setActive(bool active) { m_active = active; }
+    void setActive(bool active); // (static renderers below are re-checked)
     void destroy(); // deferred to end of frame, also destroys children
     bool isDestroyed() const { return m_destroyed; }
     Scene& scene() const { return *m_scene; }
@@ -157,6 +157,10 @@ public:
 
     // Convenience: parent this object's transform under another object.
     void setParent(GameObject* parent, bool keepWorld = true);
+    // Marks the MeshRenderers on this object (and, recursive, everything
+    // below it) static or not (MeshRenderer::isStatic: batched on the GPU,
+    // for things that never move) and refreshes them.
+    void setStatic(bool isStatic, bool recursive = true);
 
     // --- Components -------------------------------------------------------------
     template <class T, class... Args>
@@ -207,6 +211,7 @@ public:
 
 private:
     friend class Scene;
+    friend class Transform; // reports reparenting (static renderers)
     void attachComponent(std::unique_ptr<Component> component, std::type_index type);
 
     std::string m_name;

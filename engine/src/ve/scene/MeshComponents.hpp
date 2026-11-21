@@ -28,7 +28,7 @@ class StandardMaterial;
 class ModelInstance : public Component {
 public:
     std::string path;             // e.g. "models/rondavel.gltf"
-    bool staticColliders = false; // exact mesh colliders on every node (buildings)
+    bool staticColliders = false; // exact mesh colliders on every node, static renderers (buildings)
     std::string hiddenNodes;      // comma-separated node names to leave out (e.g. "Door")
     std::string animation;        // animated models: the clip to loop (empty = the first)
 
@@ -52,6 +52,7 @@ public:
     std::string texture;                // optional albedo texture path
     glm::vec2 uvScale{1.0f};
     bool castShadows = true;
+    bool isStatic = false;              // never moves: its MeshRenderer is static (batched on the GPU)
 
     void start() override { rebuild(); }
     void onDestroy() override;

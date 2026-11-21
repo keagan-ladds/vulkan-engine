@@ -29,6 +29,10 @@ struct DrawItem {
     float distance = 0.0f; // distance from the camera (sorting)
     bool castShadows = true;
     bool deforming = false; // vertices change on the GPU (skinning): never cache shadows of it
+    // A batched static renderer (StaticBatcher): its instance group draws it
+    // for the camera and the directional cascades; this item is only for the
+    // point-light cube faces in range (never in opaque / transparent).
+    bool instanced = false;
     const GameObject* owner = nullptr; // the MeshRenderer's object (editor picking)
 };
 
@@ -66,8 +70,9 @@ struct RenderStats {
     uint32_t drawCalls = 0;
     uint32_t shadowDrawCalls = 0;
     uint32_t triangles = 0;
-    uint32_t visibleObjects = 0;
-    uint32_t totalObjects = 0;
+    uint32_t visibleObjects = 0;      // CPU-drawn submeshes in view (batched statics: InstanceStats)
+    uint32_t totalObjects = 0;        // all submeshes, batched statics included
+    uint32_t staticObjects = 0;       // batched static submeshes (StaticBatcher)
     uint32_t directionalLights = 0;
     uint32_t pointLights = 0;
     uint32_t shadowViews = 0;
@@ -78,7 +83,9 @@ struct FrameData {
     FrameGlobals globals{};      // editable in RenderPass::prepare()
     LightBuffer* lights = nullptr;
     CameraData camera;
-    std::vector<DrawItem> items;      // every visible-flagged MeshRenderer submesh (for shadows)
+    // Every visible-flagged MeshRenderer submesh (for shadows), then the
+    // batched static ones near shadowed point lights (DrawItem::instanced).
+    std::vector<DrawItem> items;
     std::vector<uint32_t> opaque;     // indices into items, camera-culled, sorted
     std::vector<uint32_t> transparent;
     std::vector<uint32_t> moving;      // opaque items whose world matrix changed since last frame (motion vectors)

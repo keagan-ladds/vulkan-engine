@@ -85,6 +85,14 @@ void registerBuiltinTypes()
         t.field("castShadows", &PointLight::castShadows);
         t.field("shadowBias", &PointLight::shadowBias).range(0.0f, 0.2f).speed(0.001f);
     });
+    r.add<MeshRenderer>("MeshRenderer", [](TypeBuilder<MeshRenderer>& t) {
+        t.category("Rendering");
+        // (mesh and materials are set by code: ModelInstance, PrimitiveRenderer, game objects)
+        t.field("static", &MeshRenderer::isStatic).tooltip("Never moves: batched on the GPU (static batching)");
+        t.field("castShadows", &MeshRenderer::castShadows);
+        t.field("visible", &MeshRenderer::visible);
+        t.onChanged([](MeshRenderer& m) { m.refresh(); });
+    });
     r.add<ModelInstance>("ModelInstance", [](TypeBuilder<ModelInstance>& t) {
         t.category("Rendering");
         t.field("path", &ModelInstance::path).assets(".gltf .glb");
@@ -108,6 +116,7 @@ void registerBuiltinTypes()
         t.field("texture", &PrimitiveRenderer::texture).assets(".png .jpg .jpeg .tga");
         t.field("uvScale", &PrimitiveRenderer::uvScale);
         t.field("castShadows", &PrimitiveRenderer::castShadows);
+        t.field("static", &PrimitiveRenderer::isStatic).tooltip("Never moves: batched on the GPU");
         t.onChanged([](PrimitiveRenderer& p) { p.rebuild(); });
     });
 }

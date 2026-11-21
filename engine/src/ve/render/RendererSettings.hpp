@@ -63,6 +63,11 @@ struct RendererSettings {
     // skipped (Hi-Z occlusion culling of the camera view; HiZPass). Something
     // that comes into view from behind cover can appear a frame late.
     bool occlusionCulling = true;
+    // Static MeshRenderers (MeshRenderer::isStatic) go into GPU instance groups
+    // once (StaticBatcher) instead of being gathered, culled and drawn one by
+    // one every frame. Off = every MeshRenderer takes the per-frame path
+    // (A/B comparisons; F1 > Instance culling).
+    bool staticBatching = true;
     // --- Anti-aliasing ---
     // Temporal AA: the camera jitters by a sub-pixel offset every frame and
     // TemporalAAPass blends each frame into a reprojected history. Smooths

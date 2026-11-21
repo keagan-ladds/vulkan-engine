@@ -29,6 +29,7 @@ void Scene::queueStart(GameObject* o)
 
 void Scene::registerComponent(Component* c)
 {
+    if (auto* mr = dynamic_cast<MeshRenderer*>(c); mr && mr->isStatic) queueStaticRenderer(*mr);
     Bucket*& bucket = m_bucketByType[c->m_type];
     if (!bucket) bucket = m_buckets.emplace_back(std::make_unique<Bucket>(Bucket{c->m_type, {}})).get();
     // Queries skip empty buckets (they can't test the type), so re-check them.
@@ -39,6 +40,22 @@ void Scene::registerComponent(Component* c)
 
 void Scene::unregisterComponent(Component* c)
 {
+    if (auto* mr = dynamic_cast<MeshRenderer*>(c)) {
+        // Leaving the scene: the renderer frees its batch entry next frame,
+        // and the queue must not keep a pointer that is about to dangle.
+        if (mr->m_staticQueued != MeshRenderer::kNoStaticEntry) {
+            m_static.dirty[mr->m_staticQueued] = nullptr;
+            mr->m_staticQueued = MeshRenderer::kNoStaticEntry;
+        }
+        if (const uint32_t entry = mr->m_staticEntry; entry != MeshRenderer::kNoStaticEntry) {
+            setStaticEntry(*mr, MeshRenderer::kNoStaticEntry);
+            m_static.released.push_back(entry);
+        }
+        if (mr->m_staticKnown) {
+            mr->m_staticKnown = false;
+            --m_static.known;
+        }
+    }
     // O(1): the last item takes the gap. Nothing relies on bucket order
     // (forEach users that care sort, e.g. the renderer's lights).
     auto it = m_bucketByType.find(c->m_type);
@@ -49,6 +66,70 @@ void Scene::unregisterComponent(Component* c)
     items[i] = items.back();
     items[i]->m_bucketIndex = i;
     items.pop_back();
+}
+
+// -----------------------------------------------------------------------------
+// Static renderers (see StaticChanges in Scene.hpp)
+// -----------------------------------------------------------------------------
+
+void Scene::queueStaticRenderer(MeshRenderer& mr)
+{
+    if (mr.isRemoved() || (!mr.isStatic && mr.m_staticEntry == MeshRenderer::kNoStaticEntry)) return;
+    if (!mr.m_staticKnown) {
+        mr.m_staticKnown = true;
+        ++m_static.known;
+    }
+    if (mr.m_staticQueued != MeshRenderer::kNoStaticEntry) return;
+    mr.m_staticQueued = static_cast<uint32_t>(m_static.dirty.size());
+    m_static.dirty.push_back(&mr);
+}
+
+void Scene::refreshStatic(MeshRenderer& mr)
+{
+    if (mr.m_owner && mr.m_owner->m_scene) mr.m_owner->m_scene->queueStaticRenderer(mr);
+}
+
+void Scene::staticObjectChanged(GameObject& o, bool recursive)
+{
+    if (m_static.known == 0) return; // no static renderers: nothing to tell
+    for (const auto& c : o.m_components) {
+        if (auto* mr = dynamic_cast<MeshRenderer*>(c.get())) queueStaticRenderer(*mr);
+    }
+    if (!recursive) return;
+    for (Transform* child : o.transform().children()) staticObjectChanged(child->gameObject(), true);
+}
+
+void Scene::takeStaticDirty(std::vector<MeshRenderer*>& out)
+{
+    out.clear();
+    out.swap(m_static.dirty);
+    for (MeshRenderer* mr : out) {
+        if (mr) mr->m_staticQueued = MeshRenderer::kNoStaticEntry;
+    }
+}
+
+void Scene::setStaticEntry(MeshRenderer& mr, uint32_t entry)
+{
+    const bool had = mr.m_staticEntry != MeshRenderer::kNoStaticEntry;
+    const bool has = entry != MeshRenderer::kNoStaticEntry;
+    mr.m_staticEntry = entry;
+    if (had == has) return;
+    // The Transform reports moves only while it has batched renderers.
+    mr.transform().m_staticEntries += has ? 1 : -1;
+    m_static.entries += has ? 1 : -1;
+}
+
+void Scene::resetStaticEntries()
+{
+    forEach<MeshRenderer>([&](MeshRenderer& mr) { setStaticEntry(mr, MeshRenderer::kNoStaticEntry); });
+    m_static.released.clear();
+}
+
+void Scene::queueAllStatic()
+{
+    forEach<MeshRenderer>([&](MeshRenderer& mr) {
+        if (mr.isStatic) queueStaticRenderer(mr);
+    });
 }
 
 GameObject* Scene::find(const std::string& name) const

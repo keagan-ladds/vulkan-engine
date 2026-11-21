@@ -4,6 +4,7 @@
 #include "ve/editor/Editor.hpp"
 
 #include "ve/editor/EditorInternal.hpp"
+#include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/scene/SceneSerializer.hpp"
 
@@ -257,6 +258,8 @@ void Editor::drawInspector()
             if (ImGui::Checkbox("Enabled", &en)) {
                 m_editing = true;
                 c.enabled = en;
+                // (A static renderer is batched on the GPU: it must hear about it.)
+                if (auto* mr = dynamic_cast<MeshRenderer*>(&c)) mr->refresh();
                 endEdit("Toggle " + componentLabel(c));
             }
             if (c.persistent) {

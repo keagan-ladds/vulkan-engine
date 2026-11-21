@@ -9,7 +9,8 @@
 //
 //   1. acquire: wait for the frame slot, acquire a swapchain image
 //   2. prepare: gather camera / draw items / lights from the scene, cull,
-//      sort (SceneGatherer), shadow cascades + cube faces (ShadowSetup),
+//      sort (SceneGatherer; static renderers are batched once into instance
+//      groups by StaticBatcher), shadow cascades + cube faces (ShadowSetup),
 //      light clusters (LightClusterer); let passes prepare(), upload
 //      FrameGlobals/LightBuffer/MaterialBuffer
 //   3. record the RenderGraph (FrameCapture reads the image back if asked)
@@ -32,6 +33,7 @@
 #include "ve/render/LightClusterer.hpp"
 #include "ve/render/SceneGatherer.hpp"
 #include "ve/render/ShadowSetup.hpp"
+#include "ve/render/StaticBatcher.hpp"
 #include "ve/render/Skinning.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/PipelineHandle.hpp"
@@ -148,6 +150,8 @@ public:
     // Thousands of copies of a mesh, culled and drawn on the GPU (see Instancing.hpp).
     std::shared_ptr<InstanceGroup> createInstanceGroup(InstanceGroupDesc desc, uint32_t capacity);
     InstanceSystem& instances() { return *m_instances; }
+    // Static MeshRenderers batched into instance groups (RendererSettings::staticBatching).
+    StaticBatcher& staticBatcher() { return m_staticBatcher; }
     void addShadowCaster(ShadowCaster* caster) { m_shadowCasters.push_back(caster); }
     void removeShadowCaster(ShadowCaster* caster) { std::erase(m_shadowCasters, caster); }
     const std::vector<ShadowCaster*>& shadowCasters() const { return m_shadowCasters; }
@@ -323,6 +327,7 @@ private:
     std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
     // The per-frame parts (see the header comment).
     SceneGatherer m_sceneGatherer;
+    StaticBatcher m_staticBatcher;
     ShadowSetup m_shadowSetup;
     LightClusterer m_lightClusterer;
     FrameCapture m_capture;

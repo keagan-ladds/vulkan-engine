@@ -91,6 +91,7 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
     m_instances = std::make_unique<InstanceSystem>();
     m_instances->init(*this, m_settings.maxInstances, m_settings.maxVisibleInstancesPerView);
     writeInstanceDescriptors();
+    m_staticBatcher.init(*this);
     m_skinning = std::make_unique<SkinningSystem>();
     m_skinning->init(*this, m_settings.maxSkinnedVertices, m_settings.maxSkinJoints);
     for (uint32_t slot = 0; slot < Device::kFramesInFlight; ++slot) {
@@ -115,6 +116,7 @@ void Renderer::shutdown()
     // about to be destroyed itself, so stop doing that.
     m_bindless.setFallback(VK_NULL_HANDLE, VK_NULL_HANDLE);
     m_graph.reset();
+    m_staticBatcher.clear(); // (its instance groups)
     if (m_instances) m_instances->shutdown();
     if (m_skinning) m_skinning->shutdown();
     m_fallbackMaterial.reset();
@@ -793,6 +795,7 @@ void Renderer::gatherScene(Scene& scene)
     in.fallbackMaterial = m_fallbackMaterial.get();
     in.settings = &m_settings;
     in.shadows = &m_shadowSetup;
+    in.statics = &m_staticBatcher;
     const uint32_t pointLights = m_sceneGatherer.gather(scene, in, m_frame);
     m_lightClusterer.build(m_frame.camera, *m_lights, pointLights, m_settings.clusteredLights);
 }

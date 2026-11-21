@@ -1,6 +1,7 @@
 #include "ve/scene/GameObject.hpp"
 
 #include "ve/core/Engine.hpp"
+#include "ve/scene/Components.hpp"
 #include "ve/scene/ObjectRef.hpp"
 
 #include "ve/scene/Ids.hpp"
@@ -66,6 +67,14 @@ bool GameObject::activeInHierarchy() const
     return p ? p->gameObject().activeInHierarchy() : true;
 }
 
+void GameObject::setActive(bool active)
+{
+    if (active == m_active) return;
+    m_active = active;
+    // Static renderers here and below are batched on the GPU: tell the renderer.
+    if (m_scene) m_scene->staticObjectChanged(*this, true);
+}
+
 void GameObject::setId(uint64_t id)
 {
     const uint64_t old = m_id;
@@ -77,6 +86,9 @@ void GameObject::destroy()
 {
     if (m_destroyed) return;
     m_destroyed = true;
+    // Batched static renderers leave the GPU batches this frame, like other
+    // renderers stop drawing at once (the children do the same below).
+    if (m_scene) m_scene->staticObjectChanged(*this, false);
     for (Transform* child : m_transform.children()) child->gameObject().destroy();
     if (m_scene) m_scene->m_hasDestroyed = true;
 }
@@ -84,6 +96,19 @@ void GameObject::destroy()
 void GameObject::setParent(GameObject* parent, bool keepWorld)
 {
     m_transform.setParent(parent ? &parent->transform() : nullptr, keepWorld);
+}
+
+void GameObject::setStatic(bool isStatic, bool recursive)
+{
+    for (const auto& c : m_components) {
+        if (auto* mr = dynamic_cast<MeshRenderer*>(c.get()); mr && mr->isStatic != isStatic) {
+            mr->isStatic = isStatic;
+            mr->refresh();
+        }
+    }
+    if (recursive) {
+        for (Transform* child : m_transform.children()) child->gameObject().setStatic(isStatic, true);
+    }
 }
 
 void GameObject::attachComponent(std::unique_ptr<Component> component, std::type_index type)
