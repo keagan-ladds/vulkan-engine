@@ -53,7 +53,9 @@ classes would add plumbing without hiding anything.
   for undo.
 - Imported glTF models are placed via a `ModelInstance` component (path +
   static colliders). It instantiates the model's nodes as non-persistent
-  children when it starts. `PrimitiveRenderer` covers blockout shapes.
+  children when it starts; nodes named `SNAP_*` / `BOX_*` / `EXCL_*` become
+  snap points, placement boxes and foliage exclusions (docs/03-conventions.md,
+  "marker nodes"). `PrimitiveRenderer` covers blockout shapes.
 
 ### Scene file (JSON)
 ```json

@@ -14,6 +14,7 @@
 #include "ve/render/Renderer.hpp"
 #include "ve/render/Texture.hpp"
 #include "ve/scene/Components.hpp"
+#include "ve/scene/MeshComponents.hpp"
 #include "ve/scene/Reflection.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/scene/SceneSerializer.hpp"
@@ -806,6 +807,20 @@ void GrassLayer::rebuild()
 
 void registerVegetationTypes(TypeRegistry& r)
 {
+    // Model marker nodes (MeshComponents.hpp): EXCL (a box) or EXCL_circle.
+    registerModelMarker("EXCL", [](ModelMarker& m) {
+        const glm::vec3 scale = m.object.transform().localScale();
+        auto& e = m.object.addComponent<FoliageExclusion>(); // its box follows the object's scale itself
+        e.box = std::find(m.args.begin(), m.args.end(), "circle") == m.args.end();
+        e.size = glm::vec2(m.bounds.extents().x, m.bounds.extents().z) * 2.0f;
+        e.offset = glm::vec2(m.bounds.center().x, m.bounds.center().z);
+        e.radius = std::max(m.bounds.extents().x * std::abs(scale.x), m.bounds.extents().z * std::abs(scale.z));
+        e.radius = m.extra("radius", e.radius);
+        e.falloff = m.extra("falloff", e.falloff);
+        e.grass = m.extra("grass", e.grass);
+        e.foliage = m.extra("foliage", e.foliage);
+    });
+
     r.add<FoliageExclusion>("FoliageExclusion", [](TypeBuilder<FoliageExclusion>& t) {
         t.field("box", &FoliageExclusion::box).tooltip("a box (size, turning with the object) instead of a circle (radius)");
         t.field("size", &FoliageExclusion::size).tooltip("box: full extents along the object's local x and z");
