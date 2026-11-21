@@ -63,9 +63,9 @@ cmake --build --preset vs2022-debug            # or vs2022-release
 ```
 
 Or open the folder in Visual Studio 2022 and pick the `debug` / `release` preset
-(Ninja), or in VS Code use the same F5 configurations as on Linux (they switch to
-the Visual Studio generator and debugger on Windows). Test hooks work the same
-way, for example `$env:SAVANNA_AUTOTEST=1; .\build-vs\bin\savanna.exe` in PowerShell.
+(Ninja). Test hooks work the same way, for example
+`$env:SAVANNA_AUTOTEST=1; .\build-vs\bin\savanna.exe` in PowerShell. (VS Code's
+F5 configurations use GCC and gdb on Windows too: see the MinGW-w64 section below.)
 
 #### MinGW-w64 / GCC (w64devkit) instead of Visual Studio
 
@@ -88,6 +88,10 @@ cmake --build --preset debug                                            # or rel
 - A build folder can't switch generators: if `build/` was configured with
   Visual Studio before, delete it first.
 - Open a new terminal after installing the Vulkan SDK so `VULKAN_SDK` is set.
+- **VS Code:** the F5 configurations work as on Linux (same names, CMake +
+  Ninja + GCC, debugged with w64devkit's `gdb.exe`; needs the C/C++ extension).
+  Start VS Code from a terminal where `gcc`, `cmake`, `ninja`, `gdb` and
+  `VULKAN_SDK` are available, or put w64devkit's `bin` on the user `PATH`.
 
 Games built with `ve_setup_game` get a manifest that makes UTF-8 the process
 code page (Windows 10 1903 or later), so paths with any characters work as on
