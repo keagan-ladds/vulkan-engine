@@ -1,0 +1,3 @@
+// MinGW: embeds ve.manifest (MSVC's linker takes the .manifest file directly).
+// 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID, 24 = RT_MANIFEST.
+1 24 "ve.manifest"

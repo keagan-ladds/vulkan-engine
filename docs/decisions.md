@@ -304,3 +304,19 @@ needs `refresh()`; batched statics have no motion vectors and lose
 front-to-back ordering against the per-item opaque list (the opaque pass was
 ~25 % slower on lavapipe in the stress test); `staticBatching = false`
 restores the old path.
+
+### D29. Windows: Vulkan SDK + MSVC, SDL2 from source when missing, UTF-8 process code page (2026-11)
+**Chosen:** on Windows the only prerequisites are the LunarG Vulkan SDK and a
+compiler (Visual Studio 2022 / Build Tools; MinGW-w64 also works). If no SDL2
+CMake package is found, `cmake/Dependencies.cmake` builds SDL2 from source as a
+static library, so there's no DLL to ship. MSVC builds use `/utf-8` (sources
+are UTF-8), `/bigobj`, `/permissive-`, the DLL C runtime everywhere (Jolt
+would default to the static one, which fails to link), and `NOMINMAX` /
+`WIN32_LEAN_AND_MEAN`. Every game executable gets a manifest whose
+`activeCodePage` is UTF-8 (Windows 10 1903+): `char*` file APIs in stb,
+cgltf, miniaudio and `std::filesystem` then take UTF-8 paths as on Linux.
+**Alternatives:** requiring vcpkg (another tool to install); converting every
+path to wide strings at each C API (40-odd call sites and the third-party
+loaders); requiring SDL2 development packages (manual setup, DLL copying).
+**Cost:** Windows builds compile SDL2 once (about a minute); Windows versions
+before 10 1903 would treat non-ASCII paths in the old code page.

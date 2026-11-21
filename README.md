@@ -44,6 +44,33 @@ without one, prefix `xvfb-run -a`. No GPU? Mesa's `mesa-vulkan-drivers`
 per-pass GPU times over 120 frames after 30 warm-up frames, logs them and quits
 (see [docs/04-agent-handoff.md](docs/04-agent-handoff.md#4-verification-toolkit)).
 
+### Windows
+
+Install:
+- the **[Vulkan SDK](https://vulkan.lunarg.com/sdk/home#windows)** (headers, loader, `glslc`, validation layers; the installer sets `VULKAN_SDK`);
+- **Visual Studio 2022** (the "Desktop development with C++" workload) or its Build Tools;
+- **CMake 3.26+** (Visual Studio ships one) and Git;
+- optionally Python 3 with Pillow, only to regenerate the sandbox assets.
+
+SDL2 needs nothing: if CMake doesn't find an SDL2 package (vcpkg, a development
+package on `CMAKE_PREFIX_PATH`), it builds SDL2 from source and links it
+statically. The other libraries are fetched as on Linux.
+
+```powershell
+cmake --preset vs2022                          # a Visual Studio solution in build-vs/
+cmake --build --preset vs2022-debug            # or vs2022-release
+.\build-vs\bin\savanna.exe
+```
+
+Or open the folder in Visual Studio 2022 and pick the `debug` / `release` preset
+(Ninja), or in VS Code use the same F5 configurations as on Linux (they switch to
+the Visual Studio generator and debugger on Windows). Test hooks work the same
+way, for example `$env:SAVANNA_AUTOTEST=1; .\build-vs\bin\savanna.exe` in PowerShell.
+
+Games built with `ve_setup_game` get a manifest that makes UTF-8 the process
+code page (Windows 10 1903 or later), so paths with any characters work as on
+Linux. A shared SDL2 DLL, if one was found, is copied next to the executable.
+
 Or in VS Code press **F5** and pick a configuration: Sandbox (the game) or Editor (starts in the in-engine editor; F2 toggles it anywhere), each in Debug or Release, plus the Debug Autotest and Editor test smoke tests.
 
 | Key | Action |

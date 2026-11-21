@@ -33,6 +33,10 @@
 #include <cstdlib>
 #include <fstream>
 
+#ifdef _WIN32
+#include <windows.h> // GetThreadTimes (NOMINMAX / WIN32_LEAN_AND_MEAN: set by CMake)
+#endif
+
 namespace ve {
 
 namespace {
@@ -78,6 +82,13 @@ double threadCpuMs()
     timespec ts{};
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
     return double(ts.tv_sec) * 1e3 + double(ts.tv_nsec) * 1e-6;
+#elif defined(_WIN32)
+    FILETIME created, exited, kernel, user; // 100 ns units
+    if (GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) {
+        auto ticks = [](const FILETIME& f) { return (uint64_t(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+        return double(ticks(kernel) + ticks(user)) * 1e-4;
+    }
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
 #else
     return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
 #endif

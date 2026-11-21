@@ -26,6 +26,13 @@ cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release
 ```
 
+**Windows:** the Vulkan SDK + Visual Studio 2022 (or Build Tools) + CMake 3.26;
+`cmake --preset vs2022 && cmake --build --preset vs2022-debug` (see the
+README). SDL2 is built from source when no SDL2 package is found. MinGW-w64
+also builds the engine (cross-compiling from Linux works: that is how the
+Windows build is checked without a Windows machine; the executable links its
+C++ runtime statically).
+
 Assets are generated (they are committed, but you can regenerate them):
 `python3 tools/generate_assets.py`.
 

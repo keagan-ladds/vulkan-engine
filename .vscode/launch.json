@@ -1,5 +1,7 @@
 {
-    // F5 configurations. Each builds first, then runs the savanna test scene under gdb.
+    // F5 configurations. Each builds first, then runs the savanna test scene under
+    // gdb (Linux) or the Visual Studio debugger (Windows: the "windows" blocks;
+    // needs the C/C++ extension and Visual Studio 2022 or its Build Tools).
     //  - Sandbox:     the game (Debug: no optimisation, Vulkan validation ON - watch the
     //                 terminal for [vulkan] messages; Release: optimised, validation OFF)
     //  - Editor:      the same scene, starting in the in-engine editor (SAVANNA_EDITOR=1;
@@ -17,7 +19,8 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
-            "preLaunchTask": "Build Debug"
+            "preLaunchTask": "Build Debug",
+            "windows": { "type": "cppvsdbg", "program": "${workspaceFolder}/build/bin/savanna.exe", "console": "integratedTerminal" }
         },
         {
             "name": "Sandbox (Release)",
@@ -29,7 +32,8 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
-            "preLaunchTask": "Build Release"
+            "preLaunchTask": "Build Release",
+            "windows": { "type": "cppvsdbg", "program": "${workspaceFolder}/build-release/bin/savanna.exe", "console": "integratedTerminal" }
         },
         {
             "name": "Editor (Debug)",
@@ -41,7 +45,8 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
-            "preLaunchTask": "Build Debug"
+            "preLaunchTask": "Build Debug",
+            "windows": { "type": "cppvsdbg", "program": "${workspaceFolder}/build/bin/savanna.exe", "console": "integratedTerminal" }
         },
         {
             "name": "Editor (Release)",
@@ -53,7 +58,8 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
-            "preLaunchTask": "Build Release"
+            "preLaunchTask": "Build Release",
+            "windows": { "type": "cppvsdbg", "program": "${workspaceFolder}/build-release/bin/savanna.exe", "console": "integratedTerminal" }
         },
         {
             "name": "Autotest (Debug)",
@@ -65,7 +71,8 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
-            "preLaunchTask": "Build Debug"
+            "preLaunchTask": "Build Debug",
+            "windows": { "type": "cppvsdbg", "program": "${workspaceFolder}/build/bin/savanna.exe", "console": "integratedTerminal" }
         },
         {
             "name": "Editor test (Debug)",
@@ -77,7 +84,8 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
-            "preLaunchTask": "Build Debug"
+            "preLaunchTask": "Build Debug",
+            "windows": { "type": "cppvsdbg", "program": "${workspaceFolder}/build/bin/savanna.exe", "console": "integratedTerminal" }
         }
     ]
 }
