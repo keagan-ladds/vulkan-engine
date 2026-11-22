@@ -239,22 +239,22 @@ std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
     return m_meshes;
 }
 
-std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const std::string& mesh, const std::string& library,
+std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const std::string& meshPath, const std::string& libraryName,
                                                               const std::string& owner)
 {
     auto out = std::make_shared<FoliageMeshes>();
     std::vector<MeshData> hulls; // per variant, for ConvexHull
-    if (!library.empty() && mesh.empty()) {
-        auto lib = MeshLibrary::get(r, library);
+    if (!libraryName.empty() && meshPath.empty()) {
+        auto lib = MeshLibrary::get(r, libraryName);
         if (!lib) {
-            log::warnOnce(owner + ": no MeshLibrary entry '" + library + "'");
+            log::warnOnce(owner + ": no MeshLibrary entry '" + libraryName + "'");
             return nullptr;
         }
         *out = *lib;
-    } else if (!mesh.empty()) {
+    } else if (!meshPath.empty()) {
         LodModel model;
         try {
-            model = loadLodModel(assets(), mesh);
+            model = loadLodModel(assets(), meshPath);
         } catch (const std::exception& e) {
             log::warnOnce(owner + ": " + e.what());
             return nullptr;
@@ -296,7 +296,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const
             else if (!authoredColliders.empty())
                 log::warnOnce(owner + ": some variants have *_COL shapes and some don't: colliders ignored");
         }
-        log::info("{}: {} variant(s) from {}, {} level(s){}, {} authored collider(s)", owner, model.variants.size(), mesh,
+        log::info("{}: {} variant(s) from {}, {} level(s){}, {} authored collider(s)", owner, model.variants.size(), meshPath,
                   levelCount, impostor ? " + impostor" : "", authoredColliders.size());
     } else {
         return nullptr;
@@ -324,7 +324,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const
         break;
     case Collision::ConvexHull:
         if (hulls.empty()) {
-            log::warnOnce(owner + ": ConvexHull needs a glTF mesh (library meshes bring their own colliders)");
+            log::warnOnce(owner + ": ConvexHull needs a glTF meshPath (libraryName meshes bring their own colliders)");
         } else {
             out->colliders.clear();
             for (const MeshData& h : hulls) out->colliders.push_back(Collider::convexHull(h));
@@ -376,7 +376,7 @@ void Foliage::update(float dt)
     FoliageSystem* system = this->system();
     if (terrain != builtOn || (terrain && terrain->version() != m_terrainVersion)) {
         // Brush edits only: re-place around them instead of everything.
-        glm::vec4 area;
+        glm::vec4 area{0.0f}; // filled by changedOnlyIn()
         if (!m_dirty && system && terrain == builtOn && terrain->changedOnlyIn(m_terrainVersion, area) && state() == m_state)
             refresh(area);
         else
@@ -630,7 +630,7 @@ void GrassLayer::update(float dt)
         const Terrain* builtOn = m_terrain.get(scene());
         if (terrain != builtOn || (terrain && terrain->version() != m_terrainVersion)) {
             // Brush edits only: re-bake the grass textures in the background, keep the pass.
-            glm::vec4 area;
+            glm::vec4 area{0.0f}; // filled by changedOnlyIn()
             if (!m_dirty && m_pass && terrain == builtOn && terrain->changedOnlyIn(m_terrainVersion, area) && state() == m_state) {
                 m_terrainVersion = terrain->version();
                 auto td = terrain->data();
@@ -696,24 +696,25 @@ std::function<glm::vec4(glm::vec2)> GrassLayer::makeMask(const std::shared_ptr<c
     const auto s = uint32_t(seed);
     // Copies of the settings (not `this`): windowed grass bakes on a worker
     // thread, which must not read a layer being edited or destroyed.
-    const float minGroundHeight = this->minGroundHeight, maxGroundHeight = this->maxGroundHeight;
-    const float biomeThreshold = this->biomeThreshold, maxSlope = this->maxSlope;
-    const float patchFrequency = this->patchFrequency, patchContrast = this->patchContrast, patchOffset = this->patchOffset;
-    const float colorFrequency = this->colorFrequency, heightFrequency = this->heightFrequency;
-    const float heightVariation = this->heightVariation;
+    struct Settings {
+        float minGroundHeight, maxGroundHeight, biomeThreshold, maxSlope, patchFrequency, patchContrast, patchOffset,
+            colorFrequency, heightFrequency, heightVariation;
+    };
+    const Settings c{minGroundHeight, maxGroundHeight, biomeThreshold, maxSlope,      patchFrequency,
+                     patchContrast,   patchOffset,     colorFrequency, heightFrequency, heightVariation};
     return [=](glm::vec2 p) {
         const float h = td->height(p.x, p.y);
-        if (h < minGroundHeight || h > maxGroundHeight) return glm::vec4(0.0f);
+        if (h < c.minGroundHeight || h > c.maxGroundHeight) return glm::vec4(0.0f);
         float density = biomeDensity(weights, *td, p);
-        if (biomeThreshold > 0.0f) density = density >= biomeThreshold ? 1.0f : 0.0f;
-        if (maxSlope < 1.0f) density *= 1.0f - glm::smoothstep(maxSlope - 0.05f, maxSlope + 0.05f, 1.0f - td->normal(p.x, p.y).y);
-        if (patchFrequency > 0.0f)
-            density *= std::clamp(noise::fbm(p * patchFrequency, 2, 61 + s) * patchContrast - patchOffset, 0.0f, 1.0f);
+        if (c.biomeThreshold > 0.0f) density = density >= c.biomeThreshold ? 1.0f : 0.0f;
+        if (c.maxSlope < 1.0f) density *= 1.0f - glm::smoothstep(c.maxSlope - 0.05f, c.maxSlope + 0.05f, 1.0f - td->normal(p.x, p.y).y);
+        if (c.patchFrequency > 0.0f)
+            density *= std::clamp(noise::fbm(p * c.patchFrequency, 2, 61 + s) * c.patchContrast - c.patchOffset, 0.0f, 1.0f);
         for (const Exclusion& e : exclusions) density *= glm::smoothstep(0.0f, e.falloff, e.shape.distance(p));
         if (density <= 0.0f) return glm::vec4(0.0f);
-        const float colorMix = colorFrequency > 0.0f ? noise::fbm(p * colorFrequency, 3, 31 + s) : 0.5f;
+        const float colorMix = c.colorFrequency > 0.0f ? noise::fbm(p * c.colorFrequency, 3, 31 + s) : 0.5f;
         const float heightScale =
-            heightFrequency > 0.0f ? glm::mix(1.0f - heightVariation, 1.0f, noise::fbm(p * heightFrequency, 2, 13 + s)) : 1.0f;
+            c.heightFrequency > 0.0f ? glm::mix(1.0f - c.heightVariation, 1.0f, noise::fbm(p * c.heightFrequency, 2, 13 + s)) : 1.0f;
         return glm::vec4(density, colorMix, heightScale, 0.0f);
     };
 }

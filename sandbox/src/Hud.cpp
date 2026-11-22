@@ -204,7 +204,7 @@ void Hud::start()
         std::string text = gs.messageTimer > 0.0f ? gs.message : std::string();
         const Player* p = player();
         if (const auto* who = p ? p->getComponent<ve::Interactor>() : nullptr; who && text.empty())
-            if (const std::string p = who->prompt(); !p.empty()) text = "[E]  " + p;
+            if (const std::string prompt = who->prompt(); !prompt.empty()) text = "[E]  " + prompt;
         pill.visible = !text.empty();
         // Fit the pill to the text.
         const float w = std::max(200.0f, float(text.size()) * 11.5f + 60.0f);

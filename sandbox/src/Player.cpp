@@ -224,11 +224,11 @@ void Player::update(float)
 
     if (m_fly) {
         // Free flight (noclip): move directly, dragging the physics capsule along.
-        const float dt = time().unscaledDeltaTime;
+        const float flyDt = time().unscaledDeltaTime; // flying ignores slow motion
         glm::vec3 move = lookDirection() * in.axisValue("MoveY") + transform().right() * in.axisValue("MoveX");
         move.y += in.axis(Key::LCtrl, Key::Space);
         const float speed = flySpeed * (in.actionDown("Sprint") ? 4.0f : 1.0f);
-        glm::vec3 p = transform().position() + move * speed * dt;
+        glm::vec3 p = transform().position() + move * speed * flyDt;
         if (const ve::Terrain* t = ve::Terrain::find(scene())) p.y = std::max(p.y, t->height(p.x, p.z));
         m_controller->teleport(p);
     }

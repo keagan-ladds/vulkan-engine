@@ -138,7 +138,7 @@ public:
     const std::vector<std::pair<std::string, std::shared_ptr<const FoliageMeshes>>>& stateMeshes() const { return m_stateMeshes; }
 
 private:
-    std::shared_ptr<const FoliageMeshes> buildMeshes(Renderer& renderer, const std::string& mesh, const std::string& library,
+    std::shared_ptr<const FoliageMeshes> buildMeshes(Renderer& renderer, const std::string& meshPath, const std::string& libraryName,
                                                      const std::string& owner);
     std::string m_meshKey;
     std::shared_ptr<const FoliageMeshes> m_meshes;
