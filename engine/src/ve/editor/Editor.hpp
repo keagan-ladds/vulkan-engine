@@ -15,10 +15,14 @@
 
 #include "ve/editor/Gizmo.hpp"
 #include "ve/world/Terrain.hpp"
+#include "ve/world/Vegetation.hpp"
 #include "ve/scene/ObjectRef.hpp"
 #include "ve/scene/Reflection.hpp"
 
 #include <filesystem>
+#include <functional>
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -104,7 +108,8 @@ private:
 
     // EditorInspector.cpp: the inspector panel.
     void drawInspector();
-    bool drawField(const FieldInfo& field, void* object, GameObject& owner);
+    // owner: the object being edited (undo); null for asset files (no undo: Revert).
+    bool drawField(const FieldInfo& field, void* object, GameObject* owner);
 
     // EditorViewport.cpp: editor camera, icons, picking, gizmo, terrain tools.
     GameObject* camera() const; // the editor camera, null if gone (e.g. the scene was cleared)
@@ -112,6 +117,21 @@ private:
     void updateCamera(float dt);
     void drawViewport();
     void drawTerrainTools(Terrain& terrain);
+
+    // EditorAssets.cpp: the terrain's biome list and the asset editor (.biome,
+    // .foliage, .grass files: edited live through DataAssets, saved on demand).
+    void drawTerrainBiomes(Terrain& terrain);
+    void drawAssetsMenu();
+    void drawAssetEditor();
+    void drawNewAssetPopup();
+    void openAsset(const std::string& path, bool keepHistory = false);
+    void loadAssetCopy();
+    // A biome's foliage / grass list. owner: the terrain (in-scene biome: undo), null for a .biome file.
+    // `openNext` gets a plant file to open after the panel is drawn.
+    bool drawPlantList(const char* label, std::vector<BiomePlant>& list, bool grass, std::string& openNext, GameObject* owner);
+    void commitAssetCopy();
+    // Opens the "new asset" popup; onCreated runs with the new file's path.
+    void newAssetDialog(const std::string& path, Json content, std::function<void(const std::string&)> onCreated);
     // Terrain brush in the viewport (true = the tool owns the mouse this frame).
     bool terrainBrush(Terrain& terrain, const ViewProjector& view, DebugDraw& dd, glm::vec2 mouse);
 
@@ -175,11 +195,23 @@ private:
     char m_prefabBuffer[256] = "prefabs/object.prefab";
     bool m_openSavePrefab = false;
     bool m_snapToPoints = true; // moving an object with SnapPoints snaps it to others nearby
-    std::vector<std::string> m_assetCache;
-    std::string m_assetCacheKey;
-    float m_assetCacheAge = 1e9f;
+    std::map<std::string, std::vector<std::string>> m_assetLists; // listAssets() by extensions
+    float m_assetCacheAge = 1e9f; // all lists are re-scanned after 3 s (1e9 = now)
     std::string m_status;
     float m_statusTime = 0.0f;
+
+    // Asset editor (EditorAssets.cpp): an editable copy of one data file.
+    std::string m_assetPath; // "" = closed
+    std::vector<std::string> m_assetHistory; // Back
+    uint64_t m_assetSeen = 0; // DataAssets::generation() the copy matches
+    TerrainBiome m_assetBiome;
+    std::unique_ptr<FoliageType> m_assetFoliage;
+    std::unique_ptr<GrassLayer> m_assetGrass;
+    bool m_openNewAsset = false;
+    char m_newAssetBuffer[256] = {};
+    std::string m_newAssetExt; // the extension the new file must keep
+    Json m_newAssetContent;
+    std::function<void(const std::string&)> m_newAssetDone;
 };
 
 } // namespace ve

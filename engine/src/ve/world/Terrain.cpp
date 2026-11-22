@@ -1,6 +1,7 @@
 #include "ve/world/Terrain.hpp"
 
 #include "ve/assets/AssetManager.hpp"
+#include "ve/assets/DataAsset.hpp"
 #include "ve/core/Engine.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Profiler.hpp"
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <filesystem>
 #include <chrono>
 #include <cmath>
 
@@ -511,6 +513,7 @@ void Terrain::update(float dt)
     // edits are picked up within a quarter second (code can call markDirty()).
     if (m_sinceCheck >= 0.25f) {
         m_sinceCheck = 0.0f;
+        refreshBiomeAssets(); // a .biome file was edited (editor or on disk)
         if (editState().dump() != m_editState) m_dirty = true;
     }
     if (m_dirty && m_sinceRebuild > 0.25f) rebuild();
@@ -1016,18 +1019,86 @@ void Terrain::updateColliders(bool force, const glm::vec4* area)
 
 Json Terrain::biomesJson() const
 {
-    auto v3 = [](const glm::vec3& v) { return Json{v.x, v.y, v.z}; };
     Json a = Json::array();
-    for (const auto& b : biomes) {
-        a.push_back({{"name", b.name}, {"color", v3(b.color)}, {"color2", v3(b.color2)},
-                     {"colorNoiseFrequency", b.colorNoiseFrequency}, {"colorNoiseSeed", b.colorNoiseSeed},
-                     {"patchColor", v3(b.patchColor)}, {"patchFrequency", b.patchFrequency}, {"patchSeed", b.patchSeed},
-                     {"patchCoverage", b.patchCoverage}, {"patchStrength", b.patchStrength},
-                     {"minHeight", b.minHeight}, {"maxHeight", b.maxHeight}, {"maxSlope", b.maxSlope},
-                     {"coverage", b.coverage}, {"coverageFrequency", b.coverageFrequency}, {"coverageSeed", b.coverageSeed}});
-        if (b.material.textured()) a.back()["material"] = materialJson(b.material);
-    }
+    for (const auto& b : biomes) a.push_back(b.asset.empty() ? biomeToJson(b) : Json{{"asset", b.asset}});
     return a;
+}
+
+Json biomeToJson(const TerrainBiome& b)
+{
+    Json j = Json::object();
+    if (const TypeInfo* t = TypeRegistry::get().find("TerrainBiome")) j = SceneSerializer::serializeFields(*t, &b);
+    if (b.material.textured()) j["material"] = Terrain::materialJson(b.material);
+    auto plants = [](const std::vector<BiomePlant>& list) {
+        Json a = Json::array();
+        for (const BiomePlant& p : list) a.push_back({{"type", p.type}, {"density", p.density}});
+        return a;
+    };
+    if (!b.foliage.empty()) j["foliage"] = plants(b.foliage);
+    if (!b.grass.empty()) j["grass"] = plants(b.grass);
+    return j;
+}
+
+TerrainBiome biomeFromJson(const Json& j, const std::string& fallbackName)
+{
+    TerrainBiome b;
+    b.name = fallbackName;
+    if (!j.is_object()) return b;
+    if (const TypeInfo* t = TypeRegistry::get().find("TerrainBiome")) SceneSerializer::applyFields(*t, &b, j);
+    if (!j.contains("color2")) b.color2 = b.color; // one colour: no colour noise
+    b.material = Terrain::materialFromJson(j.value("material", Json()));
+    auto plants = [](const Json& a) {
+        std::vector<BiomePlant> out;
+        if (!a.is_array()) return out;
+        for (const Json& e : a) {
+            BiomePlant p;
+            if (e.is_string()) {
+                p.type = e.get<std::string>();
+            } else if (e.is_object()) {
+                p.type = e.value("type", std::string());
+                p.density = e.value("density", 1.0f);
+            }
+            if (!p.type.empty()) out.push_back(std::move(p));
+        }
+        return out;
+    };
+    b.foliage = plants(j.value("foliage", Json()));
+    b.grass = plants(j.value("grass", Json()));
+    return b;
+}
+
+TerrainBiome loadBiomeAsset(const std::string& path)
+{
+    TerrainBiome b = biomeFromJson(*DataAssets::get(path), std::filesystem::path(path).stem().string());
+    b.asset = path;
+    return b;
+}
+
+void Terrain::setBiomesJson(const Json& j)
+{
+    if (!j.is_array()) return;
+    biomes.clear();
+    for (const Json& e : j) {
+        if (e.is_object() && e.contains("asset") && e["asset"].is_string()) biomes.push_back(loadBiomeAsset(e["asset"].get<std::string>()));
+        else biomes.push_back(biomeFromJson(e));
+    }
+    if (biomes.empty()) biomes.push_back(TerrainBiome{});
+    m_biomeAssetsGeneration = DataAssets::generation();
+}
+
+void Terrain::refreshBiomeAssets()
+{
+    const uint64_t gen = DataAssets::generation();
+    if (gen == m_biomeAssetsGeneration) return;
+    m_biomeAssetsGeneration = gen;
+    for (TerrainBiome& b : biomes) {
+        if (b.asset.empty()) continue;
+        TerrainBiome fresh = loadBiomeAsset(b.asset);
+        if (biomeToJson(fresh) != biomeToJson(b)) {
+            b = std::move(fresh);
+            m_dirty = true; // (the scene-file state only holds the path: rebuild explicitly)
+        }
+    }
 }
 
 Json Terrain::materialJson(const TerrainMaterial& m)
@@ -1060,40 +1131,49 @@ TerrainMaterial Terrain::materialFromJson(const Json& j)
     return m;
 }
 
-void Terrain::setBiomesJson(const Json& j)
-{
-    if (!j.is_array()) return;
-    biomes.clear();
-    for (const Json& e : j) {
-        TerrainBiome b;
-        b.name = e.value("name", b.name);
-        b.color = vec3From(e.value("color", Json()), b.color);
-        b.color2 = vec3From(e.value("color2", Json()), b.color);
-        b.colorNoiseFrequency = e.value("colorNoiseFrequency", b.colorNoiseFrequency);
-        b.colorNoiseSeed = e.value("colorNoiseSeed", b.colorNoiseSeed);
-        b.patchColor = vec3From(e.value("patchColor", Json()), b.patchColor);
-        b.patchFrequency = e.value("patchFrequency", b.patchFrequency);
-        b.patchSeed = e.value("patchSeed", b.patchSeed);
-        b.patchCoverage = e.value("patchCoverage", b.patchCoverage);
-        b.patchStrength = e.value("patchStrength", b.patchStrength);
-        b.minHeight = e.value("minHeight", b.minHeight);
-        b.maxHeight = e.value("maxHeight", b.maxHeight);
-        b.maxSlope = e.value("maxSlope", b.maxSlope);
-        b.coverage = e.value("coverage", b.coverage);
-        b.coverageFrequency = e.value("coverageFrequency", b.coverageFrequency);
-        b.coverageSeed = e.value("coverageSeed", b.coverageSeed);
-        b.material = materialFromJson(e.value("material", Json()));
-        biomes.push_back(b);
-    }
-    if (biomes.empty()) biomes.push_back(TerrainBiome{});
-}
-
 // -----------------------------------------------------------------------------
 // Reflection
 // -----------------------------------------------------------------------------
 
 void registerTerrainTypes(TypeRegistry& r)
 {
+    // Plain data (biome files and the editor's biome panel). The JSON keys are
+    // the scene files' biome keys (see biomeToJson / biomeFromJson).
+    r.add<TerrainBiome>("TerrainBiome", [](TypeBuilder<TerrainBiome>& t) {
+        t.category("World");
+        t.field("name", &TerrainBiome::name).tooltip("what vegetation and stamps call it; unique per terrain");
+        t.field("color", &TerrainBiome::color).color();
+        t.field("color2", &TerrainBiome::color2).color().tooltip("mixed in by noise (colorNoiseFrequency)");
+        t.field("colorNoiseFrequency", &TerrainBiome::colorNoiseFrequency).range(0.0f, 1.0f).speed(0.0005f);
+        t.field("colorNoiseSeed", &TerrainBiome::colorNoiseSeed);
+        t.field("patchColor", &TerrainBiome::patchColor).color();
+        t.field("patchFrequency", &TerrainBiome::patchFrequency).range(0.0f, 1.0f).speed(0.0005f).tooltip("0 = no patches");
+        t.field("patchSeed", &TerrainBiome::patchSeed);
+        t.field("patchCoverage", &TerrainBiome::patchCoverage).range(0.0f, 1.0f).speed(0.01f);
+        t.field("patchStrength", &TerrainBiome::patchStrength).range(0.0f, 1.0f).speed(0.01f);
+        t.field("minHeight", &TerrainBiome::minHeight).speed(0.1f).tooltip("occurs on its own between these heights...");
+        t.field("maxHeight", &TerrainBiome::maxHeight).speed(0.1f);
+        t.field("maxSlope", &TerrainBiome::maxSlope).range(0.0f, 1.0f).speed(0.005f).tooltip("...up to this slope (1 - normal.y)...");
+        t.field("coverage", &TerrainBiome::coverage).range(0.0f, 1.0f).speed(0.005f)
+            .tooltip("...over about this fraction of that area (noise patches). 0 = only where stamps / the brush paint it. "
+                     "Ignored for the first biome, which fills whatever the others leave");
+        t.field("coverageFrequency", &TerrainBiome::coverageFrequency).range(0.0f, 1.0f).speed(0.0001f)
+            .tooltip("size of the patches (1/m): smaller = bigger regions");
+        t.field("coverageSeed", &TerrainBiome::coverageSeed);
+    });
+    r.add<TerrainMaterial>("TerrainMaterial", [](TypeBuilder<TerrainMaterial>& t) {
+        t.category("World");
+        t.field("albedo", &TerrainMaterial::albedo).assets(".png .jpg .jpeg .tga");
+        t.field("normal", &TerrainMaterial::normal).assets(".png .jpg .jpeg .tga");
+        t.field("roughness", &TerrainMaterial::roughness).assets(".png .jpg .jpeg .tga");
+        t.field("ao", &TerrainMaterial::ao).assets(".png .jpg .jpeg .tga");
+        t.field("size", &TerrainMaterial::size).range(0.05f, 1000.0f).speed(0.05f).tooltip("metres per texture repeat");
+        t.field("tint", &TerrainMaterial::tint).color();
+        t.field("normalStrength", &TerrainMaterial::normalStrength).range(0.0f, 4.0f).speed(0.01f);
+        t.field("roughnessValue", &TerrainMaterial::roughnessValue).range(0.0f, 1.0f).speed(0.01f).tooltip("without a roughness map");
+        t.field("biomeColor", &TerrainMaterial::biomeColor).range(0.0f, 1.0f).speed(0.01f)
+            .tooltip("0 = the texture's colours, 1 = the biome's colour carrying the texture's detail");
+    });
     r.add<Terrain>("Terrain", [](TypeBuilder<Terrain>& t) {
         t.category("World");
         t.field("seed", &Terrain::seed);
@@ -1135,9 +1215,9 @@ void registerTerrainTypes(TypeRegistry& r)
         t.field("wetnessSlot", &Terrain::wetnessSlot).range(-1.0f, 7.0f);
         t.property("biomes", FieldKind::Json, [](const Terrain& x) { return x.biomesJson(); },
                    [](Terrain& x, const Json& j) { x.setBiomesJson(j); })
-            .tooltip("[{name, color, color2, patchColor, patchFrequency, minHeight, maxHeight, maxSlope, coverage, ..., "
-                     "material: {albedo, normal, roughness, ao, size, tint, normalStrength, roughnessValue, biomeColor}}]; "
-                     "biome 0 fills the rest, later biomes paint over earlier ones");
+            .tooltip("[{asset: 'biomes/x.biome'} or an inline biome {name, color, ...}]; edit them in the Biomes "
+                     "section below. Biome 0 fills the rest, later biomes paint over earlier ones")
+            .hidden(); // the editor draws its own biome list (drawTerrainTools)
     });
     r.add<TerrainStamp>("TerrainStamp", [](TypeBuilder<TerrainStamp>& t) {
         t.category("World");

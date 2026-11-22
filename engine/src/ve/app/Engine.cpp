@@ -1,4 +1,5 @@
 #include "ve/core/Engine.hpp"
+#include "ve/assets/DataAsset.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/net/Network.hpp"
 #include "ve/debug/Debug.hpp"
@@ -461,6 +462,7 @@ void Engine::tickFrame()
         if (!paused) m_physics->interpolate(*m_scene, m_time.fixedAlpha);
     }
 
+    DataAssets::poll(m_time.unscaledDeltaTime); // biome / foliage / grass files edited on disk
     {
         VE_PROFILE("Update");
         m_scene->update(m_time.deltaTime, paused);

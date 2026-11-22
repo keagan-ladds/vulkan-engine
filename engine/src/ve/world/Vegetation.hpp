@@ -269,6 +269,50 @@ private:
     float m_sinceCheck = 1e6f; // since state() / exclusions were last compared
 };
 
+// Grows what the terrain's biomes list (TerrainBiome::foliage / grass): one
+// foliage layer per ".foliage" file and one GrassLayer per ".grass" file,
+// whose density at a point is the sum over biomes of (biome weight there x
+// the density that biome gives it). A file used by several biomes is one
+// layer (no double planting).
+//
+//   Terrain          biomes: savannah.biome {foliage: [acacia.foliage: 1], grass: [dry.grass: 1]},
+//                            swamp.biome    {foliage: [acacia.foliage: 0.2, reeds.foliage: 1]}
+//   BiomeVegetation  -> Foliage { acacia (Savannah:1, Swamp:0.2), reeds (Swamp:1) } + GrassLayer dry
+//
+// A .foliage file holds FoliageType fields, a .grass file GrassLayer fields
+// (JSON, as the inspector shows them; their `biomes` field comes from the
+// biomes instead). Layer names are the file names ("acacia"): that's what a
+// layer's `avoid` refers to, and layers are ordered by first mention.
+// What it creates are code objects (not saved; the files and the biomes are
+// the data); edits to any of the files show up live.
+class BiomeVegetation : public GameObject {
+public:
+    BiomeVegetation();
+    void update(float dt) override;
+    void onDestroy() override;
+
+    // The Foliage settings (see Foliage).
+    float edgeMargin = 45.0f;
+    float cellSize = 64.0f;
+    std::string colliderFocus = "Player";
+    bool preload = true;
+
+    Foliage* foliage() const { return m_foliage.get(scene()); } // null until the biomes list foliage
+
+    // ".foliage" / ".grass" file content <-> the component / object fields.
+    static Json foliageJson(const FoliageType& type);
+    static void applyFoliageJson(FoliageType& type, const Json& json); // missing keys: defaults
+    static Json grassJson(const GrassLayer& grass);
+    static void applyGrassJson(GrassLayer& grass, const Json& json);
+
+private:
+    void sync();
+    std::string m_state;
+    ObjectRef<Foliage> m_foliage;
+    std::vector<ObjectRef<GrassLayer>> m_grass;
+    float m_sinceCheck = 1e6f;
+};
+
 class TypeRegistry;
 // Reflection (scene files, editor): this file's components. The Engine calls it at startup.
 void registerVegetationTypes(TypeRegistry& r);

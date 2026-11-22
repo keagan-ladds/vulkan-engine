@@ -61,8 +61,27 @@ struct TerrainMaterial {
     bool textured() const { return !albedo.empty() || !normal.empty() || !roughness.empty() || !ao.empty(); }
 };
 
+// Something that grows in a biome: a foliage (".foliage") or grass (".grass")
+// asset file and its density there (0..1; summed over the biomes at a point,
+// weighted by how much of each biome is there).
+struct BiomePlant {
+    std::string type;     // asset path, e.g. "foliage/acacia.foliage"
+    float density = 1.0f;
+    bool operator==(const BiomePlant&) const = default;
+};
+
+// A biome: how the ground looks, where it occurs, and what grows on it.
+// Usually its own asset file ("biomes/savannah.biome", JSON: the fields below
+// plus "foliage" / "grass" lists) that terrains reference, so several scenes
+// can share it and the editor can edit it live (see docs/06-world.md).
 struct TerrainBiome {
     std::string name = "Biome";
+    // The .biome file it comes from (empty = defined in the scene file). Not
+    // part of the file itself.
+    std::string asset;
+    // What grows here (BiomeVegetation turns these into foliage layers / grass).
+    std::vector<BiomePlant> foliage;
+    std::vector<BiomePlant> grass;
     // Optional textured ground (otherwise the colours below, with detail noise).
     TerrainMaterial material;
     // Ground colour: color mixed towards color2 by noise, plus an optional patch colour.
@@ -84,6 +103,14 @@ struct TerrainBiome {
     float coverageFrequency = 0.004f;
     int coverageSeed = 61;
 };
+
+// A biome's content as JSON (the .biome file format: every field except
+// `asset`), and back. Missing keys keep their defaults; a missing name
+// becomes `fallbackName` (biome files: the file name).
+Json biomeToJson(const TerrainBiome& biome);
+TerrainBiome biomeFromJson(const Json& json, const std::string& fallbackName = "Biome");
+// A biome loaded from its .biome file (DataAssets: cached, reloaded on change).
+TerrainBiome loadBiomeAsset(const std::string& path);
 
 // The shape of a TerrainStamp (plain data, so terrain snapshots can copy it).
 struct TerrainStampShape {
@@ -319,9 +346,13 @@ public:
     bool changedOnlyIn(uint64_t version, glm::vec4& area) const;
     static Terrain* find(const Scene& scene);
 
-    // Biomes as JSON (reflection / scene files).
+    // Biomes as JSON (reflection / scene files): a biome from a file is just
+    // {"asset": "biomes/x.biome"}, others are stored in full.
     Json biomesJson() const;
     void setBiomesJson(const Json& j);
+    // Re-reads the biomes that come from files if any data asset changed
+    // (called from update(); the editor calls it after editing a biome file).
+    void refreshBiomeAssets();
     static Json materialJson(const TerrainMaterial& m);
     static TerrainMaterial materialFromJson(const Json& j);
 
@@ -368,6 +399,7 @@ private:
     bool m_loadTask = false; // registered a loading-screen task (first build)
     float m_sinceRebuild = 0.0f;
     float m_sinceCheck = 0.0f; // edit-state checks are throttled (they serialize the fields)
+    uint64_t m_biomeAssetsGeneration = 0; // DataAssets::generation() the biome files were read at
 };
 
 class TypeRegistry;

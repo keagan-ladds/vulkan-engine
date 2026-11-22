@@ -59,6 +59,10 @@ function(ve_compile_shaders TARGET)
         list(APPEND OUTPUTS "${OUT}")
     endforeach()
 
+    # Recorded so the package export (cmake/Package.cmake) knows which .spv
+    # files belong to the engine and the effects.
+    set_property(GLOBAL APPEND PROPERTY VE_SHADER_OUTPUTS_${TARGET} ${OUTPUTS})
+
     add_custom_target(${TARGET}_shaders DEPENDS ${OUTPUTS})
     add_dependencies(${TARGET} ${TARGET}_shaders)
 endfunction()

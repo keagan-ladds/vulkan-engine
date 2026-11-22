@@ -142,6 +142,46 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
 - `Terrain::biomeWeights(x, z)` gives the per-biome weights to anyone
   (foliage, grass, gameplay).
 
+**Biome files, and biomes that own their vegetation.**
+- A biome can live in its own asset file, so several scenes (and terrains)
+  share it. The terrain's `biomes` list then holds a reference instead of the
+  whole biome: `"biomes": [{"asset": "biomes/meadow.biome"}, {"asset": "biomes/rocky.biome"}]`.
+  Inline biomes still work (older scenes, quick tests), and a list can mix both.
+- A `.biome` file is JSON with the same keys as an inline biome (`name`,
+  `color`, `coverage`, `material`...; a missing `name` becomes the file name),
+  plus what grows there:
+
+  ```json
+  {"version": 1, "name": "Rocky", "color": [0.42, 0.38, 0.32], "coverage": 0.35,
+   "foliage": [{"type": "foliage/rocks.foliage", "density": 1.0}],
+   "grass":   [{"type": "grass/meadow.grass",   "density": 0.25}]}
+  ```
+
+- A `.foliage` file holds `FoliageType` fields, a `.grass` file `GrassLayer`
+  fields (missing keys keep the defaults). Their `biomes` field is ignored:
+  the biomes that list a file decide where it grows.
+- A `BiomeVegetation` object in the scene grows the lists: one foliage layer
+  per `.foliage` file and one `GrassLayer` per `.grass` file. A file's density
+  at a point = Σ over biomes (that biome's weight there × the density it gives
+  the file), so a file listed by several biomes is one layer whose density
+  blends across their borders (no double planting). Layer names are the file
+  names (`rocks`): that is what `avoid` refers to, and layers are ordered by
+  first mention. What it creates are code objects (not saved in the scene).
+  Its own fields are the `Foliage` settings (`edgeMargin`, `cellSize`,
+  `colliderFocus`, `preload`). Hand-made `Foliage` / `GrassLayer` objects keep
+  working alongside it.
+- **Live editing.** `ve::DataAssets` (`ve/assets/DataAsset.hpp`) caches these
+  files. A file changed on disk is reloaded within half a second; the terrain
+  re-reads its biome files and rebuilds, and `BiomeVegetation` re-applies the
+  plant files (foliage and grass then rebuild as after any settings change).
+- **In the editor:** selecting the terrain shows a **Biomes** list (order,
+  add a biome file, create one, move an inline biome to a file, remove; inline
+  biomes are edited in place, with undo). **Edit** (or the **Assets** menu)
+  opens a file in the asset window: changes apply live and are marked unsaved
+  (`*`) until **Save** writes the file (to the source assets folder in a
+  development build); **Revert** drops them. Asset edits have no undo of their
+  own; Revert is the way back. Unsaved edits win over changes on disk.
+
 **Vegetation** (`ve/world/Vegetation.hpp`, `LodModel.hpp`).
 - Foliage layers are `FoliageType` components on child objects of a `Foliage`
   object (the object name is the layer name, used by `avoid = "Acacias:2.5"`).
