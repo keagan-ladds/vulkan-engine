@@ -21,6 +21,27 @@ Then:
    `-DVE_ENGINE_DIR=...`. The value is cached in `build/`, so you only pass it once.
 3. Open the folder in VS Code and press F5.
 
+## Pin an engine version
+
+Build against a tagged engine version and update on purpose, so engine
+changes can't break your game unannounced (see the engine's `CHANGELOG.md`
+and `docs/09-api-stability.md`). The simplest way is a git submodule:
+
+```bash
+git submodule add https://github.com/keagan-ladds/vulkan-engine external/vulkan-engine
+git -C external/vulkan-engine checkout v0.1.0
+git commit -am "Engine v0.1.0"
+```
+
+and point `VE_ENGINE_DIR` at it (the default in `CMakeLists.txt`):
+`set(VE_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/vulkan-engine" ...)`.
+Clones then need `git clone --recursive` (or `git submodule update --init`).
+
+To update: read the changelog entries since your version, then
+`git -C external/vulkan-engine fetch --tags && git -C external/vulkan-engine checkout v0.2.0`,
+rebuild, and fix any deprecation warnings (deprecated APIs keep working for
+one minor version).
+
 ## Layout
 
 ```

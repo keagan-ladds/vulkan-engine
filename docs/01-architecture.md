@@ -75,7 +75,9 @@ sandbox ──► ve_effects ──► ve_engine
   so including it doesn't pull higher modules in. Lower modules offer
   extension points that the root connects: each module's
   `registerXTypes(TypeRegistry&)`, `SkinningSystem::addGatherer`, render's
-  `DebugLineBuffer`, `Engine::atShutdown`, `Engine::editorPaused`. `tools/check_layering.py`
+  `DebugLineBuffer`, `Engine::atShutdown`, `Engine::editorPaused`,
+  `registerModelMarker` (gameplay and world turn marker nodes of imported
+  models into their components). `tools/check_layering.py`
   holds the allowed-dependency table and the few known exceptions (each with
   its reason) and fails on anything else; run it after changing includes.
 - **Threads:** one engine job pool (`ve/core/Jobs.hpp`, D24): hardware threads

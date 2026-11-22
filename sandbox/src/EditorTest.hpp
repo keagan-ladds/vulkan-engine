@@ -2,6 +2,7 @@
 // Scripted editor exercise (SAVANNA_EDITORTEST=1): picking, create/duplicate/
 // delete, undo/redo, save, Play/Stop and reload - without mouse input.
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/ObjectRef.hpp>
 
 namespace savanna {
 
@@ -19,6 +20,7 @@ private:
     size_t m_bouldersNew = 0;
     float m_heightBefore = 0.0f; // terrain brush checks
     size_t m_editedTiles = 0;
+    ve::ObjectRef<> m_markers; // model marker nodes check
 };
 
 } // namespace savanna

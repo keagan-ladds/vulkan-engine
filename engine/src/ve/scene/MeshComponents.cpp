@@ -14,6 +14,8 @@
 #include "ve/scene/Scene.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <unordered_map>
 #include <functional>
 #include <map>
 #include <tuple>
@@ -35,6 +37,56 @@ void MeshRenderer::refresh()
 // ModelInstance
 // -----------------------------------------------------------------------------
 
+namespace {
+
+std::unordered_map<std::string, ModelMarkerHandler>& markerHandlers()
+{
+    static std::unordered_map<std::string, ModelMarkerHandler> handlers;
+    return handlers;
+}
+
+// Blender names duplicates "Name.001": markers ignore the suffix.
+std::string withoutNumberSuffix(std::string name)
+{
+    const size_t dot = name.rfind('.');
+    if (dot != std::string::npos && dot + 1 < name.size() &&
+        std::all_of(name.begin() + long(dot) + 1, name.end(), [](unsigned char c) { return std::isdigit(c); }))
+        name.resize(dot);
+    return name;
+}
+
+// A node that is a registered marker kind: hand it to that kind's handler.
+void applyMarker(GameObject& go, const ModelNode& node, const Model& model)
+{
+    const std::string name = withoutNumberSuffix(node.name);
+    const size_t sep = name.find('_');
+    const auto& handlers = markerHandlers();
+    const auto it = handlers.find(name.substr(0, sep)); // "SNAP_x" and "SNAP" ("SNAPSHOT" is no marker)
+    if (it == handlers.end()) return;
+
+    ModelMarker marker{go, node, model, {}, AABB{glm::vec3(-1.0f), glm::vec3(1.0f)}, nlohmann::json::object()};
+    if (sep != std::string::npos) marker.args = str::split(std::string_view(name).substr(sep + 1), '_');
+    if (!node.extras.empty()) {
+        nlohmann::json j = nlohmann::json::parse(node.extras, nullptr, false);
+        if (j.is_object()) marker.extras = std::move(j);
+    }
+    if (node.mesh >= 0 && size_t(node.mesh) < model.meshes.size() && model.meshes[size_t(node.mesh)])
+        marker.bounds = model.meshes[size_t(node.mesh)]->bounds();
+    // Not drawn or solid: whatever instantiate() put on the node (renderer,
+    // static collider) goes; the marker's own components come next.
+    std::vector<Component*> made;
+    for (const auto& c : go.components()) made.push_back(c.get());
+    for (Component* c : made) go.removeComponent(c);
+    it->second(marker);
+}
+
+} // namespace
+
+void registerModelMarker(const std::string& kind, ModelMarkerHandler handler)
+{
+    markerHandlers()[kind] = std::move(handler);
+}
+
 GameObject* ModelInstance::instanceRoot() const
 {
     return m_root.get(gameObject().scene());
@@ -49,6 +101,17 @@ void ModelInstance::rebuild()
         auto model = assets().loadModel(path);
         GameObject* root = &gameObject().scene().instantiate(*model, &gameObject(), staticColliders);
         m_root = root;
+        if (markers && !markerHandlers().empty()) {
+            // instantiate() makes one child per node, in the model's order.
+            std::function<void(int, GameObject&)> walk = [&](int index, GameObject& go) {
+                const ModelNode& node = model->nodes[size_t(index)];
+                applyMarker(go, node, *model);
+                const auto& kids = go.transform().children();
+                for (size_t i = 0; i < node.children.size() && i < kids.size(); ++i) walk(node.children[i], kids[i]->gameObject());
+            };
+            const auto& roots = root->transform().children();
+            for (size_t i = 0; i < model->roots.size() && i < roots.size(); ++i) walk(model->roots[i], roots[i]->gameObject());
+        }
         if (!hiddenNodes.empty()) {
             const std::vector<std::string> names = str::split(hiddenNodes, ',');
             // Destroyed before they start: no colliders or draws for hidden nodes.

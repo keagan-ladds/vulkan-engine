@@ -6,7 +6,9 @@
 #include <ve/core/Env.hpp>
 #include <ve/core/Log.hpp>
 #include <ve/editor/Editor.hpp>
+#include <ve/gameplay/Placement.hpp>
 #include <ve/render/Renderer.hpp>
+#include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/Prefab.hpp>
 #include <ve/scene/Scene.hpp>
 #include <ve/scene/SceneSerializer.hpp>
@@ -14,8 +16,10 @@
 #include <ve/world/Terrain.hpp>
 #include <ve/world/Vegetation.hpp>
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace savanna {
@@ -28,6 +32,15 @@ size_t countPersistent(const ve::Scene& s)
     return n;
 }
 void log(const std::string& m) { ve::log::info("[editortest] {}", m); }
+// The T on the object named `name` under `root`.
+template <typename T>
+T* componentOn(ve::GameObject& root, const std::string& name)
+{
+    if (root.name() == name) return root.getComponent<T>();
+    for (ve::Transform* c : root.transform().children())
+        if (T* t = componentOn<T>(c->gameObject(), name)) return t;
+    return nullptr;
+}
 } // namespace
 
 void EditorTest::update(float)
@@ -200,7 +213,61 @@ void EditorTest::update(float)
             log("prefab: no Torch in the scene");
         }
     }
-    if (m_frame == 683 && ve::env::get("SAVANNA_EDITORTEST") != "hold") {
+    if (m_frame == 683) {
+        // Model markers: SNAP / BOX / EXCL nodes in a glTF become components.
+        const std::string path = (std::filesystem::temp_directory_path() / "ve_editortest_markers.gltf").string();
+        ve::Json g{{"asset", {{"version", "2.0"}}}, {"scene", 0}, {"scenes", {{{"nodes", {0}}}}}};
+        g["nodes"] = ve::Json::array({
+            {{"name", "Piece"}, {"children", {1, 2, 3, 4, 5, 6, 7}}},
+            {{"name", "SNAP"}, {"translation", {1, 0, 0}}},
+            {{"name", "SNAP_fence_fence+grid.002"}, {"translation", {0, 1, 0}}},
+            {{"name", "SNAP_door_door-opening_align"}, {"rotation", {0, 0.7071068, 0, 0.7071068}}, {"extras", {{"accepts", "*"}}}},
+            {{"name", "BOX"}, {"translation", {0, 1, 0}}, {"scale", {2, 1, 0.5}}},
+            {{"name", "EXCL_circle"}, {"scale", {3, 1, 3}}, {"extras", {{"grass", false}}}},
+            {{"name", "BOX_mesh"}, {"mesh", 0}, {"scale", {2, 2, 2}}},
+            {{"name", "SNAPSHOT"}},
+        });
+        // One triangle (0,0,0) (1,0,0) (0,2,1).
+        g["buffers"] = {{{"byteLength", 36}, {"uri", "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAEAAAIA/"}}};
+        g["bufferViews"] = {{{"buffer", 0}, {"byteLength", 36}}};
+        g["accessors"] = {{{"bufferView", 0}, {"componentType", 5126}, {"count", 3}, {"type", "VEC3"}, {"min", {0, 0, 0}}, {"max", {1, 2, 1}}}};
+        g["meshes"] = {{{"primitives", {{{"attributes", {{"POSITION", 0}}}}}}}};
+        std::ofstream(path) << g.dump();
+
+        ve::GameObject& o = s.spawn("Markers test");
+        o.transform().setPosition({30.0f, 0.0f, 30.0f});
+        o.addComponent<ve::ModelInstance>().path = path;
+        m_markers = &o;
+    }
+    if (m_frame == 686) {
+        if (ve::GameObject* found = m_markers.get(s)) {
+            ve::GameObject& o = *found;
+            auto near = [](glm::vec3 a, glm::vec3 b) { return glm::length(a - b) < 1e-3f; };
+            const auto* plain = componentOn<ve::SnapPoint>(o, "SNAP");
+            const auto* fence = componentOn<ve::SnapPoint>(o, "SNAP_fence_fence+grid.002");
+            const auto* door = componentOn<ve::SnapPoint>(o, "SNAP_door_door-opening_align");
+            const auto* box = componentOn<ve::PlacementBox>(o, "BOX");
+            const auto* excl = componentOn<ve::FoliageExclusion>(o, "EXCL_circle");
+            const auto* meshBox = componentOn<ve::PlacementBox>(o, "BOX_mesh");
+            const bool meshHidden = !componentOn<ve::MeshRenderer>(o, "BOX_mesh");
+            const bool notMarker = !componentOn<ve::SnapPoint>(o, "SNAPSHOT");
+            const bool ok = plain && plain->type == "grid" && plain->accepts == "grid" && near(plain->worldPosition(), {31, 0, 30}) &&
+                            fence && fence->type == "fence" && fence->accepts == "fence, grid" && !fence->alignRotation && door &&
+                            door->type == "door" && door->accepts == "*" && door->alignRotation && near(door->worldFacing(), {1, 0, 0}) &&
+                            box && near(box->halfExtents, {2, 1, 0.5f}) && near(box->center, {0, 0, 0}) && excl && !excl->box &&
+                            std::abs(excl->radius - 3.0f) < 1e-3f && !excl->grass && excl->foliage && meshBox &&
+                            near(meshBox->center, {1, 2, 1}) && near(meshBox->halfExtents, {1, 2, 1}) && meshHidden && notMarker &&
+                            ve::placement::snapPointsOf(o).size() == 3 && ve::placement::volumeOf(o).size() == 2;
+            log(std::string("markers: ") + (ok ? "ok" : "WRONG") + " (snap points " + std::to_string(ve::placement::snapPointsOf(o).size()) +
+                ", boxes " + std::to_string(ve::placement::volumeOf(o).size()) + ")");
+            o.destroy();
+        } else {
+            log("markers: WRONG (the test object is gone)");
+        }
+        m_markers.reset();
+        std::filesystem::remove(std::filesystem::temp_directory_path() / "ve_editortest_markers.gltf");
+    }
+    if (m_frame == 690 && ve::env::get("SAVANNA_EDITORTEST") != "hold") {
         log("done");
         engine().quit();
     }

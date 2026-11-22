@@ -523,6 +523,35 @@ b.onClick = [this] { resume(); };
   the time of day, hide the HUD, and drop the camera when play starts
   (Savanna's `MainMenu`).
 
+#### Pieces from a modelled glTF: marker nodes
+
+Instead of adding `SnapPoint`s etc. by hand, put named empties in the model.
+A `ModelInstance` turns them into components when it builds the model
+(turn off with its `markers` field):
+
+| Node name | Becomes |
+|-----------|---------|
+| `SNAP` / `SNAP_<type>` / `SNAP_<type>_<accepts>` (+ `_align`) | `SnapPoint` at the node. `accepts` is `+`-separated (`fence+grid`), `any` = `*`, `none` = nothing; it defaults to the type, no type = `grid`. `_align` sets `alignRotation`; facing is the node's +Z (Blender: -Y). Types use `-`, not `_` (`door-opening`) |
+| `BOX` / `BOX_<anything>` | `PlacementBox` |
+| `EXCL` / `EXCL_circle` | `FoliageExclusion` (box, or circle) |
+
+- Size: a cube empty's (-1..1, scaled by the empty), or, on a mesh node, the
+  mesh's bounds; the mesh isn't drawn or solid.
+- Blender's duplicate suffixes (`SNAP.001`) are ignored. Prefixes are
+  upper case, so a mesh called `Box` stays a mesh.
+- glTF extras (Blender custom properties, exported with "Include > Custom
+  Properties") override fields: `type`, `accepts`, `align` on snap points;
+  `radius`, `falloff`, `grass`, `foliage` on exclusions.
+- The components are on the model's (non-persistent) node objects, so they
+  aren't saved in the prefab: re-exporting the model updates every piece.
+  A prefab is then just the object with its `ModelInstance` (Create > Model,
+  Edit > Save as prefab), and it snaps in the editor and in the game's
+  build tool.
+- More kinds: `ve::registerModelMarker("KIND", handler)` (at startup) hands
+  nodes named `KIND` / `KIND_<args>` to `handler` with the node's object,
+  args, bounds and extras. The engine's own SNAP / BOX (gameplay) and EXCL
+  (world) are registered that way, so scene code doesn't depend on them.
+
 ### Walking AI: navmesh + agents
 
 ```cpp

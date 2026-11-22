@@ -15,6 +15,7 @@ project cold and keep going.
 | [06-world.md](06-world.md) | Big worlds: terrain streaming, biomes, foliage, grass |
 | [07-audio.md](07-audio.md) | Audio: buses, 3D sources, zones, music, ambience |
 | [08-world-streaming.md](08-world-streaming.md) | **Proposal:** streaming placed objects by cell (not built yet) |
+| [09-api-stability.md](09-api-stability.md) | What game code can rely on: stable vs evolving APIs, versions, deprecations ([CHANGELOG](../CHANGELOG.md)) |
 | [decisions.md](decisions.md) | Architecture decision log: what was chosen, alternatives, and why |
 
 ## Quick start

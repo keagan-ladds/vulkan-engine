@@ -27,6 +27,7 @@ struct ModelNode {
     int mesh = -1; // index into Model::meshes, or -1
     int skin = -1; // index into Model::skins: the mesh is deformed by those joints
     std::vector<int> children;
+    std::string extras; // the node's glTF "extras" as JSON text (Blender: custom properties), or empty
 };
 
 struct ModelSkin {

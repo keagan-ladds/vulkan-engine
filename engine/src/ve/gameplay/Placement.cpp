@@ -1,11 +1,14 @@
 #include "ve/gameplay/Placement.hpp"
 
 #include "ve/core/Engine.hpp"
+#include "ve/core/Log.hpp"
+#include "ve/core/Strings.hpp"
 #include "ve/gameplay/Interaction.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Material.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Renderer.hpp"
+#include "ve/scene/MeshComponents.hpp"
 #include "ve/scene/Prefab.hpp"
 #include "ve/scene/Scene.hpp"
 
@@ -359,8 +362,48 @@ void PlacementPreview::update()
 
 namespace ve {
 
+namespace {
+
+// "fence+grid" -> "fence, grid"; "any" -> "*"; "none" -> "" (marker node names can't hold ',' or '*').
+std::string markerAccepts(const std::string& arg)
+{
+    if (arg == "any") return "*";
+    if (arg == "none") return "";
+    std::string out;
+    for (const std::string& t : str::split(arg, '+')) out += (out.empty() ? "" : ", ") + t;
+    return out;
+}
+
+// Model marker nodes (MeshComponents.hpp): SNAP[_type[_accepts]][_align] and BOX[_name].
+void registerPlacementMarkers()
+{
+    registerModelMarker("SNAP", [](ModelMarker& m) {
+        auto& sp = m.object.addComponent<SnapPoint>();
+        std::vector<std::string>& a = m.args;
+        sp.alignRotation = !a.empty() && a.back() == "align";
+        if (sp.alignRotation) a.pop_back();
+        if (a.size() > 2) log::warn("Model marker '{}': snap types can't contain '_' (use '-')", m.object.name());
+        sp.type = a.empty() ? "grid" : a[0];
+        sp.accepts = a.size() > 1 ? markerAccepts(a[1]) : sp.type;
+        sp.type = m.extra("type", sp.type);
+        sp.accepts = m.extra("accepts", sp.accepts);
+        sp.alignRotation = m.extra("align", sp.alignRotation);
+    });
+    registerModelMarker("BOX", [](ModelMarker& m) {
+        // PlacementBox sizes aren't scaled by the object: move the node's scale into the box.
+        const glm::vec3 scale = m.object.transform().localScale();
+        auto& b = m.object.addComponent<PlacementBox>();
+        b.center = m.bounds.center() * scale;
+        b.halfExtents = m.bounds.extents() * glm::abs(scale);
+        m.object.transform().setLocalScale(glm::vec3(1.0f));
+    });
+}
+
+} // namespace
+
 void registerPlacementTypes(TypeRegistry& r)
 {
+    registerPlacementMarkers();
     r.add<SnapPoint>("SnapPoint", [](TypeBuilder<SnapPoint>& t) {
         t.category("Gameplay");
         t.field("offset", &SnapPoint::offset).tooltip("local position of the connection point");

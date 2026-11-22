@@ -410,8 +410,8 @@ void AutoTest::update(float dt)
             player->teleport(groundAt({-1150.0f, 450.0f}), 0.0f);
         } else {
             // Interactive foliage: stand next to an acacia near the camp.
-            const int layer = foliageObject ? foliageObject->layerIndex("Acacias") : -1;
-            const auto tree = layer >= 0 ? foliageObject->system()->nearest(uint32_t(layer), {90.0f, 60.0f}, 150.0f) : std::nullopt;
+            const int acacias = foliageObject ? foliageObject->layerIndex("Acacias") : -1;
+            const auto tree = acacias >= 0 ? foliageObject->system()->nearest(uint32_t(acacias), {90.0f, 60.0f}, 150.0f) : std::nullopt;
             if (!tree) {
                 log("interactive foliage: no acacia found");
                 engine().quit();

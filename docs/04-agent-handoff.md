@@ -65,6 +65,7 @@ All of these run with Vulkan validation on in Debug builds. Any
 | Specific view | `SAVANNA_TIME=21.3 SAVANNA_WEATHER=3 SAVANNA_POSE=36,4,22,60,-8 SAVANNA_DEBUG=1 ./savanna` |
 | Performance | `SAVANNA_DEBUG=1` → F1 overlay shows FPS, total GPU ms and **per-pass GPU ms** |
 | Engine still usable by games | `cp -r templates/game /tmp/g && cmake -S /tmp/g -B /tmp/g/build -G Ninja -DVE_ENGINE_DIR=$PWD && cmake --build /tmp/g/build && /tmp/g/build/bin/mygame` |
+| Windows builds (CI) | `.github/workflows/windows.yml` runs on every push to `main` / `claude/**` and on pull requests: MinGW-w64 GCC (+ the game template) and MSVC 2022 must build with zero first-party warnings. Read the run's job logs on GitHub (Actions tab) |
 | Clean shutdown | send SIGTERM (`timeout 10 ./savanna`): SDL turns it into a normal quit, so the whole shutdown path runs |
 | Benchmark | `VE_HEADLESS=1 VE_BENCH=120,30 SAVANNA_TIME=17.6 SAVANNA_WEATHER=0 ./savanna` (Release) → `[bench]` lines: main-thread CPU ms, frame ms, physics step, total and per-pass GPU ms, then exit |
 | Screenshot | `VE_HEADLESS=1 VE_CAPTURE=shot.png VE_CAPTURE_FRAME=60 ./savanna` (any test hook works alongside) |

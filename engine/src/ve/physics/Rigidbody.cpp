@@ -51,9 +51,9 @@ void Rigidbody::start()
     // Bake the object's world scale into the shape.
     const glm::mat4& m = transform().worldMatrix();
     const glm::vec3 scale(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])), glm::length(glm::vec3(m[2])));
-    JPH::RefConst<JPH::Shape> shape = scaledShape(collider, scale);
+    JPH::RefConst<JPH::Shape> scaled = scaledShape(collider, scale);
 
-    if (shape->MustBeStatic() && type != BodyType::Static) {
+    if (scaled->MustBeStatic() && type != BodyType::Static) {
         log::warn("Rigidbody on '{}': mesh/heightfield colliders must be static; making it static",
                   gameObject().name());
         type = BodyType::Static;
@@ -66,12 +66,12 @@ void Rigidbody::start()
                                                             : JPH::EMotionType::Dynamic;
     // A static sensor only sees awake bodies; a kinematic one that never
     // sleeps (and may touch non-dynamic bodies) sees characters and sleepers too.
-    const bool sensorAsKinematic = isTrigger && motion == JPH::EMotionType::Static && !shape->MustBeStatic();
+    const bool sensorAsKinematic = isTrigger && motion == JPH::EMotionType::Static && !scaled->MustBeStatic();
     if (sensorAsKinematic) motion = JPH::EMotionType::Kinematic;
-    if (isTrigger && shape->MustBeStatic())
+    if (isTrigger && scaled->MustBeStatic())
         log::warn("Rigidbody on '{}': mesh/heightfield triggers only detect awake dynamic bodies; use a convex shape",
                   gameObject().name());
-    JPH::BodyCreationSettings s(shape, toJ(pos), toJ(rot), motion,
+    JPH::BodyCreationSettings s(scaled, toJ(pos), toJ(rot), motion,
                                 makeLayer(isTrigger                    ? Layers::Sensor
                                           : type == BodyType::Static ? Layers::NonMoving
                                                                      : Layers::Moving,
