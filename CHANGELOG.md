@@ -10,7 +10,39 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- **Prebuilt-engine package.** An engine build folder now exports a CMake
+  package: a game can `find_package(VulkanEngine)` with `VulkanEngine_DIR`
+  pointing at it and link the compiled engine instead of building it
+  (`cmake/Package.cmake`; `ve_setup_game()` copies the engine's shaders).
+- **Biome files.** A terrain biome can be its own `.biome` asset file
+  (`{"asset": "biomes/x.biome"}` in the terrain's list) and lists the foliage
+  (`.foliage`) and grass (`.grass`) files that grow in it. The new
+  `BiomeVegetation` object grows them. See docs/06-world.md.
+- **`ve::DataAssets`**: cached JSON asset files, reloaded when they change on
+  disk, editable live and saved on demand.
+- **Editor:** a Biomes list in the terrain's inspector, an asset window for
+  `.biome` / `.foliage` / `.grass` files (live edits, Save / Revert) and an
+  Assets menu. JSON fields in the inspector are no longer cut at 2 KB.
+- Reflection can describe plain settings structs (`TypeInfo::isData`), e.g.
+  `TerrainBiome`, `TerrainMaterial`.
+
+### Fixed
+- Vulkan validation error "SPIR-V Capability DemoteToHelperInvocation":
+  the device now enables `shaderDemoteToHelperInvocation` (a Vulkan 1.3 core
+  feature the shaders already used).
+- Under the VS Code debugger on Windows with an NVIDIA GPU, compiling a new
+  pipeline (e.g. giving a grass layer a model) took minutes and the game looked
+  hung: gdb caught every JIT registration of the driver's shader compiler
+  (16,000 for one grass shader), stopping all threads each time. The launch
+  configurations (engine and game template) now run gdb with
+  `set auto-solib-add off`; one new pipeline went from 40 s to under a second.
+
+### Changed
+- `Editor::drawField` takes the owning object as a pointer (null = asset file,
+  no undo). Editor-internal; no game code calls it.
+- The terrain's `biomes` field is hidden in the generic inspector (the Biomes
+  section replaces the raw JSON box). Scene files are unchanged.
 
 ## [0.1.0] - 2026-11-22
 

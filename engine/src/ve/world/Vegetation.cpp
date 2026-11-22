@@ -6,6 +6,7 @@
 #include "ve/core/Profiler.hpp"
 
 #include "ve/assets/AssetManager.hpp"
+#include "ve/assets/DataAsset.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Strings.hpp"
 #include "ve/render/Impostor.hpp"
@@ -25,6 +26,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <map>
 #include <sstream>
 
@@ -49,7 +51,7 @@ std::map<std::string, LibraryEntry>& library()
 template <class T>
 void collect(GameObject& root, std::vector<T*>& out)
 {
-    if (!root.activeInHierarchy()) return;
+    if (!root.activeInHierarchy() || root.isDestroyed()) return;
     for (const auto& c : root.components())
         if (auto* t = dynamic_cast<T*>(c.get()); t && t->enabled) out.push_back(t);
     for (Transform* child : root.transform().children()) collect(child->gameObject(), out);
@@ -803,6 +805,206 @@ void GrassLayer::rebuild()
 }
 
 // -----------------------------------------------------------------------------
+// BiomeVegetation
+// -----------------------------------------------------------------------------
+
+namespace {
+
+// A type's fields as JSON, minus `biomes` (biome files decide where it grows).
+Json plantFields(const char* typeName, const void* object)
+{
+    const TypeInfo* t = TypeRegistry::get().find(typeName);
+    if (!t) return Json::object();
+    Json j = SceneSerializer::serializeFields(*t, object);
+    j.erase("biomes");
+    return j;
+}
+
+// Applies a file's fields over the defaults (keys missing from the file reset).
+void applyPlantFields(const char* typeName, void* object, const Json& defaults, const Json& file)
+{
+    const TypeInfo* t = TypeRegistry::get().find(typeName);
+    if (!t) return;
+    Json merged = defaults;
+    if (file.is_object()) merged.update(file);
+    merged.erase("biomes");
+    merged.erase("version");
+    SceneSerializer::applyFields(*t, object, merged);
+}
+
+const Json& foliageDefaults()
+{
+    static const Json j = [] {
+        FoliageType d;
+        return plantFields("FoliageType", &d);
+    }();
+    return j;
+}
+
+const Json& grassDefaults()
+{
+    static const Json j = [] {
+        GrassLayer d;
+        return plantFields("GrassLayer", &d);
+    }();
+    return j;
+}
+
+// "Savannah:1, Swamp:0.2" for one plant file, from every biome that lists it.
+struct PlantUse {
+    std::string path;
+    std::string spec;
+};
+
+std::vector<PlantUse> plantUses(const std::vector<TerrainBiome>& biomes, bool grass)
+{
+    std::vector<PlantUse> out;
+    for (const TerrainBiome& b : biomes) {
+        for (const BiomePlant& p : grass ? b.grass : b.foliage) {
+            auto it = std::find_if(out.begin(), out.end(), [&](const PlantUse& u) { return u.path == p.type; });
+            if (it == out.end()) {
+                out.push_back({p.type, {}});
+                it = out.end() - 1;
+            }
+            if (!it->spec.empty()) it->spec += ", ";
+            it->spec += b.name + ":" + std::to_string(p.density);
+        }
+    }
+    return out;
+}
+
+std::string plantName(const std::string& path)
+{
+    return std::filesystem::path(path).stem().string();
+}
+
+} // namespace
+
+BiomeVegetation::BiomeVegetation() : GameObject("Biome vegetation")
+{
+    runInEditor = true;
+}
+
+Json BiomeVegetation::foliageJson(const FoliageType& type)
+{
+    return plantFields("FoliageType", &type);
+}
+
+void BiomeVegetation::applyFoliageJson(FoliageType& type, const Json& json)
+{
+    applyPlantFields("FoliageType", &type, foliageDefaults(), json);
+}
+
+Json BiomeVegetation::grassJson(const GrassLayer& grass)
+{
+    return plantFields("GrassLayer", &grass);
+}
+
+void BiomeVegetation::applyGrassJson(GrassLayer& grass, const Json& json)
+{
+    applyPlantFields("GrassLayer", &grass, grassDefaults(), json);
+}
+
+void BiomeVegetation::update(float dt)
+{
+    m_sinceCheck += dt;
+    if (m_sinceCheck < 0.25f) return;
+    m_sinceCheck = 0.0f;
+    sync();
+}
+
+void BiomeVegetation::onDestroy()
+{
+    // (Children go with us; nothing else to release.)
+    m_foliage.reset();
+    m_grass.clear();
+}
+
+void BiomeVegetation::sync()
+{
+    Terrain* terrain = Terrain::find(scene());
+    const std::vector<TerrainBiome> none;
+    const std::vector<TerrainBiome>& biomes = terrain ? terrain->biomes : none;
+    const auto foliageUses = plantUses(biomes, false);
+    const auto grassUses = plantUses(biomes, true);
+
+    // What we build from: the plant lists, our fields, every file's content.
+    std::string state = fieldsOf("BiomeVegetation", this) + '|' + std::to_string(terrain ? terrain->id() : 0);
+    for (const auto* uses : {&foliageUses, &grassUses}) {
+        state += '#';
+        for (const PlantUse& u : *uses) state += u.path + '=' + u.spec + '=' + DataAssets::get(u.path)->dump() + ';';
+    }
+    Foliage* foliage = m_foliage.get(scene());
+    bool missing = (!foliageUses.empty() && !foliage);
+    for (const auto& g : m_grass) missing |= !g.get(scene()); // (deleted in the editor)
+    if (state == m_state && !missing) return;
+    m_state = std::move(state);
+
+    // --- Foliage: one hidden-from-files Foliage child, one FoliageType child per file ---
+    if (foliageUses.empty()) {
+        if (foliage) foliage->destroy();
+        m_foliage.reset();
+    } else {
+        if (!foliage) {
+            foliage = &scene().spawn<Foliage>();
+            foliage->setName("Foliage (from biomes)");
+            foliage->setParent(this, false);
+            m_foliage = foliage;
+        }
+        foliage->edgeMargin = edgeMargin;
+        foliage->cellSize = cellSize;
+        foliage->colliderFocus = colliderFocus;
+        foliage->preload = preload;
+        // Layers in order of first mention (avoid refers to earlier layers): if
+        // the list of files changed, rebuild the children in order; else update in place.
+        std::vector<GameObject*> children;
+        for (Transform* c : foliage->transform().children())
+            if (c->gameObject().getComponent<FoliageType>() && !c->gameObject().isDestroyed()) children.push_back(&c->gameObject());
+        bool sameList = children.size() == foliageUses.size();
+        for (size_t i = 0; sameList && i < children.size(); ++i) sameList = children[i]->name() == plantName(foliageUses[i].path);
+        if (!sameList) {
+            for (GameObject* c : children) c->destroy();
+            children.clear();
+            for (const PlantUse& u : foliageUses) {
+                auto& layer = scene().spawn(plantName(u.path));
+                layer.setParent(foliage, false);
+                layer.addComponent<FoliageType>();
+                children.push_back(&layer);
+            }
+        }
+        for (size_t i = 0; i < children.size(); ++i) {
+            FoliageType& t = *children[i]->getComponent<FoliageType>();
+            applyFoliageJson(t, *DataAssets::get(foliageUses[i].path));
+            t.biomes = foliageUses[i].spec;
+        }
+        foliage->markDirty();
+    }
+
+    // --- Grass: one GrassLayer child per file ---
+    std::vector<GrassLayer*> layers;
+    for (const auto& g : m_grass)
+        if (GrassLayer* l = g.get(scene())) layers.push_back(l);
+    bool sameGrass = layers.size() == grassUses.size();
+    for (size_t i = 0; sameGrass && i < layers.size(); ++i) sameGrass = layers[i]->name() == plantName(grassUses[i].path);
+    if (!sameGrass) {
+        for (GrassLayer* l : layers) l->destroy();
+        layers.clear();
+        m_grass.clear();
+        for (const PlantUse& u : grassUses) {
+            auto& l = scene().spawn<GrassLayer>();
+            l.setName(plantName(u.path));
+            l.setParent(this, false);
+            layers.push_back(&l);
+            m_grass.push_back(&l);
+        }
+    }
+    for (size_t i = 0; i < layers.size(); ++i) {
+        applyGrassJson(*layers[i], *DataAssets::get(grassUses[i].path));
+        layers[i]->biomes = grassUses[i].spec;
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Reflection
 // -----------------------------------------------------------------------------
 
@@ -881,6 +1083,13 @@ void registerVegetationTypes(TypeRegistry& r)
         t.field("bodiesPerFrame", &Foliage::bodiesPerFrame).range(1.0f, 1e5f);
         t.field("colliderFocus", &Foliage::colliderFocus).tooltip("object name; colliders stream around it (else the camera)");
         t.field("preload", &Foliage::preload);
+    });
+    r.add<BiomeVegetation>("BiomeVegetation", [](TypeBuilder<BiomeVegetation>& t) {
+        t.category("World");
+        t.field("edgeMargin", &BiomeVegetation::edgeMargin).range(0.0f, 10000.0f).tooltip("foliage: keep this far inside the terrain's edges");
+        t.field("cellSize", &BiomeVegetation::cellSize).range(4.0f, 1024.0f).tooltip("foliage streaming cell size (m)");
+        t.field("colliderFocus", &BiomeVegetation::colliderFocus).tooltip("object name; foliage colliders stream around it (else the camera)");
+        t.field("preload", &BiomeVegetation::preload);
     });
     r.add<GrassBender>("GrassBender", [](TypeBuilder<GrassBender>& t) {
         t.category("World");

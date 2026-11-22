@@ -1,4 +1,8 @@
 {
+    // Windows: "set auto-solib-add off" keeps gdb from reading the GPU driver's
+    // symbols. Otherwise it catches every JIT registration NVIDIA's shader compiler
+    // makes, and compiling a new pipeline under the debugger takes minutes (the
+    // game looks hung). The game's own symbols are in the .exe and still load.
     "version": "0.2.0",
     "configurations": [
         {
@@ -10,7 +14,8 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
-            "preLaunchTask": "Build Debug"
+            "preLaunchTask": "Build Debug",
+            "windows": { "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }, { "text": "set auto-solib-add off" }] }
         },
         {
             "name": "Release",
@@ -21,7 +26,8 @@
             "externalConsole": false,
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
-            "preLaunchTask": "Build Release"
+            "preLaunchTask": "Build Release",
+            "windows": { "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }, { "text": "set auto-solib-add off" }] }
         }
     ]
 }

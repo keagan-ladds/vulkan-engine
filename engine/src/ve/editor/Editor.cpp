@@ -192,6 +192,8 @@ void Editor::onGui()
     drawHierarchy();
     drawInspector();
     drawViewport();
+    drawAssetEditor();
+    drawNewAssetPopup();
 
     if (m_openSaveAs) {
         ImGui::OpenPopup("Save scene as");
@@ -292,7 +294,11 @@ void Editor::newScene()
 
 std::vector<std::string> Editor::listAssets(const std::string& extensions)
 {
-    if (extensions == m_assetCacheKey && m_assetCacheAge < 3.0f) return m_assetCache;
+    if (m_assetCacheAge >= 3.0f) {
+        m_assetLists.clear();
+        m_assetCacheAge = 0.0f;
+    }
+    if (auto it = m_assetLists.find(extensions); it != m_assetLists.end()) return it->second;
     std::set<std::string> found;
     std::istringstream exts(extensions);
     std::vector<std::string> wanted;
@@ -309,10 +315,7 @@ std::vector<std::string> Editor::listAssets(const std::string& extensions)
             found.insert(std::filesystem::relative(it->path(), root, ec).generic_string());
         }
     }
-    m_assetCache.assign(found.begin(), found.end());
-    m_assetCacheKey = extensions;
-    m_assetCacheAge = 0.0f;
-    return m_assetCache;
+    return m_assetLists[extensions] = std::vector<std::string>(found.begin(), found.end());
 }
 
 // -----------------------------------------------------------------------------
@@ -377,6 +380,7 @@ void Editor::drawMenuBar()
         ImGui::EndMenu();
     }
     drawCreateMenu();
+    drawAssetsMenu();
     if (ImGui::BeginMenu("View")) {
         ImGui::MenuItem("Show code objects", nullptr, &m_showCodeObjects);
         ImGui::MenuItem("Show icons", nullptr, &m_showIcons);

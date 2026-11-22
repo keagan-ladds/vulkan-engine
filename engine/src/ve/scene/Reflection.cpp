@@ -42,7 +42,7 @@ std::vector<const TypeInfo*> TypeRegistry::all(bool components)
 {
     std::vector<const TypeInfo*> out;
     for (auto& e : m_entries) {
-        if (e->info.isComponent == components) out.push_back(resolve(*e));
+        if (e->info.isComponent == components && !e->info.isData) out.push_back(resolve(*e));
     }
     std::sort(out.begin(), out.end(), [](const TypeInfo* a, const TypeInfo* b) {
         return a->category != b->category ? a->category < b->category : a->name < b->name;

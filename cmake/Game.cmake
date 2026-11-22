@@ -33,9 +33,26 @@ endfunction()
 function(ve_setup_game TARGET)
     cmake_parse_arguments(ARG "NO_EFFECTS" "ASSETS" "SHADERS" ${ARGN})
 
-    target_link_libraries(${TARGET} PRIVATE ve_engine)
-    if(NOT ARG_NO_EFFECTS)
-        target_link_libraries(${TARGET} PRIVATE ve_effects)
+    # Prebuilt engine (find_package(VulkanEngine)): imported ve:: targets, and
+    # the engine's compiled shaders copied next to the game's.
+    if(TARGET ve::ve_engine)
+        target_link_libraries(${TARGET} PRIVATE ve::ve_engine)
+        set(_ve_spv ${VE_PREBUILT_ENGINE_SHADERS})
+        if(NOT ARG_NO_EFFECTS)
+            target_link_libraries(${TARGET} PRIVATE ve::ve_effects)
+            list(APPEND _ve_spv ${VE_PREBUILT_EFFECTS_SHADERS})
+        endif()
+        add_custom_target(${TARGET}_engine_shaders
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${VE_SHADER_OUTPUT_DIR}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_ve_spv} ${VE_SHADER_OUTPUT_DIR}
+            COMMENT "Copying prebuilt engine shaders"
+            VERBATIM)
+        add_dependencies(${TARGET} ${TARGET}_engine_shaders)
+    else()
+        target_link_libraries(${TARGET} PRIVATE ve_engine)
+        if(NOT ARG_NO_EFFECTS)
+            target_link_libraries(${TARGET} PRIVATE ve_effects)
+        endif()
     endif()
     ve_set_warnings(${TARGET})
     # $<1:...> stops multi-config generators (Visual Studio) adding Debug/ Release/.

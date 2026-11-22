@@ -67,6 +67,9 @@ struct TypeInfo {
     std::string category = "General";
     std::type_index type = typeid(void);
     bool isComponent = false;
+    // A plain settings struct (neither GameObject nor Component), e.g. a
+    // TerrainBiome: described for asset files and the editor, never spawned.
+    bool isData = false;
     bool creatable = false; // default constructible
     std::vector<FieldInfo> fields;
     std::function<Component*(GameObject&)> addTo;    // components
@@ -280,11 +283,12 @@ void TypeRegistry::add(const std::string& name, void (*build)(TypeBuilder<T>&))
     e->info.name = name;
     e->info.type = typeid(T);
     e->info.isComponent = std::is_base_of_v<Component, T>;
-    e->info.creatable = std::is_default_constructible_v<T>;
+    e->info.isData = !std::is_base_of_v<Component, T> && !std::is_base_of_v<GameObject, T>;
+    e->info.creatable = std::is_default_constructible_v<T> && !e->info.isData;
     if constexpr (std::is_default_constructible_v<T>) {
         if constexpr (std::is_base_of_v<Component, T>) {
             e->info.addTo = [](GameObject& go) -> Component* { return &go.addComponent<T>(); };
-        } else {
+        } else if constexpr (std::is_base_of_v<GameObject, T>) {
             e->info.spawn = [](Scene& s) -> GameObject* { return &s.spawn<T>(); };
         }
     }

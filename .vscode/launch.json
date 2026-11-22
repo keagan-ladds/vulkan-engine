@@ -2,7 +2,11 @@
     // F5 configurations (need the C/C++ extension). Each builds first (tasks.json),
     // then runs the savanna test scene under gdb - on Linux the system gdb, on
     // Windows MinGW-w64's gdb.exe from PATH (w64devkit ships it). The "windows"
-    // blocks only add the .exe suffix and the debugger name.
+    // blocks add the .exe suffix, the debugger name and "set auto-solib-add off":
+    // without it gdb reads the NVIDIA driver's symbols and catches every JIT
+    // registration its shader compiler makes (all threads stopped each time),
+    // so compiling a new pipeline takes minutes instead of a second - the game
+    // looks hung. The game's own symbols are in the .exe and still load.
     //  - Sandbox:     the game (Debug: no optimisation, Vulkan validation ON - watch the
     //                 terminal for [vulkan] messages; Release: optimised, validation OFF)
     //  - Editor:      the same scene, starting in the in-engine editor (SAVANNA_EDITOR=1;
@@ -21,7 +25,8 @@
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
             "preLaunchTask": "Build Debug",
-            "windows": { "program": "${workspaceFolder}/build/bin/savanna.exe", "miDebuggerPath": "gdb.exe" }
+            "windows": { "program": "${workspaceFolder}/build/bin/savanna.exe", "miDebuggerPath": "gdb.exe",
+                         "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }, { "text": "set auto-solib-add off" }] }
         },
         {
             "name": "Sandbox (Release)",
@@ -34,7 +39,8 @@
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
             "preLaunchTask": "Build Release",
-            "windows": { "program": "${workspaceFolder}/build-release/bin/savanna.exe", "miDebuggerPath": "gdb.exe" }
+            "windows": { "program": "${workspaceFolder}/build-release/bin/savanna.exe", "miDebuggerPath": "gdb.exe",
+                         "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }, { "text": "set auto-solib-add off" }] }
         },
         {
             "name": "Editor (Debug)",
@@ -47,7 +53,8 @@
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
             "preLaunchTask": "Build Debug",
-            "windows": { "program": "${workspaceFolder}/build/bin/savanna.exe", "miDebuggerPath": "gdb.exe" }
+            "windows": { "program": "${workspaceFolder}/build/bin/savanna.exe", "miDebuggerPath": "gdb.exe",
+                         "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }, { "text": "set auto-solib-add off" }] }
         },
         {
             "name": "Editor (Release)",
@@ -60,7 +67,8 @@
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
             "preLaunchTask": "Build Release",
-            "windows": { "program": "${workspaceFolder}/build-release/bin/savanna.exe", "miDebuggerPath": "gdb.exe" }
+            "windows": { "program": "${workspaceFolder}/build-release/bin/savanna.exe", "miDebuggerPath": "gdb.exe",
+                         "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }, { "text": "set auto-solib-add off" }] }
         },
         {
             "name": "Autotest (Debug)",
@@ -73,7 +81,8 @@
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
             "preLaunchTask": "Build Debug",
-            "windows": { "program": "${workspaceFolder}/build/bin/savanna.exe", "miDebuggerPath": "gdb.exe" }
+            "windows": { "program": "${workspaceFolder}/build/bin/savanna.exe", "miDebuggerPath": "gdb.exe",
+                         "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }, { "text": "set auto-solib-add off" }] }
         },
         {
             "name": "Editor test (Debug)",
@@ -86,7 +95,8 @@
             "MIMode": "gdb",
             "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }],
             "preLaunchTask": "Build Debug",
-            "windows": { "program": "${workspaceFolder}/build/bin/savanna.exe", "miDebuggerPath": "gdb.exe" }
+            "windows": { "program": "${workspaceFolder}/build/bin/savanna.exe", "miDebuggerPath": "gdb.exe",
+                         "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }, { "text": "set auto-solib-add off" }] }
         }
     ]
 }

@@ -14,6 +14,12 @@
 #        add_executable(mygame ...)
 #        ve_setup_game(mygame ASSETS assets SHADERS ${MY_SHADERS})
 #     The sandbox is not built in that case (VE_BUILD_SANDBOX defaults to OFF).
+#  3. Prebuilt: build this tree once, then from a game's CMakeLists
+#        find_package(VulkanEngine REQUIRED)   # VulkanEngine_DIR = this build folder
+#        add_executable(mygame ...)
+#        ve_setup_game(mygame ASSETS assets SHADERS ${MY_SHADERS})
+#     The game links the already compiled engine; it never compiles the engine.
+#     (cmake/Package.cmake; the build folder must match the game's build type.)
 # =============================================================================
 cmake_minimum_required(VERSION 3.26) # 3.25: FetchContent SYSTEM; 3.26: copy_directory_if_different
 project(VulkanEngine VERSION 0.1.0 LANGUAGES C CXX)
@@ -52,4 +58,11 @@ add_subdirectory(engine)
 add_subdirectory(effects)
 if(VE_BUILD_SANDBOX)
     add_subdirectory(sandbox)
+endif()
+
+# Lets games find_package(VulkanEngine) against this build folder and link the
+# compiled engine instead of building it themselves (cmake/Package.cmake).
+option(VE_EXPORT_PACKAGE "Export this build folder as a CMake package for prebuilt-engine games" ${PROJECT_IS_TOP_LEVEL})
+if(VE_EXPORT_PACKAGE)
+    include(Package)
 endif()

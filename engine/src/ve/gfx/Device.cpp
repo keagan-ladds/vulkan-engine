@@ -83,6 +83,7 @@ struct FeatureChain {
 bool supportsRequired(const FeatureChain& f)
 {
     return f.v13.dynamicRendering && f.v13.synchronization2 &&
+           f.v13.shaderDemoteToHelperInvocation && // glslc (vulkan1.3) compiles `discard` to a demote
            f.v12.descriptorIndexing && f.v12.runtimeDescriptorArray &&
            f.v12.descriptorBindingPartiallyBound &&
            f.v12.descriptorBindingSampledImageUpdateAfterBind &&
@@ -436,6 +437,9 @@ void Device::createLogicalDevice()
     enable.v12.hostQueryReset = supported.v12.hostQueryReset;
     enable.v13.dynamicRendering = VK_TRUE;
     enable.v13.synchronization2 = VK_TRUE;
+    // Shaders target vulkan1.3, where glslc emits `discard` as
+    // OpDemoteToHelperInvocation; the capability needs this feature (core in 1.3).
+    enable.v13.shaderDemoteToHelperInvocation = VK_TRUE;
 
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};

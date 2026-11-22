@@ -14,6 +14,7 @@
 #include <cctype>
 #include <cstdio>
 #include <typeinfo>
+#include <vector>
 
 namespace ve {
 
@@ -42,7 +43,7 @@ std::string componentLabel(const Component& c)
 
 } // namespace
 
-bool Editor::drawField(const FieldInfo& f, void* obj, GameObject& owner)
+bool Editor::drawField(const FieldInfo& f, void* obj, GameObject* owner)
 {
     if (f.hidden) return false;
     bool changed = false;
@@ -121,14 +122,14 @@ bool Editor::drawField(const FieldInfo& f, void* obj, GameObject& owner)
         break;
     }
     case FieldKind::Json: {
-        std::string text = f.get(obj).dump(1);
-        char buf[2048];
-        std::snprintf(buf, sizeof(buf), "%s", text.c_str());
+        const std::string text = f.get(obj).dump(1);
+        std::vector<char> buf(text.begin(), text.end());
+        buf.resize(text.size() + 4096, 0); // room to type (a fixed 2 KB buffer used to cut longer values)
         ImGui::TextUnformatted(label);
-        if (ImGui::InputTextMultiline((std::string("##") + f.name).c_str(), buf, sizeof(buf), ImVec2(-1.0f, 90.0f),
+        if (ImGui::InputTextMultiline((std::string("##") + f.name).c_str(), buf.data(), buf.size(), ImVec2(-1.0f, 90.0f),
                                       ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine)) {
             try {
-                f.set(obj, Json::parse(buf));
+                f.set(obj, Json::parse(buf.data()));
                 changed = true;
             } catch (...) {
                 m_status = "Invalid JSON for " + f.name;
@@ -143,7 +144,8 @@ bool Editor::drawField(const FieldInfo& f, void* obj, GameObject& owner)
 
     // Undo bookkeeping: drags span many frames (activate .. deactivate); clicks
     // (checkbox, combo) change and finish in one frame.
-    if (ImGui::IsItemActivated()) beginEdit(owner);
+    if (!owner) return changed; // (asset files: no undo, they have Revert)
+    if (ImGui::IsItemActivated()) beginEdit(*owner);
     if (changed && !m_editing) {
         m_editing = true; // m_editBefore was captured at the start of the inspector frame
     }
@@ -229,11 +231,14 @@ void Editor::drawInspector()
     if (type && !type->fields.empty() && ImGui::CollapsingHeader(type->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::PushID("class");
         bool changed = false;
-        for (const FieldInfo& f : type->fields) changed |= drawField(f, sel, *sel);
+        for (const FieldInfo& f : type->fields) changed |= drawField(f, sel, sel);
         if (changed && type->onChanged) type->onChanged(sel);
         ImGui::PopID();
     }
-    if (auto* terrain = dynamic_cast<Terrain*>(sel)) drawTerrainTools(*terrain);
+    if (auto* terrain = dynamic_cast<Terrain*>(sel)) {
+        drawTerrainTools(*terrain);
+        drawTerrainBiomes(*terrain);
+    }
 
     // --- Components ---
     Component* removeMe = nullptr;
@@ -268,7 +273,7 @@ void Editor::drawInspector()
             }
             if (ct) {
                 bool changed = false;
-                for (const FieldInfo& f : ct->fields) changed |= drawField(f, &c, *sel);
+                for (const FieldInfo& f : ct->fields) changed |= drawField(f, &c, sel);
                 if (changed && ct->onChanged) ct->onChanged(&c);
             } else {
                 ImGui::TextDisabled("Not registered: no editable fields.");
