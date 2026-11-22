@@ -26,10 +26,12 @@ void main()
     // pointing out, and the result is normalized below anyway.
     mat3 m = mat3(model);
     mat3 normalMatrix = mat3(cross(m[1], m[2]), cross(m[2], m[0]), cross(m[0], m[1]));
-    normalMatrix *= sign(dot(m[0], cross(m[1], m[2])));
+    float handedness = sign(dot(m[0], cross(m[1], m[2])));
+    normalMatrix *= handedness;
     outWorldPos = world.xyz;
     outNormal = normalize(normalMatrix * inNormal);
-    outTangent = vec4(normalize(mat3(model) * inTangent.xyz), inTangent.w);
+    // A mirroring transform flips cross(N, T), so the bitangent sign flips with it.
+    outTangent = vec4(normalize(mat3(model) * inTangent.xyz), inTangent.w * handedness);
     outUV = inUV;
     // Optional per-instance tint (instance custom.w > 0), handy for foliage variation.
     vec4 custom = veInstanceCustom();
