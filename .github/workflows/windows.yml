@@ -1,0 +1,129 @@
+# Windows build check: the engine, the Savanna sandbox and the game template
+# compile with both Windows toolchains the docs support:
+#   - MinGW-w64 GCC + CMake + Ninja (like w64devkit; MSYS2's UCRT64 here)
+#   - Visual Studio 2022 (MSVC)
+# GitHub's runners have no GPU, so this builds but doesn't run the game.
+# Compiler warnings are counted in each job's summary (they don't fail the
+# build yet: MSVC's /W4 reports things GCC and Clang don't).
+name: Windows build
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  VULKAN_SDK_VERSION: 1.3.296.0
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: windows-2022
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: MinGW-w64 GCC (Ninja, Debug) + game template
+            toolchain: mingw
+          - name: MSVC 2022 (Release)
+            toolchain: msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- Vulkan SDK (headers, loader, glslc) --------------------------------
+      - name: Vulkan SDK cache
+        id: vulkan-cache
+        uses: actions/cache@v4
+        with:
+          path: C:\VulkanSDK
+          key: vulkan-sdk-${{ env.VULKAN_SDK_VERSION }}
+      - name: Install the Vulkan SDK
+        if: steps.vulkan-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $v = $env:VULKAN_SDK_VERSION
+          Invoke-WebRequest "https://sdk.lunarg.com/sdk/download/$v/windows/VulkanSDK-$v-Installer.exe" -OutFile vulkan-sdk.exe
+          $p = Start-Process -Wait -PassThru -FilePath .\vulkan-sdk.exe `
+               -ArgumentList "--root", "C:\VulkanSDK\$v", "--accept-licenses", "--default-answer", "--confirm-command", "install"
+          if ($p.ExitCode -ne 0) { throw "Vulkan SDK installer failed: $($p.ExitCode)" }
+      - name: Vulkan SDK environment
+        shell: pwsh
+        run: |
+          $sdk = "C:\VulkanSDK\$env:VULKAN_SDK_VERSION"
+          if (-not (Test-Path "$sdk\Bin\glslc.exe")) { throw "no glslc in $sdk" }
+          "VULKAN_SDK=$sdk" | Out-File -Append $env:GITHUB_ENV
+          "$sdk\Bin" | Out-File -Append $env:GITHUB_PATH
+
+      # --- MinGW-w64 GCC -------------------------------------------------------
+      - name: MSYS2 (GCC, CMake, Ninja)
+        if: matrix.toolchain == 'mingw'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          path-type: inherit # keeps VULKAN_SDK, glslc and git visible
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+      - name: Build (MinGW-w64 GCC)
+        if: matrix.toolchain == 'mingw'
+        shell: msys2 {0}
+        run: |
+          set -o pipefail
+          gcc --version | head -1; cmake --version | head -1
+          cmake --preset debug -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+          cmake --build --preset debug 2>&1 | tee build.log
+      - name: Build the game template against this checkout (MinGW-w64 GCC)
+        if: matrix.toolchain == 'mingw'
+        shell: msys2 {0}
+        run: |
+          set -o pipefail
+          cp -r templates/game "$RUNNER_TEMP/game"
+          cmake -S "$RUNNER_TEMP/game" -B "$RUNNER_TEMP/game/build" -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+                -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DVE_ENGINE_DIR="$(cygpath -m "$GITHUB_WORKSPACE")"
+          cmake --build "$RUNNER_TEMP/game/build" 2>&1 | tee -a build.log
+          test -f "$RUNNER_TEMP/game/build/bin/mygame.exe"
+
+      # --- MSVC ----------------------------------------------------------------
+      - name: Build (MSVC 2022)
+        if: matrix.toolchain == 'msvc'
+        shell: pwsh
+        run: |
+          cmake --preset vs2022
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build --preset vs2022-release -- /m /nologo /verbosity:minimal 2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path build-vs\bin\savanna.exe)) { throw "savanna.exe wasn't built" }
+
+      # --- Report --------------------------------------------------------------
+      - name: Warnings summary
+        if: always()
+        shell: bash
+        run: |
+          [ -f build.log ] || exit 0
+          grep -E 'warning( C[0-9]+)?:' build.log | grep -v -E '_deps[\\/]' | sed -E 's/ \[[^]]*\]$//' | sort -u > warnings.txt || true
+          n=$(wc -l < warnings.txt)
+          {
+            echo "### ${{ matrix.name }}: $n first-party warning(s)"
+            if [ "$n" -gt 0 ]; then echo '```'; head -200 warnings.txt; echo '```'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.toolchain }}
+          path: |
+            build.log
+            warnings.txt
+          if-no-files-found: ignore
