@@ -3,8 +3,8 @@
 #   - MinGW-w64 GCC + CMake + Ninja (like w64devkit; MSYS2's UCRT64 here)
 #   - Visual Studio 2022 (MSVC)
 # GitHub's runners have no GPU, so this builds but doesn't run the game.
-# Compiler warnings are counted in each job's summary (they don't fail the
-# build yet: MSVC's /W4 reports things GCC and Clang don't).
+# First-party compiler warnings fail the job (the project builds warning-free,
+# docs/04-agent-handoff.md); they're listed in the job summary and the log.
 name: Windows build
 
 on:
@@ -118,6 +118,7 @@ jobs:
             echo "### ${{ matrix.name }}: $n first-party warning(s)"
             if [ "$n" -gt 0 ]; then echo '```'; head -200 warnings.txt; echo '```'; fi
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$n" -gt 0 ]; then cat warnings.txt; echo "::error::$n first-party compiler warning(s)"; exit 1; fi
       - name: Upload the build log
         if: always()
         uses: actions/upload-artifact@v4
