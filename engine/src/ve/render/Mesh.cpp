@@ -15,10 +15,11 @@ void MeshData::append(const MeshData& other, const glm::mat4& transform, const g
 {
     const auto base = static_cast<uint32_t>(vertices.size());
     const glm::mat3 normalMatrix = glm::inverseTranspose(glm::mat3(transform));
+    const float handedness = glm::determinant(glm::mat3(transform)) < 0.0f ? -1.0f : 1.0f; // mirroring flips the bitangent
     for (Vertex v : other.vertices) {
         v.position = glm::vec3(transform * glm::vec4(v.position, 1.0f));
         v.normal = glm::normalize(normalMatrix * v.normal);
-        v.tangent = glm::vec4(glm::normalize(glm::mat3(transform) * glm::vec3(v.tangent)), v.tangent.w);
+        v.tangent = glm::vec4(glm::normalize(glm::mat3(transform) * glm::vec3(v.tangent)), v.tangent.w * handedness);
         v.color *= tint;
         vertices.push_back(v);
     }
@@ -87,7 +88,10 @@ void MeshData::computeTangents()
             t = std::abs(n.y) < 0.99f ? glm::cross(glm::vec3(0, 1, 0), n) : glm::vec3(1, 0, 0);
         }
         t = glm::normalize(t);
-        const float w = glm::dot(glm::cross(n, t), bitan[i]) < 0.0f ? -1.0f : 1.0f;
+        // UVs are top-left origin (glTF / Vulkan), so bitan = dP/dv points down the
+        // texture; the bitangent (cross(n, t) * w) points up it, the +Y (green) of
+        // an OpenGL-style normal map, as glTF's tangents and the hand-built cube's do.
+        const float w = glm::dot(glm::cross(n, t), bitan[i]) > 0.0f ? -1.0f : 1.0f;
         vertices[i].tangent = glm::vec4(t, w);
     }
 }
