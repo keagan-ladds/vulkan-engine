@@ -68,6 +68,12 @@ struct RendererSettings {
     // one every frame. Off = every MeshRenderer takes the per-frame path
     // (A/B comparisons; F1 > Instance culling).
     bool staticBatching = true;
+    // Mesh pipelines (one per shader and pass) are built on worker threads as
+    // soon as a shader is created; anything drawn with a pipeline that isn't
+    // ready yet is skipped for those frames instead of stalling the frame
+    // (PipelineCompiler.hpp). Off = build on first use, blocking (always off
+    // when headless, so tests and captures are deterministic). Env: VE_ASYNC_PIPELINES.
+    bool asyncPipelines = true;
     // --- Anti-aliasing ---
     // Temporal AA: the camera jitters by a sub-pixel offset every frame and
     // TemporalAAPass blends each frame into a reprojected history. Smooths

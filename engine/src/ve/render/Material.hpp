@@ -5,8 +5,9 @@
 //
 // Shader   = which GLSL programs to run + fixed pipeline state (blending,
 //            culling, depth, render queue, shadow casting). Create once,
-//            share between many materials. Pipelines are built lazily per
-//            pass kind (forward / directional shadow / point shadow).
+//            share between many materials. One pipeline per pass kind
+//            (forward / directional shadow / point shadow), built on worker
+//            threads as soon as the shader is created (PipelineCompiler.hpp).
 //
 // Material = a Shader + its parameters (12 vec4s + 16 texture indices) that
 //            live in the global MaterialBuffer (set 0, binding 2). A shader
@@ -35,6 +36,7 @@ namespace ve {
 
 class Renderer;
 class Texture;
+struct PipelineCompile;
 
 enum class RenderQueue : int {
     Background = 1000,
@@ -75,15 +77,29 @@ public:
 
     const ShaderDesc& desc() const { return m_desc; }
     bool transparent() const { return m_desc.queue >= RenderQueue::Transparent; }
-    // Built on first use and cached.
+    // The pipeline for `kind`, or VK_NULL_HANDLE while it is still being built
+    // on a worker thread (or failed to build): skip the draw. Pipelines are
+    // built in the background (see PipelineCompiler.hpp); in headless runs or
+    // with RendererSettings::asyncPipelines off this blocks until it's built.
     VkPipeline pipeline(PassKind kind);
-    // Forces pipelines to be rebuilt (e.g. after changing desc or shader hot-reload).
+    // Starts building every pipeline this shader can need (Renderer::createShader does).
+    void prewarm();
+    // Rebuilds the pipelines (e.g. after changing desc or shader hot-reload).
+    // The old ones stay in use until the new ones are ready; if a rebuild
+    // fails, the old one is kept.
     void invalidate();
 
 private:
+    static constexpr size_t kKinds = static_cast<size_t>(PassKind::Count);
+    void start(size_t kind);
+    void claim(size_t kind);
+    void release(); // destroys / abandons everything
+
     Renderer* m_renderer;
     ShaderDesc m_desc;
-    std::array<VkPipeline, static_cast<size_t>(PassKind::Count)> m_pipelines{};
+    std::array<VkPipeline, kKinds> m_pipelines{};
+    std::array<std::shared_ptr<PipelineCompile>, kKinds> m_compiles{};
+    std::array<bool, kKinds> m_failed{};
 };
 
 class Material {

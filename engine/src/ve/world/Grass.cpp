@@ -425,7 +425,9 @@ void GrassPass::execute(RenderContext& ctx)
     ctx.beginRendering({{r.sceneColor()}, {r.sceneNormal()}}, {r.sceneDepth()});
     m_lastTiles = m_lastClumps = 0;
     for (Lod& lod : m_lods) {
-        ctx.bindPipeline(lod.shader->pipeline(PassKind::Forward));
+        const VkPipeline p = lod.shader->pipeline(PassKind::Forward);
+        if (!p) continue; // still being built on a worker thread
+        ctx.bindPipeline(p);
         const glm::uvec2 n = drawTiles(ctx, lod, ctx.frame->camera.frustum, FLT_MAX, 0);
         m_lastTiles += n.x;
         m_lastClumps += n.y;
@@ -440,7 +442,9 @@ void GrassPass::drawShadow(RenderContext& ctx, const ShadowView& view)
 {
     if (!enabled || !m_desc.castShadows || view.texelSize > m_desc.shadowMaxTexel) return;
     for (const Lod& lod : m_lods) {
-        ctx.bindPipeline(lod.shader->pipeline(PassKind::ShadowDirectional));
+        const VkPipeline p = lod.shader->pipeline(PassKind::ShadowDirectional);
+        if (!p) continue;
+        ctx.bindPipeline(p);
         m_shadowClumps += drawTiles(ctx, lod, view.frustum, m_desc.shadowDistance, view.viewIndex).y;
     }
 }

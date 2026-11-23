@@ -273,8 +273,20 @@ void Device::savePipelineCache()
     if (vkGetPipelineCacheData(m_device, m_pipelineCache, &size, nullptr) != VK_SUCCESS || size == 0) return;
     std::vector<char> data(size);
     if (vkGetPipelineCacheData(m_device, m_pipelineCache, &size, data.data()) != VK_SUCCESS) return;
-    std::ofstream out(pipelineCachePath(), std::ios::binary | std::ios::trunc);
-    if (out) out.write(data.data(), std::streamsize(size));
+    // Write a temporary file and rename it over the old one, so a crash
+    // mid-write never leaves a truncated cache behind.
+    const std::filesystem::path path = pipelineCachePath();
+    std::filesystem::path tmp = path;
+    tmp += ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return;
+        out.write(data.data(), std::streamsize(size));
+        if (!out) return;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec); // replaces the old file
+    if (ec) std::filesystem::remove(tmp, ec);
 }
 
 void Device::shutdown()

@@ -63,6 +63,8 @@ public:
     // Shared by every pipeline (see setPipelineCache in Pipeline.hpp); loaded
     // from / saved to "pipeline_cache.bin" next to the executable.
     VkPipelineCache pipelineCache() const { return m_pipelineCache; }
+    // Writes the cache to disk (also done at shutdown). Main thread.
+    void savePipelineCache();
 
     // --- Frame bookkeeping (called by the Renderer) ------------------------------
     // After the CPU waited for frame `frameNumber - kFramesInFlight`, call this
@@ -127,7 +129,6 @@ private:
     void createLogicalDevice();
     void createAllocator();
     void createPipelineCache();
-    void savePipelineCache();
 
     bool m_validation = false;
     VkInstance m_instance = VK_NULL_HANDLE;

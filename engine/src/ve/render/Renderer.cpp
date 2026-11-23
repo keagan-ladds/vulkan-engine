@@ -58,6 +58,7 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
     m_shaderDirs = std::move(shaderDirectories);
 
     m_device.init(window, validation);
+    m_pipelineCompiler.init(m_device);
     m_samplers.init(m_device);
     m_bindless.init(m_device);
     m_swapchain.create(m_device, window.drawableSize(), m_settings.vsync);
@@ -110,6 +111,7 @@ void Renderer::shutdown()
 {
     if (!m_initialized) return;
     m_device.waitIdle();
+    m_pipelineCompiler.shutdown(); // pipeline builds use the device
 
     // Release everything that defers its destruction through the device first.
     // Freed bindless slots normally get re-pointed at the white texture; it is
@@ -388,6 +390,7 @@ bool Renderer::recreateSwapchain()
 std::shared_ptr<Shader> Renderer::createShader(const ShaderDesc& desc)
 {
     auto shader = std::make_shared<Shader>(*this, desc);
+    shader->prewarm(); // built on worker threads, ready before it's first drawn
     std::erase_if(m_shaders, [](const std::weak_ptr<Shader>& w) { return w.expired(); });
     m_shaders.push_back(shader);
     return shader;
@@ -427,48 +430,24 @@ VkShaderModule Renderer::loadShader(const std::string& name)
     return loadShaderModule(m_device.handle(), findShader(name));
 }
 
-VkPipeline Renderer::buildMeshPipeline(const ShaderDesc& desc, PassKind kind)
+MeshPipelineInputs Renderer::meshPipelineInputs(const ShaderDesc& desc, PassKind kind) const
 {
-    VkDevice dev = m_device.handle();
-    const auto binding = Vertex::binding();
-    const auto attributes = Vertex::attributes();
-
-    PipelineBuilder b;
-    b.layout(m_pipelineLayout);
-
-    VkShaderModule vert = VK_NULL_HANDLE, frag = VK_NULL_HANDLE;
+    MeshPipelineInputs in;
+    in.device = m_device.handle();
+    in.layout = m_pipelineLayout;
+    in.desc = desc;
+    in.kind = kind;
+    in.fillModeNonSolid = m_device.features().fillModeNonSolid;
+    in.depthClamp = m_device.features().depthClamp;
     if (kind == PassKind::Forward) {
-        vert = loadShader(desc.vertex);
-        frag = loadShader(desc.fragment);
-        const bool wire = desc.wireframe && m_device.features().fillModeNonSolid;
-        // Reversed-Z: closer = larger depth, so the test is GREATER_OR_EQUAL.
-        b.shaders(vert, frag)
-            .vertexInput({&binding, 1}, attributes)
-            .cull(desc.cull)
-            .polygonMode(wire ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL)
-            .colorAttachment(kSceneColorFormat, desc.blend)
-            // Opaque shaders also write the thin G-buffer; transparent ones leave it alone.
-            .colorAttachment(kSceneNormalFormat, BlendMode::Opaque, desc.queue < RenderQueue::Transparent)
-            .depthAttachment(kDepthFormat)
-            .depthTest(desc.depthTest, desc.depthWrite, VK_COMPARE_OP_GREATER_OR_EQUAL);
+        in.vertex = findShader(desc.vertex);
+        in.fragment = findShader(desc.fragment);
     } else {
-        // Shadow maps use standard depth (LESS). No culling: thin geometry
-        // (leaves, open meshes) must still cast shadows from both sides.
-        vert = loadShader(desc.shadowVertex);
-        if (kind == PassKind::ShadowPoint) frag = loadShader(desc.shadowPointFragment);
-        else if (!desc.shadowFragment.empty()) frag = loadShader(desc.shadowFragment); // e.g. alpha cutout
-        b.shaders(vert, frag)
-            .vertexInput({&binding, 1}, attributes)
-            .cull(CullMode::None)
-            .depthAttachment(kShadowFormat)
-            .depthTest(true, true, VK_COMPARE_OP_LESS_OR_EQUAL)
-            .dynamicDepthBias(true)
-            .depthClamp(kind == PassKind::ShadowDirectional && m_device.features().depthClamp);
+        in.vertex = findShader(desc.shadowVertex);
+        if (kind == PassKind::ShadowPoint) in.fragment = findShader(desc.shadowPointFragment);
+        else if (!desc.shadowFragment.empty()) in.fragment = findShader(desc.shadowFragment); // e.g. alpha cutout
     }
-    VkPipeline pipeline = b.build(dev);
-    vkDestroyShaderModule(dev, vert, nullptr);
-    if (frag) vkDestroyShaderModule(dev, frag, nullptr);
-    return pipeline;
+    return in;
 }
 
 PipelineHandle::operator VkPipeline() const
@@ -632,6 +611,7 @@ void Renderer::drawItems(RenderContext& ctx, const std::vector<uint32_t>& indice
         if (shadow && (!shader.desc().castShadows || !item.castShadows)) continue;
 
         VkPipeline p = shader.pipeline(kind);
+        if (!p) continue; // still being built on a worker thread
         if (p != boundPipeline) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
             boundPipeline = p;
@@ -677,6 +657,7 @@ bool Renderer::render(Scene& scene, const Time& time)
     if (m_hotReload) {
         if (auto changed = m_hotReload->poll(); !changed.empty()) reloadShaders(changed);
     }
+    m_pipelineCompiler.poll();
 
     const bool photo = m_capture.beginFrame(); // starts a requested photo capture
     const bool offscreen = m_settings.headless || photo; // nothing to acquire or present

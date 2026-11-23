@@ -36,6 +36,7 @@
 #include "ve/render/StaticBatcher.hpp"
 #include "ve/render/Skinning.hpp"
 #include "ve/render/Material.hpp"
+#include "ve/render/PipelineCompiler.hpp"
 #include "ve/render/PipelineHandle.hpp"
 #include "ve/render/ShaderHotReload.hpp"
 #include "ve/render/RenderGraph.hpp"
@@ -196,7 +197,13 @@ public:
                    uint32_t viewIndex = 0, uint32_t lightIndex = 0, uint32_t flags = 0);
 
     // --- Engine internal ------------------------------------------------------------
-    VkPipeline buildMeshPipeline(const ShaderDesc& desc, PassKind kind);
+    // Mesh pipelines are built on worker threads (PipelineCompiler.hpp).
+    // Resolves shader files etc. for one; throws if a shader file is missing.
+    MeshPipelineInputs meshPipelineInputs(const ShaderDesc& desc, PassKind kind) const;
+    PipelineCompiler& pipelineCompiler() { return m_pipelineCompiler; }
+    // False in headless runs (tests, captures) and with asyncPipelines off:
+    // Shader::pipeline() then builds on the spot.
+    bool asyncPipelines() const { return m_settings.asyncPipelines && !m_settings.headless; }
     uint32_t allocateMaterialSlot();
     void freeMaterialSlot(uint32_t index);
     GpuMaterial& materialData(uint32_t index) { return m_materials[index]; }
@@ -286,6 +293,7 @@ private:
     std::vector<uint32_t> m_freeRawPipelines;
     std::vector<std::weak_ptr<Shader>> m_shaders; // for hot-reload
     std::unique_ptr<ShaderHotReload> m_hotReload;
+    PipelineCompiler m_pipelineCompiler;
 
     Window* m_window = nullptr;
     RendererSettings m_settings;

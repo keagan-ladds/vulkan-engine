@@ -1,10 +1,13 @@
 #include "ve/render/Material.hpp"
 
+#include "ve/core/Log.hpp"
 #include "ve/gfx/Device.hpp"
+#include "ve/render/PipelineCompiler.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/render/Texture.hpp"
 
 #include <algorithm>
+#include <exception>
 
 namespace ve {
 
@@ -19,25 +22,102 @@ Shader::Shader(Renderer& renderer, ShaderDesc desc)
 
 Shader::~Shader()
 {
-    invalidate();
+    release();
+}
+
+namespace {
+void destroyLater(Device* device, VkPipeline p)
+{
+    if (p) device->deferDestroy([device, p] { vkDestroyPipeline(device->handle(), p, nullptr); });
+}
+
+// A build the shader no longer wants. Still running: PipelineCompiler::poll
+// destroys the result when it finishes. Already finished (poll may have
+// dropped it from its list): destroy the result here.
+void abandon(Device* device, std::shared_ptr<PipelineCompile>& c)
+{
+    if (!c) return;
+    if (c->job.done()) {
+        if (!c->claimed) destroyLater(device, c->pipeline);
+        c->pipeline = VK_NULL_HANDLE;
+        c->claimed = true;
+    } else {
+        c->abandoned = true;
+    }
+    c.reset();
+}
+} // namespace
+
+void Shader::start(size_t kind)
+{
+    if (m_compiles[kind]) return;
+    try {
+        m_compiles[kind] = m_renderer->pipelineCompiler().submit(m_renderer->meshPipelineInputs(m_desc, PassKind(kind)));
+    } catch (const std::exception& e) { // e.g. a missing .spv
+        log::error("Shader '{}': {}", m_desc.name, e.what());
+        m_failed[kind] = true;
+    }
+}
+
+void Shader::claim(size_t kind)
+{
+    PipelineCompile& c = *m_compiles[kind];
+    c.claimed = true;
+    if (c.pipeline) {
+        destroyLater(&m_renderer->device(), m_pipelines[kind]); // the one it replaces (hot-reload)
+        m_pipelines[kind] = c.pipeline;
+        c.pipeline = VK_NULL_HANDLE;
+    } else {
+        if (!c.error.empty()) log::error("Shader '{}': {}", m_desc.name, c.error);
+        if (!m_pipelines[kind]) m_failed[kind] = true; // a failed rebuild keeps the old one
+    }
+    m_compiles[kind].reset();
 }
 
 VkPipeline Shader::pipeline(PassKind kind)
 {
-    VkPipeline& p = m_pipelines[static_cast<size_t>(kind)];
-    if (!p) p = m_renderer->buildMeshPipeline(m_desc, kind);
-    return p;
+    const size_t k = static_cast<size_t>(kind);
+    if (!m_compiles[k]) {
+        if (m_pipelines[k] || m_failed[k]) return m_pipelines[k];
+        start(k);
+        if (!m_compiles[k]) return VK_NULL_HANDLE;
+    }
+    // Headless / async off: build right here (runs the job inline if no worker took it yet).
+    if (!m_renderer->asyncPipelines()) m_compiles[k]->job.wait();
+    if (m_compiles[k]->job.done()) claim(k);
+    return m_pipelines[k]; // the old pipeline while a rebuild is still going
+}
+
+void Shader::prewarm()
+{
+    if (!m_renderer->asyncPipelines()) return; // the old behaviour: built (blocking) on first use
+    start(size_t(PassKind::Forward));
+    if (m_desc.castShadows) {
+        start(size_t(PassKind::ShadowDirectional));
+        start(size_t(PassKind::ShadowPoint));
+    }
 }
 
 void Shader::invalidate()
 {
-    Device* device = &m_renderer->device();
-    for (VkPipeline& p : m_pipelines) {
-        if (p) {
-            VkPipeline old = p;
-            device->deferDestroy([device, old] { vkDestroyPipeline(device->handle(), old, nullptr); });
-            p = VK_NULL_HANDLE;
+    for (size_t k = 0; k < kKinds; ++k) {
+        bool wanted = m_pipelines[k] != VK_NULL_HANDLE;
+        m_failed[k] = false;
+        if (m_compiles[k]) { // a build of the old version: let it go
+            abandon(&m_renderer->device(), m_compiles[k]);
+            wanted = true;
         }
+        if (wanted) start(k); // the rest is built on first use
+    }
+}
+
+void Shader::release()
+{
+    Device* device = &m_renderer->device();
+    for (size_t k = 0; k < kKinds; ++k) {
+        abandon(device, m_compiles[k]);
+        destroyLater(device, m_pipelines[k]);
+        m_pipelines[k] = VK_NULL_HANDLE;
     }
 }
 

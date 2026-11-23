@@ -39,6 +39,15 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `set auto-solib-add off`; one new pipeline went from 40 s to under a second.
 
 ### Changed
+- **Mesh pipelines are built on worker threads.** Creating a shader starts
+  its pipelines (forward + shadow kinds) in the background, loading screens
+  wait for them ("Compiling shaders"), and the pipeline cache is saved shortly
+  after new pipelines are built instead of only at a clean exit. Fixes the
+  freeze when something with a new shader (or the first shadow-casting point
+  light) appeared, which was worst on NVIDIA drivers. `Shader::pipeline()` now
+  returns `VK_NULL_HANDLE` while a pipeline is still building: custom passes
+  that call it must skip that draw. `RendererSettings::asyncPipelines` /
+  `VE_ASYNC_PIPELINES=0` (and headless runs) keep the old build-on-first-use.
 - `Editor::drawField` takes the owning object as a pointer (null = asset file,
   no undo). Editor-internal; no game code calls it.
 - The terrain's `biomes` field is hidden in the generic inspector (the Biomes

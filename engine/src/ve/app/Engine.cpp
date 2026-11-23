@@ -7,6 +7,7 @@
 #include "ve/anim/Animation.hpp"
 #include "ve/assets/AssetManager.hpp"
 #include "ve/audio/Audio.hpp"
+#include "ve/core/Env.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Profiler.hpp"
 #include "ve/ui/Gui.hpp"
@@ -146,6 +147,7 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
 
     RendererSettings rs = config.renderer;
     if (const char* h = std::getenv("VE_HEADLESS"); h && h[0] == '1') rs.headless = true;
+    rs.asyncPipelines = env::flag("VE_ASYNC_PIPELINES", rs.asyncPipelines); // 0 = build on first use (A/B)
     // VE_FIXED_DT=0.016667: every frame advances time by this much, however long it
     // took (headless tests on slow software rendering see real-time motion per frame).
     if (const char* f = std::getenv("VE_FIXED_DT"); f && *f) m_fixedFrameDt = std::strtof(f, nullptr);
@@ -307,6 +309,15 @@ void Engine::beginLoading(std::unique_ptr<Scene> loadingScene, float minSeconds,
     m_loadStatus = "Loading";
     m_loadClearColor = clearColor;
     m_renderer->setLoadingFrames(!loadingInEditor(), clearColor);
+    // Shaders the level creates are built on worker threads: wait for them,
+    // or the first frames would show objects popping in as they finish.
+    const uint64_t base = m_renderer->pipelineCompiler().finishedCount();
+    addLoadTask("Compiling shaders", [this, base] {
+        const PipelineCompiler& c = m_renderer->pipelineCompiler();
+        if (c.pending() == 0) return 1.0f;
+        const uint64_t total = c.submittedCount() - base;
+        return total ? float(c.finishedCount() - base) / float(total) : 1.0f;
+    });
 }
 
 void Engine::addLoadStep(std::string name, std::function<void()> step)
