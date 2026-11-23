@@ -55,7 +55,7 @@ void main()
     if (inTint.w > 0.0) rgb *= inTint.rgb; // same per-instance tint as standard.vert
 
     VeSurface s = veDefaultSurface(inWorldPos, normalize(inRotation * normalize(normal + vec3(0, 1e-4, 0))), rgb);
-    s.roughness = 0.85;
+    s.roughness = m.params[1].z > 0.0 ? m.params[1].z : 0.85; // the source mesh's roughness (Impostor::bake)
     outColor = vec4(veEvaluateLighting(s), 1.0);
     outGBuffer = veGBuffer(s.normal, s.roughness);
 }

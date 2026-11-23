@@ -323,12 +323,27 @@ namespace {
 // size (fraction of half the screen height the bounding radius covers), and
 // for trees an octahedral impostor as the last level.
 using SO = ve::SimplifyOptions;
+
+// Trees, bushes and rocks: like the prop material (vertex colours), but
+// almost fully rough. Bark, dry leaves and stone have no visible sheen; at the
+// props' 0.85 the large flat canopies caught a broad sky / sun highlight that
+// read as plastic. (Impostors take the same roughness when baked.)
+std::shared_ptr<ve::Material> vegetationMaterial(ve::Renderer& r)
+{
+    static std::weak_ptr<ve::StandardMaterial> shared; // the instance groups keep it alive
+    if (auto m = shared.lock()) return m;
+    auto mat = r.createStandardMaterial();
+    mat->setBaseColor(glm::vec4(1.0f)).setRoughness(0.97f).setVertexColorWeight(1.0f);
+    shared = mat;
+    return mat;
+}
+
 void addVariant(ve::Renderer& r, ve::FoliageMeshes& set, const MeshData& md, const char* name,
                 std::vector<std::pair<SO, float>> levels, float lod0ScreenSize, bool impostor)
 {
     ve::LodChainDesc c;
     c.name = name;
-    c.levels = {{md, {}, {propMaterial()}}};
+    c.levels = {{md, {}, {vegetationMaterial(r)}}};
     c.switches = {{.screenSize = lod0ScreenSize}};
     for (const auto& [options, screenSize] : levels) {
         c.simplify.push_back(options);
