@@ -1,6 +1,7 @@
 #include "ve/scene/Reflection.hpp"
 
 #include "ve/scene/Components.hpp"
+#include "ve/scene/Decal.hpp"
 #include "ve/scene/MeshComponents.hpp"
 #include "ve/scene/Prefab.hpp"
 
@@ -92,6 +93,30 @@ void registerBuiltinTypes()
         t.field("castShadows", &MeshRenderer::castShadows);
         t.field("visible", &MeshRenderer::visible);
         t.onChanged([](MeshRenderer& m) { m.refresh(); });
+    });
+    r.add<DecalProjector>("DecalProjector", [](TypeBuilder<DecalProjector>& t) {
+        t.category("Rendering");
+        // (the box is the transform: projects along -Z, scale = width, height, depth)
+        t.field("albedo", &DecalProjector::albedo).assets(".png .jpg .jpeg .tga").tooltip("rgb colour, a = opacity (sRGB)");
+        t.field("normal", &DecalProjector::normal).assets(".png .jpg .jpeg .tga").tooltip("tangent-space normal map (linear)");
+        t.field("mask", &DecalProjector::mask).assets(".png .jpg .jpeg .tga").tooltip("G = roughness, B = metallic, A = opacity (linear)");
+        t.field("color", &DecalProjector::color).color().tooltip("tint; alpha = overall opacity");
+        t.enumField("blend", &DecalProjector::blend, {"Normal", "Multiply"});
+        t.field("albedoOpacity", &DecalProjector::albedoOpacity).range(0.0f, 1.0f).speed(0.01f);
+        t.field("normalOpacity", &DecalProjector::normalOpacity).range(0.0f, 1.0f).speed(0.01f);
+        t.field("normalStrength", &DecalProjector::normalStrength).range(0.0f, 4.0f).speed(0.01f);
+        t.field("flatten", &DecalProjector::flatten).range(0.0f, 1.0f).speed(0.01f).tooltip("smooths out the surface's own bumps (water)");
+        t.field("roughness", &DecalProjector::roughness).range(0.0f, 1.0f).speed(0.01f);
+        t.field("roughnessOpacity", &DecalProjector::roughnessOpacity).range(0.0f, 1.0f).speed(0.01f);
+        t.field("metallic", &DecalProjector::metallic).range(0.0f, 1.0f).speed(0.01f);
+        t.field("metallicOpacity", &DecalProjector::metallicOpacity).range(0.0f, 1.0f).speed(0.01f);
+        t.field("angleFadeStart", &DecalProjector::angleFadeStart).range(0.0f, 180.0f).tooltip("degrees from the box's +Z");
+        t.field("angleFadeEnd", &DecalProjector::angleFadeEnd).range(0.0f, 180.0f);
+        t.field("depthFade", &DecalProjector::depthFade).range(0.0f, 1.0f).speed(0.01f);
+        t.field("drawDistance", &DecalProjector::drawDistance).range(1.0f, 2000.0f).speed(1.0f);
+        t.field("sortOrder", &DecalProjector::sortOrder).tooltip("higher draws on top");
+        t.field("layers", &DecalProjector::layers).tooltip("bit mask: 1 = world, 2 = characters");
+        t.onChanged([](DecalProjector& d) { d.reload(); });
     });
     r.add<ModelInstance>("ModelInstance", [](TypeBuilder<ModelInstance>& t) {
         t.category("Rendering");

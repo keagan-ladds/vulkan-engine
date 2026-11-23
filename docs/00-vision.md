@@ -73,6 +73,7 @@ The `sandbox/` executable is the engine's integration test and demo:
 | F | toggle fly mode |
 | E / left click | pick up a sunstone you're looking at |
 | Q / right click | throw a rock |
+| V | shoot (bullet-hole decal) |
 | T / G (hold) | fast-forward / rewind the time of day |
 | R | cycle weather (clear → hazy → overcast → rain) |
 | Tab | release/capture mouse |

@@ -56,6 +56,8 @@ EXCEPTIONS = {
     # ModelInstance loads a model by path and sets its Animator's clip.
     ("scene/MeshComponents.cpp", "assets"),
     ("scene/MeshComponents.cpp", "anim"),
+    # DecalProjector loads its textures by path.
+    ("scene/Decal.cpp", "assets"),
     # Prefab / scene files resolve asset paths through the AssetManager.
     ("scene/Prefab.cpp", "assets"),
     ("scene/SceneSerializer.cpp", "assets"),

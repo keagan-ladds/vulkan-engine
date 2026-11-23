@@ -76,12 +76,15 @@ struct RenderStats {
     uint32_t directionalLights = 0;
     uint32_t pointLights = 0;
     uint32_t shadowViews = 0;
+    uint32_t decals = 0;              // decals in view (DecalBuffer)
 };
 
 struct FrameData {
     Scene* scene = nullptr;
     FrameGlobals globals{};      // editable in RenderPass::prepare()
     LightBuffer* lights = nullptr;
+    DecalBuffer* decals = nullptr;   // decals in view: decals->decals[0, info.x), sorted (see Decals.hpp)
+    std::vector<glm::mat4> decalBoxes; // their world matrices (unit box -> world), same order
     CameraData camera;
     // Every visible-flagged MeshRenderer submesh (for shadows), then the
     // batched static ones near shadowed point lights (DrawItem::instanced).

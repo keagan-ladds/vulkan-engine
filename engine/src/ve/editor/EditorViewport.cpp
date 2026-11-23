@@ -13,6 +13,7 @@
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/scene/Components.hpp"
+#include "ve/scene/Decal.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/world/Terrain.hpp"
 
@@ -120,6 +121,7 @@ void Editor::drawViewport()
         scene.forEach<AudioZone>([&](AudioZone& c) { add(c, 2, "Z", IM_COL32(80, 200, 255, 230)); });
         scene.forEach<AudioSource>([&](AudioSource& c) { add(c, 3, "A", IM_COL32(230, 120, 255, 230)); });
         scene.forEach<Camera>([&](Camera& c) { add(c, 4, "C", IM_COL32(220, 220, 220, 230)); });
+        scene.forEach<DecalProjector>([&](DecalProjector& c) { add(c, 4, "D", IM_COL32(120, 255, 200, 230)); });
         for (const auto& o : scene.objects()) // empty markers: cheap checks only
             if (o->persistent && o->components().empty() && o->transform().children().empty())
                 cands.push_back({o.get(), 5, "o", IM_COL32(200, 200, 200, 200)});
@@ -176,6 +178,14 @@ void Editor::drawViewport()
             if (!st->biome.empty()) dd.circle(c, {0, 1, 0}, st->biomeRadius + st->biomeFalloff * 0.5f, IM_COL32(120, 255, 140, 160), 64);
         }
         if (auto* l = sel->getComponent<PointLight>()) dd.sphere(glm::vec3(m[3]), l->range, IM_COL32(255, 210, 80, 120));
+        if (sel->getComponent<DecalProjector>()) {
+            // The projection box (unit cube scaled by the transform) and its direction (-Z).
+            const uint32_t col = IM_COL32(120, 255, 200, 220);
+            dd.box(m, glm::vec3(0.5f), col);
+            const glm::vec3 c(m[3]), back(m * glm::vec4(0.0f, 0.0f, 0.5f, 1.0f)), front(m * glm::vec4(0.0f, 0.0f, -0.5f, 1.0f));
+            dd.line(back, front, col, 2.0f);
+            dd.line(c, glm::vec3(m * glm::vec4(0.0f, 0.5f, 0.0f, 1.0f)), IM_COL32(120, 255, 200, 120)); // texture up
+        }
         if (auto* a = sel->getComponent<AudioSource>(); a && a->spatial) {
             dd.circle(glm::vec3(m[3]), {0, 1, 0}, a->minDistance, IM_COL32(230, 120, 255, 200));
             dd.circle(glm::vec3(m[3]), {0, 1, 0}, a->maxDistance, IM_COL32(230, 120, 255, 110));

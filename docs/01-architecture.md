@@ -196,6 +196,7 @@ Every pipeline uses **one global pipeline layout**:
 | set 0, b4 | `samplerCubeArrayShadow` | point light shadow cubes |
 | set 0, b5–b9 | instancing SSBOs | instances, visible-instance lists, indirect draw commands, instance groups, cull views (see §5.7) |
 | set 0, b10–b13 | skinning SSBOs | rest vertices, joint weights, this frame's joint matrices, skinned output (see §5.7b) |
+| set 0, b14 | `DecalBuffer` SSBO | this frame's decals (≤ 1024, sorted) and their clusters (see "Decals" below) |
 | set 1, b0 | `image2D storageImages[]` | bindless storage images (compute) |
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
@@ -208,6 +209,27 @@ range in `clusterLights` (8-bit light indices). `veEvaluateLighting` (and any
 shader using `veLightList(P)`) only visits the lights of the point's cluster;
 off screen, or if the list overflows (`clusterParams.z == 0`), it falls back
 to every light. Only the used part of the buffer is uploaded.
+
+**Decals** (`render/Decals.hpp`, `scene/Decal.hpp`, `ve_decals.glsl`). A decal
+is an oriented box that projects textures along its local -Z onto whatever
+surface lies inside it (bullet holes, puddles, cracks). Placed ones are
+`DecalProjector` components (the box is the object's transform); transient
+ones go through `Renderer::decals()` (`DecalSystem`: a ring buffer, oldest
+replaced, optional lifetime + fade-out, no GameObjects). Each frame
+`SceneGatherer` culls them (frustum, `drawDistance`), keeps the nearest 1024,
+sorts them by `sortOrder` (placed before spawned, then age) and writes
+`DecalBuffer`; `LightClusterer` bins their view-space boxes into the light
+cluster grid (16-bit indices). This is a forward renderer, so decals are not
+a pass drawn over the lit image: material shaders call
+`veApplyDecals(surface, geometricNormal, dPdx, dPdy, receiveLayers)` before
+`veEvaluateLighting`, and each decal blends albedo (mix or multiply), normal
+(a normal map on the decal's frame, built on the geometric normal; `flatten`
+smooths the surface's own bumps), roughness and metallic, each with its own
+opacity times the decal's alpha and fades (angle to the projection
+direction, never on back faces; box depth; distance; lifetime). Lighting,
+shadows and the thin G-buffer (SSR on puddles) all see the result.
+`standard.frag` (receive mask in `params[3].w`, inverted) and `terrain.frag`
+receive decals; custom shaders opt in with the same call.
 
 **Temporal AA** (`RendererSettings::temporalAA`, off by default; Savanna turns
 it on). The projection is jittered by an 8-position Halton (2, 3) sequence

@@ -9,6 +9,8 @@ downloads (and so the engine's importers get exercised on real files):
   sandbox/assets/textures/reed_screen.png     woven reed screen with holes (alpha cutout test)
   sandbox/assets/textures/ground/*.png        terrain splat materials (soil, sand, leaf litter,
                                               rock): albedo (alpha = height), normal, roughness, AO
+  sandbox/assets/textures/decals/*.png        decals: bullet hole (albedo + normal), wall cracks
+                                              (albedo + normal), puddle mask (G = roughness, A = shape)
   sandbox/assets/models/villager.gltf (+.bin) skinned low-poly villager: 13 joints,
                                               Idle and Walk animations (F2 animation test)
   sandbox/assets/models/rondavel.gltf (+.bin) round African hut: walls + thatched
@@ -518,6 +520,100 @@ def terrain_textures(size=512):
 
 
 # --------------------------------------------------------------------------- skinned villager
+def decal_textures(size=256):
+    """Decal textures (ve::Decal): albedo alpha / mask alpha = where the decal
+    shows; normals in the OpenGL convention (green = up in the image), like
+    the terrain's. Not tileable: a decal covers its box once."""
+    import numpy as np
+
+    rng = np.random.default_rng(77)
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+    u, v = (xx + 0.5) / size * 2.0 - 1.0, (yy + 0.5) / size * 2.0 - 1.0  # -1..1
+    r = np.hypot(u, v)
+    ang = np.arctan2(v, u)
+    u8 = lambda a: (np.clip(a, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+
+    def smooth_noise(cells, seed):
+        g = np.random.default_rng(seed).random((cells + 1, cells + 1))
+        fx, fy = xx / size * cells, yy / size * cells
+        x0, y0 = fx.astype(int), fy.astype(int)
+        tx, ty = fx - x0, fy - y0
+        tx, ty = tx * tx * (3 - 2 * tx), ty * ty * (3 - 2 * ty)
+        a = g[y0, x0] * (1 - tx) + g[y0, x0 + 1] * tx
+        b = g[y0 + 1, x0] * (1 - tx) + g[y0 + 1, x0 + 1] * tx
+        return a * (1 - ty) + b * ty
+
+    def fbm(seed, base=4, octaves=4):
+        n, amp, norm = 0.0, 1.0, 0.0
+        for o in range(octaves):
+            n = n + smooth_noise(base << o, seed + o) * amp
+            norm += amp
+            amp *= 0.5
+        return n / norm
+
+    def normal_map(h, strength):
+        dx = (np.roll(h, -1, 1) - np.roll(h, 1, 1)) * 0.5 * strength
+        dy = (np.roll(h, -1, 0) - np.roll(h, 1, 0)) * 0.5 * strength
+        n = np.stack([-dx, dy, np.ones_like(h)], -1)
+        n /= np.linalg.norm(n, axis=-1, keepdims=True)
+        return u8(n * 0.5 + 0.5)
+
+    def blur(a, radius):
+        f = np.fft.fftfreq(size)
+        fx, fy = np.meshgrid(f, f)
+        return np.real(np.fft.ifft2(np.fft.fft2(a) * np.exp(-(fx ** 2 + fy ** 2) * (2 * np.pi * radius) ** 2 / 2)))
+
+    # --- Bullet hole: a dark hole, a raised torn rim, splinter streaks, soot.
+    jag = 1.0 + 0.18 * (fbm(3, 6, 3) - 0.5) + 0.06 * np.sin(ang * 7.0)
+    rr = r * jag
+    hole = np.clip((0.16 - rr) / 0.03, 0.0, 1.0)
+    rim = np.exp(-((rr - 0.22) / 0.07) ** 2)
+    streaks = np.clip(np.sin(ang * 23.0 + 3.0 * fbm(5, 8, 2)) * 0.5 + 0.5, 0, 1) ** 6 * np.exp(-((rr - 0.38) / 0.12) ** 2)
+    soot = np.clip(1.0 - rr / 0.75, 0.0, 1.0) ** 1.5
+    height = -hole * 1.0 + rim * 0.35 - soot * 0.15 + streaks * 0.08
+    alb = np.zeros((size, size, 4))
+    base = np.array([0.30, 0.27, 0.24])
+    alb[..., :3] = base * (1.0 - 0.75 * soot)[..., None] * (1.0 - 0.9 * hole)[..., None] + streaks[..., None] * 0.25
+    alb[..., 3] = np.clip(soot * 1.2 + rim + hole, 0.0, 1.0) * np.clip((0.95 - r) / 0.1, 0.0, 1.0)
+    Image.fromarray(u8(alb), "RGBA").save(out("textures", "decals", "bullet_hole_albedo.png"), optimize=True)
+    Image.fromarray(normal_map(blur(height, 1.0), 40.0), "RGB").save(out("textures", "decals", "bullet_hole_normal.png"), optimize=True)
+
+    # --- Cracks: random branching walks drawn as grooves; albedo dark in them.
+    crack = np.zeros((size, size))
+
+    def walk(x, y, a, length, width, depth):
+        for _ in range(int(length)):
+            a += rng.normal(0.0, 0.25)
+            x, y = x + math.cos(a), y + math.sin(a)
+            if not (2 <= x < size - 2 and 2 <= y < size - 2):
+                return
+            d = np.hypot(xx[int(y) - 4:int(y) + 5, int(x) - 4:int(x) + 5] - x, yy[int(y) - 4:int(y) + 5, int(x) - 4:int(x) + 5] - y)
+            patch = crack[int(y) - 4:int(y) + 5, int(x) - 4:int(x) + 5]
+            np.maximum(patch, np.clip(1.0 - d / width, 0.0, 1.0), out=patch)
+            if depth < 3 and rng.random() < 0.025:
+                walk(x, y, a + rng.choice([-1.0, 1.0]) * rng.uniform(0.5, 1.1), length * 0.5, max(width * 0.7, 1.0), depth + 1)
+            width = max(width * 0.997, 0.9)
+
+    for k in range(5):
+        a = k * (2 * math.pi / 5) + rng.uniform(-0.3, 0.3)
+        walk(size / 2 + rng.normal(0, 4), size / 2 + rng.normal(0, 4), a, size * 0.45, 3.2, 0)
+    halo = np.clip(blur(crack, 3.0) * 2.5, 0.0, 1.0)  # chipped plaster around the cracks
+    calb = np.zeros((size, size, 4))
+    calb[..., :3] = np.array([0.20, 0.16, 0.13]) * (1.0 - 0.6 * crack)[..., None]
+    calb[..., 3] = np.clip(crack * 1.4 + halo * 0.35, 0.0, 1.0) * np.clip((0.98 - r) / 0.25, 0.0, 1.0)
+    Image.fromarray(u8(calb), "RGBA").save(out("textures", "decals", "crack_albedo.png"), optimize=True)
+    Image.fromarray(normal_map(blur(-crack - halo * 0.3, 0.8), 30.0), "RGB").save(out("textures", "decals", "crack_normal.png"), optimize=True)
+
+    # --- Puddle: an irregular blob. A = shape (soft edge), G = roughness
+    # multiplier (glassy middle, damp rough rim), B = 0 (metallic), R unused.
+    shape = r * (1.0 + 0.55 * (fbm(11, 3, 4) - 0.5)) + 0.25 * (fbm(19, 2, 3) - 0.5)
+    alpha = np.clip((0.72 - shape) / 0.18, 0.0, 1.0)
+    water = np.clip((0.62 - shape) / 0.08, 0.0, 1.0)
+    rough = 0.06 + (1.0 - water) * 0.6 + 0.04 * fbm(23, 16, 3)
+    mask = np.stack([np.ones_like(alpha), rough, np.zeros_like(alpha), alpha], -1)
+    Image.fromarray(u8(mask), "RGBA").save(out("textures", "decals", "puddle_mask.png"), optimize=True)
+
+
 def villager():
     """A low-poly villager with a 17-joint skeleton (facing +Z, glTF convention).
     Limbs are tapered tubes whose rings blend between neighbouring joints, so
@@ -748,6 +844,7 @@ def villager():
 if __name__ == "__main__":
     villager()
     terrain_textures()
+    decal_textures()
     lut_neutral()
     textures()
     reed_screen()

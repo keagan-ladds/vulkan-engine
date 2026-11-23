@@ -317,4 +317,9 @@ vec3 veEvaluateLighting(VeSurface s)
     return veEvaluateLighting(s, sun0Shadow);
 }
 
+// Decals (veApplyDecals) need VeSurface, so they come last.
+#ifdef VE_FRAGMENT_STAGE
+#include "ve_decals.glsl"
+#endif
+
 #endif // VE_LIGHTING_GLSL

@@ -320,3 +320,27 @@ path to wide strings at each C API (40-odd call sites and the third-party
 loaders); requiring SDL2 development packages (manual setup, DLL copying).
 **Cost:** Windows builds compile SDL2 once (about a minute); Windows versions
 before 10 1903 would treat non-ASCII paths in the old code page.
+
+### D30. Decals are applied in the material shaders (clustered forward decals) (2026-11)
+**Chosen:** decals are oriented boxes gathered on the CPU each frame (nearest
+1024 in view), sorted, written to a `DecalBuffer` (set 0, binding 14) and
+binned into the light cluster grid. Material shaders call `veApplyDecals` on
+their `VeSurface` before lighting, so a decal changes albedo, normal,
+roughness and metallic with per-channel opacity and everything downstream
+(lights, shadows, ambient, the thin G-buffer for SSR) sees it. Decal textures
+are bindless and sampled with gradients from the position derivatives, so the
+per-pixel decal loop may diverge. Normal maps are oriented on the decal's
+frame and built on the geometric normal; `flatten` blends the surface's own
+normal towards it (standing water).
+**Alternatives:** deferred decals (a box drawn after opaque that blends into
+a G-buffer: this renderer is forward and has no albedo/roughness targets, so
+it could only darken the lit colour or the normal); mesh decals (geometry
+clipped to the surface: per-decal CPU work and no channel control); decal
+atlases (one texture per decal is simpler with bindless).
+**Why:** correct PBR changes to every channel (wet puddles reflect, bullet
+holes are rough and dented) for the price of a cluster lookup per pixel, with
+no extra pass and no G-buffer. **Cost:** only shaders that call
+`veApplyDecals` receive decals (standard and terrain; grass and impostors
+don't); each overlapping decal costs up to three texture samples in those
+shaders; more than 1024 decals in view keeps the nearest.
+

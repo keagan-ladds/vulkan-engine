@@ -209,6 +209,15 @@ void Editor::drawCreateMenu()
                 newObject("GameObject", "Directional Light", Json::array({{{"type", "DirectionalLight"}}}));
             ImGui::EndMenu();
         }
+        if (ImGui::MenuItem("Decal")) {
+            // A 2 x 2 m box projecting straight down onto the ground (rotated -90 degrees about X).
+            const glm::vec3 p = placementPoint(*m_engine, view);
+            const float h = 0.70710678f;
+            Json j{{"type", "GameObject"}, {"name", "Decal"}, {"position", {p.x, p.y, p.z}},
+                   {"rotation", {-h, 0.0f, 0.0f, h}}, {"scale", {2.0f, 2.0f, 1.0f}},
+                   {"components", Json::array({{{"type", "DecalProjector"}}})}};
+            createObject(j, nullptr, "Create Decal");
+        }
         if (ImGui::BeginMenu("Audio")) {
             if (ImGui::MenuItem("Audio source")) newObject("GameObject", "Audio Source", Json::array({{{"type", "AudioSource"}}}));
             if (ImGui::MenuItem("Audio zone"))

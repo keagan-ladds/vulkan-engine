@@ -82,6 +82,7 @@ private:
     ve::FoliageInstanceId m_tree, m_bush; // interactive foliage checks
     std::vector<glm::vec3> m_crateStart;
     bool m_throwPending = false;
+    uint64_t m_briefDecal = 0; // a spawned decal with a 0.3 s lifetime
     bool m_inTrigger = false;
     glm::vec3 m_triggerCenter{0.0f}, m_triggerFeet{0.0f};
     ve::ObjectRef<> m_destroyProbe; // (it destroys itself into something else)

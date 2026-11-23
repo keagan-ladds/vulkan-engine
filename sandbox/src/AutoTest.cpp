@@ -30,6 +30,7 @@
 #include <ve/render/Mesh.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
+#include <ve/scene/Decal.hpp>
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/scene/Scene.hpp>
@@ -245,6 +246,20 @@ void AutoTest::update(float dt)
         }
         log("crates: " + std::to_string(crates.size()) + ", y range " + std::to_string(minY) + " .. " + std::to_string(maxY));
         logAudio("start (camp)");
+        // Decals: the scene's projectors (puddles, a wall crack), a short-lived
+        // spawned one (expires before step 1 ends) and a bullet hole.
+        {
+            int projectors = 0, textured = 0;
+            scene().forEach<ve::DecalProjector>([&](ve::DecalProjector& d) {
+                ++projectors;
+                textured += d.albedoTexture || d.maskTexture ? 1 : 0;
+            });
+            ve::Decal brief;
+            brief.color = {0.1f, 0.1f, 0.1f, 1.0f};
+            m_briefDecal = renderer().decals().spawn(brief, ve::DecalSystem::onSurface(above - glm::vec3(0, 190, 0), {0, 1, 0}, {1, 1}), 0.3f, 0.2f);
+            log("decal projectors: " + std::to_string(projectors) + " (" + std::to_string(textured) + " with textures); spawned: " +
+                std::to_string(renderer().decals().count()));
+        }
     } else if (m_step == 1 && !m_inTrigger && m_t > 3.3f) {
         // The thrown rock is away: stand in the trigger box for a moment.
         if (auto* p = localPlayer(scene())) p->teleport(m_triggerFeet, 0.0f);
@@ -262,6 +277,18 @@ void AutoTest::update(float dt)
         m_destroyProbe.reset();
         if (auto* probe = scene().find("TestTrigger") ? scene().find("TestTrigger")->getComponent<EventProbe>() : nullptr)
             log("trigger after standing in it: " + std::to_string(probe->triggerEnters) + " enter(s): " + probe->lastTrigger);
+        {
+            // The brief decal is gone (0.3 s + 0.2 s fade); a shot leaves a bullet hole.
+            const uint32_t before = renderer().decals().count();
+            bool shot = false;
+            if (auto* p = localPlayer(scene())) {
+                p->setPose(glm::vec3(layout::kCamp.x + 3.0f, terrain().height(layout::kCamp.x + 3.0f, layout::kCamp.y + 2.0f), layout::kCamp.y + 2.0f), 0.0f, -60.0f);
+                shot = p->shoot();
+            }
+            log("decals: brief one expired: " + std::string(before == 0 ? "yes" : "NO") + ", shot hit: " + (shot ? "yes" : "no") +
+                ", spawned now: " + std::to_string(renderer().decals().count()) + ", in view last frame: " +
+                std::to_string(renderer().stats().decals));
+        }
         log("after pickup: " + std::to_string(scene().findAllWithTag("collectible").size()) + " left, collected " +
             std::to_string(gameState().collected) + "/" + std::to_string(gameState().total));
         if (auto* w = scene().findFirst<vfx::Weather>()) w->setWeather(vfx::Weather::Type::Rain, 2.0f);

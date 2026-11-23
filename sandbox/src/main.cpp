@@ -472,7 +472,10 @@ void buildLevel(ve::Engine& engine)
 void reloadLevel(ve::Engine& engine, const char* thenLabel, std::function<void()> then)
 {
     engine.beginLoading(makeLoadingScene(), 0.3f);
-    engine.addLoadStep("Leaving", [&engine] { engine.scene().clear(); });
+    engine.addLoadStep("Leaving", [&engine] {
+        engine.scene().clear();
+        engine.renderer().decals().clear(); // (bullet holes belong to the old level)
+    });
     engine.addLoadStep(kLevelStep, [&engine] { buildLevel(engine); });
     engine.addLoadStep(thenLabel, std::move(then));
 }

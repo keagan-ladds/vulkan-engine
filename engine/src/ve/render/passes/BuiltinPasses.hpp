@@ -62,6 +62,7 @@ public:
     OpaquePass() : RenderPass("Opaque", RenderStage::Opaque) {}
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
+    void onGui() override;
     glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 1.0f};
 };
 

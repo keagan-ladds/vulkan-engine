@@ -11,6 +11,15 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 ## [Unreleased]
 
 ### Added
+- **Decals.** `ve::DecalProjector` (component: editor Create > Decal, scene
+  files, prefabs) and `Renderer::decals()` (`ve::DecalSystem`: transient
+  decals such as bullet holes, with lifetime and fade-out) project textures
+  onto surfaces and change their albedo (mix or multiply), normal, roughness
+  and metallic, each with its own opacity times the decal's alpha. Applied
+  before lighting by `standard.frag` and `terrain.frag`; custom shaders opt in
+  with `veApplyDecals` (`ve_decals.glsl`). `StandardMaterial::setDecalLayers`
+  chooses which decals a material receives (`params[3].w`, previously unused).
+  New descriptor binding: set 0, binding 14 (`DecalBuffer`).
 - **Prebuilt-engine package.** An engine build folder now exports a CMake
   package: a game can `find_package(VulkanEngine)` with `VulkanEngine_DIR`
   pointing at it and link the compiled engine instead of building it

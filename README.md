@@ -106,6 +106,7 @@ Or in VS Code press **F5** and pick a configuration: Sandbox (the game) or Edito
 | F | toggle fly mode (Space/Ctrl = up/down) |
 | E or left click | pick up sunstone |
 | Q or right click | throw a rock (physics) |
+| V | shoot: leaves a bullet-hole decal where you aim |
 | T / G (hold) | fast-forward / rewind time of day |
 | R | next weather (clear → hazy → overcast → rain) |
 | Tab | release/capture mouse |

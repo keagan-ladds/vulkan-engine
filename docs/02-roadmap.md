@@ -490,6 +490,10 @@ and ask the host for everything else (decision D19).
 - [x] Look-at and aim IK (`AimIK`, `LookAtIK`): weighted chains, angle limits, blending. Savanna: villagers look at a nearby player and point at the nearest sunstone after greeting; the autotest checks both aims converge
 - [ ] Later: root motion, motion vectors from skinning; text selection / clipboard, multi-line text, on-screen keyboard for pads; ragdolls, buoyancy (Phase 11 list)
 
+### Decals ✅ (2026-11)
+- [x] Clustered forward decals: oriented boxes projecting albedo (mix / multiply), normal (+ flatten), roughness and metallic, each with its own opacity x alpha; angle / depth / distance / lifetime fades; sort order; receive layers. `DecalProjector` component (editor: Create > Decal, box gizmo, inspector; scene files) and `Renderer::decals()` for transient decals. Applied in `standard.frag` and `terrain.frag` before lighting (SSR sees wet puddles). Savanna: puddles in the camp, a cracked hut wall, V / pad left shoulder shoots bullet holes; the autotest checks projectors, lifetime expiry and a shot
+- [ ] Later: decals on grass / impostors, an atlas for many small decal textures, emissive decals (embers), GPU binning if thousands are in view
+
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`); compiles run in the background, the frame never waits for glslc
 - [x] Scene serialization (JSON scene files, editor save / load)

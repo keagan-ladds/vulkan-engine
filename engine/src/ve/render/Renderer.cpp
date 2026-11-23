@@ -65,6 +65,8 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
     m_materials.resize(kMaxMaterials);
     m_lights = std::make_unique<LightBuffer>();
     m_frame.lights = m_lights.get();
+    m_decalBuffer = std::make_unique<DecalBuffer>();
+    m_frame.decals = m_decalBuffer.get();
 
     createGlobalLayout();
     createFrameSlots();
@@ -117,6 +119,7 @@ void Renderer::shutdown()
     m_bindless.setFallback(VK_NULL_HANDLE, VK_NULL_HANDLE);
     m_graph.reset();
     m_staticBatcher.clear(); // (its instance groups)
+    m_decals.clear();        // (their textures)
     if (m_instances) m_instances->shutdown();
     if (m_skinning) m_skinning->shutdown();
     m_fallbackMaterial.reset();
@@ -132,6 +135,7 @@ void Renderer::shutdown()
         m_device.destroyBuffer(s.globals);
         m_device.destroyBuffer(s.lights);
         m_device.destroyBuffer(s.materials);
+        m_device.destroyBuffer(s.decals);
         if (s.timestamps) vkDestroyQueryPool(dev, s.timestamps, nullptr);
         vkDestroyFence(dev, s.inFlight, nullptr);
         vkDestroySemaphore(dev, s.imageAvailable, nullptr);
@@ -154,7 +158,7 @@ void Renderer::createGlobalLayout()
     VkDevice dev = m_device.handle();
 
     // set 0: per-frame data shared by every shader (see ve.glsl).
-    VkDescriptorSetLayoutBinding b[14]{};
+    VkDescriptorSetLayoutBinding b[15]{};
     b[0] = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     b[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     b[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
@@ -164,15 +168,17 @@ void Renderer::createGlobalLayout()
     for (uint32_t i = 5; i < 10; ++i) b[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     // GPU skinning: rest vertices, weights, joint matrices, skinned output (see Skinning.hpp).
     for (uint32_t i = 10; i < 14; ++i) b[i] = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
+    // Decals (DecalBuffer).
+    b[14] = {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_ALL, nullptr};
     VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layoutInfo.bindingCount = 14;
+    layoutInfo.bindingCount = 15;
     layoutInfo.pBindings = b;
     VK_CHECK(vkCreateDescriptorSetLayout(dev, &layoutInfo, nullptr, &m_globalSetLayout));
 
     const uint32_t n = Device::kFramesInFlight;
     VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, n},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 11 * n},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 12 * n},
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * n},
     };
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -226,6 +232,8 @@ void Renderer::createFrameSlots()
                                          MemoryUsage::CpuToGpu, "LightBuffer");
         s.materials = m_device.createBuffer(sizeof(GpuMaterial) * kMaxMaterials, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                             MemoryUsage::CpuToGpu, "MaterialBuffer");
+        s.decals = m_device.createBuffer(sizeof(DecalBuffer), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                         MemoryUsage::CpuToGpu, "DecalBuffer");
 
         VkDescriptorSetAllocateInfo setAlloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         setAlloc.descriptorPool = m_globalPool;
@@ -236,6 +244,7 @@ void Renderer::createFrameSlots()
         writeDescriptors(dev, s.set, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, {{s.globals.handle, 0, VK_WHOLE_SIZE}});
         writeDescriptors(dev, s.set, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                          {{s.lights.handle, 0, VK_WHOLE_SIZE}, {s.materials.handle, 0, VK_WHOLE_SIZE}});
+        writeDescriptors(dev, s.set, 14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, {{s.decals.handle, 0, VK_WHOLE_SIZE}});
     }
 }
 
@@ -785,7 +794,7 @@ void Renderer::updateJitter(bool photo)
 }
 
 // Camera, draw items, lights and shadow views (SceneGatherer, ShadowSetup),
-// then the point lights binned into clusters (LightClusterer).
+// then the point lights and decals binned into clusters (LightClusterer).
 void Renderer::gatherScene(Scene& scene)
 {
     SceneGatherer::Inputs in;
@@ -796,8 +805,10 @@ void Renderer::gatherScene(Scene& scene)
     in.settings = &m_settings;
     in.shadows = &m_shadowSetup;
     in.statics = &m_staticBatcher;
+    in.decals = &m_decals;
     const uint32_t pointLights = m_sceneGatherer.gather(scene, in, m_frame);
     m_lightClusterer.build(m_frame.camera, *m_lights, pointLights, m_settings.clusteredLights);
+    m_lightClusterer.buildDecals(m_frame.camera, *m_decalBuffer, m_frame.decalBoxes);
 }
 
 void Renderer::fillGlobals(const Time& time)
@@ -838,6 +849,12 @@ void Renderer::uploadFrameData(FrameSlot& slot, uint32_t slotIndex)
     // The light buffer up to the used part of the cluster light lists.
     std::memcpy(slot.lights.mapped, m_lights.get(),
                 offsetof(LightBuffer, clusterLights) + m_lightClusterer.usedWords() * sizeof(uint32_t));
+    // Decals: header + clusters + the used decals, then the used index words.
+    const DecalBuffer& db = *m_decalBuffer;
+    auto* decalBytes = static_cast<unsigned char*>(slot.decals.mapped);
+    std::memcpy(decalBytes, &db, offsetof(DecalBuffer, decals) + db.info.x * sizeof(GpuDecal));
+    std::memcpy(decalBytes + offsetof(DecalBuffer, clusterDecals), db.clusterDecals,
+                m_lightClusterer.usedDecalWords() * sizeof(uint32_t));
     // Only the materials that changed since this slot's buffer last got them.
     std::vector<std::pair<uint32_t, uint32_t>> materialRuns; // usually empty: no allocation
     m_materialDirty.take(slotIndex, materialRuns);
