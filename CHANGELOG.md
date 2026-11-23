@@ -11,6 +11,10 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 ## [Unreleased]
 
 ### Added
+- **`standard_painted.frag`**: the standard shader plus vertex-painted dirt
+  (R), wear (G) and wetness (B), with optional triplanar dirt / grunge / wear
+  textures; use it from a material file (`"fragmentShader"`). A placeholder
+  to copy and adapt.
 - **Shared textures and material files.** Image files referenced by glTF
   models now go through the AssetManager texture cache, so models exported
   next to each other share one GPU texture per file. New `*.material` files

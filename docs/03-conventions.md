@@ -199,6 +199,14 @@ Custom shaders keep StandardMaterial's layout and add inputs:
 `"textures": [{"slot": 5, "path": "textures/grunge.png", "srgb": false}]`,
 `"params": [{"slot": 4, "value": [0.5, 1, 0, 0]}]` (see `MaterialAsset.hpp`).
 
+**Vertex-painted dirt, wear and wetness:** `"fragmentShader":
+"standard_painted.frag"` (engine shader) reads the vertex colour as paint
+masks (R dirt, G wear, B wet; fill the colour attribute with black first)
+with optional dirt / grunge / wear textures in slots 5-7 and settings in
+params 4-8 (documented at the top of the shader). It's a starting point:
+copy it into your game as `mygame_painted.frag` to change it. Savanna's
+`SAVANNA_PAINTTEST=1` shows a test wall (`materials/painted_test.material`).
+
 ### Decals: bullet holes, puddles, cracks
 
 A decal is a box that projects along its -Z (forward) onto every surface

@@ -497,6 +497,7 @@ and ask the host for everything else (decision D19).
 ### Shared assets ✅ (2026-11)
 - [x] glTF image files go through the AssetManager texture cache: models exported side by side share one GPU texture per file
 - [x] Material files (`*.material`, `MaterialAsset`): StandardMaterial values + textures, custom shader + extra slots; used by glTF materials by name (`materials/<name>.material`) or by a `material` custom property; one shared Material per file; live reload + editor (Assets > Materials). Savanna: the huts' thatch comes from `materials/thatch.material`; the autotest checks texture sharing, the material file and a live edit
+- [x] `standard_painted.frag`: vertex-painted dirt / wear / wetness over the standard material (placeholder to adapt). Savanna: `SAVANNA_PAINTTEST=1` test wall
 - [ ] Later: texture compression (BC7 / BC5, KTX2), per-instance material overrides
 
 ### F5 — Tooling
