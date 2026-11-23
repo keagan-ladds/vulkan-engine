@@ -162,6 +162,17 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_physics->init();
     m_assets = std::make_unique<AssetManager>();
     m_assets->init(*m_renderer, assetDirs);
+    {
+        AssetManager::CookOptions cook;
+        cook.cacheDir = config.cookCache.empty() ? exeDir / "cooked" : config.cookCache.is_absolute() ? config.cookCache : exeDir / config.cookCache;
+        if (const char* d = std::getenv("VE_COOK_DIR"); d && *d) cook.cacheDir = d;
+        cook.cookOnDemand = config.cookOnDemand;
+        const std::string mode = std::getenv("VE_COOK") ? std::getenv("VE_COOK") : "";
+        if (mode == "0" || mode == "off") cook.useCooked = cook.cookOnDemand = false;
+        else if (mode == "read") cook.cookOnDemand = false;
+        else if (mode == "sync") cook.synchronous = cook.cookOnDemand = true;
+        m_assets->setCooking(cook);
+    }
     m_ui = std::make_unique<UiLayer>();
     m_ui->init(*this);
     m_scene = std::make_unique<Scene>();
@@ -466,6 +477,7 @@ void Engine::tickFrame()
 
     DataAssets::poll(m_time.unscaledDeltaTime); // biome / foliage / grass / material files edited on disk
     m_assets->updateMaterials();                // (material files apply their changes in place)
+    m_assets->updateCooking();                  // finished background texture cooks
     {
         VE_PROFILE("Update");
         m_scene->update(m_time.deltaTime, paused);

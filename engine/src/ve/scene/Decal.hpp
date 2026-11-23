@@ -15,9 +15,10 @@
 //   d.color = {0.55f, 0.55f, 0.55f, 1}; d.blend = ve::DecalBlend::Multiply;   // wet = darker
 //   d.roughness = 0.04f; d.roughnessOpacity = 1; d.flatten = 1;               // smooth, flat water
 //
-// Textures come from asset paths (scene files, editor: `albedo` as sRGB colour,
-// `normal` and `mask` as linear data), or set the Decal texture fields from
-// code (leave the path empty then). Changing a path from code: call reload().
+// Textures come from asset paths (scene files, editor; colour / data / normal
+// is each image's TextureSettings: name them *_normal, *_mask or add a
+// .texture file), or set the Decal texture fields from code (leave the path
+// empty then). Changing a path from code: call reload().
 // =============================================================================
 
 #include "ve/render/Decals.hpp"

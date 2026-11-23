@@ -902,7 +902,19 @@ never see Jolt types. The module is split by concern: `PhysicsWorld.cpp`
 - `AssetManager` resolves paths against search roots (`<exe>/assets`, plus any
   added), caches by path, and returns `shared_ptr`s.
 - Textures: stb_image (PNG/JPG/TGA/BMP/HDR), sRGB or linear, mip chains made with
-  blits, and auto-registered in the bindless table. `Texture::fromPixels()` and
+  blits, and auto-registered in the bindless table. How a file loads is its
+  `TextureSettings` (`<image>.texture`, else its name: Color / Data / Normal,
+  mips, compression, max size, sampler), one texture per file.
+- Cooking (`assets/TextureCook`, `Ktx2`): images become KTX2 files with their
+  whole mip chain, block compressed on the CPU (bc7enc / rgbcx): Color -> BC7
+  sRGB, Normal -> BC5 (Z rebuilt by `veUnpackNormal`), greyscale Data -> BC4
+  (viewed R,R,R,1), other Data -> BC7. They live in the cook cache
+  (`<exe>/cooked/<asset path>.ktx2`) and record the cooker version, the
+  settings' hash and the source's size / time / content hash, so
+  `loadTexture` uses a cooked copy only while it is current; otherwise it
+  loads the source and queues a cook on the job pool (Background lane), used
+  from the next run. `vecook` (engine/tools) cooks everything with the same
+  code for releases / CI. Without BC support the source images are used. `Texture::fromPixels()` and
   `Texture::create3D()` cover procedural data (e.g. cloud noise).
 - Models: glTF 2.0 (`.gltf`/`.glb`) via cgltf. Meshes and primitives become
   `Mesh` + submeshes. Materials become `StandardMaterial` (base colour /

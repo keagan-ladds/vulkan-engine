@@ -10,7 +10,28 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 
 ## [Unreleased]
 
+### Breaking
+- **`AssetManager::loadTexture(path)` takes only the path.** How an image
+  loads (colour / data / normal map, mips, compression, sampler) is now decided
+  by the image: a settings file next to it (`rock.png.texture`) or its name
+  (`*_normal` -> normal map, `*_rough` / `*_ao` / `*_orm` / `*_mask`... -> data,
+  else colour). Migration: drop the extra arguments; images you loaded with
+  `srgb = false` whose names don't say so need a `.texture` file
+  (`{"type": "Data"}`, or `"Normal"`). Material files' extra textures lose
+  their `"srgb"` field for the same reason.
+- **Normal maps: use `veUnpackNormal(texel)`** in custom shaders instead of
+  `texel.xyz * 2 - 1`. Cooked normal maps are BC5 (X and Y only); the helper
+  rebuilds Z and gives the same result for uncooked maps.
+
 ### Added
+- **Asset cooking (textures).** Images are cooked into GPU-ready KTX2 files
+  (BC7 colour, BC5 normal maps, BC4 greyscale data, prebuilt mips) in
+  `<exe>/cooked`: automatically on a worker thread the first time they load,
+  used from the next run on (no decoding or mip generation at load, 4-8x less
+  GPU memory). The `vecook` tool cooks everything ahead of time (releases, CI).
+  `EngineConfig::cookCache` / `cookOnDemand`; env `VE_COOK=0|read|sync`,
+  `VE_COOK_DIR`. Needs BC texture support (every desktop GPU); without it the
+  source images are used.
 - **`standard_painted.frag`**: the standard shader plus vertex-painted dirt
   (R), wear (G) and wetness (B), with optional triplanar dirt / grunge / wear
   textures; use it from a material file (`"fragmentShader"`). A placeholder

@@ -414,11 +414,13 @@ void Device::createLogicalDevice()
     m_features.maxAnisotropy = m_features.samplerAnisotropy ? m_properties.limits.maxSamplerAnisotropy : 1.0f;
     m_features.depthClamp = supported.core.features.depthClamp;
     m_features.fillModeNonSolid = supported.core.features.fillModeNonSolid;
+    m_features.textureCompressionBC = supported.core.features.textureCompressionBC;
 
     FeatureChain enable;
     enable.core.features.samplerAnisotropy = m_features.samplerAnisotropy;
     enable.core.features.depthClamp = m_features.depthClamp;
     enable.core.features.fillModeNonSolid = m_features.fillModeNonSolid;
+    enable.core.features.textureCompressionBC = m_features.textureCompressionBC;
     enable.core.features.imageCubeArray = VK_TRUE;
     enable.core.features.drawIndirectFirstInstance = VK_TRUE;
     enable.core.features.independentBlend = VK_TRUE;
@@ -717,12 +719,13 @@ void Device::flushUploads(VkCommandBuffer cmd)
 
 VkImageView Device::createImageView(VkImage image, VkFormat format, VkImageViewType type,
                                     VkImageAspectFlags aspect, uint32_t baseMip, uint32_t mipCount,
-                                    uint32_t baseLayer, uint32_t layerCount) const
+                                    uint32_t baseLayer, uint32_t layerCount, VkComponentMapping swizzle) const
 {
     VkImageViewCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
     info.image = image;
     info.viewType = type;
     info.format = format;
+    info.components = swizzle;
     info.subresourceRange = {aspect, baseMip, mipCount, baseLayer, layerCount};
     VkImageView view = VK_NULL_HANDLE;
     VK_CHECK(vkCreateImageView(m_device, &info, nullptr, &view));
@@ -757,7 +760,7 @@ Image Device::createImage(const ImageDesc& desc)
     alloc.usage = VMA_MEMORY_USAGE_AUTO; // VMA picks device-local memory for optimal-tiling images
     VK_CHECK(vmaCreateImage(m_allocator, &info, &alloc, &img.handle, &img.allocation, nullptr));
 
-    img.view = createImageView(img.handle, desc.format, desc.viewType, img.aspect, 0, desc.mipLevels, 0, desc.layers);
+    img.view = createImageView(img.handle, desc.format, desc.viewType, img.aspect, 0, desc.mipLevels, 0, desc.layers, desc.swizzle);
     if (desc.perLayerViews) {
         img.layerViews.resize(desc.layers);
         for (uint32_t i = 0; i < desc.layers; ++i) {
@@ -802,6 +805,34 @@ void Device::uploadImage(const Image& image, const void* pixels, VkDeviceSize si
                              VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                              VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         }
+    });
+    destroyBuffer(staging);
+}
+
+void Device::uploadImageLevels(const Image& image, const void* data, VkDeviceSize size,
+                               std::span<const VkDeviceSize> levelOffsets)
+{
+    Buffer staging = createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryUsage::CpuToGpu);
+    std::memcpy(staging.mapped, data, static_cast<size_t>(size));
+    immediateSubmit([&](VkCommandBuffer cmd) {
+        vk::imageBarrier(cmd, image.handle, {image.aspect, 0, image.mipLevels, 0, image.layers}, VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
+                         VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        std::vector<VkBufferImageCopy> copies;
+        for (uint32_t level = 0; level < image.mipLevels && level < levelOffsets.size(); ++level) {
+            VkBufferImageCopy c{};
+            c.bufferOffset = levelOffsets[level];
+            c.imageSubresource = {image.aspect, level, 0, image.layers};
+            // (Block-compressed levels smaller than a block are still given in texels.)
+            c.imageExtent = {std::max(1u, image.extent.width >> level), std::max(1u, image.extent.height >> level), 1};
+            copies.push_back(c);
+        }
+        vkCmdCopyBufferToImage(cmd, staging.handle, image.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               static_cast<uint32_t>(copies.size()), copies.data());
+        vk::imageBarrier(cmd, image.handle, {image.aspect, 0, image.mipLevels, 0, image.layers},
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+                         VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     });
     destroyBuffer(staging);
 }

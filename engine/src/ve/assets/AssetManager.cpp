@@ -2,6 +2,8 @@
 
 #include "ve/assets/DataAsset.hpp"
 #include "ve/assets/MaterialAsset.hpp"
+#include "ve/assets/TextureCook.hpp"
+#include "ve/gfx/Device.hpp"
 #include "ve/audio/Audio.hpp"
 #include "ve/assets/Model.hpp"
 #include "ve/core/Log.hpp"
@@ -81,19 +83,119 @@ std::string AssetManager::assetName(const std::filesystem::path& file) const
     return file.generic_string();
 }
 
-std::shared_ptr<Texture> AssetManager::loadTexture(const std::filesystem::path& path, bool srgb, bool mipmaps,
-                                                   SamplerType sampler)
+std::shared_ptr<Texture> AssetManager::loadTexture(const std::filesystem::path& path)
 {
-    const std::filesystem::path& file = resolveCached(path);
-    // Everything that changes the texture is in the key: the same image as
-    // colour and as data, with or without mips, or with another sampler, are
-    // different textures.
-    const std::string key = file.string() + (srgb ? "|srgb" : "|linear") + (mipmaps ? "|mips" : "|nomips") + "|sampler" +
-                            std::to_string(static_cast<int>(sampler));
+    // The source image, if it's there (a shipped build may only have the cooked copy).
+    std::filesystem::path source;
+    std::string name;
+    try {
+        source = resolveCached(path);
+        name = assetName(source);
+    } catch (const std::exception&) {
+        if (path.is_absolute() || m_cook.cacheDir.empty()) throw;
+        name = path.generic_string();
+    }
+    // One texture per file: its settings decide how it's loaded, not the caller.
+    const std::string key = source.empty() ? "cooked:" + name : source.string();
     if (auto it = m_textures.find(key); it != m_textures.end()) return it->second;
-    auto tex = loadTextureFile(*m_renderer, file, srgb, mipmaps, sampler);
+
+    TextureSettings settings = source.empty() ? TextureSettings{} : TextureSettings::forImage(source);
+    std::shared_ptr<Texture> tex;
+    const bool cookable = isCookableImage(path);
+    if (cookable && m_cook.useCooked && !m_cook.cacheDir.empty() && !m_renderer->device().features().textureCompressionBC) {
+        if (!m_warnedNoBC) log::warn("Cooked textures off: this GPU has no BC texture compression");
+        m_warnedNoBC = true;
+    } else if (cookable && m_cook.useCooked && !m_cook.cacheDir.empty()) {
+        const std::filesystem::path cooked = cookedTexturePath(m_cook.cacheDir, name);
+        Ktx2Texture header;
+        CookedState state = CookedState::Unusable;
+        if (readKtx2(cooked, header, true))
+            state = checkCookedTexture(header, source, source.empty() ? nullptr : &settings, source.empty() ? &settings : nullptr);
+        if (state != CookedState::Current && !source.empty() && m_cook.cookOnDemand && m_cook.synchronous) {
+            const TextureCookResult r = cookTexture(source, settings, cooked);
+            if (r.ok) state = CookedState::Current;
+            else log::warn("Cooking {} failed: {}", name, r.error);
+        }
+        Ktx2Texture full;
+        std::string error;
+        if (state == CookedState::Current && readKtx2(cooked, full, false, &error)) {
+            // BC4 holds one channel: show it in R, G and B (and A = 1) like the greyscale source did.
+            const VkComponentMapping swizzle = full.format == VK_FORMAT_BC4_UNORM_BLOCK
+                                                   ? VkComponentMapping{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R,
+                                                                        VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE}
+                                                   : VkComponentMapping{};
+            tex = Texture::createWithLevels(*m_renderer, full.width, full.height, full.format, full.data.data(), full.data.size(),
+                                            full.levelOffsets, settings.sampler(), swizzle, name);
+            ++m_texStats.cooked;
+        } else {
+            if (state == CookedState::Current) log::warn("Cooked texture {}: {}", name, error);
+            if (!source.empty()) queueCook(source, name, settings);
+        }
+    }
+    if (!tex) {
+        if (source.empty()) throw std::runtime_error("Asset not found: " + path.string() + " (no source image or cooked copy)");
+        tex = loadTextureFile(*m_renderer, source, settings.srgb(), settings.mipmaps, settings.sampler());
+        ++m_texStats.source;
+    }
     m_textures[key] = tex;
     return tex;
+}
+
+TextureSettings AssetManager::textureSettings(const std::filesystem::path& path)
+{
+    try {
+        return TextureSettings::forImage(resolveCached(path));
+    } catch (const std::exception&) {
+        TextureSettings s;
+        s.type = TextureSettings::typeFromName(path);
+        return s;
+    }
+}
+
+void AssetManager::setCooking(CookOptions options)
+{
+    m_cook = std::move(options);
+}
+
+void AssetManager::queueCook(const std::filesystem::path& source, const std::string& name, const TextureSettings& settings)
+{
+    if (!m_cook.cookOnDemand || m_cook.synchronous || m_cookJobs.count(name)) return;
+    // The job owns its inputs and result (Jobs.hpp rules): the manager can
+    // drop it at any time, and it never touches engine state.
+    auto result = std::make_shared<TextureCookResult>();
+    const std::filesystem::path output = cookedTexturePath(m_cook.cacheDir, name);
+    jobs::Handle h = jobs::submit(
+        [source, settings, output, result](const std::atomic<bool>& cancelled) { *result = cookTexture(source, settings, output, &cancelled); },
+        jobs::Lane::Background);
+    m_cookJobs[name] = {name, h, result};
+    m_texStats.cooking = uint32_t(m_cookJobs.size());
+}
+
+void AssetManager::updateCooking()
+{
+    for (auto it = m_cookJobs.begin(); it != m_cookJobs.end();) {
+        if (!it->second.handle.done()) {
+            ++it;
+            continue;
+        }
+        const TextureCookResult& r = *it->second.result;
+        if (r.ok) {
+            ++m_texStats.cookedNow;
+            log::info("Cooked {}: {}x{}, {} mips, {:.0f} KB in {:.0f} ms (used from the next load)", it->first, r.width, r.height,
+                      r.levels, double(r.bytes) / 1024.0, r.milliseconds);
+        } else if (!it->second.handle.cancelled()) {
+            ++m_texStats.failed;
+            log::warn("Cooking {} failed: {}", it->first, r.error);
+        }
+        it = m_cookJobs.erase(it);
+    }
+    m_texStats.cooking = uint32_t(m_cookJobs.size());
+}
+
+AssetManager::~AssetManager()
+{
+    // Queued cooks never start; running ones finish on their own (they own their data).
+    for (auto& [name, job] : m_cookJobs) job.handle.cancel();
 }
 
 std::shared_ptr<Model> AssetManager::loadModel(const std::filesystem::path& path)

@@ -280,6 +280,17 @@ void AutoTest::update(float dt)
             const bool matShared = thatch && thatch == assets().loadMaterial("materials/thatch.material").get();
             log(std::string("shared assets: glTF texture = direct load: ") + (texShared ? "yes" : "NO") +
                 ", thatch from material file: " + (matShared ? "yes" : "NO"));
+            // Texture settings come from the files (name / .texture), and where
+            // the loaded textures came from (cooked cache or source images).
+            const bool namesOk = assets().textureSettings("textures/ground/soil_normal.png").type == ve::TextureType::Normal &&
+                                 assets().textureSettings("textures/decals/puddle_mask.png").type == ve::TextureType::Data &&
+                                 assets().textureSettings("textures/mud_wall.png").type == ve::TextureType::Color;
+            const ve::TextureSettings lut = assets().textureSettings("textures/lut_neutral_32.png");
+            const auto& ts = assets().textureStats();
+            log(std::string("texture settings by name: ") + (namesOk ? "yes" : "NO") + ", by .texture file: " +
+                (lut.type == ve::TextureType::Data && !lut.mipmaps && !lut.compress ? "yes" : "NO") + "; textures loaded: " +
+                std::to_string(ts.cooked) + " cooked, " + std::to_string(ts.source) + " from source images, " +
+                std::to_string(ts.cooking) + " cooking");
             // A live edit (like the editor's, unsaved): checked and reverted in step 1.
             ve::Json edited = *ve::DataAssets::get("materials/thatch.material");
             edited["roughness"] = 0.25f;

@@ -125,7 +125,8 @@ go.addComponent<Spin>().speed = 3.0f;
    Copy `engine/shaders/standard.vert` as a starting point. Fragment shaders
    that want lighting `#include "ve_lighting.glsl"`, build a `VeSurface` and
    call `veEvaluateLighting(s)`. Read parameters from `veMaterial().params[i]`
-   and textures with `veSample(veMaterial().textures[i], uv)`.
+   and textures with `veSample(veMaterial().textures[i], uv)` (normal maps:
+   `veUnpackNormal(veSample(...))`, which rebuilds Z for cooked BC5 maps).
    **Opaque shaders also write the thin G-buffer** (used by SSGI/SSR):
    `layout(location = 1) out vec4 outGBuffer;` … `outGBuffer = veGBuffer(N, roughness);`.
    If you leave it out, the shader still works, but SSGI/SSR see garbage for those pixels.
@@ -196,7 +197,7 @@ editor (Assets > Materials) or in a text editor; Save writes the file.
 
 Custom shaders keep StandardMaterial's layout and add inputs:
 `"fragmentShader": "mygame_painted.frag"`,
-`"textures": [{"slot": 5, "path": "textures/grunge.png", "srgb": false}]`,
+`"textures": [{"slot": 5, "path": "textures/grunge.png"}]`,
 `"params": [{"slot": 4, "value": [0.5, 1, 0, 0]}]` (see `MaterialAsset.hpp`).
 
 **Vertex-painted dirt, wear and wetness:** `"fragmentShader":
@@ -228,7 +229,7 @@ p.roughness = 1; p.roughnessOpacity = 1; p.flatten = 1;               // glassy,
 // Fire and forget (no GameObject): replaced oldest-first when the pool is full.
 ve::Decal hole;
 hole.albedoTexture = assets.loadTexture("textures/decals/bullet_hole_albedo.png");
-hole.normalTexture = assets.loadTexture("textures/decals/bullet_hole_normal.png", false); // linear!
+hole.normalTexture = assets.loadTexture("textures/decals/bullet_hole_normal.png"); // *_normal: a normal map
 if (auto hit = physics().raycast(eye, dir, 100.0f))
     renderer().decals().spawn(hole, ve::DecalSystem::onSurface(hit->point, hit->normal, {0.2f, 0.2f}), 60.0f /* s */);
 ```
@@ -238,7 +239,8 @@ if (auto hit = physics().raycast(eye, dir, 100.0f))
   off characters, e.g. `setDecalLayers(~ve::kDecalLayerWorld)`.
 - Decals on moving objects: a projector parented to the object follows it;
   spawned ones can be moved with `decals().setTransform(handle, world)`.
-- Normal and mask textures are data: load them with `srgb = false`.
+- Normal and mask textures must load as Normal / Data: name them `*_normal` /
+  `*_mask` or give them a `.texture` file (see "Import assets").
 
 ### Add a full-screen post-process effect
 
@@ -311,8 +313,34 @@ see `vfx.glsl`). Games should use 4–7.
 ### Import assets
 
 Put files under `<game>/assets/` (copied next to the exe on build), then
-`assets().loadTexture("textures/x.png", srgb)`, `loadModel("models/x.gltf")`
+`assets().loadTexture("textures/x.png")`, `loadModel("models/x.gltf")`
 followed by `scene.instantiate(*model)`, or `loadAudio("audio/x.wav")`.
+
+**How an image loads is decided by the image, once** (`TextureSettings.hpp`),
+never by the code loading it. Its file name's last word picks the type:
+`*_normal` / `*_n` / `*_nrm` -> Normal map; `*_rough`, `*_ao`, `*_orm`,
+`*_mask`, `*_height`, `*_detail`... -> Data (linear); anything else -> Color
+(sRGB). For anything else, put a settings file next to it,
+`rock_bump.png.texture`:
+
+```json
+{ "type": "Normal", "maxSize": 1024 }
+```
+
+(also `mipmaps`, `compress`, `filter`: Linear / Nearest, `wrap`: Repeat /
+Clamp). A glTF that uses an image as a normal / data map while its settings
+say otherwise gets a warning naming the fix.
+
+**Cooking.** Textures you load are cooked into GPU-ready files (BC7 colour,
+BC5 normal maps, BC4 greyscale data, with mips: KTX2) in `build/bin/cooked/`:
+the first run loads the PNG and cooks it on a worker thread, later runs load
+the cooked copy (no decoding, no mip generation, 4-8x less GPU memory). A
+changed image, settings file or cooker version cooks again by itself.
+`build/bin/vecook` cooks everything at once (before a release, or in CI;
+`--check` lists what's stale, `--clean` removes leftovers). `VE_COOK=0` runs
+on the source images, `VE_COOK=sync` cooks before loading.
+Normal-map shaders must rebuild Z: use `veUnpackNormal(texel)` (cooked
+normal maps only store X and Y).
 
 ### Interaction ("press E to ...")
 
@@ -877,7 +905,8 @@ Set `bus` and `occlusion` before the sound first plays.
 auto& grade = renderer.graph().addPass<vfx::ColorGradingPass>();
 grade.settings.tonemapper = vfx::ColorGradingSettings::Tonemapper::AgX;
 grade.settings.temperature = 10.0f; grade.settings.contrast = 1.15f;   // or a preset: ...::sunBleached()
-grade.settings.lut = assets.loadTexture("textures/my_lut.png", /*srgb*/ false); // optional strip LUT
+grade.settings.lut = assets.loadTexture("textures/my_lut.png"); // optional strip LUT; give it a my_lut.png.texture
+// with {"type": "Data", "mipmaps": false, "compress": false, "wrap": "Clamp"} (exact values)
 ```
 Tweak everything live in F1 > Render passes > Color grading. Night brightness
 in Savanna: `DayNightCycle::nightExposure`, `moonIntensity`, and the

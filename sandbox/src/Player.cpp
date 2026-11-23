@@ -195,7 +195,7 @@ bool Player::shoot(const glm::vec3& direction)
     if (hit->body && hit->body->type != ve::BodyType::Static) return false;
     if (!m_bulletHole.albedoTexture) {
         m_bulletHole.albedoTexture = assets().loadTexture("textures/decals/bullet_hole_albedo.png");
-        m_bulletHole.normalTexture = assets().loadTexture("textures/decals/bullet_hole_normal.png", false);
+        m_bulletHole.normalTexture = assets().loadTexture("textures/decals/bullet_hole_normal.png");
         m_bulletHole.normalStrength = 1.5f;
         m_bulletHole.roughness = 0.95f; // torn, dusty: never shiny (even in a wet puddle)
         m_bulletHole.roughnessOpacity = 1.0f;

@@ -116,7 +116,7 @@ void veApplyDecals(inout VeSurface s, vec3 Ng, vec3 dPdx, vec3 dPdy, uint receiv
         vec3 N = s.normal;
         if (d.params.w > 0.0) N = normalize(mix(N, Ng, a * d.params.w)); // flatten the surface's bumps
         if (tex.y != VE_INVALID && d.opacity.y > 0.0) {
-            vec3 tn = veSampleGrad(tex.y, uv, dx, dy).xyz * 2.0 - 1.0;
+            vec3 tn = veUnpackNormal(veSampleGrad(tex.y, uv, dx, dy));
             tn.xy *= d.params.z;
             // Tangent frame: the box's +X (texture u) on the surface, and
             // N x T = the box's +Y (up in the texture) for a facing surface.

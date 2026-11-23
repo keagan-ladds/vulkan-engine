@@ -21,7 +21,7 @@
 //
 //   ve::Decal hole;
 //   hole.albedoTexture = assets.loadTexture("textures/decals/bullet_hole.png");
-//   hole.normalTexture = assets.loadTexture("textures/decals/bullet_hole_n.png", false);
+//   hole.normalTexture = assets.loadTexture("textures/decals/bullet_hole_n.png"); // *_n: a normal map
 //   hole.roughness = 0.9f; hole.roughnessOpacity = 1.0f;
 //   if (auto hit = physics.raycast(eye, dir, 100.0f))
 //       renderer.decals().spawn(hole, ve::DecalSystem::onSurface(hit->point, hit->normal, {0.12f, 0.12f}, 0.1f,
@@ -65,8 +65,8 @@ enum class DecalBlend {
 
 // What a decal looks like. Shared by DecalProjector (component) and DecalSystem.
 struct Decal {
-    // Optional textures. Load colour as sRGB, normal and mask as linear data:
-    // assets().loadTexture(path, false).
+    // Optional textures. The normal and mask textures must load as Normal /
+    // Data (TextureSettings.hpp: *_normal / *_mask names or a .texture file).
     std::shared_ptr<Texture> albedoTexture; // rgb colour, a = opacity
     std::shared_ptr<Texture> normalTexture; // tangent space (glTF / OpenGL convention: +Y = up in the image)
     std::shared_ptr<Texture> maskTexture;   // G = roughness, B = metallic multipliers (glTF style), A = opacity

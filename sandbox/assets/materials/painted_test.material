@@ -5,8 +5,8 @@
   "roughness": 0.9,
   "vertexColorWeight": 0.0,
   "textures": [
-    {"slot": 5, "path": "textures/ground/soil_albedo.png", "srgb": true},
-    {"slot": 6, "path": "textures/ground_detail.png", "srgb": false}
+    {"slot": 5, "path": "textures/ground/soil_albedo.png"},
+    {"slot": 6, "path": "textures/ground_detail.png"}
   ],
   "params": [
     {"slot": 4, "value": [1.0, 1.0, 1.0, 0.8]},

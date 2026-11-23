@@ -219,6 +219,15 @@ vec4 veSampleGrad(uint index, vec2 uv, vec2 dx, vec2 dy) { return textureGrad(ve
 vec4 veSample3D(uint index, vec3 uvw) { return texture(veTextures3D[nonuniformEXT(index)], uvw); }
 vec4 veSample3DLod(uint index, vec3 uvw, float lod) { return textureLod(veTextures3D[nonuniformEXT(index)], uvw, lod); }
 
+// Tangent-space normal from a normal-map sample. Uses only X and Y and
+// rebuilds Z: cooked normal maps are BC5 (two channels, B reads 0), and for
+// uncooked RGB maps it gives the same result.
+vec3 veUnpackNormal(vec4 texel)
+{
+    vec2 xy = texel.xy * 2.0 - 1.0;
+    return vec3(xy, sqrt(clamp(1.0 - dot(xy, xy), 0.0, 1.0)));
+}
+
 // Samples `index` if valid, otherwise returns `fallback`.
 vec4 veSampleOr(uint index, vec2 uv, vec4 fallback)
 {

@@ -365,3 +365,25 @@ silently overrides every glTF material of that name (logged when loaded);
 the file's values replace the glTF's entirely (no merging); switching a file
 used by static renderers to or from Transparent needs a level reload.
 
+### D32. Cook on demand into a cache, with the same cooker for releases; settings belong to the image (2026-11)
+**Chosen:** `loadTexture(path)` uses a GPU-ready cooked copy (KTX2, BC4/5/7,
+prebuilt mips) from `<exe>/cooked` when the copy is current, otherwise loads
+the source and cooks it on a worker thread for the next run. `vecook` runs the
+same cooker over everything for releases and CI. How an image cooks and loads
+is decided by the image (`<image>.texture`, else its name), not by callers:
+one texture and one cooked file per path. A cooked file stores the cooker
+version, the settings' hash and the source's size / time / content hash
+(time first, content hash when only the time differs).
+**Alternatives:** cooking only when packaging (the shipping formats would never
+run during development: compression problems found late); Unity-style import
+of every asset with a database / .meta files (slow first open, a database to
+keep consistent); caller-chosen formats (the same file could need several
+cooked variants, and a release cook couldn't know which).
+**Why:** development and release run the same bytes; no import step; a
+changed image or setting re-cooks itself. KTX2 because tools can read it; our
+reader/writer is ~200 lines. bc7enc/rgbcx because they're small, CPU-only and
+permissively licensed. **Cost:** the first run after a change loads source
+images (cooked ones from the next run); images used in two roles need a
+`.texture` decision; normal-map shaders must rebuild Z (`veUnpackNormal`);
+cooked files aren't compressed on disk yet (phase 5's archive will be).
+

@@ -14,6 +14,7 @@
 #include "ve/gfx/Samplers.hpp"
 
 #include <memory>
+#include <span>
 #include <string>
 
 namespace ve {
@@ -34,6 +35,11 @@ public:
     // (e.g. rendered on the GPU, like impostor atlases).
     static std::shared_ptr<Texture> adopt(Renderer& renderer, const Image& image, SamplerType sampler,
                                           std::string name = {});
+    // A 2D texture with a prebuilt mip chain (e.g. a cooked, block-compressed
+    // one): `data` holds every level, level i starting at levelOffsets[i].
+    static std::shared_ptr<Texture> createWithLevels(Renderer& renderer, uint32_t width, uint32_t height, VkFormat format,
+                                                     const void* data, size_t byteSize, std::span<const VkDeviceSize> levelOffsets,
+                                                     SamplerType sampler, VkComponentMapping swizzle = {}, std::string name = {});
     // Single-colour 1x1 texture.
     static std::shared_ptr<Texture> solid(Renderer& renderer, uint8_t r, uint8_t g, uint8_t b, uint8_t a,
                                           bool srgb, std::string name = {});

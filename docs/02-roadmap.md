@@ -500,6 +500,14 @@ and ask the host for everything else (decision D19).
 - [x] `standard_painted.frag`: vertex-painted dirt / wear / wetness over the standard material (placeholder to adapt). Savanna: `SAVANNA_PAINTTEST=1` test wall
 - [ ] Later: texture compression (BC7 / BC5, KTX2), per-instance material overrides
 
+### Asset cooking (2026-11)
+- [x] Phase 1: cook cache (`<exe>/cooked`), validity by cooker version + settings hash + source size / time / content hash, background on-demand cooking on the job pool, `vecook` tool (`--check`, `--force`, `--clean`)
+- [x] Phase 2: textures -> KTX2 with prebuilt mips, BC7 (colour), BC5 (normal maps), BC4 (greyscale data); per-image `TextureSettings` (`.texture` files / name convention) instead of caller flags
+- [ ] Phase 3: audio -> Ogg Vorbis (92 MB of WAV in the sandbox)
+- [ ] Phase 4: meshes -> binary vertex/index data with tangents and LODs precomputed
+- [ ] Phase 5: compressed archive (zstd) + `vecook --package`; the engine reads from it when present
+- [ ] Later: alpha-coverage-preserving mips for cutouts, editor panel for .texture files, swapping a freshly cooked texture in while running
+
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`); compiles run in the background, the frame never waits for glslc
 - [x] Scene serialization (JSON scene files, editor save / load)

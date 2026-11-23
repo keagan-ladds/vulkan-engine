@@ -29,7 +29,7 @@ void main()
     if (!gl_FrontFacing) N = -N; // double-sided materials light their back side correctly
     vec3 Ng = N;                 // geometric normal (decals are oriented on it)
     if (m.textures[1] != VE_INVALID) {
-        vec3 tn = veSample(m.textures[1], uv).xyz * 2.0 - 1.0;
+        vec3 tn = veUnpackNormal(veSample(m.textures[1], uv));
         tn.xy *= m.params[1].z;
         vec3 T = normalize(inTangent.xyz - N * dot(N, inTangent.xyz));
         vec3 B = cross(N, T) * inTangent.w;

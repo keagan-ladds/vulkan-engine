@@ -35,7 +35,7 @@ void addGrass(ve::Renderer& renderer)
     grass.castShadows = true;             // within grass.shadowDistance (30 m)
     // Alpha-clipped cards instead of procedural blades:
     //   grass.cardMesh = ve::GrassDesc::cardMeshCrossed(3, 1.0f);
-    //   grass.cardTexture = assets.loadTexture("textures/grass_card.png", true);
+    //   grass.cardTexture = assets.loadTexture("textures/grass_card.png");
     renderer.graph().addPass<ve::GrassPass>(grass);
 }
 

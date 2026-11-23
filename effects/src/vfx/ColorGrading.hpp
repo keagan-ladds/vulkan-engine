@@ -6,7 +6,8 @@
 //
 //   auto& grade = renderer.graph().addPass<vfx::ColorGradingPass>();
 //   grade.settings = vfx::ColorGradingSettings::sunBleached();   // or neutral(), or tweak fields
-//   grade.settings.lut = assets.loadTexture("textures/my_grade_lut.png", /*srgb*/ false); // optional
+//   grade.settings.lut = assets.loadTexture("textures/my_grade_lut.png"); // optional; give it a
+//   // my_grade_lut.png.texture: {"type": "Data", "mipmaps": false, "compress": false, "wrap": "Clamp"}
 //
 // Works on HDR SceneColor after bloom/DOF (RenderStage::PostProcess, last):
 // exposure (the CompositePass exposure, so day/night adaptation and lightning

@@ -36,6 +36,10 @@ cmake --build build
 ./build/bin/savanna
 ```
 
+Textures are cooked into GPU-ready files (`build/bin/cooked/`) the first
+time they load; `./build/bin/vecook` cooks everything at once (see
+[docs/03-conventions.md](docs/03-conventions.md#import-assets)).
+
 Smoke tests without a window on screen (offscreen rendering):
 `VE_HEADLESS=1 SAVANNA_AUTOTEST=1 ./build/bin/savanna` (or `SAVANNA_EDITORTEST=1`).
 Headless still needs a display server for SDL's Vulkan window: on a machine

@@ -38,20 +38,21 @@ void MaterialAsset::apply(StandardMaterial& mat, AssetManager& assets) const
         .setVertexColorWeight(vertexColorWeight)
         .setDecalLayers(receiveDecals ? kDecalLayerAll : 0u);
 
-    auto load = [&](const std::string& path, bool srgb) -> std::shared_ptr<Texture> {
+    // (Colour / data / normal is each image's own TextureSettings.)
+    auto load = [&](const std::string& path) -> std::shared_ptr<Texture> {
         if (path.empty()) return nullptr;
         try {
-            return assets.loadTexture(path, srgb);
+            return assets.loadTexture(path);
         } catch (const std::exception& e) {
             log::warn("Material '{}': {}", mat.name, e.what());
             return nullptr;
         }
     };
-    mat.setAlbedoTexture(load(albedo, true));
-    mat.setNormalTexture(load(normal, false));
-    mat.setMetallicRoughnessTexture(load(metallicRoughness, false));
-    mat.setOcclusionTexture(load(occlusion, false));
-    mat.setEmissiveTexture(load(emissiveTexture, true));
+    mat.setAlbedoTexture(load(albedo));
+    mat.setNormalTexture(load(normal));
+    mat.setMetallicRoughnessTexture(load(metallicRoughness));
+    mat.setOcclusionTexture(load(occlusion));
+    mat.setEmissiveTexture(load(emissiveTexture));
 
     // Extra inputs for custom shaders. Slots this file doesn't name are cleared,
     // so removing an entry (live edit) takes its texture / value away again.
@@ -63,7 +64,7 @@ void MaterialAsset::apply(StandardMaterial& mat, AssetManager& assets) const
                 log::warn("Material '{}': extra texture slots are 5..{} (got {})", mat.name, kMaterialTextureCount - 1, slot);
                 continue;
             }
-            mat.setTexture(uint32_t(slot), load(e.value("path", std::string()), e.value("srgb", true)));
+            mat.setTexture(uint32_t(slot), load(e.value("path", std::string())));
             texSet[slot] = true;
         }
     }
@@ -115,7 +116,7 @@ void registerAssetTypes(TypeRegistry& r)
         t.field("emissiveTexture", &MaterialAsset::emissiveTexture).assets(images);
         t.property("textures", FieldKind::Json, [](const MaterialAsset& m) { return m.textures; },
                    [](MaterialAsset& m, const Json& j) { m.textures = j.is_array() ? j : Json::array(); })
-            .tooltip(R"(custom shaders: [{"slot": 5, "path": "textures/x.png", "srgb": false}], slots 5-15)");
+            .tooltip(R"(custom shaders: [{"slot": 5, "path": "textures/x.png"}], slots 5-15)");
         t.property("params", FieldKind::Json, [](const MaterialAsset& m) { return m.params; },
                    [](MaterialAsset& m, const Json& j) { m.params = j.is_array() ? j : Json::array(); })
             .tooltip(R"(custom shaders: [{"slot": 4, "value": [1, 0, 0, 0]}], slots 4-11)");

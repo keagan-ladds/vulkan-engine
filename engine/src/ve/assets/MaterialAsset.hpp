@@ -33,8 +33,9 @@
 //
 // Custom shaders: `fragment` (and optionally `vertex`) replace standard.frag /
 // standard.vert but keep StandardMaterial's layout (params 0-3, textures 0-4),
-// so a copy of standard.frag works as a starting point. Extra inputs for it:
-//   "textures": [{"slot": 5, "path": "textures/grunge.png", "srgb": false}],   // slots 5-15
+// so a copy of standard.frag works as a starting point. Extra inputs for it
+// (each image's TextureSettings decide colour / data / normal):
+//   "textures": [{"slot": 5, "path": "textures/grunge.png"}],   // slots 5-15
 //   "params":   [{"slot": 4, "value": [1, 0.5, 0, 0]}]                          // slots 4-11
 // =============================================================================
 

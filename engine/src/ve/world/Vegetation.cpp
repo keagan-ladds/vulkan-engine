@@ -757,7 +757,7 @@ void GrassLayer::rebuild()
     std::shared_ptr<Texture> overrideTexture;
     if (!texture.empty()) {
         try {
-            overrideTexture = assets().loadTexture(texture, true);
+            overrideTexture = assets().loadTexture(texture);
         } catch (const std::exception& e) {
             log::warn("{}: {}", self, e.what());
         }

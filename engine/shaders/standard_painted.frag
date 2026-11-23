@@ -10,9 +10,9 @@
 //     "fragmentShader": "standard_painted.frag",
 //     "albedo": "textures/plaster.png",
 //     "textures": [
-//       {"slot": 5, "path": "textures/dirt.png", "srgb": true},      // optional
-//       {"slot": 6, "path": "textures/grunge.png", "srgb": false},   // optional (R)
-//       {"slot": 7, "path": "textures/brick.png", "srgb": true}      // optional
+//       {"slot": 5, "path": "textures/dirt.png"},      // optional
+//       {"slot": 6, "path": "textures/grunge.png"},   // optional (R)
+//       {"slot": 7, "path": "textures/brick.png"}      // optional
 //     ],
 //     "params": [
 //       {"slot": 4, "value": [1, 1, 1, 0.8]},           // strengths: dirt, wear, wet, grunge breakup
@@ -97,7 +97,7 @@ void main()
     if (!gl_FrontFacing) N = -N;
     vec3 Ng = N;
     if (m.textures[1] != VE_INVALID) {
-        vec3 tn = veSample(m.textures[1], uv).xyz * 2.0 - 1.0;
+        vec3 tn = veUnpackNormal(veSample(m.textures[1], uv));
         tn.xy *= m.params[1].z;
         vec3 T = normalize(inTangent.xyz - N * dot(N, inTangent.xyz));
         vec3 B = cross(N, T) * inTangent.w;
