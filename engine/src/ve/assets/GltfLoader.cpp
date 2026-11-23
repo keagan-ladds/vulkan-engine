@@ -31,6 +31,7 @@ struct GltfContext {
     const cgltf_data* data;
     std::filesystem::path baseDir;
     Model& model;
+    AssetManager* assets; // null: textures per model, no material files
     std::map<std::pair<const cgltf_image*, bool>, std::shared_ptr<Texture>> textureCache;
 };
 
@@ -72,7 +73,13 @@ std::shared_ptr<Texture> loadImage(GltfContext& ctx, const cgltf_texture_view& v
         std::string uri = image->uri;
         cgltf_decode_uri(uri.data());
         uri.resize(std::strlen(uri.c_str()));
-        tex = loadTextureFile(ctx.renderer, ctx.baseDir / uri, srgb, true, sampler);
+        // Through the asset cache when there is one: every model pointing at
+        // this file shares one texture. (Canonical path: "../textures/x.png"
+        // from different folders is the same key.)
+        std::error_code ec;
+        std::filesystem::path file = std::filesystem::weakly_canonical(ctx.baseDir / uri, ec);
+        if (ec) file = ctx.baseDir / uri;
+        tex = ctx.assets ? ctx.assets->loadTexture(file, srgb, true, sampler) : loadTextureFile(ctx.renderer, file, srgb, true, sampler);
     }
     if (tex) {
         ctx.textureCache[key] = tex;
@@ -85,6 +92,10 @@ std::shared_ptr<Material> convertMaterial(GltfContext& ctx, const cgltf_material
 {
     using Mode = StandardMaterial::Mode;
     if (!m) return ctx.renderer.createStandardMaterial();
+    // A material file (MaterialAsset.hpp) replaces the model's own material.
+    if (ctx.assets) {
+        if (auto shared = ctx.assets->materialForGltf(m->name ? m->name : "", m->extras.data ? m->extras.data : "")) return shared;
+    }
 
     Mode mode = Mode::Opaque;
     if (m->alpha_mode == cgltf_alpha_mode_blend) mode = Mode::Transparent;
@@ -124,7 +135,7 @@ const cgltf_accessor* findAttribute(const cgltf_primitive& p, cgltf_attribute_ty
 
 } // namespace
 
-std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path& file)
+std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path& file, AssetManager* assets)
 {
     cgltf_options options{};
     cgltf_data* data = nullptr;
@@ -140,7 +151,7 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
 
     auto model = std::make_shared<Model>();
     model->name = file.stem().string();
-    GltfContext ctx{renderer, data, file.parent_path(), *model, {}};
+    GltfContext ctx{renderer, data, file.parent_path(), *model, assets, {}};
 
     // Materials are shared between meshes in glTF; convert each once.
     std::vector<std::shared_ptr<Material>> materials(data->materials_count);

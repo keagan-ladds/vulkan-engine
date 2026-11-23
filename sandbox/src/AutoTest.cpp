@@ -31,6 +31,10 @@
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Decal.hpp>
+#include <ve/assets/AssetManager.hpp>
+#include <ve/assets/DataAsset.hpp>
+#include <ve/assets/Model.hpp>
+#include <ve/render/Texture.hpp>
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/scene/Scene.hpp>
@@ -260,6 +264,27 @@ void AutoTest::update(float dt)
             log("decal projectors: " + std::to_string(projectors) + " (" + std::to_string(textured) + " with textures); spawned: " +
                 std::to_string(renderer().decals().count()));
         }
+        // Shared assets: the hut's glTF image file is the same GPU texture as a
+        // direct load of it, and its "Thatch" material comes from
+        // materials/thatch.material (one Material for every model using it).
+        {
+            const auto hut = assets().loadModel("models/rondavel.gltf");
+            const ve::Material* wall = nullptr;
+            const ve::Material* thatch = nullptr;
+            for (const auto& slots : hut->meshMaterials)
+                for (const auto& m : slots) {
+                    if (m && m->name == "MudWall") wall = m.get();
+                    if (m && m->name == "thatch") thatch = m.get();
+                }
+            const bool texShared = wall && wall->texture(0) == assets().loadTexture("textures/mud_wall.png");
+            const bool matShared = thatch && thatch == assets().loadMaterial("materials/thatch.material").get();
+            log(std::string("shared assets: glTF texture = direct load: ") + (texShared ? "yes" : "NO") +
+                ", thatch from material file: " + (matShared ? "yes" : "NO"));
+            // A live edit (like the editor's, unsaved): checked and reverted in step 1.
+            ve::Json edited = *ve::DataAssets::get("materials/thatch.material");
+            edited["roughness"] = 0.25f;
+            ve::DataAssets::set("materials/thatch.material", edited);
+        }
     } else if (m_step == 1 && !m_inTrigger && m_t > 3.3f) {
         // The thrown rock is away: stand in the trigger box for a moment.
         if (auto* p = localPlayer(scene())) p->teleport(m_triggerFeet, 0.0f);
@@ -277,6 +302,11 @@ void AutoTest::update(float dt)
         m_destroyProbe.reset();
         if (auto* probe = scene().find("TestTrigger") ? scene().find("TestTrigger")->getComponent<EventProbe>() : nullptr)
             log("trigger after standing in it: " + std::to_string(probe->triggerEnters) + " enter(s): " + probe->lastTrigger);
+        {
+            const float r = assets().loadMaterial("materials/thatch.material")->vector(1).x;
+            log(std::string("material file live edit applied: ") + (std::abs(r - 0.25f) < 1e-4f ? "yes" : "NO"));
+            ve::DataAssets::revert("materials/thatch.material");
+        }
         {
             // The brief decal is gone (0.3 s + 0.2 s fade); a shot leaves a bullet hole.
             const uint32_t before = renderer().decals().count();

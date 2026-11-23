@@ -1,5 +1,6 @@
 #include "ve/core/Engine.hpp"
 #include "ve/assets/DataAsset.hpp"
+#include "ve/assets/MaterialAsset.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/net/Network.hpp"
 #include "ve/debug/Debug.hpp"
@@ -64,6 +65,7 @@ void registerAllTypes()
     registerAudioTypes(r);
     registerTerrainTypes(r);
     registerVegetationTypes(r);
+    registerAssetTypes(r); // MaterialAsset (.material files)
 }
 } // namespace
 
@@ -462,7 +464,8 @@ void Engine::tickFrame()
         if (!paused) m_physics->interpolate(*m_scene, m_time.fixedAlpha);
     }
 
-    DataAssets::poll(m_time.unscaledDeltaTime); // biome / foliage / grass files edited on disk
+    DataAssets::poll(m_time.unscaledDeltaTime); // biome / foliage / grass / material files edited on disk
+    m_assets->updateMaterials();                // (material files apply their changes in place)
     {
         VE_PROFILE("Update");
         m_scene->update(m_time.deltaTime, paused);

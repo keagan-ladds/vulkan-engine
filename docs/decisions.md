@@ -344,3 +344,24 @@ no extra pass and no G-buffer. **Cost:** only shaders that call
 don't); each overlapping decal costs up to three texture samples in those
 shaders; more than 1024 decals in view keeps the nearest.
 
+### D31. Shared textures by path; material files replace glTF materials by name (2026-11)
+**Chosen:** glTF image files are loaded through `AssetManager::loadTexture`
+(keyed by canonical path, colour/data and sampler), so separate models share
+textures. `*.material` JSON files (`MaterialAsset`, reflection-described,
+loaded through `DataAssets`) define a StandardMaterial; a glTF material
+uses one when its `material` extras property names it or when
+`materials/<name>.material` exists. Each file is one shared `Material`,
+updated in place on reload.
+**Alternatives:** per-model textures (the old behaviour: duplicated GPU
+memory); swapping materials in game code after instantiating (each model
+still loads its own textures first, and static renderers need refreshing);
+a material library inside each glTF (Blender would have to repeat it per
+file); matching only by explicit property (every Blender material would
+need it set by hand).
+**Why:** a texture used by many buildings is loaded once, and a surface type
+is tuned in one file. Name matching needs no Blender work beyond consistent
+material names; the property covers the exceptions. **Cost:** a file
+silently overrides every glTF material of that name (logged when loaded);
+the file's values replace the glTF's entirely (no merging); switching a file
+used by static renderers to or from Transparent needs a level reload.
+

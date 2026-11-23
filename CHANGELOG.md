@@ -11,6 +11,15 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 ## [Unreleased]
 
 ### Added
+- **Shared textures and material files.** Image files referenced by glTF
+  models now go through the AssetManager texture cache, so models exported
+  next to each other share one GPU texture per file. New `*.material` files
+  (`ve::MaterialAsset`, `assets().loadMaterial`) describe a StandardMaterial
+  (textures, values, optional custom shader with extra texture / parameter
+  slots); a glTF material uses `materials/<its name>.material` when it exists,
+  or the file its `material` custom property names. One shared Material per
+  file, reloaded live; editable in the editor (Assets > Materials).
+  `AssetManager::materialFolder = ""` turns name matching off.
 - **Decals.** `ve::DecalProjector` (component: editor Create > Decal, scene
   files, prefabs) and `Renderer::decals()` (`ve::DecalSystem`: transient
   decals such as bullet holes, with lifetime and fade-out) project textures

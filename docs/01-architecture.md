@@ -909,6 +909,19 @@ never see Jolt types. The module is split by concern: `PhysicsWorld.cpp`
   normal / metallic-roughness / emissive textures and factors), and the node
   hierarchy becomes `Model`.
   `scene.instantiate(model)` spawns a GameObject hierarchy with MeshRenderers.
+  Image files a glTF references go through the `AssetManager` texture cache
+  (canonical path + colour/data + sampler), so models exported side by side
+  ("glTF Separate") share one GPU texture per file; `.glb`-embedded images
+  stay per model.
+- Material files (`*.material`, `assets/MaterialAsset.hpp`): a
+  `StandardMaterial` (optionally with a custom vertex / fragment shader in its
+  layout, plus extra texture and parameter slots) described as JSON. A glTF
+  material uses one instead of its own values when its `material` custom
+  property (glTF extras) names it, or when `materials/<its name>.material`
+  exists (`AssetManager::materialFolder`; Blender's `.001` suffix ignored, lower
+  case tried too). One shared `Material` per file; files are `DataAssets`, so
+  edits on disk or in the editor (Assets > Materials) are re-applied in place
+  by `AssetManager::updateMaterials()` every frame.
 - Audio: `AudioClip` = path + decode mode, played through miniaudio's resource manager.
 
 ## 8. Audio

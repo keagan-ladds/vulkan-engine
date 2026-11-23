@@ -494,6 +494,11 @@ and ask the host for everything else (decision D19).
 - [x] Clustered forward decals: oriented boxes projecting albedo (mix / multiply), normal (+ flatten), roughness and metallic, each with its own opacity x alpha; angle / depth / distance / lifetime fades; sort order; receive layers. `DecalProjector` component (editor: Create > Decal, box gizmo, inspector; scene files) and `Renderer::decals()` for transient decals. Applied in `standard.frag` and `terrain.frag` before lighting (SSR sees wet puddles). Savanna: puddles in the camp, a cracked hut wall, V / pad left shoulder shoots bullet holes; the autotest checks projectors, lifetime expiry and a shot
 - [ ] Later: decals on grass / impostors, an atlas for many small decal textures, emissive decals (embers), GPU binning if thousands are in view
 
+### Shared assets ✅ (2026-11)
+- [x] glTF image files go through the AssetManager texture cache: models exported side by side share one GPU texture per file
+- [x] Material files (`*.material`, `MaterialAsset`): StandardMaterial values + textures, custom shader + extra slots; used by glTF materials by name (`materials/<name>.material`) or by a `material` custom property; one shared Material per file; live reload + editor (Assets > Materials). Savanna: the huts' thatch comes from `materials/thatch.material`; the autotest checks texture sharing, the material file and a live edit
+- [ ] Later: texture compression (BC7 / BC5, KTX2), per-instance material overrides
+
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`); compiles run in the background, the frame never waits for glslc
 - [x] Scene serialization (JSON scene files, editor save / load)

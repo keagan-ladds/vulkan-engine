@@ -1,7 +1,8 @@
 // Editor: the terrain's biome list (inspector) and the asset editor, a window
-// that edits one data file (.biome, .foliage, .grass) live. Edits go to the
-// shared DataAssets copy at once (the terrain, foliage and grass rebuild from
-// it within a quarter second); Save writes the file. See Editor.hpp.
+// that edits one data file (.biome, .foliage, .grass, .material) live. Edits go
+// to the shared DataAssets copy at once (the terrain, foliage and grass rebuild
+// from it within a quarter second, materials update in place); Save writes the
+// file. See Editor.hpp.
 
 #include "ve/assets/DataAsset.hpp"
 #include "ve/core/Engine.hpp"
@@ -24,7 +25,7 @@ using namespace editor_internal;
 
 namespace {
 
-enum class AssetKind { None, Biome, Foliage, Grass };
+enum class AssetKind { None, Biome, Foliage, Grass, Material };
 
 AssetKind kindOf(const std::string& path)
 {
@@ -32,6 +33,7 @@ AssetKind kindOf(const std::string& path)
     if (ext == ".biome") return AssetKind::Biome;
     if (ext == ".foliage") return AssetKind::Foliage;
     if (ext == ".grass") return AssetKind::Grass;
+    if (ext == ".material") return AssetKind::Material;
     return AssetKind::None;
 }
 
@@ -68,6 +70,7 @@ Json defaultContent(AssetKind kind, const std::string& name)
         j = BiomeVegetation::grassJson(g);
         break;
     }
+    case AssetKind::Material: j = MaterialAsset{}.toJson(); break;
     case AssetKind::None: break;
     }
     j["version"] = 1;
@@ -293,7 +296,8 @@ void Editor::drawAssetsMenu()
         const char* dir;
     };
     for (const Kind& k : {Kind{"Biomes", AssetKind::Biome, ".biome", "biomes/"}, Kind{"Foliage", AssetKind::Foliage, ".foliage", "foliage/"},
-                          Kind{"Grass", AssetKind::Grass, ".grass", "grass/"}}) {
+                          Kind{"Grass", AssetKind::Grass, ".grass", "grass/"},
+                          Kind{"Materials", AssetKind::Material, ".material", "materials/"}}) {
         if (!ImGui::BeginMenu(k.label)) continue;
         if (ImGui::MenuItem("New...")) {
             const std::string path = std::string(k.dir) + "new" + k.ext;
@@ -338,6 +342,7 @@ void Editor::loadAssetCopy()
         if (!m_assetGrass) m_assetGrass = std::make_unique<GrassLayer>();
         BiomeVegetation::applyGrassJson(*m_assetGrass, j);
         break;
+    case AssetKind::Material: m_assetMaterial = MaterialAsset::fromJson(j); break;
     case AssetKind::None: break;
     }
     m_assetSeen = DataAssets::generation();
@@ -350,6 +355,7 @@ void Editor::commitAssetCopy()
     case AssetKind::Biome: j = biomeToJson(m_assetBiome); break;
     case AssetKind::Foliage: j = BiomeVegetation::foliageJson(*m_assetFoliage); break;
     case AssetKind::Grass: j = BiomeVegetation::grassJson(*m_assetGrass); break;
+    case AssetKind::Material: j = m_assetMaterial.toJson(); break;
     case AssetKind::None: return;
     }
     j["version"] = 1;
@@ -424,6 +430,14 @@ void Editor::drawAssetEditor()
         break;
     case AssetKind::Grass:
         fieldsOf("GrassLayer", m_assetGrass.get());
+        break;
+    case AssetKind::Material:
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextDisabled("Shared by every model whose glTF material is named '%s' (or names this file in its "
+                            "\"material\" custom property). Same file in metallicRoughness and occlusion = one ORM texture.",
+                            stem(m_assetPath).c_str());
+        ImGui::PopTextWrapPos();
+        fieldsOf("MaterialAsset", &m_assetMaterial);
         break;
     case AssetKind::None:
         ImGui::TextDisabled("Not an editable asset type.");

@@ -165,6 +165,40 @@ made with `createFullscreenPipeline` / `createComputePipeline`. Keep those as
 `ve::PipelineHandle` members, which always give the current `VkPipeline`. New
 shader files still need a rebuild. `VE_SHADER_HOT_RELOAD=0` turns it off.
 
+### Share textures and materials between models
+
+Export from Blender as **glTF Separate** (.gltf + .bin + images) with every
+model writing into one folder tree, e.g. `assets/models/buildings/*.gltf` and
+a shared `assets/models/buildings/textures/`. Image files are cached by path,
+so all models that reference `concrete_albedo.png` share one GPU texture
+(`.glb` files embed their images: one copy per model).
+
+To share one *material* (and tune it in one place), add a material file named
+after the Blender material, `assets/materials/Concrete.material`:
+
+```json
+{
+  "version": 1,
+  "albedo": "models/buildings/textures/concrete_albedo.png",
+  "normal": "models/buildings/textures/concrete_normal.png",
+  "metallicRoughness": "models/buildings/textures/concrete_orm.png",
+  "occlusion": "models/buildings/textures/concrete_orm.png",
+  "roughness": 1.0, "metallic": 1.0, "uvScale": [1, 1]
+}
+```
+
+Every glTF material called `Concrete` (or `Concrete.001`...) now uses this one
+material instead of its own. Or name the file explicitly with a custom
+property `material` = `materials/concrete.material` on the Blender material
+(export with Include > Custom Properties). From code:
+`assets().loadMaterial("materials/concrete.material")`. Edit it live in the
+editor (Assets > Materials) or in a text editor; Save writes the file.
+
+Custom shaders keep StandardMaterial's layout and add inputs:
+`"fragmentShader": "mygame_painted.frag"`,
+`"textures": [{"slot": 5, "path": "textures/grunge.png", "srgb": false}]`,
+`"params": [{"slot": 4, "value": [0.5, 1, 0, 0]}]` (see `MaterialAsset.hpp`).
+
 ### Decals: bullet holes, puddles, cracks
 
 A decal is a box that projects along its -Z (forward) onto every surface
