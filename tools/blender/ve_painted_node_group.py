@@ -12,6 +12,21 @@ rebuilds, so it's safe to run again after updating the script):
   * material "VE Painted Example": the group wired up the way the engine
     samples things (see "Wiring" below). Copy it, or copy its nodes.
 
+Exporting the engine's material file
+------------------------------------
+Properties editor > Material tab > "VE Engine" panel > Export VE material
+writes assets/materials/<material name>.material from the material's VE
+Painted node (values, images, the overlay scale and the UV Mapping scale), so
+the engine replaces the exported glTF material with the same look. The
+assets folder is found above the .blend (or set it in the panel). Export the
+model itself as glTF Separate with Data > Mesh > Vertex Color = Active (the
+paint is in the vertex colours; "Material" may drop it, the group hides the
+Color Attribute node). Images must be files under assets/ (not packed).
+
+Always available: install this file as an add-on (Preferences > Add-ons >
+Install from Disk), then the panel is in every file; its "Create / update VE
+Painted" button builds the node group in the current file.
+
 To reuse it in every project: save this .blend somewhere permanent, right-click
 the group in the Asset Browser (it is marked as an asset by this script) or add
 the .blend's folder under Preferences > File Paths > Asset Libraries, then drag
@@ -66,6 +81,16 @@ Not reproduced (small differences)
     Blender scene. Use the AgX view transform, one sun and a plain world colour
     to get close; judge final looks in the engine (material files reload live).
 """
+
+bl_info = {
+    "name": "VE Painted (vulkan-engine materials)",
+    "author": "vulkan-engine",
+    "version": (1, 1, 0),
+    "blender": (4, 0, 0),
+    "location": "Properties > Material > VE Engine",
+    "description": "The engine's painted shader as a node group, and export of its .material files",
+    "category": "Material",
+}
 
 import bpy
 
@@ -422,6 +447,248 @@ def connect_example_images(mat):
         tree.links.new(out, socket(group_node.inputs, target))
 
 
+# --- Exporting the engine's material file -----------------------------------
+#
+# Properties editor > Material tab > "VE Engine" panel:
+#   Assets folder   the game's assets/ folder (found by itself when the .blend
+#                   lives inside the project; saved in the .blend)
+#   Export VE material
+#       writes <assets>/materials/<material name>.material from the active
+#       material's "VE Painted" node: its values and the images plugged into
+#       it (paths relative to the assets folder). Fields the export doesn't
+#       manage (mode, receiveDecals, ...) of an existing file are kept.
+
+import json
+import os
+
+
+def _upstream(sock, depth=0):
+    """The node (and its output socket) feeding `sock`, skipping reroutes."""
+    if not sock.is_linked or depth > 16:
+        return None, None
+    link = sock.links[0]
+    node = link.from_node
+    if node.type == "REROUTE":
+        return _upstream(node.inputs[0], depth + 1)
+    return node, link.from_socket
+
+
+def _image_node(sock):
+    node, _ = _upstream(sock)
+    return node if node is not None and node.type == "TEX_IMAGE" else None
+
+
+def find_assets_root(start):
+    """The nearest folder named "assets" at or above `start` (the .blend's folder)."""
+    d = os.path.abspath(start) if start else ""
+    while d and os.path.dirname(d) != d:
+        if os.path.basename(d) == "assets":
+            return d
+        candidate = os.path.join(d, "assets")
+        if os.path.isdir(candidate):
+            return candidate
+        d = os.path.dirname(d)
+    return ""
+
+
+def _assets_root(context):
+    root = bpy.path.abspath(context.scene.ve_assets_root) if context.scene.ve_assets_root else ""
+    if not root and bpy.data.filepath:
+        root = find_assets_root(os.path.dirname(bpy.data.filepath))
+    return os.path.normpath(root) if root else ""
+
+
+def material_base_name(name):
+    """Blender's "Concrete.001" uses Concrete's file, as the engine looks it up."""
+    base, dot, suffix = name.rpartition(".")
+    return base if dot and suffix.isdigit() else name
+
+
+def export_material(mat, assets_root):
+    """Writes the material file; returns (path, warnings)."""
+    tree = mat.node_tree
+    g = next((n for n in tree.nodes if n.type == "GROUP" and n.node_tree and n.node_tree.name.startswith(GROUP_NAME)), None)
+    if g is None:
+        raise RuntimeError(f"'{mat.name}' has no '{GROUP_NAME}' node")
+    warnings = []
+
+    def image_path(sock, what):
+        node = _image_node(sock)
+        if node is None:
+            if sock.is_linked:
+                warnings.append(f"{what}: not an Image Texture node directly (ignored)")
+            return None, None
+        if node.image is None:
+            warnings.append(f"{what}: the image node has no image (ignored)")
+            return None, node
+        if node.image.packed_file or not node.image.filepath:
+            warnings.append(f"{what}: '{node.image.name}' is packed / unsaved: save it as a file under assets/")
+            return None, node
+        path = os.path.normpath(bpy.path.abspath(node.image.filepath, library=node.image.library))
+        rel = os.path.relpath(path, assets_root) if assets_root else path
+        if rel.startswith(".."):
+            warnings.append(f"{what}: {path} is outside the assets folder (absolute path written: not portable)")
+            return path.replace("\\", "/"), node
+        return rel.replace("\\", "/"), node
+
+    def value(name):
+        v = socket(g.inputs, name).default_value
+        try:
+            return [round(float(x), 4) for x in v]
+        except TypeError:
+            return round(float(v), 4)
+
+    def color3(name):
+        return value(name)[:3]
+
+    data = {"version": 1, "fragmentShader": "standard_painted.frag", "vertexColorWeight": 0}
+
+    # Base colour: an image (+ white), or the colour itself.
+    albedo, albedo_node = image_path(socket(g.inputs, "Base Color"), "Base Color")
+    if albedo:
+        data["albedo"] = albedo
+        data["baseColor"] = [1.0, 1.0, 1.0, value("Alpha") if not socket(g.inputs, "Alpha").is_linked else 1.0]
+    else:
+        data["albedo"] = ""
+        data["baseColor"] = color3("Base Color") + [value("Alpha")]
+    orm, _ = image_path(socket(g.inputs, "ORM"), "ORM")
+    data["metallicRoughness"] = orm or ""
+    data["occlusion"] = orm or ""  # glTF ORM: R = ambient occlusion (the engine uses it; Blender's preview doesn't)
+    normal, _ = image_path(socket(g.inputs, "Normal Map"), "Normal Map")
+    data["normal"] = normal or ""
+    data["roughness"] = value("Roughness")
+    data["metallic"] = value("Metallic")
+    data["normalStrength"] = value("Normal Strength")
+
+    # uvScale: a Mapping node's scale on the base colour image's UVs.
+    uv_scale = [1.0, 1.0]
+    if albedo_node is not None:
+        mapping, _ = _upstream(socket(albedo_node.inputs, "Vector"))
+        if mapping is not None and mapping.type == "MAPPING" and not socket(mapping.inputs, "Scale").is_linked:
+            sc = socket(mapping.inputs, "Scale").default_value
+            uv_scale = [round(sc[0], 4), round(sc[1], 4)]
+    data["uvScale"] = uv_scale
+
+    # Overlay images (slots 5-7) and their world scale (the Vector Math Scale
+    # node, or its Value node, feeding their coordinates).
+    textures, overlay_scale = [], None
+    for slot, name in ((5, "Dirt Texture"), (6, "Grunge"), (7, "Wear Texture")):
+        path, node = image_path(socket(g.inputs, name), name)
+        if path:
+            textures.append({"slot": slot, "path": path})
+        if node is not None and overlay_scale is None:
+            vm, _ = _upstream(socket(node.inputs, "Vector"))
+            if vm is not None and vm.type == "VECT_MATH" and vm.operation == "SCALE":
+                src, _ = _upstream(socket(vm.inputs, "Scale"))
+                overlay_scale = src.outputs[0].default_value if src is not None and src.type == "VALUE" else socket(vm.inputs, "Scale").default_value
+            elif node.projection != "BOX":
+                warnings.append(f"{name}: not box-projected on world position x scale: the engine samples it that way")
+    if socket(g.inputs, "Grunge").is_linked is False and value("Grunge Breakup") > 0:
+        warnings.append("Grunge Breakup > 0 without a grunge image: the engine uses no breakup then")
+    data["textures"] = textures
+    data["params"] = [
+        {"slot": 4, "value": [value("Dirt Strength"), value("Wear Strength"), value("Wet Strength"), value("Grunge Breakup")]},
+        {"slot": 5, "value": color3("Dirt Color") + [value("Dirt Roughness")]},
+        {"slot": 6, "value": color3("Wear Color") + [value("Wear Roughness")]},
+        {"slot": 7, "value": [round(float(overlay_scale if overlay_scale is not None else 0.5), 4), value("Edge Sharpness"),
+                              value("Wet Darkening"), value("Wet Roughness")]},
+        {"slot": 8, "value": [value("Invert Dirt"), value("Invert Wear"), value("Invert Wet"), 0.0]},
+    ]
+
+    path = os.path.join(assets_root, "materials", material_base_name(mat.name) + ".material")
+    existing = {}
+    if os.path.isfile(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                existing = json.load(f)
+        except (OSError, ValueError):
+            warnings.append(f"{path} wasn't valid JSON: replaced")
+    existing.update(data)  # (keeps fields this export doesn't manage: mode, receiveDecals, ...)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(existing, f, indent=2)
+        f.write("\n")
+    return path, warnings
+
+
+class VE_OT_export_material(bpy.types.Operator):
+    """Write the engine's .material file for this material (its VE Painted node's values and images)"""
+    bl_idname = "ve.export_material"
+    bl_label = "Export VE material"
+    bl_options = {"REGISTER"}
+
+    @classmethod
+    def poll(cls, context):
+        return getattr(context, "material", None) is not None
+
+    def execute(self, context):
+        root = _assets_root(context)
+        if not root or not os.path.isdir(root):
+            self.report({"ERROR"}, "Set the assets folder (VE Engine panel) first")
+            return {"CANCELLED"}
+        try:
+            path, warnings = export_material(context.material, root)
+        except RuntimeError as e:
+            self.report({"ERROR"}, str(e))
+            return {"CANCELLED"}
+        for w in warnings:
+            self.report({"WARNING"}, w)
+        self.report({"INFO"}, f"Wrote {path}")
+        return {"FINISHED"}
+
+
+class VE_OT_build_group(bpy.types.Operator):
+    """Create / update the VE Painted node group and example material in this file"""
+    bl_idname = "ve.build_painted_group"
+    bl_label = "Create / update VE Painted"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        main()
+        self.report({"INFO"}, f"{GROUP_NAME} node group ready")
+        return {"FINISHED"}
+
+
+class VE_PT_material(bpy.types.Panel):
+    bl_label = "VE Engine"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "material"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(context.scene, "ve_assets_root")
+        root = _assets_root(context)
+        if root and not context.scene.ve_assets_root:
+            layout.label(text=f"Found: {root}", icon="INFO")
+        mat = getattr(context, "material", None)
+        if mat is not None:
+            layout.label(text="-> materials/" + material_base_name(mat.name) + ".material")
+        layout.operator(VE_OT_export_material.bl_idname, icon="EXPORT")
+        layout.operator(VE_OT_build_group.bl_idname, icon="NODETREE")
+
+
+_classes = (VE_OT_export_material, VE_OT_build_group, VE_PT_material)
+
+
+def register():
+    bpy.types.Scene.ve_assets_root = bpy.props.StringProperty(
+        name="Assets folder", subtype="DIR_PATH",
+        description="The game's assets/ folder (empty: found above this .blend)")
+    for c in _classes:
+        try:
+            bpy.utils.unregister_class(c)  # (running the script again)
+        except RuntimeError:
+            pass
+        bpy.utils.register_class(c)
+
+
+def unregister():
+    for c in reversed(_classes):
+        bpy.utils.unregister_class(c)
+    del bpy.types.Scene.ve_assets_root
+
+
 def main():
     if bpy.app.version < (4, 0, 0):
         raise RuntimeError("VE Painted needs Blender 4.0 or newer (node group interface API)")
@@ -435,4 +702,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # Run from the Text Editor: build the group and add the VE Engine panel
+    # (for this session; install the file as an add-on to always have it).
     main()
+    register()

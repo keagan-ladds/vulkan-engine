@@ -213,7 +213,14 @@ and inputs named like the material file's values, plus an example material
 showing the wiring, so vertex / texture painting looks like the engine while
 you paint. Mark it as an asset (the script does) to reuse it in every
 project. `tools/blender/test_ve_painted.py` checks the group against the
-shader (needs `pip install bpy`).
+shader (needs `pip install bpy`). **Getting it into the engine:** the glTF
+exporter can't describe the group, so the engine uses a material file named
+after the Blender material instead: Material tab > VE Engine > **Export VE
+material** writes `assets/materials/<name>.material` from the node's values
+and images. Export the model as glTF Separate with Data > Mesh > Vertex Color
+= **Active** (the paint lives in the vertex colours). The script also installs
+as an add-on (Preferences > Add-ons > Install from Disk) to have the panel in
+every file.
 
 ### Decals: bullet holes, puddles, cracks
 

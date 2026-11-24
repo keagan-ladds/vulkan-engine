@@ -41,7 +41,9 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 - **Blender node group for the painted shader**
   (`tools/blender/ve_painted_node_group.py`): "VE Painted" reproduces
   `standard_painted.frag` in Blender so painted assets look the same while you
-  paint; `tools/blender/test_ve_painted.py` checks the two agree.
+  paint; `tools/blender/test_ve_painted.py` checks the two agree. Its
+  "Export VE material" button (Material tab > VE Engine; also installable as
+  an add-on) writes the engine's `.material` file from the node.
 - **`standard_painted.frag`**: the standard shader plus vertex-painted dirt
   (R), wear (G) and wetness (B), with optional triplanar dirt / grunge / wear
   textures; use it from a material file (`"fragmentShader"`). A placeholder
