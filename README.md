@@ -68,8 +68,13 @@ cmake --build --preset vs2022-debug            # or vs2022-release
 
 Or open the folder in Visual Studio 2022 and pick the `debug` / `release` preset
 (Ninja). Test hooks work the same way, for example
-`$env:SAVANNA_AUTOTEST=1; .\build-vs\bin\savanna.exe` in PowerShell. (VS Code's
-F5 configurations use GCC and gdb on Windows too: see the MinGW-w64 section below.)
+`$env:SAVANNA_AUTOTEST=1; .\build-vs\bin\savanna.exe` in PowerShell.
+
+**VS Code with MSVC:** pick a "(MSVC Debug)" / "(MSVC Release)" configuration
+in Run and Debug (needs the C/C++ extension). It builds with the `vs2022`
+preset into `build-vs\` and runs under Visual Studio's debugger: symbols go in
+a separate `.pdb`, so the Debug `.exe` stays small and the debugger starts
+quickly. The other F5 configurations use GCC and gdb (MinGW-w64 section below).
 
 #### MinGW-w64 / GCC (w64devkit) instead of Visual Studio
 

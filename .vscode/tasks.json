@@ -5,8 +5,11 @@
     //  - Linux:   the system compiler (g++).
     //  - Windows: MinGW-w64 GCC (e.g. w64devkit: gcc, g++, cmake, ninja, gdb on
     //             PATH) plus the Vulkan SDK. The compilers are named so CMake
-    //             doesn't pick Visual Studio's cl.exe. For an MSVC build use the
-    //             vs2022 CMake preset (see README) - it builds in build-vs/.
+    //             doesn't pick Visual Studio's cl.exe.
+    //  - "MSVC" tasks (Windows): Visual Studio 2022's compiler via the vs2022
+    //             CMake preset, in build-vs/ (Debug and Release share
+    //             build-vs/bin: whichever was built last is there). No developer
+    //             prompt needed: CMake finds Visual Studio itself.
     // Tasks run cmake directly (no shell), so any default terminal works.
     "version": "2.0.0",
     "tasks": [
@@ -53,6 +56,34 @@
             "options": { "cwd": "${workspaceFolder}" },
             "group": "build",
             "problemMatcher": { "base": "$gcc", "fileLocation": ["autoDetect", "${workspaceFolder}/build-release"] }
+        },
+        {
+            "label": "Configure MSVC",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--preset", "vs2022"],
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build MSVC Debug",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "--preset", "vs2022-debug", "--", "/m", "/v:minimal", "/nologo"],
+            "dependsOn": "Configure MSVC",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "build",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Build MSVC Release",
+            "type": "process",
+            "command": "cmake",
+            "args": ["--build", "--preset", "vs2022-release", "--", "/m", "/v:minimal", "/nologo"],
+            "dependsOn": "Configure MSVC",
+            "options": { "cwd": "${workspaceFolder}" },
+            "group": "build",
+            "problemMatcher": "$msCompile"
         },
         {
             "label": "Regenerate sandbox assets",
