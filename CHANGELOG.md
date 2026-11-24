@@ -44,6 +44,11 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   paint; `tools/blender/test_ve_painted.py` checks the two agree. Its
   "Export VE material" button (Material tab > VE Engine; also installable as
   an add-on) writes the engine's `.material` file from the node.
+- **Baked normal for `standard_painted.frag`**: texture slot 8 (params slot
+  9: strength, UV scale) takes a per-asset normal map on the mesh's own UVs,
+  whiteout-blended over the material's tiled normal map: a generic tiled
+  surface plus damage baked per asset. The Blender node group has matching
+  "Baked Normal" inputs and the material export writes them.
 - **`standard_painted.frag`**: the standard shader plus vertex-painted dirt
   (R), wear (G) and wetness (B), with optional triplanar dirt / grunge / wear
   textures; use it from a material file (`"fragmentShader"`). A placeholder

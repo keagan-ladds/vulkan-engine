@@ -48,6 +48,9 @@ Inputs = the material file's values
   Base Color / Roughness / Metallic          "baseColor", "roughness", "metallic" (x the textures)
   ORM                                        "metallicRoughness" texture (G roughness, B metallic; Non-Color)
   Normal Map / Normal Strength               "normal" texture (Non-Color), "normalStrength"
+  Baked Normal / Baked Normal Strength       textures[8] (Non-Color), params[9].x: a per-asset normal
+                                             map (damage baked in Blender) on the mesh's own UVs (not
+                                             uvScale), whiteout-blended over the tiled Normal Map"
   Alpha                                      base colour alpha (Cutout / Transparent modes)
   Dirt / Wear / Wet Strength, Grunge Breakup params[4] x, y, z, w
   Dirt Color, Dirt Roughness                 params[5] rgb, w   (linear colour, as Blender stores it)
@@ -244,6 +247,8 @@ def build_group():
     add_input(group, "ORM", "NodeSocketColor", (1.0, 1.0, 1.0, 1.0))
     add_input(group, "Normal Map", "NodeSocketColor", (0.5, 0.5, 1.0, 1.0))
     add_input(group, "Normal Strength", "NodeSocketFloat", 1.0, 0.0, 4.0)
+    add_input(group, "Baked Normal", "NodeSocketColor", (0.5, 0.5, 1.0, 1.0))
+    add_input(group, "Baked Normal Strength", "NodeSocketFloat", 1.0, 0.0, 4.0)
     paint = ["Dirt Strength", "Wear Strength", "Wet Strength", "Grunge Breakup", "Edge Sharpness"]
     add_input(group, "Dirt Strength", "NodeSocketFloat", 1.0, 0.0, 1.0, factor=True)
     add_input(group, "Wear Strength", "NodeSocketFloat", 1.0, 0.0, 1.0, factor=True)
@@ -273,7 +278,8 @@ def build_group():
     add_output(group, "BSDF", "NodeSocketShader")
     for name in ("Dirt Mask", "Wear Mask", "Wet Mask"):
         add_output(group, name, "NodeSocketFloat")
-    keep = {("INPUT", n) for n in ("Base Color", "Alpha", "Roughness", "Metallic", "ORM", "Normal Map", "Normal Strength")}
+    keep = {("INPUT", n) for n in ("Base Color", "Alpha", "Roughness", "Metallic", "ORM", "Normal Map", "Normal Strength",
+                                   "Baked Normal", "Baked Normal Strength")}
     keep |= {("INPUT", n) for _, names in panels for n in names}
     keep |= {("OUTPUT", n) for n in ("BSDF", "Dirt Mask", "Wear Mask", "Wet Mask")}
     keep |= {("PANEL", title) for title, _ in panels}
@@ -344,9 +350,41 @@ def build_group():
     alb3 = b.mix("RGBA", 1.0, alb2, socket(scale_rgb.outputs, "Color"), 1250, 100, label="wet darkening", blend="MULTIPLY")
     rough3 = b.mix("FLOAT", wet_mask, rough2, I("Wet Roughness"), 1100, -200, label="wet roughness")
 
-    nmap = b.node("ShaderNodeNormalMap", -800, -450)  # tangent space, the mesh's UVs (OpenGL convention, like the engine)
-    b.link(I("Normal Map"), socket(nmap.inputs, "Color"))
-    b.link(I("Normal Strength"), socket(nmap.inputs, "Strength"))
+    # Tangent-space normals, as the shader does them: each map decoded
+    # (texel * 2 - 1), its X/Y tilt scaled by its strength, the baked one
+    # whiteout-blended over the tiled one (X, Y added; Z multiplied), then one
+    # Normal Map node (tangent space, the mesh's UVs; OpenGL convention).
+    def decoded(color_name, strength_name, y):
+        v = b.node("ShaderNodeVectorMath", -1100, y, operation="MULTIPLY_ADD", label=color_name + " * 2 - 1")
+        v.hide = True
+        b.link(I(color_name), v.inputs[0])
+        v.inputs[1].default_value = (2.0, 2.0, 2.0)
+        v.inputs[2].default_value = (-1.0, -1.0, -1.0)
+        xyz = b.node("ShaderNodeSeparateXYZ", -950, y)
+        xyz.hide = True
+        b.link(v.outputs[0], xyz.inputs[0])
+        x = b.math("MULTIPLY", xyz.outputs[0], I(strength_name), -800, y)
+        yy = b.math("MULTIPLY", xyz.outputs[1], I(strength_name), -800, y - 40)
+        return x, yy, xyz.outputs[2]
+
+    x1, y1, z1 = decoded("Normal Map", "Normal Strength", -450)
+    x2, y2, z2 = decoded("Baked Normal", "Baked Normal Strength", -560)
+    blended = b.node("ShaderNodeCombineXYZ", -650, -480, label="whiteout blend")
+    blended.hide = True
+    b.link(b.math("ADD", x1, x2, -700, -450), blended.inputs[0])
+    b.link(b.math("ADD", y1, y2, -700, -490), blended.inputs[1])
+    b.link(b.math("MULTIPLY", z1, z2, -700, -530), blended.inputs[2])
+    unit = b.node("ShaderNodeVectorMath", -550, -480, operation="NORMALIZE")
+    unit.hide = True
+    b.link(blended.outputs[0], unit.inputs[0])
+    encoded = b.node("ShaderNodeVectorMath", -450, -480, operation="MULTIPLY_ADD", label="* 0.5 + 0.5")
+    encoded.hide = True
+    b.link(socket(unit.outputs, "Vector"), encoded.inputs[0])
+    encoded.inputs[1].default_value = (0.5, 0.5, 0.5)
+    encoded.inputs[2].default_value = (0.5, 0.5, 0.5)
+    nmap = b.node("ShaderNodeNormalMap", -300, -450)
+    b.link(encoded.outputs[0], socket(nmap.inputs, "Color"))
+    socket(nmap.inputs, "Strength").default_value = 1.0  # (strengths applied above, like the engine)
     geo = b.node("ShaderNodeNewGeometry", -800, -650)
     flatten = b.math("MULTIPLY", wet_mask, 0.8, 950, -450)
     n_mix = b.mix("VECTOR", flatten, socket(nmap.outputs, "Normal"), socket(geo.outputs, "Normal"), 1100, -450, label="water fills the bumps")
@@ -404,6 +442,14 @@ def build_example(group):
         img["ve_connect_to"] = target
         img["ve_non_color"] = non_color
         y -= 280
+
+    # The baked normal: the mesh's own UVs (not uvScale), with its own scale.
+    baked_map = b.node("ShaderNodeMapping", -700, -80, label="baked normal UV scale (params[9].yz)")
+    b.link(socket(uv.outputs, "UV"), socket(baked_map.inputs, "Vector"))
+    img = b.node("ShaderNodeTexImage", -400, -100, label="Baked normal (Non-Color) -> Baked Normal")
+    b.link(socket(baked_map.outputs, "Vector"), socket(img.inputs, "Vector"))
+    img["ve_connect_to"] = "Baked Normal"
+    img["ve_non_color"] = True
 
     # World-space, box-projected overlays (the shader's triplanar sampling).
     geo = b.node("ShaderNodeNewGeometry", -1100, -500)
@@ -585,6 +631,15 @@ def export_material(mat, assets_root):
                 warnings.append(f"{name}: not box-projected on world position x scale: the engine samples it that way")
     if socket(g.inputs, "Grunge").is_linked is False and value("Grunge Breakup") > 0:
         warnings.append("Grunge Breakup > 0 without a grunge image: the engine uses no breakup then")
+    # Baked normal (slot 8) and params[9]: strength, its UV scale (a Mapping node on its UVs).
+    baked, baked_node = image_path(socket(g.inputs, "Baked Normal"), "Baked Normal")
+    baked_scale = [1.0, 1.0]
+    if baked:
+        textures.append({"slot": 8, "path": baked})
+        mapping, _ = _upstream(socket(baked_node.inputs, "Vector"))
+        if mapping is not None and mapping.type == "MAPPING" and not socket(mapping.inputs, "Scale").is_linked:
+            sc = socket(mapping.inputs, "Scale").default_value
+            baked_scale = [round(sc[0], 4), round(sc[1], 4)]
     data["textures"] = textures
     data["params"] = [
         {"slot": 4, "value": [value("Dirt Strength"), value("Wear Strength"), value("Wet Strength"), value("Grunge Breakup")]},
@@ -593,6 +648,7 @@ def export_material(mat, assets_root):
         {"slot": 7, "value": [round(float(overlay_scale if overlay_scale is not None else 0.5), 4), value("Edge Sharpness"),
                               value("Wet Darkening"), value("Wet Roughness")]},
         {"slot": 8, "value": [value("Invert Dirt"), value("Invert Wear"), value("Invert Wet"), 0.0]},
+        {"slot": 9, "value": [value("Baked Normal Strength")] + baked_scale + [0.0]},
     ]
 
     path = os.path.join(assets_root, "materials", material_base_name(mat.name) + ".material")

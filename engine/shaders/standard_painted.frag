@@ -44,9 +44,19 @@
 //   params[7]   = x overlay scale (repeats per metre, world space; 0 = 0.5),
 //                 y edge sharpness (>= 1; 0 = 3), z wet darkening (0..1), w wet roughness
 //   params[8]   = xyz invert dirt / wear / wet mask (1 = white is clean), w unused
+//   params[9]   = baked normal (textures[8]): x strength (0 = 1), yz UV scale (0 = 1), w unused
 //   textures[5] = dirt albedo (sRGB)          triplanar in world space, so it
 //   textures[6] = grunge / breakup mask (R)   doesn't depend on the mesh's UVs
 //   textures[7] = wear albedo (sRGB)          and continues across modular pieces
+//   textures[8] = baked normal (optional): a per-asset tangent-space normal map
+//                 (damage, chips, dents baked in Blender) on the mesh's own UVs,
+//                 NOT scaled by uvScale (params[3].xy): the material's normal map
+//                 (textures[1]) can tile a generic surface while this one stays
+//                 unique to the asset. Combined with it by "whiteout" blending
+//                 (X/Y tilts added, Z multiplied): the damage bends the surface
+//                 and the tiled grain stays visible on it. Bake it in the same
+//                 tangent space the engine uses: export glTF with tangents
+//                 (Data > Mesh > Tangents), else the engine computes its own.
 // All-zero params 4-8 (a material without them) = plain standard.frag.
 // =============================================================================
 #include "ve_lighting.glsl"
@@ -99,9 +109,21 @@ void main()
     vec3 N = normalize(inNormal);
     if (!gl_FrontFacing) N = -N;
     vec3 Ng = N;
-    if (m.textures[1] != VE_INVALID) {
-        vec3 tn = veUnpackNormal(veSample(m.textures[1], uv));
-        tn.xy *= m.params[1].z;
+    if (m.textures[1] != VE_INVALID || m.textures[8] != VE_INVALID) {
+        // Tangent space: the material's (tiled) normal map, then the asset's
+        // baked one (unique UVs) blended over it.
+        vec3 tn = vec3(0.0, 0.0, 1.0);
+        if (m.textures[1] != VE_INVALID) {
+            tn = veUnpackNormal(veSample(m.textures[1], uv));
+            tn.xy *= m.params[1].z;
+        }
+        if (m.textures[8] != VE_INVALID) {
+            vec4 b = m.params[9];
+            vec2 bakedUV = inUV * vec2(b.y > 0.0 ? b.y : 1.0, b.z > 0.0 ? b.z : 1.0);
+            vec3 bn = veUnpackNormal(veSample(m.textures[8], bakedUV));
+            bn.xy *= b.x > 0.0 ? b.x : 1.0;
+            tn = vec3(tn.xy + bn.xy, tn.z * bn.z); // whiteout blend
+        }
         vec3 T = normalize(inTangent.xyz - N * dot(N, inTangent.xyz));
         vec3 B = cross(N, T) * inTangent.w;
         N = normalize(mat3(T, B, N) * tn);

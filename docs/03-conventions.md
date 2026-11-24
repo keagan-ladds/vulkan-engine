@@ -205,7 +205,11 @@ Custom shaders keep StandardMaterial's layout and add inputs:
 masks (R dirt, G wear, B wet; fill the colour attribute with black first)
 with optional dirt / grunge / wear textures in slots 5-7 and settings in
 params 4-8 (documented at the top of the shader). It's a starting point:
-copy it into your game as `mygame_painted.frag` to change it. Savanna's
+copy it into your game as `mygame_painted.frag` to change it. A **baked
+normal** (texture slot 8, settings params slot 9: strength, UV scale) adds a
+per-asset normal map on the mesh's own UVs (damage baked in Blender) on top of
+the material's tiled normal map; export the glTF with tangents
+(Data > Mesh > Tangents) so the engine uses the tangent space it was baked in. Savanna's
 `SAVANNA_PAINTTEST=1` shows a test wall (`materials/painted_test.material`).
 **In Blender:** run `tools/blender/ve_painted_node_group.py` once (Scripting
 workspace, Run Script). It makes a "VE Painted" node group with the same maths
