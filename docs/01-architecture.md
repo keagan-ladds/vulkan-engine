@@ -143,6 +143,13 @@ nearest first, after play starts), and the terrain's first LOD view is
 built on the job pool with no per-frame upload budget while loading
 (Savanna: about 0.9 s to play in Release, was 2.4 s).
 
+Scene files load the same way (`Engine::addSceneLoad`, `SceneSerializer::
+loadAsync` -> `SceneLoad`): the file is read and parsed on the job pool, then
+objects are created a time slice per frame as a step spanning frames
+(`addLoadStepOverFrames`). Meanwhile `Scene::holdStarts()` keeps them from
+starting, so they start together once the file is in (after the caller's
+`then`), as a synchronous load would.
+
 **In the editor** (Edit mode, or a game started in it): `beginLoading`
 shows no loading scene. Frames stay normal editor frames (the world paused,
 drawn as it fills in), one load step runs per frame, and the editor draws a

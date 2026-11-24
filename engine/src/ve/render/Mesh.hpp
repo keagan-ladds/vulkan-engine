@@ -19,9 +19,10 @@ namespace ve {
 
 class Renderer;
 
+/// A part of a mesh drawn with one material: an index range.
 struct Submesh {
-    uint32_t firstIndex = 0;
-    uint32_t indexCount = 0;
+    uint32_t firstIndex = 0;   ///< First index in the mesh's index buffer.
+    uint32_t indexCount = 0;   ///< Number of indices (3 per triangle).
     uint32_t materialSlot = 0; ///< which entry of MeshRenderer::materials to use
     AABB bounds;               ///< local-space bounds of just this submesh
 };
@@ -41,8 +42,8 @@ struct SimplifyOptions {
 
 /// CPU-side mesh data with a few useful operations for procedural geometry.
 struct MeshData {
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
+    std::vector<Vertex> vertices;   ///< The vertices.
+    std::vector<uint32_t> indices;  ///< Triangles: three indices into vertices each (counter-clockwise = front).
 
     /// Appends another mesh, transforming positions/normals and optionally tinting it.
     void append(const MeshData& other, const glm::mat4& transform = glm::mat4(1.0f),
@@ -54,8 +55,9 @@ struct MeshData {
     void makeFlatShaded();
     /// Tangents for normal mapping (needs normals + uvs).
     void computeTangents();
-    void setColor(const glm::vec4& color);
-    AABB bounds() const;
+    void setColor(const glm::vec4& color);  ///< Sets every vertex's colour.
+    AABB bounds() const;                    ///< Bounds of the vertices.
+    /// Number of triangles.
     uint32_t triangleCount() const { return static_cast<uint32_t>(indices.size() / 3); }
 
     /// A simplified copy (one LOD level). All triangles are treated as one
@@ -66,6 +68,9 @@ struct MeshData {
     void optimize();
 };
 
+/// Geometry on the GPU: a vertex and an index buffer with submeshes. Shared
+/// (shared_ptr) by renderers and instance groups; freed safely when the last
+/// user lets go.
 class Mesh {
 public:
     /// Uploads `data` to the GPU. If `submeshes` is empty a single submesh
@@ -82,18 +87,19 @@ public:
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
 
+    /// The vertex buffer (another object's, for shared meshes).
     VkBuffer vertexBuffer() const { return m_sharedVertices ? m_sharedVertices : m_vertices.handle; }
     VkDeviceSize vertexOffset() const { return m_vertexOffset; } ///< bind the vertex buffer at this byte offset
     /// Binds the vertex buffer (at vertexOffset()) to binding 0 and the 32-bit index buffer.
     void bind(VkCommandBuffer cmd) const;
     /// Moving geometry (skinning): every submesh gets these bounds.
     void setBounds(const AABB& bounds);
-    VkBuffer indexBuffer() const { return m_indices.handle; }
-    const std::vector<Submesh>& submeshes() const { return m_submeshes; }
-    const AABB& bounds() const { return m_bounds; }
-    uint32_t vertexCount() const { return m_vertexCount; }
-    uint32_t indexCount() const { return m_indexCount; }
-    const std::string& name() const { return m_name; }
+    VkBuffer indexBuffer() const { return m_indices.handle; }             ///< The index buffer (32-bit indices).
+    const std::vector<Submesh>& submeshes() const { return m_submeshes; } ///< Its submeshes.
+    const AABB& bounds() const { return m_bounds; }                       ///< Local-space bounds.
+    uint32_t vertexCount() const { return m_vertexCount; }                ///< Number of vertices.
+    uint32_t indexCount() const { return m_indexCount; }                  ///< Number of indices.
+    const std::string& name() const { return m_name; }                    ///< Debug name.
 
 private:
     Mesh() = default;

@@ -29,28 +29,32 @@ class Device;
 class Swapchain;
 class RenderGraph;
 
+/// A photo capture (Renderer::beginPhotoCapture).
 struct PhotoCaptureSettings {
-    uint32_t width = 0, height = 0;
-    uint32_t samples = 64;
-    uint32_t warmupFrames = 12;
-    std::string path = "photo.png";
+    uint32_t width = 0;          ///< Photo width in pixels (0 = the window's).
+    uint32_t height = 0;         ///< Photo height in pixels (0 = the window's).
+    uint32_t samples = 64;       ///< Jittered frames averaged (anti-aliasing, converges noisy effects).
+    uint32_t warmupFrames = 12;  ///< Frames rendered first and thrown away (temporal effects settle).
+    std::string path = "photo.png"; ///< Where the PNG is written.
 };
 
+/// Screenshots for tests (VE_CAPTURE) and high-quality photos (the Renderer's photo capture). Renderer internal.
 class FrameCapture {
 public:
     /// `headless`: VE_CAPTURE* are read (they only apply to headless runs).
     void init(Device& device, const Swapchain& swapchain, RenderGraph& graph, bool headless);
-    void shutdown();
+    void shutdown(); ///< Frees the capture images.
 
+    /// Headless: writes the next rendered frame to `pngPath`.
     void requestCapture(const std::string& pngPath) { m_capturePath = pngPath; }
 
-    void beginPhoto(const PhotoCaptureSettings& settings);
-    bool photoActive() const { return m_photo.active; }
-    float photoProgress() const;
-    const std::string& lastPhotoPath() const { return m_photo.lastPath; }
+    void beginPhoto(const PhotoCaptureSettings& settings);         ///< Starts a photo capture.
+    bool photoActive() const { return m_photo.active; }            ///< Whether a photo is being captured.
+    float photoProgress() const;                                   ///< Its progress (0..1).
+    const std::string& lastPhotoPath() const { return m_photo.lastPath; } ///< The last photo written ("" = none yet).
     /// A photo is being rendered: frames go to photoTarget() at its size.
     bool photoRendering() const { return m_photo.active && m_photo.started; }
-    const Image& photoTarget() const { return m_photo.target; }
+    const Image& photoTarget() const { return m_photo.target; } ///< The offscreen photo image being rendered into.
 
     // --- Per frame (Renderer::render) -----------------------------------------------
     /// Starts a requested photo (creates its target, resizes the graph).

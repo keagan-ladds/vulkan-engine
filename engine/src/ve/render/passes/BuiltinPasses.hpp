@@ -38,6 +38,7 @@ public:
     void onGui() override;
 };
 
+/// Renders directional cascades and point-light cube faces (caching unchanged faces).
 class ShadowPass : public RenderPass {
 public:
     ShadowPass() : RenderPass("Shadows", RenderStage::Shadow) {}
@@ -57,15 +58,17 @@ private:
     uint32_t m_pointFacesRendered = 0, m_pointFacesCached = 0;
 };
 
+/// Draws opaque geometry (meshes, instances) into SceneColor, the thin G-buffer and depth.
 class OpaquePass : public RenderPass {
 public:
     OpaquePass() : RenderPass("Opaque", RenderStage::Opaque) {}
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
     void onGui() override;
-    glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 1.0f};
+    glm::vec4 clearColor{0.0f, 0.0f, 0.0f, 1.0f}; ///< Background where nothing (not even sky) draws.
 };
 
+/// Draws transparent items back to front over the lit scene.
 class TransparentPass : public RenderPass {
 public:
     TransparentPass() : RenderPass("Transparent", RenderStage::Transparent) {}
@@ -88,7 +91,7 @@ public:
     void execute(RenderContext& ctx) override;
     /// The pyramid built last frame (for this frame's cull), or null.
     const std::array<uint32_t, kHiZLevels>* lastFrame(uint64_t frameNumber) const;
-    const std::array<TextureId, kHiZLevels>& textures() const { return m_levels; }
+    const std::array<TextureId, kHiZLevels>& textures() const { return m_levels; } ///< The pyramid's graph textures.
 
 private:
     std::array<TextureId, kHiZLevels> m_levels{};
@@ -111,7 +114,7 @@ public:
     void setup(RenderGraph& graph) override;
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
-    TextureId velocity() const { return m_velocity; }
+    TextureId velocity() const { return m_velocity; } ///< The motion-vector texture.
 
 private:
     TextureId m_velocity = kNoTexture;
@@ -157,14 +160,15 @@ public:
     /// composite then only adds vignette + dither. Cleared after each frame, so
     /// disabling the grading pass falls back to the built-in tonemapping.
     void useGradedInput(TextureId texture) { m_graded = texture; }
+    /// exposure * exposureMultiplier * 2^exposureCompensation.
     float effectiveExposure() const { return exposure * exposureMultiplier * std::exp2(exposureCompensation); }
 
-    float exposure = 1.0f;
+    float exposure = 1.0f;           ///< Linear exposure multiplier.
     float exposureMultiplier = 1.0f; ///< transient boosts (lightning flashes); multiplies exposure
     float exposureCompensation = 0.0f; ///< EV stops on top of everything (photo mode, brightness setting)
-    float contrast = 1.05f;
-    float saturation = 1.1f;
-    float vignette = 0.25f;
+    float contrast = 1.05f;    ///< 1 = unchanged.
+    float saturation = 1.1f;   ///< 1 = unchanged, 0 = grey.
+    float vignette = 0.25f;    ///< Corner darkening (0 = none).
     glm::vec3 tint{1.0f}; ///< colour balance multiplier
     int tonemapper = 0;   ///< 0 = ACES (fitted), 1 = Reinhard, 2 = none
 

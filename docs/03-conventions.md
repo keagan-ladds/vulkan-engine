@@ -478,9 +478,15 @@ Saveable. Slots: `ve::save::folder()` (per-user data folder, or
 ```cpp
 ve::Engine engine(config);
 engine.beginLoading(makeLoadingScene(), 0.5f);            // your own small scene (UI in onGui)
-engine.addLoadStep("Loading the world", [&] { loadWorld(engine); }); // main thread, one step per frame
+engine.addSceneLoad("Loading the level", "scenes/level1.json",   // parsed on the job pool, objects
+    [&](const std::vector<ve::GameObject*>& roots) { setUpLevel(engine); }); // created over frames
+engine.addLoadStep("Spawning the player", [&] { spawnPlayer(engine); }); // main thread, one step per frame
 engine.run();
 ```
+
+`addSceneLoad`'s objects don't start until the whole file is in; `then` runs
+first, so it can look them up and adjust them. Steps after it wait for it
+(`addLoadStepOverFrames` makes your own multi-frame steps).
 
 The loading scene's objects read `engine().loadProgress()` (0..1) and
 `engine().loadStatus()` (the current step / task name). Systems that fill

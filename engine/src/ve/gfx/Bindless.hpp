@@ -26,29 +26,31 @@ namespace ve {
 
 class Device;
 
+/// The bindless descriptor tables: every texture (and storage image) gets an
+/// index any shader can sample with (veSample(index, uv)). Renderer::bindless().
 class Bindless {
 public:
-    static constexpr uint32_t kMaxTextures = 4096;
-    static constexpr uint32_t kMaxStorageImages = 256;
-    static constexpr uint32_t kInvalid = 0xFFFFFFFFu;
+    static constexpr uint32_t kMaxTextures = 4096;       ///< Sampled texture slots.
+    static constexpr uint32_t kMaxStorageImages = 256;   ///< Storage image slots.
+    static constexpr uint32_t kInvalid = 0xFFFFFFFFu;    ///< No slot.
 
-    void init(Device& device);
-    void shutdown();
+    void init(Device& device);  ///< Creates the descriptor set and layout.
+    void shutdown();            ///< Destroys them.
 
-    VkDescriptorSetLayout layout() const { return m_layout; }
-    VkDescriptorSet set() const { return m_set; }
+    VkDescriptorSetLayout layout() const { return m_layout; } ///< The set's layout (part of the pipeline layout).
+    VkDescriptorSet set() const { return m_set; }             ///< The descriptor set.
 
     /// Image views must be in VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL when sampled.
     uint32_t addTexture(VkImageView view, VkSampler sampler);
-    void updateTexture(uint32_t index, VkImageView view, VkSampler sampler);
+    void updateTexture(uint32_t index, VkImageView view, VkSampler sampler); ///< Points a slot at another view / sampler.
     /// Freed slots are recycled kFramesInFlight frames later and point at the
     /// fallback texture meanwhile.
     void removeTexture(uint32_t index);
 
     /// Storage images must be in VK_IMAGE_LAYOUT_GENERAL when accessed.
     uint32_t addStorageImage(VkImageView view);
-    void updateStorageImage(uint32_t index, VkImageView view);
-    void removeStorageImage(uint32_t index);
+    void updateStorageImage(uint32_t index, VkImageView view); ///< Points a storage slot at another view.
+    void removeStorageImage(uint32_t index);                   ///< Frees a storage slot.
 
     /// Texture written into freed slots (set by the renderer once its default
     /// white texture exists).

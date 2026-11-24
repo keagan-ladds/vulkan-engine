@@ -72,7 +72,7 @@ struct Decal {
     std::shared_ptr<Texture> maskTexture;   ///< G = roughness, B = metallic multipliers (glTF style), A = opacity
 
     glm::vec4 color{1.0f};               ///< linear tint (multiplies the albedo texture), a = overall opacity
-    DecalBlend blend = DecalBlend::Normal;
+    DecalBlend blend = DecalBlend::Normal; ///< How the albedo combines with the surface.
     float albedoOpacity = 1.0f;          ///< 0 = leave the surface's colour alone (e.g. a normal-only crack)
     float normalOpacity = 1.0f;          ///< how strongly the normal texture replaces the surface's normal
     float normalStrength = 1.0f;         ///< scales the normal texture's bumps
@@ -85,7 +85,7 @@ struct Decal {
     /// these angles (degrees between the surface normal and the box's +Z):
     /// keeps the decal from smearing down the sides of things it hits.
     float angleFadeStart = 60.0f;
-    float angleFadeEnd = 80.0f;
+    float angleFadeEnd = 80.0f;          ///< See angleFadeStart (degrees).
     float depthFade = 0.3f;              ///< fraction of the box's depth over which it fades out at the front/back
     float drawDistance = 120.0f;         ///< not drawn beyond this camera distance (fades out over the last 15%)
     int sortOrder = 0;                   ///< higher draws over lower (then newer over older)
@@ -101,7 +101,7 @@ struct Decal {
 class DecalSystem {
 public:
     using Handle = uint64_t; ///< 0 = none; a handle of a replaced / removed decal is ignored
-    static constexpr Handle kNone = 0;
+    static constexpr Handle kNone = 0;   ///< No decal.
 
     /// A world matrix for a decal on a surface: centred on `point`, projecting
     /// into the surface along -normal, `size` wide/high, `depth` deep (half of
@@ -113,26 +113,27 @@ public:
     /// `lifetime` seconds (0 = until replaced or removed), then fades out over
     /// `fadeOut` seconds. The decal keeps its textures alive.
     Handle spawn(const Decal& decal, const glm::mat4& world, float lifetime = 0.0f, float fadeOut = 1.0f);
-    void remove(Handle handle);
-    void clear();
+    void remove(Handle handle);  ///< Removes a decal now (an old handle is ignored).
+    void clear();                ///< Removes every decal.
     void setTransform(Handle handle, const glm::mat4& world); ///< e.g. a decal stuck to a moving object
     /// Default 512. Shrinking drops the oldest.
     void setCapacity(uint32_t capacity);
-    uint32_t capacity() const { return m_capacity; }
-    uint32_t count() const { return m_live; }
+    uint32_t capacity() const { return m_capacity; } ///< Decals kept at most.
+    uint32_t count() const { return m_live; }        ///< Decals alive now.
 
     // --- Engine internal (SceneGatherer) -----------------------------------------
+    /// One live decal.
     struct Entry {
-        Decal decal;
-        glm::mat4 world{1.0f};
+        Decal decal;               ///< Its look.
+        glm::mat4 world{1.0f};     ///< Box to world (scale = size).
         float spawnTime = 0.0f; ///< game time; < 0 until the first update() sees it
-        float lifetime = 0.0f;
-        float fadeOut = 1.0f;
+        float lifetime = 0.0f;     ///< Seconds before it fades (0 = until replaced or removed).
+        float fadeOut = 1.0f;      ///< Seconds the fade takes.
         uint64_t serial = 0;    ///< spawn order (handle); 0 = free slot
     };
     /// Expires finished decals; `time` = game time in seconds.
     void update(float time);
-    const std::vector<Entry>& entries() const { return m_entries; }
+    const std::vector<Entry>& entries() const { return m_entries; } ///< Every slot (dead ones included).
     /// Lifetime fade of an entry at `time` (1 = fully visible).
     static float lifeFade(const Entry& e, float time);
 

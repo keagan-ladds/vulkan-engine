@@ -42,6 +42,18 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Scene files load in the background.** `Engine::addSceneLoad(name, path,
+  then)` reads and parses the file on the job pool, then creates its objects
+  a time slice per frame; `then(roots)` runs before any of them start (adjust
+  them, spawn what goes with them). Built on `SceneSerializer::loadAsync`
+  (`SceneLoad`), `Engine::addLoadStepOverFrames` (a load step spanning frames;
+  later steps wait) and `Scene::holdStarts()`. The sandbox loads its level
+  this way.
+- **API reference and documented headers.** Every public header declaration
+  now has a doc comment (`///`, shown by IntelliSense / clangd);
+  `cmake --build build --target docs` builds an HTML reference with Doxygen
+  (when installed). `python3 tools/check_docs.py --changed` lists
+  undocumented declarations in the headers a branch touches.
 - **Hooks for loading and compile UI.** `Engine::loadEvents()` (Began, step
   started / finished, task finished, Ended) and `Renderer::compileEvents()` /
   `compileStatus()` (pipelines and hot-reloaded shaders: started / finished /

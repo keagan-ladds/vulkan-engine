@@ -40,24 +40,29 @@ namespace ve {
 
 class Renderer;
 
+/// Quadtree LOD meshes for a Terrain (see the top of this file). Terrain internal.
 class TerrainLod {
 public:
+    /// Quadtree parameters (from the Terrain's fields).
     struct Settings {
         int nodeCells = 32;          ///< cells per node side
         float lodFactor = 2.5f;      ///< split within lodFactor x node size
         size_t maxNodes = 1500;      ///< meshes kept (least recently drawn are freed beyond this)
-        uint32_t uploadsPerFrame = 12;
+        uint32_t uploadsPerFrame = 12; ///< Finished meshes uploaded per frame at most.
     };
+    /// A node chosen for drawing this frame.
     struct Drawn {
-        std::shared_ptr<Mesh> mesh;
-        int level;
+        std::shared_ptr<Mesh> mesh; ///< Its mesh.
+        int level;                  ///< Its LOD level (0 = finest).
     };
+    /// Counters (F1 overlay).
     struct Stats {
-        uint32_t drawn = 0, pending = 0;
+        uint32_t drawn = 0;   ///< Nodes drawn.
+        uint32_t pending = 0; ///< Meshes being built.
         uint32_t missing = 0; ///< nodes the view wants that have no mesh yet (a coarser one stands in)
     };
 
-    explicit TerrainLod(Renderer& renderer);
+    explicit TerrainLod(Renderer& renderer); ///< Meshes are created with `renderer`.
     ~TerrainLod();
 
     /// New terrain (or edited): nodes rebuild lazily and keep their old mesh meanwhile.
@@ -68,11 +73,11 @@ public:
     /// preload = build everything needed for this view first (synchronously).
     void update(const glm::vec3& camera, bool preload, bool uploadAll = false); ///< uploadAll: no per-frame budget (loading screens)
 
-    const std::vector<Drawn>& drawn() const { return m_drawn; }
-    int levels() const { return m_levels; }
+    const std::vector<Drawn>& drawn() const { return m_drawn; } ///< The nodes chosen by the last update().
+    int levels() const { return m_levels; }                     ///< Number of LOD levels.
     /// The distance range over which a level-L node morphs into its parent (shader params).
     glm::vec2 morphRange(int level) const;
-    const Stats& stats() const { return m_stats; }
+    const Stats& stats() const { return m_stats; } ///< Counters.
 
 private:
     struct Key {

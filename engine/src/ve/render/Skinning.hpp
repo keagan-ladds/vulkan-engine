@@ -38,25 +38,35 @@ class MeshRenderer;
 /// A skinned mesh as loaded (shared by every instance of the model).
 struct SkinnedMeshSource {
     MeshData data;                   ///< rest pose
-    std::vector<Submesh> submeshes;
+    std::vector<Submesh> submeshes;  ///< Index ranges and material slots.
     std::vector<glm::uvec4> joints;  ///< per vertex, indices into the skin's joints
     std::vector<glm::vec4> weights;  ///< per vertex, sum 1
     std::vector<float> jointRadius;  ///< per joint: distance of its farthest weighted vertex (bounds)
-    std::string name;
+    std::string name;                ///< The mesh's name (debugging).
 };
 
+/// GPU skinning (a compute pass): rest-pose vertices + joint matrices ->
+/// deformed vertices that ordinary pipelines draw. Owned by the Renderer
+/// (Renderer::skinning()); SkinnedMeshRenderer uses it.
 class SkinningSystem {
 public:
+    /// One skinned mesh's place in the shared buffers.
     struct Instance {
-        uint32_t restBase = 0, outputBase = 0, count = 0;
+        uint32_t restBase = 0;    ///< First vertex in the rest-pose buffer.
+        uint32_t outputBase = 0;  ///< First vertex in the output buffer.
+        uint32_t count = 0;       ///< Vertex count.
         std::shared_ptr<Mesh> mesh; ///< draws the output range
-        const SkinnedMeshSource* source = nullptr;
+        const SkinnedMeshSource* source = nullptr; ///< What it was created from.
     };
 
+    /// Allocates the shared buffers (sizes fixed for the run).
     void init(Renderer& renderer, uint32_t maxVertices, uint32_t maxJointsPerFrame);
+    /// Frees the buffers and pipeline.
     void shutdown();
 
+    /// Places a skinned mesh's rest pose in the buffers and makes its output Mesh.
     Instance create(const std::shared_ptr<const SkinnedMeshSource>& source);
+    /// Frees an instance's space (its output mesh too).
     void destroy(Instance& instance);
 
     /// What to skin comes from gatherers: render can't see the animation module
@@ -65,19 +75,19 @@ public:
     /// runs them in order: each add()s the joint matrices of `scene`'s visible
     /// skinned renderers and lists them in `deformed`.
     using Gatherer = std::function<void(Scene& scene, SkinningSystem& system, std::vector<const MeshRenderer*>& deformed)>;
-    void addGatherer(Gatherer gatherer) { m_gatherers.push_back(std::move(gatherer)); }
-    const std::vector<Gatherer>& gatherers() const { return m_gatherers; }
+    void addGatherer(Gatherer gatherer) { m_gatherers.push_back(std::move(gatherer)); } ///< Registers a Gatherer.
+    const std::vector<Gatherer>& gatherers() const { return m_gatherers; }                 ///< Every registered Gatherer.
 
     /// Per frame: collect what to skin (Renderer::gatherScene), then record (SkinningPass).
     void beginFrame(uint32_t slot);
     bool add(const Instance& instance, const glm::mat4* joints, uint32_t jointCount); ///< false = over budget
-    void record(VkCommandBuffer cmd);
-    uint32_t skinnedThisFrame() const { return uint32_t(m_jobs.size()); }
+    void record(VkCommandBuffer cmd);                 ///< Records this frame's skinning dispatches.
+    uint32_t skinnedThisFrame() const { return uint32_t(m_jobs.size()); } ///< Meshes skinned this frame.
 
-    VkBuffer restBuffer() const { return m_rest.handle; }
-    VkBuffer weightBuffer() const { return m_weights.handle; }
-    VkBuffer matrixBuffer(uint32_t slot) const { return m_matrices[slot].handle; }
-    VkBuffer outputBuffer() const { return m_output.handle; }
+    VkBuffer restBuffer() const { return m_rest.handle; }        ///< Rest-pose vertices.
+    VkBuffer weightBuffer() const { return m_weights.handle; }   ///< Joint indices and weights.
+    VkBuffer matrixBuffer(uint32_t slot) const { return m_matrices[slot].handle; } ///< A frame slot's joint matrices.
+    VkBuffer outputBuffer() const { return m_output.handle; }    ///< Skinned vertices (drawn by the output meshes).
 
 private:
     struct Range {

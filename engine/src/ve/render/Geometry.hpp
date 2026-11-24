@@ -19,17 +19,19 @@ namespace ve {
 /// means any material/shader can draw any mesh. Unused attributes cost a bit
 /// of memory but keep everything simple.
 struct Vertex {
-    glm::vec3 position{0.0f};
-    glm::vec3 normal{0.0f, 1.0f, 0.0f};
-    glm::vec2 uv{0.0f};
+    glm::vec3 position{0.0f};              ///< Object-space position.
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};    ///< Unit normal.
+    glm::vec2 uv{0.0f};                    ///< Texture coordinate.
     glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f}; ///< xyz = tangent, w = bitangent sign
     glm::vec4 color{1.0f};                     ///< vertex colour (great for low-poly art)
 
+    /// The vertex buffer binding every mesh pipeline uses.
     static VkVertexInputBindingDescription binding()
     {
         return {0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
     }
 
+    /// The attribute layout (locations 0..4: position, normal, uv, tangent, colour).
     static std::array<VkVertexInputAttributeDescription, 5> attributes()
     {
         return {{
@@ -45,18 +47,20 @@ static_assert(sizeof(Vertex) == 64);
 
 /// Axis-aligned bounding box.
 struct AABB {
-    glm::vec3 min{FLT_MAX};
-    glm::vec3 max{-FLT_MAX};
+    glm::vec3 min{FLT_MAX};   ///< Minimum corner (empty box: +FLT_MAX).
+    glm::vec3 max{-FLT_MAX};  ///< Maximum corner (empty box: -FLT_MAX).
 
-    bool valid() const { return min.x <= max.x; }
-    glm::vec3 center() const { return (min + max) * 0.5f; }
-    glm::vec3 extents() const { return (max - min) * 0.5f; }
+    bool valid() const { return min.x <= max.x; }            ///< Whether it contains anything.
+    glm::vec3 center() const { return (min + max) * 0.5f; }  ///< The centre point.
+    glm::vec3 extents() const { return (max - min) * 0.5f; } ///< Half the size along each axis.
 
+    /// Grows the box to include a point.
     void expand(const glm::vec3& p)
     {
         min = glm::min(min, p);
         max = glm::max(max, p);
     }
+    /// Grows the box to include another (an empty one changes nothing).
     void expand(const AABB& b)
     {
         if (!b.valid()) return;
@@ -80,8 +84,9 @@ struct AABB {
 
 /// Six planes (ax + by + cz + d >= 0 is inside) extracted from a view-projection matrix.
 struct Frustum {
-    std::array<glm::vec4, 6> planes{};
+    std::array<glm::vec4, 6> planes{}; ///< Left, right, the two vertical planes, then the two depth planes (normals point inside).
 
+    /// The frustum of a view-projection matrix.
     static Frustum fromMatrix(const glm::mat4& m)
     {
         // Gribb-Hartmann extraction. glm is column-major: row i = (m[0][i], m[1][i], m[2][i], m[3][i]).
@@ -97,6 +102,7 @@ struct Frustum {
         return f;
     }
 
+    /// Whether a world-space box is (at least partly) inside. Conservative: may say yes for boxes just outside a corner.
     bool intersects(const AABB& box) const
     {
         const glm::vec3 c = box.center();
@@ -108,6 +114,7 @@ struct Frustum {
         return true;
     }
 
+    /// Whether a sphere is (at least partly) inside.
     bool intersectsSphere(const glm::vec3& center, float radius) const
     {
         for (const auto& p : planes) {

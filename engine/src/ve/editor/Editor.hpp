@@ -35,38 +35,55 @@ class Component;
 class PickingPass;
 struct FieldInfo;
 
+/// The in-engine scene editor (F2): hierarchy, inspector, gizmos, asset
+/// browser, undo / redo, scene files (docs/05-editor.md). Engine::editor().
 class Editor {
 public:
+    /// Off (playing, editor hidden), Edit (world paused, editing), Play (playing with the editor open).
     enum class Mode { Off, Edit, Play };
 
+    /// Engine: sets up the editor (camera, panels).
     void init(Engine& engine);
+    /// Engine: tears it down.
     void shutdown();
 
     /// Engine hooks (every frame).
     void beginFrame(float realDt); ///< shortcuts, editor camera, pick results
     void onGui();                  ///< panels, gizmo, debug shapes
+    /// Whether the world is paused for editing (Edit mode).
     bool paused() const { return m_mode == Mode::Edit; }
     /// In Edit mode, or about to be (a game that starts in the editor): loading
     /// then shows the editor's progress bar instead of the game's loading screen.
     bool editing() const { return m_mode == Mode::Edit || (m_hasPending && m_pendingMode == Mode::Edit); }
 
+    /// The current mode.
     Mode mode() const { return m_mode; }
+    /// Switches mode (Edit pauses the world; leaving Edit for Play starts it).
     void setMode(Mode mode);
 
+    /// The selected object, or null.
     GameObject* selected() const;
+    /// Selects an object (null = nothing).
     void select(GameObject* object);
     /// Picks the object under a framebuffer pixel (result arrives a few frames later).
     void requestPick(glm::ivec2 pixel);
 
     /// Undo-able structural operations (also used by the menus).
     GameObject* createObject(const Json& json, GameObject* parent, const std::string& label);
+    /// Deletes an object (undoable).
     void deleteObject(GameObject& object);
+    /// Duplicates an object and its children with new ids (undoable); returns the copy.
     GameObject* duplicate(GameObject& object);
+    /// Undoes the last edit.
     void undo();
+    /// Redoes the last undone edit.
     void redo();
 
+    /// Saves the scene's persistent objects to `path` (SceneSerializer::save).
     bool saveScene(const std::filesystem::path& path);
+    /// Clears the scene and loads `path` (with loading progress).
     void openScene(const std::filesystem::path& path);
+    /// Clears the scene's persistent objects (a new, empty scene).
     void newScene();
 
 private:

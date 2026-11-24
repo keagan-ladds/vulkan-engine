@@ -39,27 +39,29 @@ class Material;
 class Mesh;
 class Renderer;
 
+/// Batches static renderers into instance groups (see the top of this file). Renderer::staticBatcher().
 class StaticBatcher {
 public:
-    using Handle = uint32_t;
-    static constexpr Handle kNone = 0xFFFFFFFFu;
+    using Handle = uint32_t;                     ///< Identifies an entry.
+    static constexpr Handle kNone = 0xFFFFFFFFu; ///< No entry.
 
+    /// One static renderer to batch.
     struct Desc {
-        std::shared_ptr<Mesh> mesh;
+        std::shared_ptr<Mesh> mesh;              ///< What to draw.
         /// Per submesh material slot (index = Submesh::materialSlot), already
         /// resolved like MeshRenderer::material(); null = the fallback material.
         std::vector<std::shared_ptr<Material>> materials;
-        bool castShadows = true;
-        glm::mat4 world{1.0f};
+        bool castShadows = true;                 ///< Casts shadows (part of the batch key).
+        glm::mat4 world{1.0f};                   ///< Object to world.
         const GameObject* owner = nullptr; ///< for DrawItem::owner (editor picking)
         const void* source = nullptr;      ///< who added it (checked by remove / matches)
     };
 
-    void init(Renderer& renderer) { m_renderer = &renderer; }
+    void init(Renderer& renderer) { m_renderer = &renderer; } ///< Renderer: sets its owner.
 
     Handle add(const Desc& desc); ///< may throw (instance buffer full: RendererSettings::maxInstances)
-    void remove(Handle h);
-    void setTransform(Handle h, const glm::mat4& world);
+    void remove(Handle h);                                  ///< Removes an entry.
+    void setTransform(Handle h, const glm::mat4& world);    ///< Moves an entry (re-uploads its instance).
     /// Can `h` keep its entry with these fields (same batch)? Otherwise the
     /// caller removes and adds it again.
     bool matches(Handle h, const void* source, const Mesh* mesh, const std::vector<std::shared_ptr<Material>>& materials,
@@ -67,10 +69,11 @@ public:
     void clear(); ///< drops every entry and group
     /// Hidden groups draw nothing (another scene is being rendered).
     void setHidden(bool hidden);
-    bool hidden() const { return m_hidden; }
+    bool hidden() const { return m_hidden; }  ///< Whether the groups are hidden.
 
-    size_t size() const { return m_entries.size() - m_free.size(); }
-    bool empty() const { return size() == 0; }
+    size_t size() const { return m_entries.size() - m_free.size(); } ///< Entries batched.
+    bool empty() const { return size() == 0; }                       ///< Whether nothing is batched.
+    /// Instance groups in use.
     uint32_t groupCount() const { return static_cast<uint32_t>(m_groupByKey.size()); }
     uint32_t submeshCount() const { return m_submeshes; } ///< over all entries (RenderStats::totalObjects)
     /// Highest point of any entry (-FLT_MAX if none): ShadowSetup's caster reach.
