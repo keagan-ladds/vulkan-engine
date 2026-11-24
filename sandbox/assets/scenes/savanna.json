@@ -1876,6 +1876,124 @@
     },
     {
       "active": true,
+      "components": [
+        {
+          "enabled": true,
+          "fields": {
+            "mask": "textures/decals/puddle_mask.png",
+            "color": [
+              0.3,
+              0.28,
+              0.26,
+              1.0
+            ],
+            "blend": 1,
+            "roughness": 1.0,
+            "roughnessOpacity": 1.0,
+            "flatten": 1.0
+          },
+          "type": "DecalProjector"
+        }
+      ],
+      "id": "d3ca1f0e5a7b2c41",
+      "name": "Puddle",
+      "position": [
+        23.6,
+        3.2,
+        12.4
+      ],
+      "rotation": [
+        -0.70710678,
+        0.0,
+        0.0,
+        0.70710678
+      ],
+      "scale": [
+        3.2,
+        2.2,
+        1.0
+      ],
+      "type": "GameObject"
+    },
+    {
+      "active": true,
+      "components": [
+        {
+          "enabled": true,
+          "fields": {
+            "mask": "textures/decals/puddle_mask.png",
+            "color": [
+              0.3,
+              0.28,
+              0.26,
+              1.0
+            ],
+            "blend": 1,
+            "roughness": 1.0,
+            "roughnessOpacity": 1.0,
+            "flatten": 1.0
+          },
+          "type": "DecalProjector"
+        }
+      ],
+      "id": "d3ca1f0e5a7b2c42",
+      "name": "Puddle",
+      "position": [
+        16.4,
+        3.2,
+        13.2
+      ],
+      "rotation": [
+        -0.6830127,
+        -0.1830127,
+        -0.1830127,
+        0.6830127
+      ],
+      "scale": [
+        2.0,
+        1.4,
+        1.0
+      ],
+      "type": "GameObject"
+    },
+    {
+      "active": true,
+      "components": [
+        {
+          "enabled": true,
+          "fields": {
+            "albedo": "textures/decals/crack_albedo.png",
+            "normal": "textures/decals/crack_normal.png",
+            "normalStrength": 1.5,
+            "roughness": 1.0,
+            "roughnessOpacity": 0.6,
+            "sortOrder": 1
+          },
+          "type": "DecalProjector"
+        }
+      ],
+      "id": "d3ca1f0e5a7b2c43",
+      "name": "Wall crack",
+      "position": [
+        30.83,
+        4.45,
+        6.75
+      ],
+      "rotation": [
+        0.0,
+        0.258819,
+        0.0,
+        0.965926
+      ],
+      "scale": [
+        1.6,
+        1.6,
+        0.8
+      ],
+      "type": "GameObject"
+    },
+    {
+      "active": true,
       "children": [
         {
           "active": true,

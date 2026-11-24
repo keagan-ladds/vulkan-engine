@@ -490,6 +490,24 @@ and ask the host for everything else (decision D19).
 - [x] Look-at and aim IK (`AimIK`, `LookAtIK`): weighted chains, angle limits, blending. Savanna: villagers look at a nearby player and point at the nearest sunstone after greeting; the autotest checks both aims converge
 - [ ] Later: root motion, motion vectors from skinning; text selection / clipboard, multi-line text, on-screen keyboard for pads; ragdolls, buoyancy (Phase 11 list)
 
+### Decals ✅ (2026-11)
+- [x] Clustered forward decals: oriented boxes projecting albedo (mix / multiply), normal (+ flatten), roughness and metallic, each with its own opacity x alpha; angle / depth / distance / lifetime fades; sort order; receive layers. `DecalProjector` component (editor: Create > Decal, box gizmo, inspector; scene files) and `Renderer::decals()` for transient decals. Applied in `standard.frag` and `terrain.frag` before lighting (SSR sees wet puddles). Savanna: puddles in the camp, a cracked hut wall, V / pad left shoulder shoots bullet holes; the autotest checks projectors, lifetime expiry and a shot
+- [ ] Later: decals on grass / impostors, an atlas for many small decal textures, emissive decals (embers), GPU binning if thousands are in view
+
+### Shared assets ✅ (2026-11)
+- [x] glTF image files go through the AssetManager texture cache: models exported side by side share one GPU texture per file
+- [x] Material files (`*.material`, `MaterialAsset`): StandardMaterial values + textures, custom shader + extra slots; used by glTF materials by name (`materials/<name>.material`) or by a `material` custom property; one shared Material per file; live reload + editor (Assets > Materials). Savanna: the huts' thatch comes from `materials/thatch.material`; the autotest checks texture sharing, the material file and a live edit
+- [x] `standard_painted.frag`: vertex-painted dirt / wear / wetness over the standard material (placeholder to adapt). Savanna: `SAVANNA_PAINTTEST=1` test wall
+- [ ] Later: texture compression (BC7 / BC5, KTX2), per-instance material overrides
+
+### Asset cooking (2026-11)
+- [x] Phase 1: cook cache (`<exe>/cooked`), validity by cooker version + settings hash + source size / time / content hash, background on-demand cooking on the job pool, `vecook` tool (`--check`, `--force`, `--clean`)
+- [x] Phase 2: textures -> KTX2 with prebuilt mips, BC7 (colour), BC5 (normal maps), BC4 (greyscale data); per-image `TextureSettings` (`.texture` files / name convention) instead of caller flags
+- [ ] Phase 3: audio -> Ogg Vorbis (92 MB of WAV in the sandbox)
+- [ ] Phase 4: meshes -> binary vertex/index data with tangents and LODs precomputed
+- [ ] Phase 5: compressed archive (zstd) + `vecook --package`; the engine reads from it when present
+- [ ] Later: alpha-coverage-preserving mips for cutouts, editor panel for .texture files, swapping a freshly cooked texture in while running
+
 ### F5 — Tooling
 - [x] Shader hot-reload: edited GLSL (or any include) is recompiled with the build's own glslc command and its pipelines rebuilt; errors keep the old shader (`ShaderHotReload`, `PipelineHandle`); compiles run in the background, the frame never waits for glslc
 - [x] Scene serialization (JSON scene files, editor save / load)

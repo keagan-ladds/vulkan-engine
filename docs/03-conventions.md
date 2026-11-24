@@ -125,10 +125,15 @@ go.addComponent<Spin>().speed = 3.0f;
    Copy `engine/shaders/standard.vert` as a starting point. Fragment shaders
    that want lighting `#include "ve_lighting.glsl"`, build a `VeSurface` and
    call `veEvaluateLighting(s)`. Read parameters from `veMaterial().params[i]`
-   and textures with `veSample(veMaterial().textures[i], uv)`.
+   and textures with `veSample(veMaterial().textures[i], uv)` (normal maps:
+   `veUnpackNormal(veSample(...))`, which rebuilds Z for cooked BC5 maps).
    **Opaque shaders also write the thin G-buffer** (used by SSGI/SSR):
    `layout(location = 1) out vec4 outGBuffer;` … `outGBuffer = veGBuffer(N, roughness);`.
    If you leave it out, the shader still works, but SSGI/SSR see garbage for those pixels.
+   **Decals** (bullet holes, puddles...) land on your shader if it calls
+   `veApplyDecals(s, geometricNormal, dFdx(P), dFdy(P), VE_DECAL_LAYERS_ALL)`
+   on its `VeSurface` before `veEvaluateLighting(s)` (take the derivatives
+   before any `discard`; see `ve_decals.glsl` and `standard.frag`).
    Shaders with their own lighting loop should only visit the point lights of
    the pixel's cluster: `VeLightList list = veLightList(P);` then
    `lights.point[veLightAt(list, k)]` for `k < list.count` (see the template's
@@ -160,6 +165,89 @@ and the old version keeps running. This covers `ShaderDesc` shaders and pipeline
 made with `createFullscreenPipeline` / `createComputePipeline`. Keep those as
 `ve::PipelineHandle` members, which always give the current `VkPipeline`. New
 shader files still need a rebuild. `VE_SHADER_HOT_RELOAD=0` turns it off.
+
+### Share textures and materials between models
+
+Export from Blender as **glTF Separate** (.gltf + .bin + images) with every
+model writing into one folder tree, e.g. `assets/models/buildings/*.gltf` and
+a shared `assets/models/buildings/textures/`. Image files are cached by path,
+so all models that reference `concrete_albedo.png` share one GPU texture
+(`.glb` files embed their images: one copy per model).
+
+To share one *material* (and tune it in one place), add a material file named
+after the Blender material, `assets/materials/Concrete.material`:
+
+```json
+{
+  "version": 1,
+  "albedo": "models/buildings/textures/concrete_albedo.png",
+  "normal": "models/buildings/textures/concrete_normal.png",
+  "metallicRoughness": "models/buildings/textures/concrete_orm.png",
+  "occlusion": "models/buildings/textures/concrete_orm.png",
+  "roughness": 1.0, "metallic": 1.0, "uvScale": [1, 1]
+}
+```
+
+Every glTF material called `Concrete` (or `Concrete.001`...) now uses this one
+material instead of its own. Or name the file explicitly with a custom
+property `material` = `materials/concrete.material` on the Blender material
+(export with Include > Custom Properties). From code:
+`assets().loadMaterial("materials/concrete.material")`. Edit it live in the
+editor (Assets > Materials) or in a text editor; Save writes the file.
+
+Custom shaders keep StandardMaterial's layout and add inputs:
+`"fragmentShader": "mygame_painted.frag"`,
+`"textures": [{"slot": 5, "path": "textures/grunge.png"}]`,
+`"params": [{"slot": 4, "value": [0.5, 1, 0, 0]}]` (see `MaterialAsset.hpp`).
+
+**Vertex-painted dirt, wear and wetness:** `"fragmentShader":
+"standard_painted.frag"` (engine shader) reads the vertex colour as paint
+masks (R dirt, G wear, B wet; fill the colour attribute with black first)
+with optional dirt / grunge / wear textures in slots 5-7 and settings in
+params 4-8 (documented at the top of the shader). It's a starting point:
+copy it into your game as `mygame_painted.frag` to change it. Savanna's
+`SAVANNA_PAINTTEST=1` shows a test wall (`materials/painted_test.material`).
+**In Blender:** run `tools/blender/ve_painted_node_group.py` once (Scripting
+workspace, Run Script). It makes a "VE Painted" node group with the same maths
+and inputs named like the material file's values, plus an example material
+showing the wiring, so vertex / texture painting looks like the engine while
+you paint. Mark it as an asset (the script does) to reuse it in every
+project. `tools/blender/test_ve_painted.py` checks the group against the
+shader (needs `pip install bpy`).
+
+### Decals: bullet holes, puddles, cracks
+
+A decal is a box that projects along its -Z (forward) onto every surface
+inside it; its scale is its size (x width, y height, z depth). It can change
+albedo, normal, roughness and metallic, each with its own opacity, all times
+its alpha (colour alpha x albedo texture alpha x mask alpha x fades).
+
+```cpp
+// Placed in the world (also: editor Create > Decal, scene files, prefabs).
+auto& go = scene.spawn("Puddle");
+go.transform().setPosition({4, 0, 2});
+go.transform().setLocalEuler({-90, 0, 0});          // project straight down
+go.transform().setLocalScale({3, 2, 0.6f});
+auto& p = go.addComponent<ve::DecalProjector>();
+p.mask = "textures/decals/puddle_mask.png";         // A = shape, G = roughness
+p.color = {0.45f, 0.43f, 0.4f, 1}; p.blend = ve::DecalBlend::Multiply; // wet = darker
+p.roughness = 1; p.roughnessOpacity = 1; p.flatten = 1;               // glassy, flat water
+
+// Fire and forget (no GameObject): replaced oldest-first when the pool is full.
+ve::Decal hole;
+hole.albedoTexture = assets.loadTexture("textures/decals/bullet_hole_albedo.png");
+hole.normalTexture = assets.loadTexture("textures/decals/bullet_hole_normal.png"); // *_normal: a normal map
+if (auto hit = physics().raycast(eye, dir, 100.0f))
+    renderer().decals().spawn(hole, ve::DecalSystem::onSurface(hit->point, hit->normal, {0.2f, 0.2f}), 60.0f /* s */);
+```
+
+- `sortOrder`: higher draws on top (bullet holes over puddles).
+- `layers` / `StandardMaterial::setDecalLayers(receive)`: keep world decals
+  off characters, e.g. `setDecalLayers(~ve::kDecalLayerWorld)`.
+- Decals on moving objects: a projector parented to the object follows it;
+  spawned ones can be moved with `decals().setTransform(handle, world)`.
+- Normal and mask textures must load as Normal / Data: name them `*_normal` /
+  `*_mask` or give them a `.texture` file (see "Import assets").
 
 ### Add a full-screen post-process effect
 
@@ -232,8 +320,34 @@ see `vfx.glsl`). Games should use 4–7.
 ### Import assets
 
 Put files under `<game>/assets/` (copied next to the exe on build), then
-`assets().loadTexture("textures/x.png", srgb)`, `loadModel("models/x.gltf")`
+`assets().loadTexture("textures/x.png")`, `loadModel("models/x.gltf")`
 followed by `scene.instantiate(*model)`, or `loadAudio("audio/x.wav")`.
+
+**How an image loads is decided by the image, once** (`TextureSettings.hpp`),
+never by the code loading it. Its file name's last word picks the type:
+`*_normal` / `*_n` / `*_nrm` -> Normal map; `*_rough`, `*_ao`, `*_orm`,
+`*_mask`, `*_height`, `*_detail`... -> Data (linear); anything else -> Color
+(sRGB). For anything else, put a settings file next to it,
+`rock_bump.png.texture`:
+
+```json
+{ "type": "Normal", "maxSize": 1024 }
+```
+
+(also `mipmaps`, `compress`, `filter`: Linear / Nearest, `wrap`: Repeat /
+Clamp). A glTF that uses an image as a normal / data map while its settings
+say otherwise gets a warning naming the fix.
+
+**Cooking.** Textures you load are cooked into GPU-ready files (BC7 colour,
+BC5 normal maps, BC4 greyscale data, with mips: KTX2) in `build/bin/cooked/`:
+the first run loads the PNG and cooks it on a worker thread, later runs load
+the cooked copy (no decoding, no mip generation, 4-8x less GPU memory). A
+changed image, settings file or cooker version cooks again by itself.
+`build/bin/vecook` cooks everything at once (before a release, or in CI;
+`--check` lists what's stale, `--clean` removes leftovers). `VE_COOK=0` runs
+on the source images, `VE_COOK=sync` cooks before loading.
+Normal-map shaders must rebuild Z: use `veUnpackNormal(texel)` (cooked
+normal maps only store X and Y).
 
 ### Interaction ("press E to ...")
 
@@ -798,7 +912,8 @@ Set `bus` and `occlusion` before the sound first plays.
 auto& grade = renderer.graph().addPass<vfx::ColorGradingPass>();
 grade.settings.tonemapper = vfx::ColorGradingSettings::Tonemapper::AgX;
 grade.settings.temperature = 10.0f; grade.settings.contrast = 1.15f;   // or a preset: ...::sunBleached()
-grade.settings.lut = assets.loadTexture("textures/my_lut.png", /*srgb*/ false); // optional strip LUT
+grade.settings.lut = assets.loadTexture("textures/my_lut.png"); // optional strip LUT; give it a my_lut.png.texture
+// with {"type": "Data", "mipmaps": false, "compress": false, "wrap": "Clamp"} (exact values)
 ```
 Tweak everything live in F1 > Render passes > Color grading. Night brightness
 in Savanna: `DayNightCycle::nightExposure`, `moonIntensity`, and the

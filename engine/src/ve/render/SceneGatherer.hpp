@@ -17,6 +17,8 @@
 //      matrix (motion vectors); camera-culled, sorted opaque / transparent lists
 //   5. directional + point lights into the LightBuffer, shadow views via
 //      ShadowSetup; batched statics near shadowed point lights as DrawItems
+//   6. decals in view (DecalProjector components + DecalSystem's spawned
+//      ones) into the DecalBuffer: nearest kMaxDecals, sorted by sortOrder
 //
 // It keeps last frame's world matrix per renderer and its scratch lists
 // between frames (no per-frame allocations once warmed up).
@@ -41,6 +43,8 @@ class PointLight;
 class SkinningSystem;
 class ShadowSetup;
 class StaticBatcher;
+class DecalSystem;
+struct Decal;
 struct RendererSettings;
 
 class SceneGatherer {
@@ -53,10 +57,11 @@ public:
         const RendererSettings* settings = nullptr;
         const ShadowSetup* shadows = nullptr;
         StaticBatcher* statics = nullptr;
+        DecalSystem* decals = nullptr;
     };
 
     // Resets `frame`'s per-frame lists and stats and fills them from `scene`
-    // (frame.lights must point at the LightBuffer to fill). Returns the
+    // (frame.lights / frame.decals must point at the buffers to fill). Returns the
     // number of point lights written (input to LightClusterer).
     uint32_t gather(Scene& scene, const Inputs& in, FrameData& frame);
 
@@ -64,6 +69,7 @@ private:
     void setupCamera(Scene& scene, const Inputs& in, CameraData& cam) const;
     void gatherDrawItems(Scene& scene, const Inputs& in, FrameData& frame);
     uint32_t gatherLights(Scene& scene, const Inputs& in, FrameData& frame);
+    void gatherDecals(Scene& scene, const Inputs& in, FrameData& frame);
     // Static batching: binds the batcher to a scene, applies its changes.
     // False: nothing of `scene` is batched this frame (all drawn per item).
     bool updateStatics(Scene& scene, const Inputs& in);
@@ -94,6 +100,14 @@ private:
     };
     std::vector<DirectionalLight*> m_dirScratch;
     std::vector<PointCandidate> m_pointScratch;
+    struct DecalCandidate {
+        const Decal* decal;
+        glm::mat4 world;
+        float opacity;
+        float distance;
+        uint64_t order; // within a sortOrder: placed decals first (by id), then spawned ones (oldest first)
+    };
+    std::vector<DecalCandidate> m_decalScratch;
 };
 
 } // namespace ve

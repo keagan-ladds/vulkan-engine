@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "mode": 1,
+  "alphaCutoff": 0.0,
+  "albedo": "textures/thatch.png",
+  "roughness": 1.0,
+  "metallic": 0.0,
+  "receiveDecals": true
+}

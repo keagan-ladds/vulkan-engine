@@ -46,6 +46,9 @@ use these, and they're what game code should use.
 | **Multiplayer gameplay** (roadmap N2) | Interactions, pickups, doors, NPC actions going through the host | Write every world-changing action host-authoritative from the start (conventions: "Multiplayer-ready gameplay"); offline play runs the same path. `ProxySet` pickups and foliage chopping are still local: don't copy that pattern for shared state. |
 | **World streaming** ([08-world-streaming.md](08-world-streaming.md)) | Placed objects may exist only near players | Remember objects with `ObjectRef` and handle `get()` returning null; keep state that must survive in `Saveable` components. Streaming will be opt-in per object. |
 | **`ve::net` API** | Interest management, prediction, batching | Use the documented request / replicate pattern, not transport details. |
+| **Decals** (`DecalProjector`, `Renderer::decals()`, `veApplyDecals`) | New: settings may be added or renamed (emissive, atlases), and more shaders may receive them | Set fields by name rather than relying on defaults; custom shaders call `veApplyDecals` exactly as `standard.frag` does. |
+| **Asset cooking** (`vecook`, the cook cache, `.texture` files) | Audio / mesh cooking and an archive format are coming; cooked file layout may change (old files are simply re-cooked) | Keep source assets as the truth; don't hand-edit or commit `cooked/` |
+| **Material files** (`*.material`, `MaterialAsset`) | New: fields may be added (more shader options, per-instance overrides); the file format is versioned | Keep `"version": 1` in files; old files will keep loading. |
 | **Editor** | New tools (painting proxies, streaming previews) | Editor-only; doesn't affect game code. |
 
 ## Internal: not for game code

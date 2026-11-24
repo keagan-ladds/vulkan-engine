@@ -169,6 +169,23 @@ if(WIN32)
     target_link_libraries(enet ws2_32 winmm)
 endif()
 
+# bc7enc_rdo: CPU BC7 (bc7enc) and BC4 / BC5 (rgbcx) block encoders for the
+# texture cooker (ve/assets/TextureCook). MIT / public domain. Fetched with
+# git like ENet; only the two encoder files are built.
+FetchContent_Declare(bc7enc_rdo
+    GIT_REPOSITORY https://github.com/richgel999/bc7enc_rdo.git
+    GIT_TAG b9438627eef73a1157e84201b6fa6eb2ffd6d9f0
+    SOURCE_SUBDIR _none)
+FetchContent_MakeAvailable(bc7enc_rdo)
+add_library(ve_bcenc STATIC ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp)
+target_include_directories(ve_bcenc SYSTEM PUBLIC ${bc7enc_rdo_SOURCE_DIR})
+set_target_properties(ve_bcenc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(ve_bcenc PRIVATE /w)
+else()
+    target_compile_options(ve_bcenc PRIVATE -w)
+endif()
+
 add_library(ve_thirdparty STATIC
     ${CMAKE_CURRENT_LIST_DIR}/thirdparty/thirdparty_impl.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp

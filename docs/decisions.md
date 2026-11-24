@@ -320,3 +320,70 @@ path to wide strings at each C API (40-odd call sites and the third-party
 loaders); requiring SDL2 development packages (manual setup, DLL copying).
 **Cost:** Windows builds compile SDL2 once (about a minute); Windows versions
 before 10 1903 would treat non-ASCII paths in the old code page.
+
+### D30. Decals are applied in the material shaders (clustered forward decals) (2026-11)
+**Chosen:** decals are oriented boxes gathered on the CPU each frame (nearest
+1024 in view), sorted, written to a `DecalBuffer` (set 0, binding 14) and
+binned into the light cluster grid. Material shaders call `veApplyDecals` on
+their `VeSurface` before lighting, so a decal changes albedo, normal,
+roughness and metallic with per-channel opacity and everything downstream
+(lights, shadows, ambient, the thin G-buffer for SSR) sees it. Decal textures
+are bindless and sampled with gradients from the position derivatives, so the
+per-pixel decal loop may diverge. Normal maps are oriented on the decal's
+frame and built on the geometric normal; `flatten` blends the surface's own
+normal towards it (standing water).
+**Alternatives:** deferred decals (a box drawn after opaque that blends into
+a G-buffer: this renderer is forward and has no albedo/roughness targets, so
+it could only darken the lit colour or the normal); mesh decals (geometry
+clipped to the surface: per-decal CPU work and no channel control); decal
+atlases (one texture per decal is simpler with bindless).
+**Why:** correct PBR changes to every channel (wet puddles reflect, bullet
+holes are rough and dented) for the price of a cluster lookup per pixel, with
+no extra pass and no G-buffer. **Cost:** only shaders that call
+`veApplyDecals` receive decals (standard and terrain; grass and impostors
+don't); each overlapping decal costs up to three texture samples in those
+shaders; more than 1024 decals in view keeps the nearest.
+
+### D31. Shared textures by path; material files replace glTF materials by name (2026-11)
+**Chosen:** glTF image files are loaded through `AssetManager::loadTexture`
+(keyed by canonical path, colour/data and sampler), so separate models share
+textures. `*.material` JSON files (`MaterialAsset`, reflection-described,
+loaded through `DataAssets`) define a StandardMaterial; a glTF material
+uses one when its `material` extras property names it or when
+`materials/<name>.material` exists. Each file is one shared `Material`,
+updated in place on reload.
+**Alternatives:** per-model textures (the old behaviour: duplicated GPU
+memory); swapping materials in game code after instantiating (each model
+still loads its own textures first, and static renderers need refreshing);
+a material library inside each glTF (Blender would have to repeat it per
+file); matching only by explicit property (every Blender material would
+need it set by hand).
+**Why:** a texture used by many buildings is loaded once, and a surface type
+is tuned in one file. Name matching needs no Blender work beyond consistent
+material names; the property covers the exceptions. **Cost:** a file
+silently overrides every glTF material of that name (logged when loaded);
+the file's values replace the glTF's entirely (no merging); switching a file
+used by static renderers to or from Transparent needs a level reload.
+
+### D32. Cook on demand into a cache, with the same cooker for releases; settings belong to the image (2026-11)
+**Chosen:** `loadTexture(path)` uses a GPU-ready cooked copy (KTX2, BC4/5/7,
+prebuilt mips) from `<exe>/cooked` when the copy is current, otherwise loads
+the source and cooks it on a worker thread for the next run. `vecook` runs the
+same cooker over everything for releases and CI. How an image cooks and loads
+is decided by the image (`<image>.texture`, else its name), not by callers:
+one texture and one cooked file per path. A cooked file stores the cooker
+version, the settings' hash and the source's size / time / content hash
+(time first, content hash when only the time differs).
+**Alternatives:** cooking only when packaging (the shipping formats would never
+run during development: compression problems found late); Unity-style import
+of every asset with a database / .meta files (slow first open, a database to
+keep consistent); caller-chosen formats (the same file could need several
+cooked variants, and a release cook couldn't know which).
+**Why:** development and release run the same bytes; no import step; a
+changed image or setting re-cooks itself. KTX2 because tools can read it; our
+reader/writer is ~200 lines. bc7enc/rgbcx because they're small, CPU-only and
+permissively licensed. **Cost:** the first run after a change loads source
+images (cooked ones from the next run); images used in two roles need a
+`.texture` decision; normal-map shaders must rebuild Z (`veUnpackNormal`);
+cooked files aren't compressed on disk yet (phase 5's archive will be).
+

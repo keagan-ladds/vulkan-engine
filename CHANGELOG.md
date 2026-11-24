@@ -10,7 +10,54 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 
 ## [Unreleased]
 
+### Breaking
+- **`AssetManager::loadTexture(path)` takes only the path.** How an image
+  loads (colour / data / normal map, mips, compression, sampler) is now decided
+  by the image: a settings file next to it (`rock.png.texture`) or its name
+  (`*_normal` -> normal map, `*_rough` / `*_ao` / `*_orm` / `*_mask`... -> data,
+  else colour). Migration: drop the extra arguments; images you loaded with
+  `srgb = false` whose names don't say so need a `.texture` file
+  (`{"type": "Data"}`, or `"Normal"`). Material files' extra textures lose
+  their `"srgb"` field for the same reason.
+- **Normal maps: use `veUnpackNormal(texel)`** in custom shaders instead of
+  `texel.xyz * 2 - 1`. Cooked normal maps are BC5 (X and Y only); the helper
+  rebuilds Z and gives the same result for uncooked maps.
+
 ### Added
+- **Asset cooking (textures).** Images are cooked into GPU-ready KTX2 files
+  (BC7 colour, BC5 normal maps, BC4 greyscale data, prebuilt mips) in
+  `<exe>/cooked`: automatically on a worker thread the first time they load,
+  used from the next run on (no decoding or mip generation at load, 4-8x less
+  GPU memory). The `vecook` tool cooks everything ahead of time (releases, CI).
+  `EngineConfig::cookCache` / `cookOnDemand`; env `VE_COOK=0|read|sync`,
+  `VE_COOK_DIR`. Needs BC texture support (every desktop GPU); without it the
+  source images are used.
+- **Blender node group for the painted shader**
+  (`tools/blender/ve_painted_node_group.py`): "VE Painted" reproduces
+  `standard_painted.frag` in Blender so painted assets look the same while you
+  paint; `tools/blender/test_ve_painted.py` checks the two agree.
+- **`standard_painted.frag`**: the standard shader plus vertex-painted dirt
+  (R), wear (G) and wetness (B), with optional triplanar dirt / grunge / wear
+  textures; use it from a material file (`"fragmentShader"`). A placeholder
+  to copy and adapt.
+- **Shared textures and material files.** Image files referenced by glTF
+  models now go through the AssetManager texture cache, so models exported
+  next to each other share one GPU texture per file. New `*.material` files
+  (`ve::MaterialAsset`, `assets().loadMaterial`) describe a StandardMaterial
+  (textures, values, optional custom shader with extra texture / parameter
+  slots); a glTF material uses `materials/<its name>.material` when it exists,
+  or the file its `material` custom property names. One shared Material per
+  file, reloaded live; editable in the editor (Assets > Materials).
+  `AssetManager::materialFolder = ""` turns name matching off.
+- **Decals.** `ve::DecalProjector` (component: editor Create > Decal, scene
+  files, prefabs) and `Renderer::decals()` (`ve::DecalSystem`: transient
+  decals such as bullet holes, with lifetime and fade-out) project textures
+  onto surfaces and change their albedo (mix or multiply), normal, roughness
+  and metallic, each with its own opacity times the decal's alpha. Applied
+  before lighting by `standard.frag` and `terrain.frag`; custom shaders opt in
+  with `veApplyDecals` (`ve_decals.glsl`). `StandardMaterial::setDecalLayers`
+  chooses which decals a material receives (`params[3].w`, previously unused).
+  New descriptor binding: set 0, binding 14 (`DecalBuffer`).
 - **Prebuilt-engine package.** An engine build folder now exports a CMake
   package: a game can `find_package(VulkanEngine)` with `VulkanEngine_DIR`
   pointing at it and link the compiled engine instead of building it

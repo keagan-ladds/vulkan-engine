@@ -13,12 +13,16 @@
 #include <ve/assets/AssetManager.hpp>
 #include <ve/audio/Audio.hpp>
 #include <ve/core/Engine.hpp>
+#include <ve/core/Env.hpp>
 #include <ve/core/Input.hpp>
 #include <ve/core/Time.hpp>
+#include <ve/physics/Physics.hpp>
+#include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/scene/Scene.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <random>
 
 namespace savanna {
@@ -33,6 +37,7 @@ Player* localPlayer(const ve::Scene& scene)
 
 Player::Player() : GameObject("Player")
 {
+    if (const auto n = ve::env::get("SAVANNA_SHOOT")) m_testShots = std::atoi(std::string(*n).c_str());
     // Input actions: gameplay code asks for "Jump" rather than a specific key,
     // so bindings can change without touching the logic.
     ve::Input& in = input();
@@ -43,6 +48,8 @@ Player::Player() : GameObject("Player")
     in.bindAction("Throw", Key::Q);
     in.bindAction("Throw", ve::MouseButton::Right);
     in.bindAction("ToggleFly", Key::F);
+    in.bindAction("Shoot", Key::V);
+    in.bindAction("Shoot", ve::GamepadButton::LeftShoulder);
     // Gamepad (Xbox layout): left stick moves, right stick looks.
     in.bindAction("Jump", ve::GamepadButton::A);
     in.bindAction("Use", ve::GamepadButton::X);
@@ -179,6 +186,31 @@ void Player::throwRock()
     }
 }
 
+bool Player::shoot(const glm::vec3& direction)
+{
+    const auto hit = physics().raycast(eyePosition(), direction, 150.0f);
+    if (!hit) return false;
+    // Only on things that don't move: a decal stays where it was put (a
+    // crate rolling away would leave its hole floating in the air).
+    if (hit->body && hit->body->type != ve::BodyType::Static) return false;
+    if (!m_bulletHole.albedoTexture) {
+        m_bulletHole.albedoTexture = assets().loadTexture("textures/decals/bullet_hole_albedo.png");
+        m_bulletHole.normalTexture = assets().loadTexture("textures/decals/bullet_hole_normal.png");
+        m_bulletHole.normalStrength = 1.5f;
+        m_bulletHole.roughness = 0.95f; // torn, dusty: never shiny (even in a wet puddle)
+        m_bulletHole.roughnessOpacity = 1.0f;
+        m_bulletHole.sortOrder = 10;   // over puddles and cracks
+        m_bulletHole.drawDistance = 60.0f;
+    }
+    static std::mt19937 rng(4242);
+    const float spin = std::uniform_real_distribution<float>(0.0f, 6.2831853f)(rng);
+    const float size = std::uniform_real_distribution<float>(0.16f, 0.24f)(rng);
+    // 60 s, then a 3 s fade; the system's ring buffer replaces the oldest when full.
+    renderer().decals().spawn(m_bulletHole, ve::DecalSystem::onSurface(hit->point, hit->normal, {size, size}, 0.15f, spin),
+                              60.0f, 3.0f);
+    return true;
+}
+
 void Player::update(float)
 {
     ve::Input& in = input();
@@ -221,6 +253,14 @@ void Player::update(float)
     }
 
     if (in.actionPressed("Throw") && !Builder::building(scene())) throwRock(); // RMB removes pieces while building
+    if (in.actionPressed("Shoot")) shoot();
+    if (m_testShots > 0 && time().time > 1.0f) {
+        // (test hook) a spread of shots around the view centre, all at once
+        std::mt19937 spread(99);
+        std::normal_distribution<float> n(0.0f, 0.06f);
+        const glm::vec3 d = lookDirection(), r = transform().right(), u = glm::cross(r, d);
+        for (; m_testShots > 0; --m_testShots) shoot(glm::normalize(d + r * n(spread) + u * n(spread)));
+    }
 
     if (m_fly) {
         // Free flight (noclip): move directly, dragging the physics capsule along.

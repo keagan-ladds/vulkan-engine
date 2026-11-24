@@ -12,6 +12,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace ve {
@@ -30,6 +31,10 @@ constexpr uint32_t kMaxShadowViews = 128; // directional cascades + 6 per shadow
 constexpr uint32_t kMaxMaterials = 4096;
 constexpr uint32_t kGlobalParamCount = 8;
 constexpr uint32_t kInvalidIndex = 0xFFFFFFFFu;
+// Decals (DecalProjector, DecalSystem): the nearest kMaxDecals in view are
+// binned into the same clusters as the point lights (16-bit indices, 2 per uint).
+constexpr uint32_t kMaxDecals = 1024;
+constexpr uint32_t kDecalIndexCapacity = 32768;
 
 // set 0, binding 0 (uniform buffer)
 struct FrameGlobals {
@@ -80,6 +85,28 @@ struct LightBuffer {
     uint32_t clusters[kClusterCount];                       // first index << 9 | light count
     uint32_t clusterLights[kClusterIndexCapacity / 4];      // point light indices, 8 bits each
 };
+
+// One decal: an oriented box that projects its textures onto whatever
+// surface lies inside it, along its local -Z (see ve_decals.glsl). 128 bytes.
+struct GpuDecal {
+    glm::vec4 rows[3];   // world -> decal space (the box is -0.5..0.5 on each axis), row-major affine
+    glm::vec4 color;     // rgb = linear colour, a = opacity (distance / lifetime fade included)
+    glm::vec4 opacity;   // per channel: x = albedo, y = normal, z = roughness, w = metallic
+    glm::vec4 params;    // x = roughness, y = metallic, z = normal strength, w = flatten (smooths the surface's own bumps)
+    glm::vec4 fade;      // x = cos(angle fade start), y = cos(angle fade end), z = depth fade (fraction of half the box), w = blend (0 normal, 1 multiply)
+    glm::uvec4 textures; // x = albedo (rgba), y = normal, z = mask (G = roughness, B = metallic, A = opacity), w = layer mask
+};
+static_assert(sizeof(GpuDecal) == 128);
+
+// set 0, binding 14 (storage buffer). Only the used parts are uploaded.
+struct DecalBuffer {
+    glm::uvec4 info;         // x = decal count, y = 1 if the clusters are valid (0 = every pixel tests every decal)
+    glm::vec4 clusterParams; // depth slice = log(view depth) * x + y (same grid as the light clusters)
+    uint32_t clusters[kClusterCount];                 // first index << 16 | decal count
+    GpuDecal decals[kMaxDecals];                      // sorted: later decals are drawn over earlier ones
+    uint32_t clusterDecals[kDecalIndexCapacity / 2];  // decal indices, 16 bits each
+};
+static_assert(offsetof(DecalBuffer, decals) % 16 == 0);
 
 // set 0, binding 2 (storage buffer, array). 256 bytes per material.
 // The meaning of params/textures is defined by each shader; see

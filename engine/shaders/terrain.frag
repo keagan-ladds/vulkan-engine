@@ -169,6 +169,7 @@ void main()
     VeSurface s = veDefaultSurface(inWorldPos, N, albedo);
     s.roughness = mix(roughness, 0.35, wet);
     s.ao = ao;
+    veApplyDecals(s, normalize(inNormal), gDx, gDy, VE_DECAL_LAYERS_ALL); // puddles, tracks, scorch marks
     outColor = vec4(veEvaluateLighting(s), 1.0);
-    outGBuffer = veGBuffer(N, s.roughness);
+    outGBuffer = veGBuffer(s.normal, s.roughness);
 }

@@ -35,6 +35,7 @@ struct ImageDesc {
     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT;
     VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D; // 2D, 2D_ARRAY, 3D, CUBE, CUBE_ARRAY
     bool perLayerViews = false;                  // also create one 2D view per layer (render targets)
+    VkComponentMapping swizzle{};                // of the whole-image view (identity by default), e.g. R,R,R,1 for BC4
     const char* debugName = nullptr;
 };
 

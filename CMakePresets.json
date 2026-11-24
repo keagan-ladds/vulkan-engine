@@ -1,21 +1,32 @@
 {
     "version": 6,
-    "cmakeMinimumRequired": { "major": 3, "minor": 26, "patch": 0 },
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 26,
+        "patch": 0
+    },
     "configurePresets": [
         {
             "name": "debug",
             "displayName": "Debug (Ninja; Vulkan validation on)",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build",
-            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
-            "architecture": { "value": "x64", "strategy": "external" }
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            },
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            }
         },
         {
             "name": "release",
             "displayName": "Release (Ninja)",
             "inherits": "debug",
             "binaryDir": "${sourceDir}/build-release",
-            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
         },
         {
             "name": "vs2022",
@@ -23,13 +34,78 @@
             "generator": "Visual Studio 17 2022",
             "architecture": "x64",
             "binaryDir": "${sourceDir}/build-vs",
-            "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "msvc",
+            "displayName": "Visual Studio solution, the newest Visual Studio installed (2026, 2022...)",
+            "description": "No fixed generator: CMake picks the newest Visual Studio it finds. Needs a CMake that knows that Visual Studio (the one bundled with it always does; VS Code's MSVC tasks use it).",
+            "architecture": {
+                "value": "x64",
+                "strategy": "set"
+            },
+            "binaryDir": "${sourceDir}/build-vs",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "vs2026",
+            "displayName": "Visual Studio 2026 solution (Debug + Release; CMake 4.2+)",
+            "generator": "Visual Studio 18 2026",
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/build-vs",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
         }
     ],
     "buildPresets": [
-        { "name": "debug", "configurePreset": "debug" },
-        { "name": "release", "configurePreset": "release" },
-        { "name": "vs2022-debug", "configurePreset": "vs2022", "configuration": "Debug" },
-        { "name": "vs2022-release", "configurePreset": "vs2022", "configuration": "Release" }
+        {
+            "name": "debug",
+            "configurePreset": "debug"
+        },
+        {
+            "name": "release",
+            "configurePreset": "release"
+        },
+        {
+            "name": "vs2022-debug",
+            "configurePreset": "vs2022",
+            "configuration": "Debug"
+        },
+        {
+            "name": "vs2022-release",
+            "configurePreset": "vs2022",
+            "configuration": "Release"
+        },
+        {
+            "name": "msvc-debug",
+            "configurePreset": "msvc",
+            "configuration": "Debug"
+        },
+        {
+            "name": "msvc-release",
+            "configurePreset": "msvc",
+            "configuration": "Release"
+        },
+        {
+            "name": "vs2026-debug",
+            "configurePreset": "vs2026",
+            "configuration": "Debug"
+        },
+        {
+            "name": "vs2026-release",
+            "configurePreset": "vs2026",
+            "configuration": "Release"
+        }
     ]
 }

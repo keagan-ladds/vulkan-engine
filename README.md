@@ -36,6 +36,10 @@ cmake --build build
 ./build/bin/savanna
 ```
 
+Textures are cooked into GPU-ready files (`build/bin/cooked/`) the first
+time they load; `./build/bin/vecook` cooks everything at once (see
+[docs/03-conventions.md](docs/03-conventions.md#import-assets)).
+
 Smoke tests without a window on screen (offscreen rendering):
 `VE_HEADLESS=1 SAVANNA_AUTOTEST=1 ./build/bin/savanna` (or `SAVANNA_EDITORTEST=1`).
 Headless still needs a display server for SDL's Vulkan window: on a machine
@@ -57,15 +61,21 @@ package on `CMAKE_PREFIX_PATH`), it builds SDL2 from source and links it
 statically. The other libraries are fetched as on Linux.
 
 ```powershell
-cmake --preset vs2022                          # a Visual Studio solution in build-vs/
-cmake --build --preset vs2022-debug            # or vs2022-release
+cmake --preset vs2022                          # a Visual Studio solution in build-vs/ (vs2026: VS 2026, CMake 4.2+;
+cmake --build --preset vs2022-debug            #   msvc: the newest installed) - or vs2022-release
 .\build-vs\bin\savanna.exe
 ```
 
 Or open the folder in Visual Studio 2022 and pick the `debug` / `release` preset
 (Ninja). Test hooks work the same way, for example
-`$env:SAVANNA_AUTOTEST=1; .\build-vs\bin\savanna.exe` in PowerShell. (VS Code's
-F5 configurations use GCC and gdb on Windows too: see the MinGW-w64 section below.)
+`$env:SAVANNA_AUTOTEST=1; .\build-vs\bin\savanna.exe` in PowerShell.
+
+**VS Code with MSVC:** pick a "(MSVC Debug)" / "(MSVC Release)" configuration
+in Run and Debug (needs the C/C++ extension). It builds with the newest
+Visual Studio installed (2026, 2022: the `msvc` preset, run by the CMake that
+ships with that Visual Studio) into `build-vs\` and runs under its debugger: symbols go in
+a separate `.pdb`, so the Debug `.exe` stays small and the debugger starts
+quickly. The other F5 configurations use GCC and gdb (MinGW-w64 section below).
 
 #### MinGW-w64 / GCC (w64devkit) instead of Visual Studio
 
@@ -106,6 +116,7 @@ Or in VS Code press **F5** and pick a configuration: Sandbox (the game) or Edito
 | F | toggle fly mode (Space/Ctrl = up/down) |
 | E or left click | pick up sunstone |
 | Q or right click | throw a rock (physics) |
+| V | shoot: leaves a bullet-hole decal where you aim |
 | T / G (hold) | fast-forward / rewind time of day |
 | R | next weather (clear → hazy → overcast → rain) |
 | Tab | release/capture mouse |

@@ -798,7 +798,7 @@ void Terrain::updateMaterials()
     std::shared_ptr<Texture> detail;
     if (!detailTexture.empty()) {
         try {
-            detail = assets().loadTexture(detailTexture, false);
+            detail = assets().loadTexture(detailTexture); // (data: its TextureSettings, e.g. *_detail)
         } catch (const std::exception& e) {
             log::warn("Terrain: {}", e.what());
         }
@@ -839,7 +839,7 @@ void Terrain::updateMaterials()
         if (lm->textured()) {
             anyTextured = true;
             if (!lm->albedo.empty())
-                albedo = layerTexture("albedo:" + lm->albedo, [&] { return assets().loadTexture(lm->albedo, true); });
+                albedo = layerTexture("albedo:" + lm->albedo, [&] { return assets().loadTexture(lm->albedo); });
             if (!lm->normal.empty() || !lm->roughness.empty() || !lm->ao.empty())
                 surface = layerTexture("surface:" + lm->normal + "|" + lm->roughness + "|" + lm->ao + "|" + std::to_string(lm->roughnessValue),
                                        [&] { return packSurfaceMap(r, assets(), *lm); });

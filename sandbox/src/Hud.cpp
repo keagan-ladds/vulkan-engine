@@ -298,7 +298,7 @@ void Hud::start()
     help.alignX = ui::Align::Center;
     help.bind = [this]() -> std::string {
         if (!m_showHelp) return {};
-        return "WASD move   Shift sprint   Space jump   E use   Q throw   Tab inventory   B build   F fly   R weather   F5/F9 save/load   "
+        return "WASD move   Shift sprint   Space jump   E use   Q throw   V shoot   Tab inventory   B build   F fly   R weather   F5/F9 save/load   "
                "Esc menu   H hide";
     };
 }

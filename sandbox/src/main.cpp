@@ -404,6 +404,7 @@ void buildLevel(ve::Engine& engine)
     r.settings().staticBatching = ve::env::flag("SAVANNA_STATIC", r.settings().staticBatching);
     // SAVANNA_STRESS=pieces:<n>: n static building pieces in a grid by the camp (Stress.hpp).
     if (const auto st = ve::env::get("SAVANNA_STRESS")) spawnStress(scene, terrain, *st);
+    if (ve::env::flag("SAVANNA_PAINTTEST")) spawnPaintTest(scene, terrain); // standard_painted.frag (Stress.hpp)
     // SAVANNA_SCULPT=1: brush a hill and a desert patch in front of the camera.
     if (ve::env::flag("SAVANNA_SCULPT")) scene.spawn<SculptTest>(terrainPtr);
     // SAVANNA_MOVER=1: a textured box sliding sideways 5 m in front of the camera.
@@ -472,7 +473,10 @@ void buildLevel(ve::Engine& engine)
 void reloadLevel(ve::Engine& engine, const char* thenLabel, std::function<void()> then)
 {
     engine.beginLoading(makeLoadingScene(), 0.3f);
-    engine.addLoadStep("Leaving", [&engine] { engine.scene().clear(); });
+    engine.addLoadStep("Leaving", [&engine] {
+        engine.scene().clear();
+        engine.renderer().decals().clear(); // (bullet holes belong to the old level)
+    });
     engine.addLoadStep(kLevelStep, [&engine] { buildLevel(engine); });
     engine.addLoadStep(thenLabel, std::move(then));
 }

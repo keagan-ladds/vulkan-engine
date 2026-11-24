@@ -12,6 +12,12 @@
     //  - Editor:      the same scene, starting in the in-engine editor (SAVANNA_EDITOR=1;
     //                 F2 toggles editor <-> game in any configuration)
     //  - Autotest / Editor test: scripted smoke tests that exit by themselves
+    //  - "(MSVC ...)" (Windows only): built with the newest Visual Studio's compiler
+    //    (tasks.json "Build MSVC ...", into build-vs/) and run under Visual
+    //    Studio's debugger ("cppvsdbg"): symbols in a separate .pdb, so the
+    //    .exe stays small and the debugger starts in seconds; no gdb, no
+    //    auto-solib workaround needed. Output (including [vulkan] messages) in
+    //    the integrated terminal.
     "version": "0.2.0",
     "configurations": [
         {
@@ -83,6 +89,56 @@
             "preLaunchTask": "Build Debug",
             "windows": { "program": "${workspaceFolder}/build/bin/savanna.exe", "miDebuggerPath": "gdb.exe",
                          "setupCommands": [{ "text": "-enable-pretty-printing", "ignoreFailures": true }, { "text": "set auto-solib-add off" }] }
+        },
+        {
+            "name": "Sandbox (MSVC Debug)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-vs/bin/savanna.exe",
+            "cwd": "${workspaceFolder}/build-vs/bin",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build MSVC Debug"
+        },
+        {
+            "name": "Editor (MSVC Debug)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-vs/bin/savanna.exe",
+            "cwd": "${workspaceFolder}/build-vs/bin",
+            "environment": [{ "name": "SAVANNA_EDITOR", "value": "1" }],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build MSVC Debug"
+        },
+        {
+            "name": "Sandbox (MSVC Release)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-vs/bin/savanna.exe",
+            "cwd": "${workspaceFolder}/build-vs/bin",
+            "environment": [],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build MSVC Release"
+        },
+        {
+            "name": "Editor (MSVC Release)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-vs/bin/savanna.exe",
+            "cwd": "${workspaceFolder}/build-vs/bin",
+            "environment": [{ "name": "SAVANNA_EDITOR", "value": "1" }],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build MSVC Release"
+        },
+        {
+            "name": "Autotest (MSVC Debug)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build-vs/bin/savanna.exe",
+            "cwd": "${workspaceFolder}/build-vs/bin",
+            "environment": [{ "name": "SAVANNA_AUTOTEST", "value": "1" }],
+            "console": "integratedTerminal",
+            "preLaunchTask": "Build MSVC Debug"
         },
         {
             "name": "Editor test (Debug)",

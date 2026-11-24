@@ -1,5 +1,6 @@
 #include "ve/render/SceneGatherer.hpp"
 
+#include "ve/render/Decals.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/render/ShadowSetup.hpp"
@@ -7,6 +8,7 @@
 #include "ve/render/StaticBatcher.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/scene/Components.hpp"
+#include "ve/scene/Decal.hpp"
 #include "ve/scene/Scene.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -29,7 +31,9 @@ uint32_t SceneGatherer::gather(Scene& scene, const Inputs& in, FrameData& frame)
 
     setupCamera(scene, in, frame.camera);
     gatherDrawItems(scene, in, frame);
-    return gatherLights(scene, in, frame);
+    const uint32_t points = gatherLights(scene, in, frame);
+    gatherDecals(scene, in, frame);
+    return points;
 }
 
 void SceneGatherer::setupCamera(Scene& scene, const Inputs& in, CameraData& cam) const
@@ -316,6 +320,50 @@ uint32_t SceneGatherer::gatherLights(Scene& scene, const Inputs& in, FrameData& 
     frame.stats.shadowViews = static_cast<uint32_t>(frame.shadowViews.size());
     frame.globals.lightCounts = glm::uvec4(dirs.size(), points.size(), settings.cascadeCount, 0);
     return static_cast<uint32_t>(points.size());
+}
+
+void SceneGatherer::gatherDecals(Scene& scene, const Inputs& in, FrameData& frame)
+{
+    std::vector<DecalCandidate>& list = m_decalScratch;
+    list.clear();
+    frame.decalBoxes.clear();
+    const CameraData& cam = frame.camera;
+    if (in.decals) in.decals->update(frame.time); // (expires spawned decals even while they're off)
+
+    // In view and within its draw distance; fades out over the last 15% of it.
+    auto consider = [&](const Decal& d, const glm::mat4& world, float opacity, uint64_t order) {
+        if (opacity <= 0.0f || d.color.a <= 0.0f || d.layers == 0) return;
+        const AABB box = AABB{glm::vec3(-0.5f), glm::vec3(0.5f)}.transformed(world);
+        const float dist = glm::length(glm::max(glm::abs(cam.position - box.center()) - box.extents(), glm::vec3(0.0f)));
+        if (dist >= d.drawDistance || !cam.frustum.intersects(box)) return;
+        const float fade = std::clamp((d.drawDistance - dist) / (0.15f * d.drawDistance), 0.0f, 1.0f);
+        list.push_back({&d, world, opacity * fade, dist, order});
+    };
+    if (in.settings->decals) {
+        scene.forEach<DecalProjector>([&](DecalProjector& p) {
+            if (p.isActive()) consider(p, p.transform().worldMatrix(), 1.0f, p.gameObject().id() >> 1);
+        });
+        if (in.decals) {
+            for (const DecalSystem::Entry& e : in.decals->entries()) {
+                if (e.serial != 0) consider(e.decal, e.world, DecalSystem::lifeFade(e, frame.time), (1ull << 63) | e.serial);
+            }
+        }
+    }
+    // Too many: keep the nearest. Then the drawing order (later on top).
+    if (list.size() > kMaxDecals) {
+        std::nth_element(list.begin(), list.begin() + kMaxDecals, list.end(),
+                         [](const auto& a, const auto& b) { return a.distance < b.distance; });
+        list.resize(kMaxDecals);
+    }
+    std::sort(list.begin(), list.end(), [](const auto& a, const auto& b) {
+        return a.decal->sortOrder != b.decal->sortOrder ? a.decal->sortOrder < b.decal->sortOrder : a.order < b.order;
+    });
+    DecalBuffer& out = *frame.decals;
+    for (size_t i = 0; i < list.size(); ++i) {
+        list[i].decal->toGpu(list[i].world, list[i].opacity, out.decals[i]);
+        frame.decalBoxes.push_back(list[i].world);
+    }
+    frame.stats.decals = static_cast<uint32_t>(list.size());
 }
 
 } // namespace ve

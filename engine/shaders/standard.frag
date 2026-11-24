@@ -14,6 +14,8 @@ layout(location = 1) out vec4 outGBuffer; // thin G-buffer (see ve.glsl)
 
 void main()
 {
+    // Position derivatives for decal texture LODs: here, before any discard.
+    vec3 dPdx = dFdx(inWorldPos), dPdy = dFdy(inWorldPos);
     veLodDither(inLodFade);
     VeMaterial m = veMaterial();
     vec2 uv = inUV * m.params[3].xy;
@@ -25,8 +27,9 @@ void main()
 
     vec3 N = normalize(inNormal);
     if (!gl_FrontFacing) N = -N; // double-sided materials light their back side correctly
+    vec3 Ng = N;                 // geometric normal (decals are oriented on it)
     if (m.textures[1] != VE_INVALID) {
-        vec3 tn = veSample(m.textures[1], uv).xyz * 2.0 - 1.0;
+        vec3 tn = veUnpackNormal(veSample(m.textures[1], uv));
         tn.xy *= m.params[1].z;
         vec3 T = normalize(inTangent.xyz - N * dot(N, inTangent.xyz));
         vec3 B = cross(N, T) * inTangent.w;
@@ -49,6 +52,8 @@ void main()
     s.metallic = metallic;
     s.ao = m.textures[4] != VE_INVALID ? veSample(m.textures[4], uv).r : 1.0;
     s.emissive = m.params[2].rgb * m.params[2].w * veSampleOr(m.textures[3], uv, vec4(1.0)).rgb;
+    // Decals (bullet holes, puddles, cracks): params[3].w = the layers not received.
+    veApplyDecals(s, Ng, dPdx, dPdy, ~floatBitsToUint(m.params[3].w));
 
     outColor = vec4(veEvaluateLighting(s), base.a);
     outGBuffer = veGBuffer(s.normal, s.roughness);

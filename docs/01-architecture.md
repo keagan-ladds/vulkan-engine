@@ -196,6 +196,7 @@ Every pipeline uses **one global pipeline layout**:
 | set 0, b4 | `samplerCubeArrayShadow` | point light shadow cubes |
 | set 0, b5–b9 | instancing SSBOs | instances, visible-instance lists, indirect draw commands, instance groups, cull views (see §5.7) |
 | set 0, b10–b13 | skinning SSBOs | rest vertices, joint weights, this frame's joint matrices, skinned output (see §5.7b) |
+| set 0, b14 | `DecalBuffer` SSBO | this frame's decals (≤ 1024, sorted) and their clusters (see "Decals" below) |
 | set 1, b0 | `image2D storageImages[]` | bindless storage images (compute) |
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
@@ -208,6 +209,27 @@ range in `clusterLights` (8-bit light indices). `veEvaluateLighting` (and any
 shader using `veLightList(P)`) only visits the lights of the point's cluster;
 off screen, or if the list overflows (`clusterParams.z == 0`), it falls back
 to every light. Only the used part of the buffer is uploaded.
+
+**Decals** (`render/Decals.hpp`, `scene/Decal.hpp`, `ve_decals.glsl`). A decal
+is an oriented box that projects textures along its local -Z onto whatever
+surface lies inside it (bullet holes, puddles, cracks). Placed ones are
+`DecalProjector` components (the box is the object's transform); transient
+ones go through `Renderer::decals()` (`DecalSystem`: a ring buffer, oldest
+replaced, optional lifetime + fade-out, no GameObjects). Each frame
+`SceneGatherer` culls them (frustum, `drawDistance`), keeps the nearest 1024,
+sorts them by `sortOrder` (placed before spawned, then age) and writes
+`DecalBuffer`; `LightClusterer` bins their view-space boxes into the light
+cluster grid (16-bit indices). This is a forward renderer, so decals are not
+a pass drawn over the lit image: material shaders call
+`veApplyDecals(surface, geometricNormal, dPdx, dPdy, receiveLayers)` before
+`veEvaluateLighting`, and each decal blends albedo (mix or multiply), normal
+(a normal map on the decal's frame, built on the geometric normal; `flatten`
+smooths the surface's own bumps), roughness and metallic, each with its own
+opacity times the decal's alpha and fades (angle to the projection
+direction, never on back faces; box depth; distance; lifetime). Lighting,
+shadows and the thin G-buffer (SSR on puddles) all see the result.
+`standard.frag` (receive mask in `params[3].w`, inverted) and `terrain.frag`
+receive decals; custom shaders opt in with the same call.
 
 **Temporal AA** (`RendererSettings::temporalAA`, off by default; Savanna turns
 it on). The projection is jittered by an 8-position Halton (2, 3) sequence
@@ -880,13 +902,38 @@ never see Jolt types. The module is split by concern: `PhysicsWorld.cpp`
 - `AssetManager` resolves paths against search roots (`<exe>/assets`, plus any
   added), caches by path, and returns `shared_ptr`s.
 - Textures: stb_image (PNG/JPG/TGA/BMP/HDR), sRGB or linear, mip chains made with
-  blits, and auto-registered in the bindless table. `Texture::fromPixels()` and
+  blits, and auto-registered in the bindless table. How a file loads is its
+  `TextureSettings` (`<image>.texture`, else its name: Color / Data / Normal,
+  mips, compression, max size, sampler), one texture per file.
+- Cooking (`assets/TextureCook`, `Ktx2`): images become KTX2 files with their
+  whole mip chain, block compressed on the CPU (bc7enc / rgbcx): Color -> BC7
+  sRGB, Normal -> BC5 (Z rebuilt by `veUnpackNormal`), greyscale Data -> BC4
+  (viewed R,R,R,1), other Data -> BC7. They live in the cook cache
+  (`<exe>/cooked/<asset path>.ktx2`) and record the cooker version, the
+  settings' hash and the source's size / time / content hash, so
+  `loadTexture` uses a cooked copy only while it is current; otherwise it
+  loads the source and queues a cook on the job pool (Background lane), used
+  from the next run. `vecook` (engine/tools) cooks everything with the same
+  code for releases / CI. Without BC support the source images are used. `Texture::fromPixels()` and
   `Texture::create3D()` cover procedural data (e.g. cloud noise).
 - Models: glTF 2.0 (`.gltf`/`.glb`) via cgltf. Meshes and primitives become
   `Mesh` + submeshes. Materials become `StandardMaterial` (base colour /
   normal / metallic-roughness / emissive textures and factors), and the node
   hierarchy becomes `Model`.
   `scene.instantiate(model)` spawns a GameObject hierarchy with MeshRenderers.
+  Image files a glTF references go through the `AssetManager` texture cache
+  (canonical path + colour/data + sampler), so models exported side by side
+  ("glTF Separate") share one GPU texture per file; `.glb`-embedded images
+  stay per model.
+- Material files (`*.material`, `assets/MaterialAsset.hpp`): a
+  `StandardMaterial` (optionally with a custom vertex / fragment shader in its
+  layout, plus extra texture and parameter slots) described as JSON. A glTF
+  material uses one instead of its own values when its `material` custom
+  property (glTF extras) names it, or when `materials/<its name>.material`
+  exists (`AssetManager::materialFolder`; Blender's `.001` suffix ignored, lower
+  case tried too). One shared `Material` per file; files are `DataAssets`, so
+  edits on disk or in the editor (Assets > Materials) are re-applied in place
+  by `AssetManager::updateMaterials()` every frame.
 - Audio: `AudioClip` = path + decode mode, played through miniaudio's resource manager.
 
 ## 8. Audio

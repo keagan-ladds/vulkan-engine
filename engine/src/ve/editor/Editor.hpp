@@ -13,6 +13,7 @@
 // your scene file at startup (ve::SceneSerializer::load).
 // =============================================================================
 
+#include "ve/assets/MaterialAsset.hpp"
 #include "ve/editor/Gizmo.hpp"
 #include "ve/world/Terrain.hpp"
 #include "ve/world/Vegetation.hpp"
@@ -207,6 +208,7 @@ private:
     TerrainBiome m_assetBiome;
     std::unique_ptr<FoliageType> m_assetFoliage;
     std::unique_ptr<GrassLayer> m_assetGrass;
+    MaterialAsset m_assetMaterial;
     bool m_openNewAsset = false;
     char m_newAssetBuffer[256] = {};
     std::string m_newAssetExt; // the extension the new file must keep

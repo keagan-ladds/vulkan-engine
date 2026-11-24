@@ -11,8 +11,8 @@
 //   2. prepare: gather camera / draw items / lights from the scene, cull,
 //      sort (SceneGatherer; static renderers are batched once into instance
 //      groups by StaticBatcher), shadow cascades + cube faces (ShadowSetup),
-//      light clusters (LightClusterer); let passes prepare(), upload
-//      FrameGlobals/LightBuffer/MaterialBuffer
+//      light + decal clusters (LightClusterer); let passes prepare(), upload
+//      FrameGlobals/LightBuffer/DecalBuffer/MaterialBuffer
 //   3. record the RenderGraph (FrameCapture reads the image back if asked)
 //   4. submit, present
 //
@@ -27,6 +27,7 @@
 #include "ve/gfx/Device.hpp"
 #include "ve/gfx/Samplers.hpp"
 #include "ve/gfx/Swapchain.hpp"
+#include "ve/render/Decals.hpp"
 #include "ve/render/FrameCapture.hpp"
 #include "ve/render/FrameData.hpp"
 #include "ve/render/Instancing.hpp"
@@ -152,6 +153,9 @@ public:
     InstanceSystem& instances() { return *m_instances; }
     // Static MeshRenderers batched into instance groups (RendererSettings::staticBatching).
     StaticBatcher& staticBatcher() { return m_staticBatcher; }
+    // Fire-and-forget decals (bullet holes, footprints): see Decals.hpp.
+    // Placed decals are DecalProjector components.
+    DecalSystem& decals() { return m_decals; }
     void addShadowCaster(ShadowCaster* caster) { m_shadowCasters.push_back(caster); }
     void removeShadowCaster(ShadowCaster* caster) { std::erase(m_shadowCasters, caster); }
     const std::vector<ShadowCaster*>& shadowCasters() const { return m_shadowCasters; }
@@ -242,6 +246,7 @@ private:
         Buffer globals;   // FrameGlobals (UBO)
         Buffer lights;    // LightBuffer (SSBO)
         Buffer materials; // GpuMaterial[kMaxMaterials] (SSBO)
+        Buffer decals;    // DecalBuffer (SSBO)
         VkDescriptorSet set = VK_NULL_HANDLE;
         VkQueryPool timestamps = VK_NULL_HANDLE;   // GPU pass timing
         std::vector<RenderPass*> timedPasses;      // which pass each query pair belongs to
@@ -325,6 +330,8 @@ private:
 
     std::unique_ptr<SkinningSystem> m_skinning;
     std::unique_ptr<LightBuffer> m_lights; // ~110 KB, heap allocated (only the used part is uploaded)
+    std::unique_ptr<DecalBuffer> m_decalBuffer; // ~210 KB, likewise
+    DecalSystem m_decals;
     // The per-frame parts (see the header comment).
     SceneGatherer m_sceneGatherer;
     StaticBatcher m_staticBatcher;

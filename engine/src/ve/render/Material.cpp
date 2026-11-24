@@ -5,6 +5,7 @@
 #include "ve/render/Texture.hpp"
 
 #include <algorithm>
+#include <bit>
 
 namespace ve {
 
@@ -147,6 +148,21 @@ StandardMaterial::StandardMaterial(Renderer& renderer, Mode mode)
     setVector(1, glm::vec4(0.8f, 0.0f, 1.0f, mode == Mode::Cutout ? 0.5f : 0.0f));
     setVector(2, glm::vec4(0.0f));
     setVector(3, glm::vec4(1.0f, 1.0f, 1.0f, 0.0f));
+}
+
+// Stored inverted (the layers *not* received), so the all-zero parameters of a
+// fresh material receive every decal.
+StandardMaterial& StandardMaterial::setDecalLayers(uint32_t receive)
+{
+    glm::vec4 v = vector(3);
+    v.w = std::bit_cast<float>(~receive);
+    setVector(3, v);
+    return *this;
+}
+
+uint32_t StandardMaterial::decalLayers() const
+{
+    return ~std::bit_cast<uint32_t>(vector(3).w);
 }
 
 StandardMaterial& StandardMaterial::setRoughness(float r)

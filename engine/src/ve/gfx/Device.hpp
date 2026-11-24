@@ -30,6 +30,9 @@ struct DeviceFeatures {
     float maxAnisotropy = 1.0f;
     bool depthClamp = false;
     bool fillModeNonSolid = false;
+    // BC1-7 block-compressed textures (every desktop GPU): cooked textures use
+    // BC4 / BC5 / BC7. Without it the asset manager loads the source images.
+    bool textureCompressionBC = false;
 };
 
 // Fills mips 1..n of `image` by successive half-size blits of mip 0 (which is
@@ -82,7 +85,7 @@ public:
     void destroyImage(Image& image);
     VkImageView createImageView(VkImage image, VkFormat format, VkImageViewType type,
                                 VkImageAspectFlags aspect, uint32_t baseMip, uint32_t mipCount,
-                                uint32_t baseLayer, uint32_t layerCount) const;
+                                uint32_t baseLayer, uint32_t layerCount, VkComponentMapping swizzle = {}) const;
 
     // Asynchronous buffer uploads. The data is copied into staging memory right
     // away (the caller may free it on return); the GPU copy is recorded at the
@@ -111,6 +114,10 @@ public:
     // layer), optionally generates the remaining mips with linear blits, and
     // leaves the image in VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL.
     void uploadImage(const Image& image, const void* pixels, VkDeviceSize size, bool generateMips);
+    // Uploads every mip level of a 2D image from one buffer (levelOffsets[i] =
+    // where level i starts; any format, block-compressed included), then
+    // leaves it READ_ONLY_OPTIMAL. For prebuilt mip chains (cooked textures).
+    void uploadImageLevels(const Image& image, const void* data, VkDeviceSize size, std::span<const VkDeviceSize> levelOffsets);
 
     // Records commands with `fn`, submits them and waits for completion.
     // Convenient for one-off uploads at load time; never use it per frame.

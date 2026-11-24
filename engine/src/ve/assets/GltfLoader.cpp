@@ -9,6 +9,7 @@
 // =============================================================================
 
 #include "ve/assets/AssetManager.hpp"
+#include "ve/assets/TextureSettings.hpp"
 #include "ve/anim/Animation.hpp"
 #include "ve/render/Skinning.hpp"
 #include "ve/assets/Model.hpp"
@@ -31,11 +32,13 @@ struct GltfContext {
     const cgltf_data* data;
     std::filesystem::path baseDir;
     Model& model;
+    AssetManager* assets; // null: textures per model, no material files
     std::map<std::pair<const cgltf_image*, bool>, std::shared_ptr<Texture>> textureCache;
 };
 
-std::shared_ptr<Texture> loadImage(GltfContext& ctx, const cgltf_texture_view& view, bool srgb)
+std::shared_ptr<Texture> loadImage(GltfContext& ctx, const cgltf_texture_view& view, TextureType role)
 {
+    const bool srgb = role == TextureType::Color; // (embedded images: the role decides; files: their settings)
     if (!view.texture || !view.texture->image) return nullptr;
     const cgltf_image* image = view.texture->image;
     const auto key = std::make_pair(image, srgb);
@@ -72,7 +75,26 @@ std::shared_ptr<Texture> loadImage(GltfContext& ctx, const cgltf_texture_view& v
         std::string uri = image->uri;
         cgltf_decode_uri(uri.data());
         uri.resize(std::strlen(uri.c_str()));
-        tex = loadTextureFile(ctx.renderer, ctx.baseDir / uri, srgb, true, sampler);
+        // Through the asset cache when there is one: every model pointing at
+        // this file shares one texture. (Canonical path: "../textures/x.png"
+        // from different folders is the same key.)
+        std::error_code ec;
+        std::filesystem::path file = std::filesystem::weakly_canonical(ctx.baseDir / uri, ec);
+        if (ec) file = ctx.baseDir / uri;
+        if (ctx.assets) {
+            // The file's settings decide how it loads (TextureSettings.hpp). Say
+            // so when they disagree with how this model uses it.
+            tex = ctx.assets->loadTexture(file);
+            const TextureType type = ctx.assets->textureSettings(file).type;
+            if (type != role)
+                log::warnOnce(std::string("Texture ") + ctx.assets->assetName(file) + " is used as a " +
+                              (role == TextureType::Normal ? "normal map" : role == TextureType::Data ? "data texture" : "colour texture") +
+                              " by " + ctx.model.name + " but loads as " + toString(type) + ": add " +
+                              ctx.assets->assetName(TextureSettings::settingsFile(file)) + " with {\"type\": \"" + toString(role) +
+                              "\"} or rename the image (e.g. *_normal, *_orm)");
+        } else {
+            tex = loadTextureFile(ctx.renderer, file, srgb, true, sampler);
+        }
     }
     if (tex) {
         ctx.textureCache[key] = tex;
@@ -85,6 +107,10 @@ std::shared_ptr<Material> convertMaterial(GltfContext& ctx, const cgltf_material
 {
     using Mode = StandardMaterial::Mode;
     if (!m) return ctx.renderer.createStandardMaterial();
+    // A material file (MaterialAsset.hpp) replaces the model's own material.
+    if (ctx.assets) {
+        if (auto shared = ctx.assets->materialForGltf(m->name ? m->name : "", m->extras.data ? m->extras.data : "")) return shared;
+    }
 
     Mode mode = Mode::Opaque;
     if (m->alpha_mode == cgltf_alpha_mode_blend) mode = Mode::Transparent;
@@ -100,17 +126,17 @@ std::shared_ptr<Material> convertMaterial(GltfContext& ctx, const cgltf_material
                            pbr.base_color_factor[3]});
         mat->setRoughness(pbr.roughness_factor);
         mat->setMetallic(pbr.metallic_factor);
-        if (auto t = loadImage(ctx, pbr.base_color_texture, true)) mat->setAlbedoTexture(t);
-        if (auto t = loadImage(ctx, pbr.metallic_roughness_texture, false)) mat->setMetallicRoughnessTexture(t);
+        if (auto t = loadImage(ctx, pbr.base_color_texture, TextureType::Color)) mat->setAlbedoTexture(t);
+        if (auto t = loadImage(ctx, pbr.metallic_roughness_texture, TextureType::Data)) mat->setMetallicRoughnessTexture(t);
     }
-    if (auto t = loadImage(ctx, m->normal_texture, false)) {
+    if (auto t = loadImage(ctx, m->normal_texture, TextureType::Normal)) {
         mat->setNormalTexture(t);
         mat->setNormalStrength(m->normal_texture.scale);
     }
-    if (auto t = loadImage(ctx, m->occlusion_texture, false)) mat->setOcclusionTexture(t);
+    if (auto t = loadImage(ctx, m->occlusion_texture, TextureType::Data)) mat->setOcclusionTexture(t);
     const float emissiveStrength = m->has_emissive_strength ? m->emissive_strength.emissive_strength : 1.0f;
     mat->setEmissive({m->emissive_factor[0], m->emissive_factor[1], m->emissive_factor[2]}, emissiveStrength);
-    if (auto t = loadImage(ctx, m->emissive_texture, true)) mat->setEmissiveTexture(t);
+    if (auto t = loadImage(ctx, m->emissive_texture, TextureType::Color)) mat->setEmissiveTexture(t);
     return mat;
 }
 
@@ -124,7 +150,7 @@ const cgltf_accessor* findAttribute(const cgltf_primitive& p, cgltf_attribute_ty
 
 } // namespace
 
-std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path& file)
+std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path& file, AssetManager* assets)
 {
     cgltf_options options{};
     cgltf_data* data = nullptr;
@@ -140,7 +166,7 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
 
     auto model = std::make_shared<Model>();
     model->name = file.stem().string();
-    GltfContext ctx{renderer, data, file.parent_path(), *model, {}};
+    GltfContext ctx{renderer, data, file.parent_path(), *model, assets, {}};
 
     // Materials are shared between meshes in glTF; convert each once.
     std::vector<std::shared_ptr<Material>> materials(data->materials_count);

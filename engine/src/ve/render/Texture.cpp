@@ -38,6 +38,27 @@ std::shared_ptr<Texture> Texture::create2D(Renderer& renderer, uint32_t width, u
     return createImpl(renderer, desc, pixels, byteSize, mipmaps, sampler, std::move(name));
 }
 
+std::shared_ptr<Texture> Texture::createWithLevels(Renderer& renderer, uint32_t width, uint32_t height, VkFormat format,
+                                                  const void* data, size_t byteSize, std::span<const VkDeviceSize> levelOffsets,
+                                                  SamplerType sampler, VkComponentMapping swizzle, std::string name)
+{
+    std::shared_ptr<Texture> tex(new Texture());
+    tex->m_renderer = &renderer;
+    tex->m_name = std::move(name);
+    ImageDesc d;
+    d.format = format;
+    d.extent = {width, height, 1};
+    d.mipLevels = static_cast<uint32_t>(std::max<size_t>(1, levelOffsets.size()));
+    d.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    d.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    d.swizzle = swizzle;
+    d.debugName = tex->m_name.empty() ? nullptr : tex->m_name.c_str();
+    tex->m_image = renderer.device().createImage(d);
+    renderer.device().uploadImageLevels(tex->m_image, data, byteSize, levelOffsets);
+    tex->m_index = renderer.bindless().addTexture(tex->m_image.view, renderer.samplers().get(sampler));
+    return tex;
+}
+
 std::shared_ptr<Texture> Texture::create3D(Renderer& renderer, uint32_t width, uint32_t height, uint32_t depth,
                                            VkFormat format, const void* pixels, size_t byteSize, SamplerType sampler,
                                            std::string name)

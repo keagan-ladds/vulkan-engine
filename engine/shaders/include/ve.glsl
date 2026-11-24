@@ -8,6 +8,7 @@
 //   veDirShadowMap     directional cascades (sampler2DArrayShadow)
 //   vePointShadowMap   point light cubes (samplerCubeArrayShadow)
 //   veTextures[]       bindless textures (+ veTextures3D[] / veTexturesCube[] aliases)
+//   decals.*           this frame's decals + their clusters (functions: ve_decals.glsl)
 //   draw.*             default per-draw push constants (unless VE_CUSTOM_PUSH_CONSTANTS)
 //
 // !!! Keep in sync with engine/src/ve/render/GpuTypes.hpp !!!
@@ -25,6 +26,8 @@
 #define VE_CLUSTER_Y 9
 #define VE_CLUSTER_Z 24
 #define VE_CLUSTER_INDEX_CAPACITY 65536
+#define VE_MAX_DECALS 1024
+#define VE_DECAL_INDEX_CAPACITY 32768
 #define VE_INVALID 0xFFFFFFFFu
 #define VE_DRAW_FLAG_POINT_SHADOW 1u
 #define VE_DRAW_FLAG_INSTANCED 2u
@@ -84,6 +87,26 @@ struct VeMaterial {
 layout(set = 0, binding = 2, std430) readonly buffer VeMaterialBuffer {
     VeMaterial materials[];
 };
+
+// Decals: oriented boxes projecting colour / normal / roughness / metallic
+// onto surfaces (ve::DecalProjector, ve::DecalSystem). Binned into the light
+// cluster grid; material shaders apply them with veApplyDecals (ve_decals.glsl).
+struct VeDecal {
+    vec4 rows[3];   // world -> decal space (box -0.5..0.5), row-major affine
+    vec4 color;     // rgb linear colour, a = opacity
+    vec4 opacity;   // per channel: albedo, normal, roughness, metallic
+    vec4 params;    // roughness, metallic, normal strength, flatten
+    vec4 fade;      // cos(angle fade start), cos(angle fade end), depth fade, blend (0 normal, 1 multiply)
+    uvec4 textures; // albedo, normal, mask (G rough, B metal, A opacity), layer mask
+};
+
+layout(set = 0, binding = 14, std430) readonly buffer VeDecalBuffer {
+    uvec4 info;         // x = count, y = 1 if clusters are valid
+    vec4 clusterParams; // depth slice = log(view depth) * x + y
+    uint clusters[VE_CLUSTER_X * VE_CLUSTER_Y * VE_CLUSTER_Z]; // first << 16 | count
+    VeDecal list[VE_MAX_DECALS];
+    uint clusterDecals[VE_DECAL_INDEX_CAPACITY / 2];           // 16-bit decal indices
+} decals;
 
 layout(set = 0, binding = 3) uniform sampler2DArrayShadow veDirShadowMap;
 layout(set = 0, binding = 4) uniform samplerCubeArrayShadow vePointShadowMap;
@@ -195,6 +218,15 @@ vec4 veSampleLod(uint index, vec2 uv, float lod) { return textureLod(veTextures[
 vec4 veSampleGrad(uint index, vec2 uv, vec2 dx, vec2 dy) { return textureGrad(veTextures[nonuniformEXT(index)], uv, dx, dy); }
 vec4 veSample3D(uint index, vec3 uvw) { return texture(veTextures3D[nonuniformEXT(index)], uvw); }
 vec4 veSample3DLod(uint index, vec3 uvw, float lod) { return textureLod(veTextures3D[nonuniformEXT(index)], uvw, lod); }
+
+// Tangent-space normal from a normal-map sample. Uses only X and Y and
+// rebuilds Z: cooked normal maps are BC5 (two channels, B reads 0), and for
+// uncooked RGB maps it gives the same result.
+vec3 veUnpackNormal(vec4 texel)
+{
+    vec2 xy = texel.xy * 2.0 - 1.0;
+    return vec3(xy, sqrt(clamp(1.0 - dot(xy, xy), 0.0, 1.0)));
+}
 
 // Samples `index` if valid, otherwise returns `fallback`.
 vec4 veSampleOr(uint index, vec2 uv, vec4 fallback)

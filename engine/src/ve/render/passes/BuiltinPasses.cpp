@@ -60,6 +60,14 @@ void InstanceCullPass::execute(RenderContext& ctx)
     renderer().instances().recordCulling(ctx.cmd, ctx.frameSlot);
 }
 
+void OpaquePass::onGui()
+{
+    // Decals are applied by the material shaders while this pass draws.
+    ImGui::Checkbox("Decals", &renderer().settings().decals);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%u in view, %u spawned", renderer().stats().decals, renderer().decals().count());
+}
+
 void InstanceCullPass::onGui()
 {
     const InstanceStats& s = renderer().instances().stats();

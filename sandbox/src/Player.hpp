@@ -11,6 +11,7 @@
 //    so motion stays smooth even though physics runs at 50 Hz.
 // =============================================================================
 
+#include <ve/render/Decals.hpp>
 #include <ve/physics/Physics.hpp>
 #include <ve/scene/GameObject.hpp>
 #include <ve/scene/ObjectRef.hpp>
@@ -56,6 +57,11 @@ public:
     // What Q / right mouse throws.
     void setThrowable(std::shared_ptr<ve::Mesh> mesh, std::shared_ptr<ve::Material> material, ve::Collider collider);
     void throwRock();
+    // V / gamepad left shoulder: a "shot" along the view: leaves a bullet-hole decal
+    // (ve::DecalSystem) on whatever static surface it hits. Returns whether it hit.
+    // Test hook: SAVANNA_SHOOT=n fires n shots spread around the view a second in.
+    bool shoot() { return shoot(lookDirection()); }
+    bool shoot(const glm::vec3& direction);
 
     glm::vec3 eyePosition() const;
     glm::vec3 lookDirection() const;
@@ -100,6 +106,8 @@ private:
     bool m_wasGrounded = true;
     bool m_sprinting = false;
 
+    ve::Decal m_bulletHole; // (textures loaded on the first shot)
+    int m_testShots = 0;    // SAVANNA_SHOOT
     std::shared_ptr<ve::Mesh> m_rockMesh;
     std::shared_ptr<ve::Material> m_rockMaterial;
     ve::Collider m_rockCollider;

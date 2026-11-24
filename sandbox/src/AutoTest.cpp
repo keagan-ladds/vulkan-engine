@@ -30,6 +30,11 @@
 #include <ve/render/Mesh.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Components.hpp>
+#include <ve/scene/Decal.hpp>
+#include <ve/assets/AssetManager.hpp>
+#include <ve/assets/DataAsset.hpp>
+#include <ve/assets/Model.hpp>
+#include <ve/render/Texture.hpp>
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/scene/Scene.hpp>
@@ -245,6 +250,52 @@ void AutoTest::update(float dt)
         }
         log("crates: " + std::to_string(crates.size()) + ", y range " + std::to_string(minY) + " .. " + std::to_string(maxY));
         logAudio("start (camp)");
+        // Decals: the scene's projectors (puddles, a wall crack), a short-lived
+        // spawned one (expires before step 1 ends) and a bullet hole.
+        {
+            int projectors = 0, textured = 0;
+            scene().forEach<ve::DecalProjector>([&](ve::DecalProjector& d) {
+                ++projectors;
+                textured += d.albedoTexture || d.maskTexture ? 1 : 0;
+            });
+            ve::Decal brief;
+            brief.color = {0.1f, 0.1f, 0.1f, 1.0f};
+            m_briefDecal = renderer().decals().spawn(brief, ve::DecalSystem::onSurface(above - glm::vec3(0, 190, 0), {0, 1, 0}, {1, 1}), 0.3f, 0.2f);
+            log("decal projectors: " + std::to_string(projectors) + " (" + std::to_string(textured) + " with textures); spawned: " +
+                std::to_string(renderer().decals().count()));
+        }
+        // Shared assets: the hut's glTF image file is the same GPU texture as a
+        // direct load of it, and its "Thatch" material comes from
+        // materials/thatch.material (one Material for every model using it).
+        {
+            const auto hut = assets().loadModel("models/rondavel.gltf");
+            const ve::Material* wall = nullptr;
+            const ve::Material* thatch = nullptr;
+            for (const auto& slots : hut->meshMaterials)
+                for (const auto& m : slots) {
+                    if (m && m->name == "MudWall") wall = m.get();
+                    if (m && m->name == "thatch") thatch = m.get();
+                }
+            const bool texShared = wall && wall->texture(0) == assets().loadTexture("textures/mud_wall.png");
+            const bool matShared = thatch && thatch == assets().loadMaterial("materials/thatch.material").get();
+            log(std::string("shared assets: glTF texture = direct load: ") + (texShared ? "yes" : "NO") +
+                ", thatch from material file: " + (matShared ? "yes" : "NO"));
+            // Texture settings come from the files (name / .texture), and where
+            // the loaded textures came from (cooked cache or source images).
+            const bool namesOk = assets().textureSettings("textures/ground/soil_normal.png").type == ve::TextureType::Normal &&
+                                 assets().textureSettings("textures/decals/puddle_mask.png").type == ve::TextureType::Data &&
+                                 assets().textureSettings("textures/mud_wall.png").type == ve::TextureType::Color;
+            const ve::TextureSettings lut = assets().textureSettings("textures/lut_neutral_32.png");
+            const auto& ts = assets().textureStats();
+            log(std::string("texture settings by name: ") + (namesOk ? "yes" : "NO") + ", by .texture file: " +
+                (lut.type == ve::TextureType::Data && !lut.mipmaps && !lut.compress ? "yes" : "NO") + "; textures loaded: " +
+                std::to_string(ts.cooked) + " cooked, " + std::to_string(ts.source) + " from source images, " +
+                std::to_string(ts.cooking) + " cooking");
+            // A live edit (like the editor's, unsaved): checked and reverted in step 1.
+            ve::Json edited = *ve::DataAssets::get("materials/thatch.material");
+            edited["roughness"] = 0.25f;
+            ve::DataAssets::set("materials/thatch.material", edited);
+        }
     } else if (m_step == 1 && !m_inTrigger && m_t > 3.3f) {
         // The thrown rock is away: stand in the trigger box for a moment.
         if (auto* p = localPlayer(scene())) p->teleport(m_triggerFeet, 0.0f);
@@ -262,6 +313,23 @@ void AutoTest::update(float dt)
         m_destroyProbe.reset();
         if (auto* probe = scene().find("TestTrigger") ? scene().find("TestTrigger")->getComponent<EventProbe>() : nullptr)
             log("trigger after standing in it: " + std::to_string(probe->triggerEnters) + " enter(s): " + probe->lastTrigger);
+        {
+            const float r = assets().loadMaterial("materials/thatch.material")->vector(1).x;
+            log(std::string("material file live edit applied: ") + (std::abs(r - 0.25f) < 1e-4f ? "yes" : "NO"));
+            ve::DataAssets::revert("materials/thatch.material");
+        }
+        {
+            // The brief decal is gone (0.3 s + 0.2 s fade); a shot leaves a bullet hole.
+            const uint32_t before = renderer().decals().count();
+            bool shot = false;
+            if (auto* p = localPlayer(scene())) {
+                p->setPose(glm::vec3(layout::kCamp.x + 3.0f, terrain().height(layout::kCamp.x + 3.0f, layout::kCamp.y + 2.0f), layout::kCamp.y + 2.0f), 0.0f, -60.0f);
+                shot = p->shoot();
+            }
+            log("decals: brief one expired: " + std::string(before == 0 ? "yes" : "NO") + ", shot hit: " + (shot ? "yes" : "no") +
+                ", spawned now: " + std::to_string(renderer().decals().count()) + ", in view last frame: " +
+                std::to_string(renderer().stats().decals));
+        }
         log("after pickup: " + std::to_string(scene().findAllWithTag("collectible").size()) + " left, collected " +
             std::to_string(gameState().collected) + "/" + std::to_string(gameState().total));
         if (auto* w = scene().findFirst<vfx::Weather>()) w->setWeather(vfx::Weather::Type::Rain, 2.0f);

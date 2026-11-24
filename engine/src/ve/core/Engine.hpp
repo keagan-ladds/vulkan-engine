@@ -66,6 +66,13 @@ struct EngineConfig {
     std::vector<std::filesystem::path> shaderPaths;
     // Save games (ve::save): empty = the platform's per-user data folder ("<title>/saves").
     std::filesystem::path saveFolder;
+    // Cooked textures (assets/TextureCook.hpp): GPU-ready copies of the images,
+    // used when current. Empty = <exe>/cooked. Relative = to the executable.
+    std::filesystem::path cookCache;
+    // Cook missing / stale textures in the background while the game runs
+    // (development). Off: only use what `vecook` made. Env VE_COOK overrides:
+    // 0 = load source images only, read = never cook, sync = cook before loading.
+    bool cookOnDemand = true;
 };
 
 class Engine {

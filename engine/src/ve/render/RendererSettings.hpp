@@ -59,6 +59,8 @@ struct RendererSettings {
     // Point lights are binned into screen/depth clusters so each pixel only
     // evaluates the lights that reach it (off = every pixel loops over all).
     bool clusteredLights = true;
+    // Decals (DecalProjector, Renderer::decals()): off = none are drawn.
+    bool decals = true;
     // Instances (trees, rocks...) hidden behind what was drawn last frame are
     // skipped (Hi-Z occlusion culling of the camera view; HiZPass). Something
     // that comes into view from behind cover can appear a frame late.
