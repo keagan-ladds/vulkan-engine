@@ -366,7 +366,9 @@ std::shared_ptr<StandardMaterial> AssetManager::materialForGltf(const std::strin
         base.resize(dot);
     std::string lower = base;
     for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
-    for (const std::string& candidate : {base, lower}) {
+    // (Lower case first: the usual file name, and what Windows / archives
+    // would match for "Thatch" anyway; the Material's name is the file's.)
+    for (const std::string& candidate : {lower, base}) {
         const std::filesystem::path p = std::filesystem::path(materialFolder) / (candidate + ".material");
         if (!exists(p)) continue;
         try {
