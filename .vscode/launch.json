@@ -12,7 +12,7 @@
     //  - Editor:      the same scene, starting in the in-engine editor (SAVANNA_EDITOR=1;
     //                 F2 toggles editor <-> game in any configuration)
     //  - Autotest / Editor test: scripted smoke tests that exit by themselves
-    //  - "(MSVC ...)" (Windows only): built with Visual Studio 2022's compiler
+    //  - "(MSVC ...)" (Windows only): built with the newest Visual Studio's compiler
     //    (tasks.json "Build MSVC ...", into build-vs/) and run under Visual
     //    Studio's debugger ("cppvsdbg"): symbols in a separate .pdb, so the
     //    .exe stays small and the debugger starts in seconds; no gdb, no
