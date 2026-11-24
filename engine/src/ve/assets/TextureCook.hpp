@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace ve {
 
@@ -52,6 +53,12 @@ struct TextureCookResult {
 // `cancelled` (optional) is polled between block rows.
 TextureCookResult cookTexture(const std::filesystem::path& source, const TextureSettings& settings,
                               const std::filesystem::path& output, const std::atomic<bool>* cancelled = nullptr);
+
+// Decodes one level of a cooked texture to 8-bit RGBA on the CPU (BC4 -> R,R,R,255;
+// BC5 -> X, Y, rebuilt Z, 255, like veUnpackNormal; BC7 / RGBA8 as stored). For
+// code that wants pixels while only the cooked copy exists (a packaged game).
+bool decodeCookedTexture(const Ktx2Texture& texture, uint32_t level, uint32_t& width, uint32_t& height,
+                         std::vector<uint8_t>& rgba);
 
 // Checks a cooked file (read with headerOnly is enough). `source` may not
 // exist (shipped builds): then only the cooker version is checked, and

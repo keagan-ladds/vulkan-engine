@@ -372,6 +372,17 @@ seamless. Author in WAV / FLAC; to tune one, put `<sound>.audio` next to it:
 sounds; `"compress": false` keeps the source file). MP3 / Ogg files are used
 as they are.
 
+**Packaging a release:** `build/bin/vecook --package <dir>` (cooks what's
+stale first) writes the game executable, its runtime libraries and one
+`data.vepak` archive: assets (images and sounds only as their cooked copies),
+cooked files and shaders. `.texture` / `.audio` files, hidden files and
+`*.blend` stay out; list more in `assets/.vepackignore` (globs: `*`, `?`,
+`**`, `folder/`). `--loose` writes folders instead of the archive (to look
+inside), `--level N` sets the zstd level. Read files through `ve::vfs`
+(`vfs::read`, `vfs::open`, `vfs::exists`), not `std::ifstream` /
+`std::filesystem::exists`, or a packaged game won't find them; for an image's
+pixels use `assets().loadPixels(path)`.
+
 ### Interaction ("press E to ...")
 
 ```cpp

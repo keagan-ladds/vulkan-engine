@@ -1,5 +1,6 @@
 #include "ve/assets/AudioCook.hpp"
 
+#include "ve/core/FileSystem.hpp"
 #include "ve/core/Log.hpp"
 
 #include <miniaudio.h>
@@ -197,11 +198,27 @@ AudioCookResult cookAudio(const std::filesystem::path& source, const AudioSettin
 CookedState checkCookedAudio(const std::filesystem::path& cooked, const std::filesystem::path& source,
                              const AudioSettings* settings, AudioSettings* settingsOut)
 {
-    std::error_code ec;
-    if (!std::filesystem::exists(cooked, ec)) return CookedState::Unusable;
-    // The stamp is the VE_COOK tag of the Vorbis comment header (the start of the file).
+    // The stamp is the VE_COOK tag of the Vorbis comment header (the start of
+    // the file). Read through the virtual file system: also from a packaged
+    // game's archive.
+    std::unique_ptr<std::istream> in = vfs::open(cooked);
+    if (!in) return CookedState::Unusable;
+    ov_callbacks callbacks{};
+    callbacks.read_func = [](void* ptr, size_t size, size_t count, void* source) -> size_t {
+        auto* s = static_cast<std::istream*>(source);
+        s->read(static_cast<char*>(ptr), std::streamsize(size * count));
+        return size ? size_t(s->gcount()) / size : 0;
+    };
+    callbacks.seek_func = [](void* source, ogg_int64_t offset, int whence) -> int {
+        auto* s = static_cast<std::istream*>(source);
+        s->clear();
+        s->seekg(std::streamoff(offset), whence == SEEK_SET ? std::ios::beg : whence == SEEK_CUR ? std::ios::cur : std::ios::end);
+        return s->fail() ? -1 : 0;
+    };
+    callbacks.close_func = nullptr; // (the stream is ours)
+    callbacks.tell_func = [](void* source) -> long { return long(static_cast<std::istream*>(source)->tellg()); };
     OggVorbis_File vf;
-    if (ov_fopen(cooked.string().c_str(), &vf) != 0) return CookedState::Unusable;
+    if (ov_open_callbacks(in.get(), &vf, nullptr, 0, callbacks) != 0) return CookedState::Unusable;
     const char* text = vorbis_comment_query(ov_comment(&vf, -1), "VE_COOK", 0);
     const nlohmann::json stamp = text ? nlohmann::json::parse(text, nullptr, false) : nlohmann::json();
     ov_clear(&vf);

@@ -1,6 +1,7 @@
 #include "ve/render/Renderer.hpp"
 #include "ve/render/ShaderHotReload.hpp"
 
+#include "ve/core/FileSystem.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/core/Profiler.hpp"
 #include "ve/core/Time.hpp"
@@ -426,7 +427,7 @@ std::filesystem::path Renderer::findShader(const std::string& name) const
 {
     for (const auto& dir : m_shaderDirs) {
         auto p = dir / (name + ".spv");
-        if (std::filesystem::exists(p)) return p;
+        if (vfs::exists(p)) return p; // (disk, or a packaged game's archive)
     }
     throw std::runtime_error("Shader not found: " + name + ".spv");
 }

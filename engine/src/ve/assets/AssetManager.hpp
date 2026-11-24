@@ -50,6 +50,11 @@ class AudioClip;
 class Material;
 class Shader;
 
+// 8-bit RGBA pixels of an image file (for building textures on the CPU).
+struct ImagePixels {
+    int width = 0, height = 0;
+    std::vector<uint8_t> rgba;
+};
 class AssetManager {
 public:
     AssetManager() = default;
@@ -62,6 +67,8 @@ public:
 
     void addSearchPath(const std::filesystem::path& path);
     const std::vector<std::filesystem::path>& searchPaths() const { return m_searchPaths; }
+    // (exists(): the file, or - for a cookable file - its cooked copy, so a
+    // packaged game without the sources still has its images and sounds.)
     // Absolute path of an asset; throws if it can't be found.
     std::filesystem::path resolve(const std::filesystem::path& path) const;
     bool exists(const std::filesystem::path& path) const;
@@ -69,6 +76,10 @@ public:
     // it ("audio/fire.wav"), or the path unchanged if it's outside them.
     std::string assetName(const std::filesystem::path& file) const;
 
+    // An image's 8-bit RGBA pixels on the CPU (e.g. to combine maps): the
+    // source image, or - in a packaged game, where only the cooked copy ships -
+    // the cooked copy's full-size level decoded (TextureCook.hpp).
+    ImagePixels loadPixels(const std::filesystem::path& path) const;
     // PNG/JPG/TGA/BMP/PSD/GIF (8-bit) or HDR (float). How it's loaded (colour,
     // data or normal map, mips, sampler...) is the file's TextureSettings:
     // its .texture file, else its name. One texture per file.
@@ -157,11 +168,6 @@ private:
     bool m_warnedNoBC = false;
 };
 
-// 8-bit RGBA pixels of an image file (for building textures on the CPU).
-struct ImagePixels {
-    int width = 0, height = 0;
-    std::vector<uint8_t> rgba;
-};
 ImagePixels loadImagePixels(const std::filesystem::path& file);
 
 // Lower-level loaders (used by AssetManager; usable directly).

@@ -136,7 +136,8 @@ SoundPtr MusicPlayer::openTrack(const std::string& path)
     if (!m_audio.available()) return nullptr;
     std::string file;
     try {
-        file = Engine::get().assets().resolve(path).string();
+        // (loadAudio: the cooked Ogg when current, also in a packaged game.)
+        file = Engine::get().assets().loadAudio(path, true)->path();
     } catch (const std::exception&) {
         log::warnOnce("Music: track not found: " + path);
         return nullptr;
@@ -212,7 +213,7 @@ void MusicPlayer::stinger(const std::string& path, float volume, float duck)
     if (!m_audio.available()) return;
     std::string file;
     try {
-        file = Engine::get().assets().resolve(path).string();
+        file = Engine::get().assets().loadAudio(path)->path();
     } catch (const std::exception&) {
         log::warnOnce("Music: stinger not found: " + path);
         return;

@@ -1,6 +1,7 @@
 #include "ve/assets/Ktx2.hpp"
 
 #include "ve/assets/Cook.hpp"
+#include "ve/core/FileSystem.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -167,8 +168,9 @@ bool writeKtx2(const std::filesystem::path& file, const Ktx2Texture& t, std::str
 
 bool readKtx2(const std::filesystem::path& file, Ktx2Texture& t, bool headerOnly, std::string* error)
 {
-    std::ifstream in(file, std::ios::binary);
-    if (!in) return fail(error, "can't open " + file.string());
+    const std::unique_ptr<std::istream> stream = vfs::open(file); // (disk, or a packaged game's archive)
+    if (!stream) return fail(error, "can't open " + file.string());
+    std::istream& in = *stream;
     uint8_t head[kHeaderSize];
     if (!in.read(reinterpret_cast<char*>(head), kHeaderSize) || std::memcmp(head, kIdentifier, 12) != 0)
         return fail(error, file.string() + " is not a KTX2 file");

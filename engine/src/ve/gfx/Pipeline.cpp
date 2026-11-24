@@ -1,5 +1,8 @@
 #include "ve/gfx/Pipeline.hpp"
 
+#include "ve/core/FileSystem.hpp"
+
+#include <cstring>
 #include <fstream>
 
 namespace ve {
@@ -15,13 +18,13 @@ void setPipelineCache(VkPipelineCache cache)
 
 VkShaderModule loadShaderModule(VkDevice device, const std::filesystem::path& path)
 {
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) throw std::runtime_error("Cannot open shader: " + path.string());
-    const auto bytes = static_cast<size_t>(file.tellg());
+    // (Through the virtual file system: a packaged game's shaders are in its archive.)
+    const auto data = vfs::read(path);
+    if (!data) throw std::runtime_error("Cannot open shader: " + path.string());
+    const size_t bytes = data->size();
     if (bytes == 0 || bytes % 4 != 0) throw std::runtime_error("Invalid SPIR-V: " + path.string());
     std::vector<uint32_t> code(bytes / 4);
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(code.data()), static_cast<std::streamsize>(bytes));
+    std::memcpy(code.data(), data->data(), bytes);
 
     VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     info.codeSize = bytes;

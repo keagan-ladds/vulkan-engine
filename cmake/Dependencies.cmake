@@ -177,7 +177,8 @@ FetchContent_Declare(bc7enc_rdo
     GIT_TAG b9438627eef73a1157e84201b6fa6eb2ffd6d9f0
     SOURCE_SUBDIR _none)
 FetchContent_MakeAvailable(bc7enc_rdo)
-add_library(ve_bcenc STATIC ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp)
+add_library(ve_bcenc STATIC ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
+    ${bc7enc_rdo_SOURCE_DIR}/bc7decomp.cpp) # (+ the BC7 decoder: CPU pixels from cooked textures)
 target_include_directories(ve_bcenc SYSTEM PUBLIC ${bc7enc_rdo_SOURCE_DIR})
 set_target_properties(ve_bcenc PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
@@ -222,6 +223,27 @@ else()
 endif()
 if(NOT WIN32)
     target_link_libraries(ve_vorbis PRIVATE m)
+endif()
+
+# zstd (BSD): compression for .vepak archives (ve/core/Pack): written by
+# vecook --package, read by the engine's virtual file system. Fetched with git;
+# the library's C sources are compiled directly (no assembly, single-threaded).
+FetchContent_Declare(zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG v1.5.6
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR _none)
+FetchContent_MakeAvailable(zstd)
+file(GLOB _ve_zstd_sources ${zstd_SOURCE_DIR}/lib/common/*.c ${zstd_SOURCE_DIR}/lib/compress/*.c
+    ${zstd_SOURCE_DIR}/lib/decompress/*.c)
+add_library(ve_zstd STATIC ${_ve_zstd_sources})
+target_include_directories(ve_zstd SYSTEM PUBLIC ${zstd_SOURCE_DIR}/lib)
+target_compile_definitions(ve_zstd PRIVATE ZSTD_DISABLE_ASM XXH_NAMESPACE=ZSTD_)
+set_target_properties(ve_zstd PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(ve_zstd PRIVATE /w)
+else()
+    target_compile_options(ve_zstd PRIVATE -w)
 endif()
 
 add_library(ve_thirdparty STATIC

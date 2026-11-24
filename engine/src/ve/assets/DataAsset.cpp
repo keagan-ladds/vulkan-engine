@@ -2,6 +2,7 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Engine.hpp"
+#include "ve/core/FileSystem.hpp"
 #include "ve/core/Log.hpp"
 
 #include <fstream>
@@ -55,10 +56,11 @@ bool readFile(const std::string& path, Entry& e)
         log::warnOnce("Data asset not found: " + path);
         return false;
     }
-    e.stamp = stampOf(e.file);
-    std::ifstream in(e.file);
+    e.stamp = stampOf(e.file); // (an archive's file: no time, never reloaded)
+    const std::unique_ptr<std::istream> in = vfs::open(e.file);
     try {
-        Json j = Json::parse(in);
+        if (!in) throw std::runtime_error("can't read " + e.file.string());
+        Json j = Json::parse(*in);
         e.content = std::make_shared<const Json>(std::move(j));
         return true;
     } catch (const std::exception& ex) {

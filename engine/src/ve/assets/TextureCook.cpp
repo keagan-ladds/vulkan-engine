@@ -1,5 +1,6 @@
 #include "ve/assets/TextureCook.hpp"
 
+#include <bc7decomp.h>
 #include <bc7enc.h>
 #include <rgbcx.h>
 #include <stb_image.h>
@@ -209,6 +210,50 @@ TextureCookResult cookTexture(const std::filesystem::path& source, const Texture
     r.bytes = out.data.size();
     r.milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     return r;
+}
+
+bool decodeCookedTexture(const Ktx2Texture& t, uint32_t level, uint32_t& width, uint32_t& height, std::vector<uint8_t>& rgba)
+{
+    if (level >= t.levelOffsets.size()) return false;
+    width = std::max(1u, t.width >> level);
+    height = std::max(1u, t.height >> level);
+    rgba.assign(size_t(width) * height * 4, 255);
+    const uint8_t* data = t.data.data() + t.levelOffsets[level];
+    if (!ktx2IsBlockCompressed(t.format)) {
+        if (t.levelSizes[level] < rgba.size()) return false;
+        std::memcpy(rgba.data(), data, rgba.size());
+        return true;
+    }
+    initEncoders(); // (rgbcx's tables)
+    const uint32_t bx = (width + 3) / 4, by = (height + 3) / 4, blockBytes = ktx2BlockBytes(t.format);
+    if (t.levelSizes[level] < size_t(bx) * by * blockBytes) return false;
+    uint8_t block[16 * 4];
+    for (uint32_t y = 0; y < by; ++y) {
+        for (uint32_t x = 0; x < bx; ++x) {
+            const uint8_t* src = data + (size_t(y) * bx + x) * blockBytes;
+            std::memset(block, 255, sizeof(block));
+            switch (t.format) {
+            case VK_FORMAT_BC4_UNORM_BLOCK:
+                rgbcx::unpack_bc4(src, block, 4);
+                for (int i = 0; i < 16; ++i) block[i * 4 + 1] = block[i * 4 + 2] = block[i * 4];
+                break;
+            case VK_FORMAT_BC5_UNORM_BLOCK:
+                rgbcx::unpack_bc5(src, block, 0, 1, 4);
+                for (int i = 0; i < 16; ++i) { // Z from X / Y (unit normals)
+                    const float nx = block[i * 4] / 127.5f - 1.0f, ny = block[i * 4 + 1] / 127.5f - 1.0f;
+                    block[i * 4 + 2] = unorm8(std::sqrt(std::max(0.0f, 1.0f - nx * nx - ny * ny)) * 0.5f + 0.5f);
+                }
+                break;
+            default:
+                bc7decomp::unpack_bc7(src, reinterpret_cast<bc7decomp::color_rgba*>(block));
+                break;
+            }
+            for (uint32_t j = 0; j < 4 && y * 4 + j < height; ++j)
+                for (uint32_t i = 0; i < 4 && x * 4 + i < width; ++i)
+                    std::memcpy(&rgba[((size_t(y) * 4 + j) * width + x * 4 + i) * 4], &block[(j * 4 + i) * 4], 4);
+        }
+    }
+    return true;
 }
 
 CookedState checkCookedTexture(const Ktx2Texture& cooked, const std::filesystem::path& source, const TextureSettings* settings,

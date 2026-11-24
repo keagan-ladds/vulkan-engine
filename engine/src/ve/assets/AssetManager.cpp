@@ -2,11 +2,13 @@
 
 #include "ve/assets/DataAsset.hpp"
 #include "ve/assets/AudioCook.hpp"
+#include "ve/assets/Cookers.hpp"
 #include "ve/assets/MaterialAsset.hpp"
 #include "ve/assets/TextureCook.hpp"
 #include "ve/gfx/Device.hpp"
 #include "ve/audio/Audio.hpp"
 #include "ve/assets/Model.hpp"
+#include "ve/core/FileSystem.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/render/Renderer.hpp"
 #include "ve/render/Texture.hpp"
@@ -51,23 +53,58 @@ const std::filesystem::path& AssetManager::resolveCached(const std::filesystem::
     return m_resolved.emplace(std::move(key), resolve(path)).first->second;
 }
 
+// (Through the virtual file system: files on disk, or in mounted .vepak
+// archives in a packaged game, FileSystem.hpp.)
 bool AssetManager::exists(const std::filesystem::path& path) const
 {
-    if (path.is_absolute()) return std::filesystem::exists(path);
+    if (path.is_absolute()) return vfs::exists(path);
     for (const auto& root : m_searchPaths) {
-        if (std::filesystem::exists(root / path)) return true;
+        if (vfs::exists(root / path)) return true;
     }
+    // A packaged game ships cookable files only as their cooked copies.
+    if (const Cooker* cooker = m_cook.cacheDir.empty() ? nullptr : cookerFor(path))
+        return vfs::exists(cooker->cookedPath(m_cook.cacheDir, path.generic_string()));
     return false;
+}
+
+ImagePixels AssetManager::loadPixels(const std::filesystem::path& path) const
+{
+    std::filesystem::path source;
+    try {
+        source = resolve(path);
+    } catch (const std::exception&) {
+        // Only the cooked copy (a packaged game): decode its full-size level.
+        if (m_cook.cacheDir.empty() || !isCookableImage(path)) throw;
+        const std::string name = path.is_absolute() ? assetName(path) : path.generic_string();
+        Ktx2Texture cooked;
+        std::string error;
+        if (!readKtx2(cookedTexturePath(m_cook.cacheDir, name), cooked, false, &error))
+            throw std::runtime_error("Asset not found: " + path.string() + " (no source image or readable cooked copy)");
+        uint32_t w = 0, h = 0;
+        ImagePixels img;
+        if (!decodeCookedTexture(cooked, 0, w, h, img.rgba)) throw std::runtime_error("Can't decode the cooked copy of " + name);
+        img.width = int(w);
+        img.height = int(h);
+        return img;
+    }
+    return loadImagePixels(source);
 }
 
 std::filesystem::path AssetManager::resolve(const std::filesystem::path& path) const
 {
+    // Canonical when it's on disk (one key per file: the caches), else
+    // normalized the same way (an archive entry).
+    auto normalized = [](const std::filesystem::path& p) {
+        std::error_code ec;
+        const std::filesystem::path c = std::filesystem::weakly_canonical(p, ec);
+        return ec ? p.lexically_normal() : c;
+    };
     if (path.is_absolute()) {
-        if (std::filesystem::exists(path)) return path;
+        if (vfs::exists(path)) return normalized(path);
     } else {
         for (const auto& root : m_searchPaths) {
             auto p = root / path;
-            if (std::filesystem::exists(p)) return std::filesystem::canonical(p);
+            if (vfs::exists(p)) return normalized(p);
         }
     }
     throw std::runtime_error("Asset not found: " + path.string());
@@ -94,8 +131,12 @@ std::shared_ptr<Texture> AssetManager::loadTexture(const std::filesystem::path& 
         source = resolveCached(path);
         name = assetName(source);
     } catch (const std::exception&) {
-        if (path.is_absolute() || m_cook.cacheDir.empty()) throw;
-        name = path.generic_string();
+        // No source (a packaged game): its cooked copy, by asset name. An
+        // absolute path (a glTF's image, next to the model) is named relative
+        // to the search path it's under.
+        if (m_cook.cacheDir.empty()) throw;
+        name = path.is_absolute() ? assetName(path) : path.generic_string();
+        if (std::filesystem::path(name).is_absolute()) throw; // (outside the asset folders)
     }
     // One texture per file: its settings decide how it's loaded, not the caller.
     const std::string key = source.empty() ? "cooked:" + name : source.string();
@@ -229,8 +270,12 @@ std::shared_ptr<AudioClip> AssetManager::loadAudio(const std::filesystem::path& 
         source = resolveCached(path);
         name = assetName(source);
     } catch (const std::exception&) {
-        if (path.is_absolute() || m_cook.cacheDir.empty()) throw;
-        name = path.generic_string();
+        // No source (a packaged game): its cooked copy, by asset name. An
+        // absolute path (a glTF's image, next to the model) is named relative
+        // to the search path it's under.
+        if (m_cook.cacheDir.empty()) throw;
+        name = path.is_absolute() ? assetName(path) : path.generic_string();
+        if (std::filesystem::path(name).is_absolute()) throw; // (outside the asset folders)
     }
     const std::string key = (source.empty() ? "cooked:" + name : source.string()) + (stream ? "|stream" : "");
     if (auto it = m_audio.find(key); it != m_audio.end()) return it->second;
@@ -377,18 +422,22 @@ std::shared_ptr<Texture> loadTextureFile(Renderer& renderer, const std::filesyst
                                          bool mipmaps, SamplerType sampler)
 {
     const std::string path = file.string();
+    const auto bytes = vfs::read(file);
+    if (!bytes) throw std::runtime_error("Can't read " + path);
+    const auto* data = bytes->data();
+    const int size = static_cast<int>(bytes->size());
     int w = 0, h = 0, channels = 0;
-    if (stbi_is_hdr(path.c_str())) {
+    if (stbi_is_hdr_from_memory(data, size)) {
         // HDR images stay floating point; float32 blits aren't guaranteed to
         // support linear filtering, so no mips.
-        float* px = stbi_loadf(path.c_str(), &w, &h, &channels, 4);
+        float* px = stbi_loadf_from_memory(data, size, &w, &h, &channels, 4);
         if (!px) throw std::runtime_error("Failed to load " + path + ": " + stbi_failure_reason());
         auto tex = Texture::create2D(renderer, uint32_t(w), uint32_t(h), VK_FORMAT_R32G32B32A32_SFLOAT, px,
                                      size_t(w) * h * 16, false, sampler, file.filename().string());
         stbi_image_free(px);
         return tex;
     }
-    stbi_uc* px = stbi_load(path.c_str(), &w, &h, &channels, 4); // always expand to RGBA
+    stbi_uc* px = stbi_load_from_memory(data, size, &w, &h, &channels, 4); // always expand to RGBA
     if (!px) throw std::runtime_error("Failed to load " + path + ": " + stbi_failure_reason());
     auto tex = Texture::create2D(renderer, uint32_t(w), uint32_t(h),
                                  srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM, px, size_t(w) * h * 4,
@@ -400,8 +449,10 @@ std::shared_ptr<Texture> loadTextureFile(Renderer& renderer, const std::filesyst
 ImagePixels loadImagePixels(const std::filesystem::path& file)
 {
     const std::string path = file.string();
+    const auto bytes = vfs::read(file);
+    if (!bytes) throw std::runtime_error("Can't read " + path);
     int w = 0, h = 0, channels = 0;
-    stbi_uc* px = stbi_load(path.c_str(), &w, &h, &channels, 4);
+    stbi_uc* px = stbi_load_from_memory(bytes->data(), static_cast<int>(bytes->size()), &w, &h, &channels, 4);
     if (!px) throw std::runtime_error("Failed to load " + path + ": " + stbi_failure_reason());
     ImagePixels img{w, h, std::vector<uint8_t>(px, px + size_t(w) * h * 4)};
     stbi_image_free(px);

@@ -920,7 +920,21 @@ never see Jolt types. The module is split by concern: `PhysicsWorld.cpp`
   comment (tag `VE_COOK`); settings in an optional `<sound>.audio` (quality,
   mono, sampleRate, compress). `loadAudio` plays the cooked file when current
   (miniaudio decodes Vorbis with its stb_vorbis); MP3 / Ogg sources are used
-  as they are. The stamp logic is shared (`assets/Cook`). `Texture::fromPixels()` and
+  as they are. The stamp logic is shared (`assets/Cook`). `assets/Cookers` is
+  the registry of cookers (name, settings extensions, handles, cookedPath,
+  check, cook) that `vecook` and packaging use, so a new kind is one
+  `registerCooker()`.
+- Files (`core/FileSystem`, `core/Pack`): every engine file read goes through
+  `ve::vfs` (`exists`, `read`, `readText`, `open`, `list`): a real file first,
+  then mounted `.vepak` archives (later ones win) overlaid on a root folder.
+  The Engine mounts `<exe>/*.vepak` at start (`EngineConfig::mountArchives`).
+  Third-party readers are bridged (cgltf callbacks, miniaudio's VFS,
+  vorbisfile callbacks, stb from memory). `vecook --package <dir>` writes a
+  release: the game, its runtime libraries and `data.vepak` (assets with
+  cookable sources replaced by their cooked copies, cooked files, shaders), or
+  loose folders with `--loose`. With only cooked copies present,
+  `AssetManager::exists` still finds the asset and `loadPixels` decodes the
+  cooked texture on the CPU (terrain maps). `Texture::fromPixels()` and
   `Texture::create3D()` cover procedural data (e.g. cloud noise).
 - Models: glTF 2.0 (`.gltf`/`.glb`) via cgltf. Meshes and primitives become
   `Mesh` + submeshes. Materials become `StandardMaterial` (base colour /

@@ -13,6 +13,7 @@
 #include "ve/anim/Animation.hpp"
 #include "ve/render/Skinning.hpp"
 #include "ve/assets/Model.hpp"
+#include "ve/core/FileSystem.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Renderer.hpp"
@@ -20,6 +21,8 @@
 
 #include <cgltf.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 
@@ -148,14 +151,39 @@ const cgltf_accessor* findAttribute(const cgltf_primitive& p, cgltf_attribute_ty
     return nullptr;
 }
 
+
+// cgltf file callbacks through the virtual file system (external .bin
+// buffers of a .gltf, also inside a packaged game's archive).
+cgltf_result vfsReadFile(const cgltf_memory_options*, const cgltf_file_options*, const char* path, cgltf_size* size, void** data)
+{
+    auto bytes = vfs::read(std::filesystem::path(path));
+    if (!bytes) return cgltf_result_file_not_found;
+    void* copy = std::malloc(std::max<size_t>(bytes->size(), 1));
+    if (!copy) return cgltf_result_out_of_memory;
+    std::memcpy(copy, bytes->data(), bytes->size());
+    *size = bytes->size();
+    *data = copy;
+    return cgltf_result_success;
+}
+
+void vfsReleaseFile(const cgltf_memory_options*, const cgltf_file_options*, void* data)
+{
+    std::free(data);
+}
+
 } // namespace
 
 std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path& file, AssetManager* assets)
 {
     cgltf_options options{};
+    options.file.read = vfsReadFile;
+    options.file.release = vfsReleaseFile;
     cgltf_data* data = nullptr;
     const std::string path = file.string();
-    if (cgltf_parse_file(&options, path.c_str(), &data) != cgltf_result_success) {
+    // The file's bytes stay alive until cgltf_free (a .glb's binary chunk points into them).
+    const auto bytes = vfs::read(file);
+    if (!bytes) throw std::runtime_error("Can't read " + path);
+    if (cgltf_parse(&options, bytes->data(), bytes->size(), &data) != cgltf_result_success) {
         throw std::runtime_error("Failed to parse glTF: " + path);
     }
     // Freed on every way out, including exceptions (texture loads, Mesh::create...).

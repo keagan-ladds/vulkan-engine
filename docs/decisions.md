@@ -385,9 +385,32 @@ reader/writer is ~200 lines. bc7enc/rgbcx because they're small, CPU-only and
 permissively licensed. **Cost:** the first run after a change loads source
 images (cooked ones from the next run); images used in two roles need a
 `.texture` decision; normal-map shaders must rebuild Z (`veUnpackNormal`);
-cooked files aren't compressed on disk yet (phase 5's archive will be).
+cooked files are compressed on disk only in a packaged `.vepak` (D33).
 Audio (phase 3) follows the same scheme: WAV / FLAC -> Ogg Vorbis, the stamp in
 the Vorbis comment, settings in `<sound>.audio`. Vorbis rather than Opus:
 miniaudio plays it with no extra library, encoding is libvorbis (BSD), and
 Opus's 48 kHz-only output would resample everything.
 
+### D33. Releases read from a zstd archive through a VFS overlay; cookers are a registry (2026-11)
+**Decision:** every engine file read goes through `ve::vfs` (`core/FileSystem`):
+a real file first, then the mounted `.vepak` archives (later ones win), which
+overlay the exe folder, so code keeps using ordinary paths (`<exe>/assets/...`,
+`<exe>/cooked/...`, `<exe>/shaders/...`). The Engine mounts `<exe>/*.vepak` at
+start. `.vepak`: entries zstd-compressed one by one (stored raw when that
+doesn't save 3%), the index at the end. `vecook --package` builds a release
+from the cooker registry (`assets/Cookers`): cookable sources ship only as
+their cooked copies; settings files, hidden files, `.blend`, `.vepackignore`
+matches stay out. `AssetManager::exists` / `loadPixels` / `loadAudio` accept
+an asset whose source is gone when its cooked copy is there.
+**Alternatives:** zip / PhysFS (more code, Deflate is slower to decode and
+compresses worse than zstd); one compressed blob (no random access);
+rewriting asset paths to archive names at the call sites (every loader
+changes, and loose files and archives would behave differently); a
+per-kind switch in vecook (every new kind touches the tool).
+**Why:** loose files during development and an archive in a release take the
+same code path; a patch can be a second archive or a loose file next to the
+exe; a new asset kind is one `registerCooker()`. **Cost:** third-party code
+that opens files itself must be given a bridge (done: cgltf, miniaudio,
+vorbisfile, stb, ImGui fonts); archive reads hold one lock; entries are read
+whole (no streaming from inside an archive: miniaudio streams decode from
+memory).

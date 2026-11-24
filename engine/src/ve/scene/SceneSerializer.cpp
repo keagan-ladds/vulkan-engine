@@ -2,6 +2,7 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Engine.hpp"
+#include "ve/core/FileSystem.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/scene/Ids.hpp"
 
@@ -251,10 +252,11 @@ std::vector<GameObject*> SceneSerializer::load(Scene& scene, const std::filesyst
         log::warn("Scene: {}", e.what());
         return {};
     }
-    std::ifstream in(file);
+    const std::unique_ptr<std::istream> in = vfs::open(file); // (disk, or a packaged game's archive)
     Json json;
     try {
-        in >> json;
+        if (!in) throw std::runtime_error("can't read");
+        *in >> json;
     } catch (const std::exception& e) {
         log::error("Scene: {} is not valid JSON: {}", file.string(), e.what());
         return {};

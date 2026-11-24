@@ -73,6 +73,10 @@ struct EngineConfig {
     // (development). Off: only use what `vecook` made. Env VE_COOK overrides:
     // 0 = load source images only, read = never cook, sync = cook before loading.
     bool cookOnDemand = true;
+    // Mount <exe dir>/*.vepak (vecook --package) over the executable's folder
+    // at startup: a packaged game reads its assets, cooked files and shaders
+    // from them (core/FileSystem.hpp). Loose files on disk win over archives.
+    bool mountArchives = true;
 };
 
 class Engine {

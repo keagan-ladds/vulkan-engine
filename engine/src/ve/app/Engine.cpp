@@ -1,4 +1,5 @@
 #include "ve/core/Engine.hpp"
+#include "ve/core/FileSystem.hpp"
 #include "ve/assets/DataAsset.hpp"
 #include "ve/assets/MaterialAsset.hpp"
 #include "ve/render/Renderer.hpp"
@@ -131,6 +132,10 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_time.fixedDeltaTime = config.fixedTimestep;
 
     const auto exeDir = executableDirectory();
+    // A packaged game (vecook --package): its .vepak archives overlay the
+    // executable's folder, so assets/, cooked/ and shaders/ read from them
+    // (core/FileSystem.hpp). Before anything loads.
+    if (config.mountArchives) vfs::mountAll(exeDir);
     auto resolve = [&](const std::filesystem::path& p) { return p.is_absolute() ? p : exeDir / p; };
     std::vector<std::filesystem::path> shaderDirs;
     for (const auto& p : config.shaderPaths) shaderDirs.push_back(resolve(p));

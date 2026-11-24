@@ -2,6 +2,7 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Engine.hpp"
+#include "ve/core/FileSystem.hpp"
 #include "ve/core/Input.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/gfx/Samplers.hpp"
@@ -15,6 +16,9 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cstring>
+#include <optional>
+#include <vector>
 
 namespace ve::ui {
 
@@ -738,8 +742,11 @@ void System::applyPendingFonts()
     ImGuiIO& io = ImGui::GetIO();
     for (const PendingFont& f : m_pending) {
         std::string file;
+        std::optional<std::vector<uint8_t>> bytes;
         try {
             file = Engine::get().assets().resolve(f.path).string();
+            bytes = vfs::read(file); // (disk, or a packaged game's archive)
+            if (!bytes || bytes->empty()) throw std::runtime_error("can't read " + file);
         } catch (const std::exception& e) {
             log::warn("UI font '{}': {}", f.name, e.what());
             continue;
@@ -748,7 +755,10 @@ void System::applyPendingFonts()
             ImFontConfig cfg;
             cfg.OversampleH = 2;
             cfg.OversampleV = 1;
-            if (ImFont* font = io.Fonts->AddFontFromFileTTF(file.c_str(), size, &cfg)) m_fonts.push_back({f.name, size, font});
+            // The atlas takes ownership of the copy (freed with ImGui's allocator).
+            void* copy = ImGui::MemAlloc(bytes->size());
+            std::memcpy(copy, bytes->data(), bytes->size());
+            if (ImFont* font = io.Fonts->AddFontFromMemoryTTF(copy, int(bytes->size()), size, &cfg)) m_fonts.push_back({f.name, size, font});
             else log::warn("UI font '{}': can't load {}", f.name, file);
         }
     }

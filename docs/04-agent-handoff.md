@@ -64,6 +64,7 @@ All of these run with Vulkan validation on in Debug builds. Any
 | Title screen | `VE_HEADLESS=1 SAVANNA_MENU=1 VE_CAPTURE=title.png VE_CAPTURE_FRAME=60 VE_BENCH=4,62 ./savanna` |
 | Specific view | `SAVANNA_TIME=21.3 SAVANNA_WEATHER=3 SAVANNA_POSE=36,4,22,60,-8 SAVANNA_DEBUG=1 ./savanna` |
 | Performance | `SAVANNA_DEBUG=1` → F1 overlay shows FPS, total GPU ms and **per-pass GPU ms** |
+| Release package | `build/bin/vecook --package <dir>` (`--loose` for folders); run the packaged game from `<dir>` to check nothing reads sources |
 | Cooked assets | `build/bin/vecook --check` (exit 1 if anything is stale), `build/bin/vecook` cooks; `VE_COOK=0` / `read` / `sync` pick source images, cooked only, or cook-before-load |
 | Engine still usable by games | `cp -r templates/game /tmp/g && cmake -S /tmp/g -B /tmp/g/build -G Ninja -DVE_ENGINE_DIR=$PWD && cmake --build /tmp/g/build && /tmp/g/build/bin/mygame` |
 | Windows builds (CI) | `.github/workflows/windows.yml` runs on every push to `main` / `claude/**` and on pull requests: MinGW-w64 GCC (+ the game template) and MSVC 2022 must build with zero first-party warnings. Read the run's job logs on GitHub (Actions tab) |
@@ -152,6 +153,7 @@ north (-Z), 90 looks west (-X).
 - **Testing aim:** a ray (or thrown rock) through the exact centre of the crate
   pyramid passes through the 2 cm gap between crates. That cost a debugging
   session; aim off-centre in tests.
+- **Read files through `ve::vfs`** (`core/FileSystem.hpp`), never `std::ifstream` / `std::filesystem::exists` on game data: packaged games keep everything in `data.vepak`.
 - **Normal maps: `veUnpackNormal(texel)`**, never `texel.xyz * 2 - 1`: cooked
   normal maps are BC5 and their B channel reads 0.
 - **Textures load the way their file says** (`TextureSettings`: name or

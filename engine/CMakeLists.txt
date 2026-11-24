@@ -9,7 +9,7 @@ add_library(ve_engine STATIC ${VE_ENGINE_SOURCES})
 target_include_directories(ve_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_features(ve_engine PUBLIC cxx_std_20) # games linking the engine get C++20 too
 target_link_libraries(ve_engine PUBLIC ve_thirdparty Vulkan::Vulkan SDL2::SDL2 glm::glm nlohmann_json::nlohmann_json)
-target_link_libraries(ve_engine PRIVATE Jolt meshoptimizer Recast Detour DetourCrowd enet ve_bcenc ve_vorbis) # physics, mesh simplification, navmesh, networking, BC texture / Vorbis encoding: hidden behind engine APIs
+target_link_libraries(ve_engine PRIVATE Jolt meshoptimizer Recast Detour DetourCrowd enet ve_bcenc ve_vorbis ve_zstd) # physics, mesh simplification, navmesh, networking, BC texture / Vorbis encoding, zstd archives: hidden behind engine APIs
 target_compile_definitions(ve_engine PUBLIC
     GLM_FORCE_RADIANS
     GLM_FORCE_DEPTH_ZERO_TO_ONE   # Vulkan clip-space depth is [0, 1]

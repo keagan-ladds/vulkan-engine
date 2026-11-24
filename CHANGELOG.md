@@ -24,6 +24,18 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   rebuilds Z and gives the same result for uncooked maps.
 
 ### Added
+- **Release packaging and archives.** `vecook --package <dir>` writes a
+  shippable folder: the game, its runtime libraries and `data.vepak` (zstd;
+  assets with images / sounds as their cooked copies only, cooked files,
+  shaders; no `.texture` / `.audio` / `.blend` / hidden files or
+  `assets/.vepackignore` matches). `--loose` writes folders instead. The
+  engine mounts `<exe>/*.vepak` at start (`EngineConfig::mountArchives`); all
+  engine file reads go through the new `ve::vfs` (disk first, then archives),
+  so game code reading its own files should use `vfs::read` / `vfs::open` /
+  `vfs::exists` too. New: `AssetManager::loadPixels` (CPU pixels, also from a
+  cooked copy), `ve::Cooker` / `registerCooker` (cooker registry used by
+  vecook). `AssetManager::exists` now also counts an asset whose cooked copy
+  is all that exists.
 - **Audio cooking.** WAV and FLAC sounds are cooked into Ogg Vorbis like
   textures (on demand and by `vecook`; ~10-15x smaller, lengths sample-exact
   so loops stay seamless), tuned per sound with an optional `<sound>.audio`

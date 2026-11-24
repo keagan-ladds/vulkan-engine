@@ -760,7 +760,7 @@ std::shared_ptr<Texture> packSurfaceMap(Renderer& r, const AssetManager& assets,
     int w = 1, h = 1;
     for (int k = 0; k < 3; ++k) {
         if (paths[k]->empty()) continue;
-        maps[k] = loadImagePixels(assets.resolve(*paths[k]));
+        maps[k] = assets.loadPixels(*paths[k]); // (also from a packaged game's cooked copy)
         w = std::max(w, maps[k].width);
         h = std::max(h, maps[k].height);
     }
