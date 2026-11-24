@@ -32,8 +32,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -47,8 +49,6 @@ class Model;
 class AudioClip;
 class Material;
 class Shader;
-
-struct TextureCookResult;
 
 class AssetManager {
 public:
@@ -107,14 +107,16 @@ public:
     };
     void setCooking(CookOptions options);
     const CookOptions& cooking() const { return m_cook; }
-    struct TextureStats {
-        uint32_t cooked = 0;    // textures loaded from cooked files
-        uint32_t source = 0;    // textures loaded from source images
-        uint32_t cooking = 0;   // cook jobs running or queued
-        uint32_t cookedNow = 0; // cooks finished this run
+    struct CookStats {
+        uint32_t texturesCooked = 0; // textures loaded from cooked files
+        uint32_t texturesSource = 0; // textures loaded from source images
+        uint32_t soundsCooked = 0;   // sounds playing cooked (Ogg Vorbis) files
+        uint32_t soundsSource = 0;   // sounds playing their source files
+        uint32_t cooking = 0;        // cook jobs running or queued
+        uint32_t cookedNow = 0;      // cooks finished this run
         uint32_t failed = 0;
     };
-    const TextureStats& textureStats() const { return m_texStats; }
+    const CookStats& cookStats() const { return m_cookStats; }
     // Collects finished cook jobs (logs them). Every frame.
     void updateCooking();
 
@@ -135,13 +137,21 @@ private:
     std::unordered_map<std::string, std::shared_ptr<Shader>> m_materialShaders;
     uint64_t m_materialGeneration = 0;
 
-    void queueCook(const std::filesystem::path& source, const std::string& name, const TextureSettings& settings);
+    // What a cook job reports back (to the main thread, updateCooking()).
+    struct CookJobResult {
+        bool ok = false;
+        std::string error;
+        std::string summary; // logged when it succeeded
+    };
+    using CookWork = std::function<CookJobResult(const std::atomic<bool>& cancelled)>;
+    // Runs `work` on the job pool (Background lane) unless cooking on demand
+    // is off, or a cook of `name` is already running.
+    void queueCook(const std::string& name, CookWork work);
     CookOptions m_cook;
-    TextureStats m_texStats;
+    CookStats m_cookStats;
     struct CookJob {
-        std::string name;
         jobs::Handle handle;
-        std::shared_ptr<TextureCookResult> result;
+        std::shared_ptr<CookJobResult> result;
     };
     std::unordered_map<std::string, CookJob> m_cookJobs; // by asset name
     bool m_warnedNoBC = false;

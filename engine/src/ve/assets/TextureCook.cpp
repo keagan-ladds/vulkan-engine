@@ -119,20 +119,6 @@ bool encodeLevel(const Level& l, VkFormat format, const bc7enc_compress_block_pa
     return true;
 }
 
-std::string hex(uint64_t v)
-{
-    char b[17];
-    std::snprintf(b, sizeof(b), "%016llx", static_cast<unsigned long long>(v));
-    return b;
-}
-
-uint64_t fileTime(const std::filesystem::path& file)
-{
-    std::error_code ec;
-    const auto t = std::filesystem::last_write_time(file, ec);
-    return ec ? 0 : uint64_t(t.time_since_epoch().count());
-}
-
 } // namespace
 
 bool isCookableImage(const std::filesystem::path& file)
@@ -147,23 +133,6 @@ std::filesystem::path cookedTexturePath(const std::filesystem::path& cacheDir, c
     return cacheDir / std::filesystem::path(assetPath + ".ktx2");
 }
 
-uint64_t hashFileContent(const std::filesystem::path& file)
-{
-    std::ifstream in(file, std::ios::binary);
-    if (!in) return 0;
-    uint64_t h = 1469598103934665603ull;
-    std::vector<char> buf(1 << 16);
-    while (in) {
-        in.read(buf.data(), std::streamsize(buf.size()));
-        const std::streamsize n = in.gcount();
-        for (std::streamsize i = 0; i < n; ++i) {
-            h ^= uint8_t(buf[size_t(i)]);
-            h *= 1099511628211ull;
-        }
-    }
-    return h;
-}
-
 TextureCookResult cookTexture(const std::filesystem::path& source, const TextureSettings& settings,
                               const std::filesystem::path& output, const std::atomic<bool>* cancelled)
 {
@@ -175,10 +144,7 @@ TextureCookResult cookTexture(const std::filesystem::path& source, const Texture
     }
     // Stamp the source before reading it: if it changes meanwhile, the
     // cooked file looks stale next time rather than wrongly current.
-    std::error_code ec;
-    const uint64_t sourceSize = std::filesystem::file_size(source, ec);
-    const uint64_t sourceTime = fileTime(source);
-    const uint64_t sourceHash = hashFileContent(source);
+    const nlohmann::json stamp = makeCookStamp(source, kTextureCookerVersion, settings.cookHash(), settings.toJson());
 
     int w = 0, h = 0, channels = 0;
     stbi_uc* pixels = stbi_load(source.string().c_str(), &w, &h, &channels, 4);
@@ -231,14 +197,8 @@ TextureCookResult cookTexture(const std::filesystem::path& source, const Texture
         out.levelOffsets.push_back(before);
         out.levelSizes.push_back(out.data.size() - before);
     }
-    const nlohmann::json meta = {{"version", kTextureCookerVersion},
-                                 {"settingsHash", hex(settings.cookHash())},
-                                 {"sourceSize", sourceSize},
-                                 {"sourceTime", sourceTime},
-                                 {"sourceHash", hex(sourceHash)},
-                                 {"settings", settings.toJson()}};
     out.keyValues.emplace_back("KTXwriter", "vulkan-engine texture cooker " + std::to_string(kTextureCookerVersion));
-    out.keyValues.emplace_back("ve.cook", meta.dump());
+    out.keyValues.emplace_back("ve.cook", stamp.dump());
     if (!writeKtx2(output, out, &r.error)) return r;
 
     r.ok = true;
@@ -256,18 +216,10 @@ CookedState checkCookedTexture(const Ktx2Texture& cooked, const std::filesystem:
 {
     const std::string* metaText = cooked.value("ve.cook");
     if (!metaText) return CookedState::Unusable;
-    const nlohmann::json meta = nlohmann::json::parse(*metaText, nullptr, false);
-    if (!meta.is_object() || meta.value("version", 0u) != kTextureCookerVersion) return CookedState::Stale;
-    if (settingsOut) settingsOut->applyJson(meta.value("settings", nlohmann::json::object()));
-
-    std::error_code ec;
-    if (!std::filesystem::exists(source, ec)) return CookedState::Current; // shipped build: the cooked file is all there is
-    if (settings && meta.value("settingsHash", std::string()) != hex(settings->cookHash())) return CookedState::Stale;
-    const uint64_t size = std::filesystem::file_size(source, ec);
-    if (meta.value("sourceSize", uint64_t(0)) != size) return CookedState::Stale;
-    if (meta.value("sourceTime", uint64_t(0)) == fileTime(source)) return CookedState::Current;
-    // Same size, another time (a checkout, a copy): compare the content.
-    return meta.value("sourceHash", std::string()) == hex(hashFileContent(source)) ? CookedState::Current : CookedState::Stale;
+    const nlohmann::json stamp = nlohmann::json::parse(*metaText, nullptr, false);
+    if (settingsOut && stamp.is_object()) settingsOut->applyJson(stamp.value("settings", nlohmann::json::object()));
+    const uint64_t hash = settings ? settings->cookHash() : 0;
+    return checkCookStamp(stamp, source, kTextureCookerVersion, settings ? &hash : nullptr);
 }
 
 } // namespace ve

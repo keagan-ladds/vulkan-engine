@@ -15,6 +15,7 @@
 // cooks what it loads by itself.
 // =============================================================================
 
+#include <ve/assets/AudioCook.hpp>
 #include <ve/assets/TextureCook.hpp>
 #include <ve/core/Jobs.hpp>
 #include <ve/core/Window.hpp>
@@ -36,8 +37,9 @@ namespace {
 void usage()
 {
     std::puts("usage: vecook [--out <cache dir>] [--force] [--check] [--clean] [--quiet] [assets folder...]\n"
-              "Cooks every image under the asset folders (textures: BC4 / BC5 / BC7 KTX2 with mips; settings from\n"
-              "<image>.texture files or the file names, see ve/assets/TextureSettings.hpp) into the cook cache.\n"
+              "Cooks every image and sound under the asset folders into the cook cache: images -> BC4 / BC5 / BC7\n"
+              "KTX2 with mips (settings: <image>.texture or the file name, ve/assets/TextureSettings.hpp), WAV / FLAC\n"
+              "-> Ogg Vorbis (settings: <sound>.audio, ve/assets/AudioCook.hpp).\n"
               "Defaults: the game's source assets folder (ve-source-assets.txt next to vecook) or ./assets next to\n"
               "vecook, and ./cooked next to vecook (the game's cache).");
 }
@@ -55,7 +57,10 @@ const char* formatName(VkFormat f)
     }
 }
 
+enum class Kind { Texture, Audio };
+
 struct Item {
+    Kind kind;
     fs::path source;
     std::string name; // asset path (relative to its folder): the cache key
     fs::path cooked;
@@ -97,7 +102,8 @@ int main(int argc, char** argv)
     }
     if (out.empty()) out = exeDir / "cooked";
 
-    // Every cookable image (hidden folders skipped).
+    // Every cookable image and sound (hidden folders skipped; sounds whose
+    // .audio settings say compress: false are used as they are).
     std::vector<Item> items;
     for (const fs::path& root : roots) {
         std::error_code ec;
@@ -111,21 +117,33 @@ int main(int argc, char** argv)
                 it.disable_recursion_pending();
                 continue;
             }
-            if (!it->is_regular_file() || !ve::isCookableImage(it->path())) continue;
+            if (!it->is_regular_file()) continue;
             const std::string name = fs::relative(it->path(), root).generic_string();
-            items.push_back({it->path(), name, ve::cookedTexturePath(out, name)});
+            if (ve::isCookableImage(it->path())) items.push_back({Kind::Texture, it->path(), name, ve::cookedTexturePath(out, name)});
+            else if (ve::isCookableAudio(it->path()) && ve::AudioSettings::forFile(it->path()).compress)
+                items.push_back({Kind::Audio, it->path(), name, ve::cookedAudioPath(out, name)});
         }
     }
     std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.name < b.name; });
-    std::printf("vecook: %zu images in %zu folder(s) -> %s\n", items.size(), roots.size(), out.string().c_str());
+    const size_t images = size_t(std::count_if(items.begin(), items.end(), [](const Item& i) { return i.kind == Kind::Texture; }));
+    std::printf("vecook: %zu images, %zu sounds in %zu folder(s) -> %s\n", images, items.size() - images, roots.size(),
+                out.string().c_str());
 
     // Which need cooking.
     std::vector<size_t> todo;
     for (size_t i = 0; i < items.size(); ++i) {
-        const ve::TextureSettings settings = ve::TextureSettings::forImage(items[i].source);
-        ve::Ktx2Texture header;
-        const bool current = !force && ve::readKtx2(items[i].cooked, header, true) &&
-                             ve::checkCookedTexture(header, items[i].source, &settings) == ve::CookedState::Current;
+        bool current = false;
+        if (force) {
+            // (everything again)
+        } else if (items[i].kind == Kind::Texture) {
+            const ve::TextureSettings settings = ve::TextureSettings::forImage(items[i].source);
+            ve::Ktx2Texture header;
+            current = ve::readKtx2(items[i].cooked, header, true) &&
+                      ve::checkCookedTexture(header, items[i].source, &settings) == ve::CookedState::Current;
+        } else {
+            const ve::AudioSettings settings = ve::AudioSettings::forFile(items[i].source);
+            current = ve::checkCookedAudio(items[i].cooked, items[i].source, &settings) == ve::CookedState::Current;
+        }
         if (!current) todo.push_back(i);
         if (check && !current) std::printf("  stale: %s\n", items[i].name.c_str());
     }
@@ -135,9 +153,10 @@ int main(int argc, char** argv)
     if (clean || check) {
         std::error_code ec;
         for (auto it = fs::recursive_directory_iterator(out, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-            if (!it->is_regular_file() || it->path().extension() != ".ktx2") continue;
+            const std::string ext = it->path().extension().string();
+            if (!it->is_regular_file() || (ext != ".ktx2" && ext != ".ogg")) continue;
             const std::string name = fs::relative(it->path(), out).generic_string();
-            const std::string sourceName = name.substr(0, name.size() - 5); // without ".ktx2"
+            const std::string sourceName = name.substr(0, name.size() - ext.size()); // without ".ktx2" / ".ogg"
             const bool known = std::any_of(items.begin(), items.end(), [&](const Item& item) { return item.name == sourceName; });
             if (!known) orphans.push_back(it->path());
         }
@@ -151,13 +170,31 @@ int main(int argc, char** argv)
     // Cook, spread over the worker threads.
     const auto t0 = std::chrono::steady_clock::now();
     std::mutex printLock;
-    std::atomic<uint64_t> sourceBytes{0}, cookedBytes{0}, rgbaBytes{0};
+    std::atomic<uint64_t> sourceBytes{0}, cookedBytes{0}, rgbaBytes{0}, soundSource{0}, soundCooked{0};
     std::atomic<int> failed{0};
     ve::jobs::parallelFor(todo.size(), [&](size_t k) {
         const Item& item = items[todo[k]];
+        std::error_code ec;
+        if (item.kind == Kind::Audio) {
+            const ve::AudioSettings settings = ve::AudioSettings::forFile(item.source);
+            const ve::AudioCookResult r = ve::cookAudio(item.source, settings, item.cooked);
+            std::lock_guard lock(printLock);
+            if (!r.ok) {
+                ++failed;
+                std::fprintf(stderr, "  FAILED %s: %s\n", item.name.c_str(), r.error.c_str());
+                return;
+            }
+            const uint64_t before = fs::file_size(item.source, ec);
+            soundSource += before;
+            soundCooked += r.bytes;
+            if (!quiet)
+                std::printf("  %-48s %-6s %-10s %5.1f s %u ch %5u Hz %8.0f KB (%4.1fx) %6.0f ms\n", item.name.c_str(), "Sound",
+                            "Vorbis", r.seconds, r.channels, r.sampleRate, double(r.bytes) / 1024.0,
+                            r.bytes ? double(before) / double(r.bytes) : 0.0, r.milliseconds);
+            return;
+        }
         const ve::TextureSettings settings = ve::TextureSettings::forImage(item.source);
         const ve::TextureCookResult r = ve::cookTexture(item.source, settings, item.cooked);
-        std::error_code ec;
         sourceBytes += fs::file_size(item.source, ec);
         std::lock_guard lock(printLock);
         if (!r.ok) {
@@ -179,9 +216,11 @@ int main(int argc, char** argv)
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     std::printf("vecook: cooked %zu (%d failed), %zu already current, %zu orphans removed in %.1f s",
                 todo.size() - size_t(failed.load()), failed.load(), items.size() - todo.size(), orphans.size(), seconds);
-    if (!todo.empty())
-        std::printf("; %.1f MB of images -> %.1f MB GPU-ready (%.1f MB of GPU memory uncompressed)", double(sourceBytes) / 1048576.0,
+    if (sourceBytes > 0)
+        std::printf("\n  images: %.1f MB -> %.1f MB GPU-ready (%.1f MB of GPU memory uncompressed)", double(sourceBytes) / 1048576.0,
                     double(cookedBytes) / 1048576.0, double(rgbaBytes) / 1048576.0);
+    if (soundSource > 0)
+        std::printf("\n  sounds: %.1f MB -> %.1f MB Ogg Vorbis", double(soundSource) / 1048576.0, double(soundCooked) / 1048576.0);
     std::printf("\n");
     ve::jobs::shutdown();
     return failed > 0 ? 1 : 0;

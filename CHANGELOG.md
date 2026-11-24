@@ -24,6 +24,12 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   rebuilds Z and gives the same result for uncooked maps.
 
 ### Added
+- **Audio cooking.** WAV and FLAC sounds are cooked into Ogg Vorbis like
+  textures (on demand and by `vecook`; ~10-15x smaller, lengths sample-exact
+  so loops stay seamless), tuned per sound with an optional `<sound>.audio`
+  file (quality, mono, sampleRate, compress). Ogg Vorbis files now play
+  (miniaudio's stb_vorbis is compiled in). `AssetManager::textureStats()` is
+  now `cookStats()` (textures and sounds).
 - **Asset cooking (textures).** Images are cooked into GPU-ready KTX2 files
   (BC7 colour, BC5 normal maps, BC4 greyscale data, prebuilt mips) in
   `<exe>/cooked`: automatically on a worker thread the first time they load,

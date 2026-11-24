@@ -914,7 +914,13 @@ never see Jolt types. The module is split by concern: `PhysicsWorld.cpp`
   `loadTexture` uses a cooked copy only while it is current; otherwise it
   loads the source and queues a cook on the job pool (Background lane), used
   from the next run. `vecook` (engine/tools) cooks everything with the same
-  code for releases / CI. Without BC support the source images are used. `Texture::fromPixels()` and
+  code for releases / CI. Without BC support the source images are used.
+- Audio cooking (`assets/AudioCook`): WAV / FLAC become Ogg Vorbis (VBR,
+  libvorbis) in the same cache (`<asset path>.ogg`), stamped in the Vorbis
+  comment (tag `VE_COOK`); settings in an optional `<sound>.audio` (quality,
+  mono, sampleRate, compress). `loadAudio` plays the cooked file when current
+  (miniaudio decodes Vorbis with its stb_vorbis); MP3 / Ogg sources are used
+  as they are. The stamp logic is shared (`assets/Cook`). `Texture::fromPixels()` and
   `Texture::create3D()` cover procedural data (e.g. cloud noise).
 - Models: glTF 2.0 (`.gltf`/`.glb`) via cgltf. Meshes and primitives become
   `Mesh` + submeshes. Materials become `StandardMaterial` (base colour /

@@ -349,6 +349,18 @@ on the source images, `VE_COOK=sync` cooks before loading.
 Normal-map shaders must rebuild Z: use `veUnpackNormal(texel)` (cooked
 normal maps only store X and Y).
 
+**Sounds cook too:** WAV and FLAC files become Ogg Vorbis in the same cache
+(the sandbox's 92 MB of WAV: 7 MB), sample-exact in length so loops stay
+seamless. Author in WAV / FLAC; to tune one, put `<sound>.audio` next to it:
+
+```json
+{ "quality": 0.2, "mono": true, "sampleRate": 22050 }
+```
+
+(`quality` -0.1..1, default 0.4 ~ 128 kbit/s stereo; `mono` for positional
+sounds; `"compress": false` keeps the source file). MP3 / Ogg files are used
+as they are.
+
 ### Interaction ("press E to ...")
 
 ```cpp

@@ -286,10 +286,11 @@ void AutoTest::update(float dt)
                                  assets().textureSettings("textures/decals/puddle_mask.png").type == ve::TextureType::Data &&
                                  assets().textureSettings("textures/mud_wall.png").type == ve::TextureType::Color;
             const ve::TextureSettings lut = assets().textureSettings("textures/lut_neutral_32.png");
-            const auto& ts = assets().textureStats();
+            const auto& ts = assets().cookStats();
             log(std::string("texture settings by name: ") + (namesOk ? "yes" : "NO") + ", by .texture file: " +
                 (lut.type == ve::TextureType::Data && !lut.mipmaps && !lut.compress ? "yes" : "NO") + "; textures loaded: " +
-                std::to_string(ts.cooked) + " cooked, " + std::to_string(ts.source) + " from source images, " +
+                std::to_string(ts.texturesCooked) + " cooked, " + std::to_string(ts.texturesSource) + " from source images; sounds: " +
+                std::to_string(ts.soundsCooked) + " cooked, " + std::to_string(ts.soundsSource) + " source files; " +
                 std::to_string(ts.cooking) + " cooking");
             // A live edit (like the editor's, unsaved): checked and reverted in step 1.
             ve::Json edited = *ve::DataAssets::get("materials/thatch.material");

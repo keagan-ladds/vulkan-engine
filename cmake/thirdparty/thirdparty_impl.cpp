@@ -11,5 +11,13 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
+// Ogg Vorbis playback (cooked audio is .ogg): miniaudio decodes Vorbis with
+// its bundled stb_vorbis, declared before and implemented after miniaudio.
+#define STB_VORBIS_HEADER_ONLY
+#include <extras/stb_vorbis.c>
+
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio.h>
+
+#undef STB_VORBIS_HEADER_ONLY
+#include <extras/stb_vorbis.c>

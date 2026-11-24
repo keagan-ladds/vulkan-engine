@@ -186,6 +186,44 @@ else()
     target_compile_options(ve_bcenc PRIVATE -w)
 endif()
 
+# libogg + libvorbis (BSD): the audio cooker's Ogg Vorbis encoder and the
+# cooked-file reader (vorbisfile) for ve/assets/AudioCook. Playback decodes
+# Vorbis with miniaudio's stb_vorbis. Fetched with git like ENet; the C
+# sources are compiled into one private static library (no upstream CMake).
+FetchContent_Declare(ogg
+    GIT_REPOSITORY https://github.com/xiph/ogg.git
+    GIT_TAG v1.3.5
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR _none)
+FetchContent_Declare(vorbis
+    GIT_REPOSITORY https://github.com/xiph/vorbis.git
+    GIT_TAG v1.3.7
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR _none)
+FetchContent_MakeAvailable(ogg vorbis)
+set(_ve_ogg_types_dir ${CMAKE_BINARY_DIR}/ve_ogg_include)
+file(WRITE ${_ve_ogg_types_dir}/ogg/config_types.h
+"#ifndef __CONFIG_TYPES_H__\n#define __CONFIG_TYPES_H__\n#include <stdint.h>\n"
+"typedef int16_t ogg_int16_t;\ntypedef uint16_t ogg_uint16_t;\ntypedef int32_t ogg_int32_t;\n"
+"typedef uint32_t ogg_uint32_t;\ntypedef int64_t ogg_int64_t;\ntypedef uint64_t ogg_uint64_t;\n#endif\n")
+set(_ve_vorbis_sources mdct.c smallft.c block.c envelope.c window.c lsp.c lpc.c analysis.c synthesis.c psy.c
+    info.c floor1.c floor0.c res0.c mapping0.c registry.c codebook.c sharedbook.c lookup.c bitrate.c
+    vorbisenc.c vorbisfile.c)
+list(TRANSFORM _ve_vorbis_sources PREPEND ${vorbis_SOURCE_DIR}/lib/)
+add_library(ve_vorbis STATIC ${ogg_SOURCE_DIR}/src/bitwise.c ${ogg_SOURCE_DIR}/src/framing.c ${_ve_vorbis_sources})
+target_include_directories(ve_vorbis SYSTEM PUBLIC ${_ve_ogg_types_dir} ${ogg_SOURCE_DIR}/include ${vorbis_SOURCE_DIR}/include)
+target_include_directories(ve_vorbis PRIVATE ${vorbis_SOURCE_DIR}/lib)
+set_target_properties(ve_vorbis PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(ve_vorbis PRIVATE /w)
+    target_compile_definitions(ve_vorbis PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(ve_vorbis PRIVATE -w)
+endif()
+if(NOT WIN32)
+    target_link_libraries(ve_vorbis PRIVATE m)
+endif()
+
 add_library(ve_thirdparty STATIC
     ${CMAKE_CURRENT_LIST_DIR}/thirdparty/thirdparty_impl.cpp
     ${imgui_SOURCE_DIR}/imgui.cpp

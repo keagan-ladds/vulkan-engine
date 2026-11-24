@@ -21,6 +21,7 @@
 // command-line tool.
 // =============================================================================
 
+#include "ve/assets/Cook.hpp"
 #include "ve/assets/Ktx2.hpp"
 #include "ve/assets/TextureSettings.hpp"
 
@@ -39,9 +40,6 @@ bool isCookableImage(const std::filesystem::path& file);
 // Where the cooked copy of an asset lives: <cacheDir>/<asset path>.ktx2.
 std::filesystem::path cookedTexturePath(const std::filesystem::path& cacheDir, const std::string& assetPath);
 
-// 64-bit FNV-1a of a file's bytes (0 if unreadable).
-uint64_t hashFileContent(const std::filesystem::path& file);
-
 struct TextureCookResult {
     bool ok = false;
     std::string error;
@@ -55,11 +53,6 @@ struct TextureCookResult {
 TextureCookResult cookTexture(const std::filesystem::path& source, const TextureSettings& settings,
                               const std::filesystem::path& output, const std::atomic<bool>* cancelled = nullptr);
 
-enum class CookedState {
-    Current,  // made by this cooker from these settings and the source as it is now (or no source to compare)
-    Stale,    // the source, settings or cooker changed: cook again
-    Unusable, // missing or unreadable
-};
 // Checks a cooked file (read with headerOnly is enough). `source` may not
 // exist (shipped builds): then only the cooker version is checked, and
 // `settingsOut` gets the settings stored in the file.

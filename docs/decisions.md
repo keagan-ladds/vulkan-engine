@@ -386,4 +386,8 @@ permissively licensed. **Cost:** the first run after a change loads source
 images (cooked ones from the next run); images used in two roles need a
 `.texture` decision; normal-map shaders must rebuild Z (`veUnpackNormal`);
 cooked files aren't compressed on disk yet (phase 5's archive will be).
+Audio (phase 3) follows the same scheme: WAV / FLAC -> Ogg Vorbis, the stamp in
+the Vorbis comment, settings in `<sound>.audio`. Vorbis rather than Opus:
+miniaudio plays it with no extra library, encoding is libvorbis (BSD), and
+Opus's 48 kHz-only output would resample everything.
 

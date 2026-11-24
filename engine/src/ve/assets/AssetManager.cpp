@@ -1,6 +1,7 @@
 #include "ve/assets/AssetManager.hpp"
 
 #include "ve/assets/DataAsset.hpp"
+#include "ve/assets/AudioCook.hpp"
 #include "ve/assets/MaterialAsset.hpp"
 #include "ve/assets/TextureCook.hpp"
 #include "ve/gfx/Device.hpp"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 
 namespace ve {
 
@@ -126,16 +128,24 @@ std::shared_ptr<Texture> AssetManager::loadTexture(const std::filesystem::path& 
                                                    : VkComponentMapping{};
             tex = Texture::createWithLevels(*m_renderer, full.width, full.height, full.format, full.data.data(), full.data.size(),
                                             full.levelOffsets, settings.sampler(), swizzle, name);
-            ++m_texStats.cooked;
+            ++m_cookStats.texturesCooked;
         } else {
             if (state == CookedState::Current) log::warn("Cooked texture {}: {}", name, error);
-            if (!source.empty()) queueCook(source, name, settings);
+            if (!source.empty()) {
+                queueCook(name, [source, settings, cooked](const std::atomic<bool>& cancelled) {
+                    const TextureCookResult r = cookTexture(source, settings, cooked, &cancelled);
+                    char summary[128];
+                    std::snprintf(summary, sizeof(summary), "%ux%u, %u mips, %.0f KB in %.0f ms", r.width, r.height, r.levels,
+                                  double(r.bytes) / 1024.0, r.milliseconds);
+                    return CookJobResult{r.ok, r.error, summary};
+                });
+            }
         }
     }
     if (!tex) {
         if (source.empty()) throw std::runtime_error("Asset not found: " + path.string() + " (no source image or cooked copy)");
         tex = loadTextureFile(*m_renderer, source, settings.srgb(), settings.mipmaps, settings.sampler());
-        ++m_texStats.source;
+        ++m_cookStats.texturesSource;
     }
     m_textures[key] = tex;
     return tex;
@@ -157,18 +167,16 @@ void AssetManager::setCooking(CookOptions options)
     m_cook = std::move(options);
 }
 
-void AssetManager::queueCook(const std::filesystem::path& source, const std::string& name, const TextureSettings& settings)
+void AssetManager::queueCook(const std::string& name, CookWork work)
 {
     if (!m_cook.cookOnDemand || m_cook.synchronous || m_cookJobs.count(name)) return;
     // The job owns its inputs and result (Jobs.hpp rules): the manager can
     // drop it at any time, and it never touches engine state.
-    auto result = std::make_shared<TextureCookResult>();
-    const std::filesystem::path output = cookedTexturePath(m_cook.cacheDir, name);
-    jobs::Handle h = jobs::submit(
-        [source, settings, output, result](const std::atomic<bool>& cancelled) { *result = cookTexture(source, settings, output, &cancelled); },
-        jobs::Lane::Background);
-    m_cookJobs[name] = {name, h, result};
-    m_texStats.cooking = uint32_t(m_cookJobs.size());
+    auto result = std::make_shared<CookJobResult>();
+    jobs::Handle h = jobs::submit([work = std::move(work), result](const std::atomic<bool>& cancelled) { *result = work(cancelled); },
+                                  jobs::Lane::Background);
+    m_cookJobs[name] = {h, result};
+    m_cookStats.cooking = uint32_t(m_cookJobs.size());
 }
 
 void AssetManager::updateCooking()
@@ -178,18 +186,17 @@ void AssetManager::updateCooking()
             ++it;
             continue;
         }
-        const TextureCookResult& r = *it->second.result;
+        const CookJobResult& r = *it->second.result;
         if (r.ok) {
-            ++m_texStats.cookedNow;
-            log::info("Cooked {}: {}x{}, {} mips, {:.0f} KB in {:.0f} ms (used from the next load)", it->first, r.width, r.height,
-                      r.levels, double(r.bytes) / 1024.0, r.milliseconds);
+            ++m_cookStats.cookedNow;
+            log::info("Cooked {}: {} (used from the next load)", it->first, r.summary);
         } else if (!it->second.handle.cancelled()) {
-            ++m_texStats.failed;
+            ++m_cookStats.failed;
             log::warn("Cooking {} failed: {}", it->first, r.error);
         }
         it = m_cookJobs.erase(it);
     }
-    m_texStats.cooking = uint32_t(m_cookJobs.size());
+    m_cookStats.cooking = uint32_t(m_cookJobs.size());
 }
 
 AssetManager::~AssetManager()
@@ -214,10 +221,49 @@ std::shared_ptr<Model> AssetManager::loadModel(const std::filesystem::path& path
 
 std::shared_ptr<AudioClip> AssetManager::loadAudio(const std::filesystem::path& path, bool stream)
 {
-    const std::filesystem::path& file = resolveCached(path);
-    const std::string key = file.string() + (stream ? "|stream" : "");
+    // Like loadTexture: the source if it's there, its cooked copy (Ogg Vorbis,
+    // AudioCook.hpp) when that is current, else the source + a cook for next time.
+    std::filesystem::path source;
+    std::string name;
+    try {
+        source = resolveCached(path);
+        name = assetName(source);
+    } catch (const std::exception&) {
+        if (path.is_absolute() || m_cook.cacheDir.empty()) throw;
+        name = path.generic_string();
+    }
+    const std::string key = (source.empty() ? "cooked:" + name : source.string()) + (stream ? "|stream" : "");
     if (auto it = m_audio.find(key); it != m_audio.end()) return it->second;
-    auto clip = std::make_shared<AudioClip>(file.string(), stream, assetName(file));
+
+    std::filesystem::path file = source;
+    if (isCookableAudio(path) && m_cook.useCooked && !m_cook.cacheDir.empty()) {
+        AudioSettings settings = source.empty() ? AudioSettings{} : AudioSettings::forFile(source);
+        if (settings.compress) {
+            const std::filesystem::path cooked = cookedAudioPath(m_cook.cacheDir, name);
+            CookedState state = checkCookedAudio(cooked, source, source.empty() ? nullptr : &settings);
+            if (state != CookedState::Current && !source.empty() && m_cook.cookOnDemand && m_cook.synchronous) {
+                const AudioCookResult r = cookAudio(source, settings, cooked);
+                if (r.ok) state = CookedState::Current;
+                else log::warn("Cooking {} failed: {}", name, r.error);
+            }
+            if (state == CookedState::Current) {
+                file = cooked;
+            } else if (!source.empty()) {
+                queueCook(name, [source, settings, cooked](const std::atomic<bool>& cancelled) {
+                    const AudioCookResult r = cookAudio(source, settings, cooked, &cancelled);
+                    char summary[128];
+                    std::snprintf(summary, sizeof(summary), "%.1f s, %u ch, %u Hz, %.0f KB in %.0f ms", r.seconds, r.channels,
+                                  r.sampleRate, double(r.bytes) / 1024.0, r.milliseconds);
+                    return CookJobResult{r.ok, r.error, summary};
+                });
+            }
+        }
+    }
+    if (file.empty()) throw std::runtime_error("Asset not found: " + path.string() + " (no source file or cooked copy)");
+    if (file == source) ++m_cookStats.soundsSource;
+    else ++m_cookStats.soundsCooked;
+    // The clip keeps the asset's own name: scene files store "audio/fire.wav" either way.
+    auto clip = std::make_shared<AudioClip>(file.string(), stream, name);
     m_audio[key] = clip;
     return clip;
 }
