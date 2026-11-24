@@ -21,6 +21,7 @@ namespace ve {
 
 class Renderer;
 
+/// A GPU image registered in the bindless table (index() for shaders). Load with AssetManager::loadTexture; shared.
 class Texture {
 public:
     /// `pixels` must be tightly packed. mipmaps = generate a full mip chain.
@@ -49,9 +50,13 @@ public:
     Texture& operator=(const Texture&) = delete;
 
     uint32_t index() const { return m_index; } ///< bindless slot
+    /// The underlying image.
     const Image& image() const { return m_image; }
+    /// Width in pixels.
     uint32_t width() const { return m_image.extent.width; }
+    /// Height in pixels.
     uint32_t height() const { return m_image.extent.height; }
+    /// Debug name (the file path for loaded textures).
     const std::string& name() const { return m_name; }
 
     /// Change filtering/wrapping after creation.

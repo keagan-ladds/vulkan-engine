@@ -165,7 +165,8 @@ go.addComponent<Spin>().speed = 3.0f;
    Shaders with their own lighting loop should only visit the point lights of
    the pixel's cluster: `VeLightList list = veLightList(P);` then
    `lights.point[veLightAt(list, k)]` for `k < list.count` (see the template's
-   `mygame_toon.frag`).
+   `mygame_toon.frag`), multiplying each light by `veSpotFactor(L, l)` (`l`:
+   unit direction towards the light) so spot lights keep their cone.
 2. Document the parameter layout at the top of the shader.
 3. In C++:
    ```cpp
@@ -1106,4 +1107,29 @@ config.renderer.maxShadowedPointLights = 4;
 config.renderer.maxShadowDistance = 180.0f;
 // at runtime: renderer.settings().cascadeCount = 3; renderer.applySettings();
 ```
-Set `castShadows = true` on the `DirectionalLight` / `PointLight` components.
+Set `castShadows = true` on the `DirectionalLight` / `PointLight` / `SpotLight` components.
+
+### Spot lights (torches, headlights, street lamps)
+
+A `ve::SpotLight` shines a cone along its object's forward (-Z) from its
+position: put it on a child placed and turned where the lamp is.
+
+```cpp
+auto& lamp = scene().spawn("Headlight L");
+lamp.setParent(&car, false);
+lamp.transform().setLocalPosition({-0.7f, 0.6f, -2.1f}); // at the lamp, facing the car's forward
+auto& beam = lamp.addComponent<ve::SpotLight>();
+beam.range = 40.0f;       // m
+beam.outerAngle = 28.0f;  // degrees from the axis to the edge of the cone
+beam.innerAngle = 18.0f;  // fully bright inside this
+beam.intensity = 60.0f;
+beam.castShadows = true;  // a cube shadow map, only the faces the cone reaches
+```
+
+It is a `PointLight` underneath (colour, intensity, range, shadows, the point
+light limits and clusters), so `forEach<PointLight>` sees spots too. Beams
+show in volumetric fog. Editor: Create > Light > Spot light (the gizmo draws
+the cone). The sandbox's player has a torch on T / pad d-pad down.
+
+`DirectionalLight` is for infinitely distant light (sun, moon): it lights
+everything from one direction and has no position or range.

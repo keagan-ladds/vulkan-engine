@@ -73,7 +73,8 @@ struct GpuPointLight {
     glm::vec4 positionRange; ///< xyz = position, w = range
     glm::vec4 color;         ///< rgb = colour * intensity
     glm::ivec4 shadow;       ///< x = cube index in PointShadowMap (-1 = none), y = first shadow view index
-    glm::vec4 params;        ///< x = shadow bias, yzw reserved
+    glm::vec4 params;        ///< x = shadow bias, y = spot: 1 / (cos inner - cos outer), zw reserved
+    glm::vec4 spot;          ///< spot lights: xyz = direction it shines, w = cos(outer angle); point lights: w = -2
 };
 
 /// set 0, binding 1 (storage buffer)

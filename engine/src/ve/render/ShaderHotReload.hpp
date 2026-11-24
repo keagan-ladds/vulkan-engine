@@ -29,10 +29,13 @@
 
 namespace ve {
 
+/// Recompiles edited GLSL with the build's own glslc commands, in the background (Renderer::shaderHotReload()).
 class ShaderHotReload {
 public:
+    /// Watches the shaders whose compile commands the build left in these folders.
     explicit ShaderHotReload(const std::vector<std::filesystem::path>& shaderDirectories);
 
+    /// Number of shaders watched.
     size_t watchedCount() const { return m_entries.size(); }
     /// Starts recompiling shaders whose sources changed (throttled; call every
     /// frame) without waiting. Returns the names (e.g. "bloom_up.frag") of
@@ -41,10 +44,13 @@ public:
     /// Checks right now, ignoring the throttle, and waits for every compile.
     std::vector<std::string> pollNow();
 
+    /// The last compile error ("" after a successful round).
     const std::string& lastError() const { return m_lastError; }
+    /// Compiles running now.
     size_t compiling() const { return m_jobs.size(); }
     /// Called when a recompile starts (ok and milliseconds unused) and ends.
     std::function<void(const std::string& name, bool started, bool ok, float milliseconds, const std::string& output)> onCompile;
+    /// Successful reload rounds so far.
     uint32_t reloadCount() const { return m_reloads; }
 
 private:

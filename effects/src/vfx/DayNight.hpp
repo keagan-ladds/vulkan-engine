@@ -20,6 +20,8 @@ namespace vfx {
 
 class Weather;
 
+/// Moves the sun and moon over a 24-hour clock, colours them through the
+/// atmosphere, and adapts exposure at night. Publishes the time of day to audio ("timeOfDay").
 class DayNightCycle : public ve::GameObject, public ve::Saveable {
 public:
     DayNightCycle();
@@ -35,8 +37,8 @@ public:
     bool advanceInEditor = false; ///< keep the clock running while the editor is paused
     bool timeKeys = false;        ///< T / G: fast-forward / rewind (debug)
     float dayLengthMinutes = 16.0f; ///< real minutes per in-game day
-    float sunIntensity = 3.2f;
-    float moonIntensity = 0.08f;
+    float sunIntensity = 3.2f;  ///< Sun light intensity at noon (dims through the atmosphere).
+    float moonIntensity = 0.08f;  ///< Moon light intensity.
     /// Night brightness. Exposure rises towards this at night (crude eye
     /// adaptation): 1 = no adaptation (darkest), 3 = bright "game" nights.
     float nightExposure = 1.4f;
@@ -45,8 +47,11 @@ public:
 
     /// The lights (separate objects; the editor can delete them). May be null; don't keep the pointers.
     ve::DirectionalLight* sun() const;
+    /// The moon light (may be null; don't keep the pointer).
     ve::DirectionalLight* moon() const;
+    /// Unit direction towards the sun now.
     glm::vec3 towardsSun() const { return m_towardsSun; }
+    /// Unit direction towards the sun at `hours` (0..24).
     static glm::vec3 sunDirection(float hours);
 
 private:

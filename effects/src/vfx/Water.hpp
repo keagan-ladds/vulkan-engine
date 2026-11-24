@@ -21,18 +21,19 @@ class MeshRenderer;
 
 namespace vfx {
 
+/// A flat water plane at its object's height: depth-tinted, rippled, with shore foam (water.frag).
 class Water : public ve::GameObject {
 public:
     Water() : GameObject("Water") { runInEditor = true; }
     void start() override;
 
-    glm::vec2 size{640.0f};
-    glm::vec4 deepColor{0.05f, 0.09f, 0.06f, 1.0f};
-    glm::vec4 shallowColor{0.22f, 0.25f, 0.15f, 1.0f};
+    glm::vec2 size{640.0f};  ///< Plane size in metres (x, z), centred on the object.
+    glm::vec4 deepColor{0.05f, 0.09f, 0.06f, 1.0f};  ///< Colour of deep water (linear RGBA).
+    glm::vec4 shallowColor{0.22f, 0.25f, 0.15f, 1.0f};  ///< Colour of shallow water near the shore.
     float absorption = 1.2f;     ///< how quickly colour goes from shallow to deep
-    float shoreFoam = 0.5f;
-    float rippleScale = 0.35f;
-    float rippleStrength = 0.12f;
+    float shoreFoam = 0.5f;  ///< Foam where the water meets geometry (0 = none).
+    float rippleScale = 0.35f;  ///< Ripple pattern frequency (larger = smaller ripples).
+    float rippleStrength = 0.12f;  ///< Ripple normal strength.
 
     void rebuild(); ///< applies size / material fields (editor edits)
 

@@ -18,8 +18,10 @@
 
 namespace vfx {
 
+/// Depth of field: blurs what's out of focus (photo mode, cutscenes).
 class DepthOfFieldPass : public ve::RenderPass {
 public:
+    /// @param resolutionScale blur resolution relative to the screen.
     explicit DepthOfFieldPass(float resolutionScale = 0.5f);
     ~DepthOfFieldPass() override;
 
@@ -28,13 +30,13 @@ public:
     void execute(ve::RenderContext& ctx) override;
     void onGui() override;
 
-    bool autoFocus = true;
+    bool autoFocus = true;  ///< Focus on what's at the centre of the screen (else focusDistance).
     float focusDistance = 10.0f; ///< m, used when autoFocus is off
     float focusRange = 1.0f;     ///< depth range around the focus that stays fully sharp (m)
     float aperture = 2.0f;       ///< blur strength: CoC = aperture * |1/focus - 1/depth| (1 = full maxBlur)
     float nearBlur = 1.0f;       ///< near-field blur multiplier (0 = no foreground blur)
     float maxBlur = 12.0f;       ///< max blur radius (pixels at full resolution)
-    int taps = 24;
+    int taps = 24;  ///< Samples per pixel (quality vs speed).
 
 private:
     float m_scale;

@@ -19,6 +19,7 @@
 
 namespace ve {
 
+/// Bins point / spot lights and decals into the cluster grid each frame (Renderer internal).
 class LightClusterer {
 public:
     /// Bins lights.point[0, pointLights). `enabled` = RendererSettings::clusteredLights
@@ -28,6 +29,7 @@ public:
     void buildDecals(const CameraData& camera, DecalBuffer& decals, const std::vector<glm::mat4>& worlds);
     /// Used words of LightBuffer::clusterLights / DecalBuffer::clusterDecals (only that much is uploaded).
     uint32_t usedWords() const { return m_clusterWords; }
+    /// 32-bit words of decal indices used this frame.
     uint32_t usedDecalWords() const { return m_decalWords; }
 
 private:

@@ -105,7 +105,7 @@ public:
     /// file, updated in place when the file changes.
     std::shared_ptr<StandardMaterial> loadMaterial(const std::filesystem::path& path);
 
-    /// glTF materials named X use "<materialFolder>/X.material" (or x.material)
+    /// glTF materials named X use "`<materialFolder>`/X.material" (or x.material)
     /// when that file exists. Empty = only materials with a "material" custom
     /// property use files. Set before loading models.
     std::string materialFolder = "materials";

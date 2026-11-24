@@ -38,7 +38,7 @@ nlohmann::json makeCookStamp(const std::filesystem::path& source, uint32_t cooke
 CookedState checkCookStamp(const nlohmann::json& stamp, const std::filesystem::path& source, uint32_t cookerVersion,
                            const uint64_t* settingsHash);
 
-/// Writes `file` via "<file>.tmp" + rename, so a reader (or a crash) never sees
+/// Writes `file` via "`<file>`.tmp" + rename, so a reader (or a crash) never sees
 /// half a file; creates the folder. False (and `error`) on failure.
 bool writeFileReplacing(const std::filesystem::path& file, const void* data, size_t size, std::string* error = nullptr);
 

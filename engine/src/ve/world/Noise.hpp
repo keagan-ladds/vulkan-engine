@@ -64,7 +64,9 @@ inline float unitFloat(uint32_t h) { return static_cast<float>(h >> 8) * (1.0f /
 /// Simple deterministic random number generator for scattering.
 class Rng {
 public:
+    /// A generator seeded with `seed` (the same seed gives the same sequence).
     explicit Rng(uint32_t seed) : m_state(seed * 747796405u + 2891336453u) {}
+    /// The next number in [0, 1).
     float next()
     {
         // pcg(state) permutes the *next* LCG state, which is what we advance to.
@@ -72,6 +74,7 @@ public:
         m_state = m_state * 747796405u + 2891336453u;
         return static_cast<float>(w & 0xFFFFFFu) / 16777216.0f;
     }
+    /// A number in [lo, hi).
     float range(float lo, float hi) { return lo + (hi - lo) * next(); }
 
 private:

@@ -49,7 +49,8 @@ void main()
         vec3 toLight = L.positionRange.xyz - inWorldPos;
         float d = length(toLight);
         if (d >= L.positionRange.w) continue;
-        float ndl = max(dot(N, toLight / d), 0.0) * vePointAttenuation(d, L.positionRange.w);
+        // (veSpotFactor: the cone of a SpotLight; 1 for point lights.)
+        float ndl = max(dot(N, toLight / d), 0.0) * vePointAttenuation(d, L.positionRange.w) * veSpotFactor(L, toLight / d);
         color += albedo * L.color.rgb * floor(ndl * bands * 4.0 + 0.5) / (bands * 4.0);
     }
 

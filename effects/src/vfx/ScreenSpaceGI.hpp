@@ -21,8 +21,10 @@
 
 namespace vfx {
 
+/// Screen-space global illumination: one bounce of light from what's on screen.
 class ScreenSpaceGIPass : public ScreenSpaceTracePass {
 public:
+    /// @param resolutionScale trace resolution relative to the screen.
     explicit ScreenSpaceGIPass(float resolutionScale = 0.5f);
     void onGui() override;
 
@@ -34,6 +36,7 @@ public:
 
 protected:
     void pushTrace(ve::RenderContext& ctx, const Inputs& in) override;
+    /// Sets the apply pass's push constants.
     void pushApply(ve::RenderContext& ctx, const Inputs& in, uint32_t result, glm::vec2 size) override;
 };
 

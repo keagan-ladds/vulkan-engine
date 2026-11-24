@@ -20,16 +20,18 @@
 
 namespace vfx {
 
+/// Screen-space reflections on smooth surfaces (uses the thin G-buffer's roughness).
 class ScreenSpaceReflectionsPass : public ScreenSpaceTracePass {
 public:
+    /// @param resolutionScale trace resolution relative to the screen.
     explicit ScreenSpaceReflectionsPass(float resolutionScale = 0.5f);
     void onGui() override;
 
     float maxDistance = 40.0f;  ///< ray length (m)
     float thickness = 0.6f;     ///< how far behind a depth sample still counts as a hit (m)
-    int steps = 32;
+    int steps = 32;  ///< Ray steps per pixel.
     float maxRoughness = 0.6f;  ///< rougher surfaces get no SSR
-    float intensity = 1.0f;
+    float intensity = 1.0f;  ///< Reflection strength.
     float edgeFade = 0.1f;      ///< fraction of the screen to fade reflections over at the edges
 
 protected:

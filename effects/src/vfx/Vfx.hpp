@@ -36,12 +36,13 @@ enum GlobalSlot : uint32_t {
     SlotSunColor = 3, ///< rgb sun radiance after the atmosphere
 };
 
+/// The effect passes vfx::addDefaultEffects added (null for ones left out).
 struct Effects {
-    AtmospherePass* atmosphere = nullptr;
-    VolumetricFogPass* fog = nullptr;
-    ParticlePass* particles = nullptr;
-    FirePass* fire = nullptr;
-    BloomPass* bloom = nullptr;
+    AtmospherePass* atmosphere = nullptr;  ///< Sky and clouds.
+    VolumetricFogPass* fog = nullptr;  ///< Volumetric fog.
+    ParticlePass* particles = nullptr;  ///< Particles.
+    FirePass* fire = nullptr;  ///< Fire.
+    BloomPass* bloom = nullptr;  ///< Bloom.
 };
 
 /// Adds sky + clouds, volumetric fog, fire, particles and bloom with sensible defaults.

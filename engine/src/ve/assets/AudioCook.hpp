@@ -44,9 +44,9 @@ struct AudioSettings {
     bool mono = false;       ///< Mix down to one channel (positional sounds don't need stereo).
     uint32_t sampleRate = 0; ///< Resample to this rate in Hz; 0 = keep the source's.
 
-    /// <sound>.audio if there is one (fields it leaves out: defaults).
+    /// `<sound>`.audio if there is one (fields it leaves out: defaults).
     static AudioSettings forFile(const std::filesystem::path& soundFile);
-    static std::filesystem::path settingsFile(const std::filesystem::path& soundFile); ///< <sound>.audio
+    static std::filesystem::path settingsFile(const std::filesystem::path& soundFile); ///< `<sound>`.audio
     nlohmann::json toJson() const;            ///< The settings as a .audio file's JSON.
     void applyJson(const nlohmann::json& j);  ///< Sets the fields `j` has (others keep their values).
     uint64_t cookHash() const;                ///< Changes whenever the cooked result would (stamped in cooked files).
@@ -54,7 +54,7 @@ struct AudioSettings {
 
 /// Sound files the cooker handles (by extension: .wav, .flac).
 bool isCookableAudio(const std::filesystem::path& file);
-/// <cacheDir>/<asset path>.ogg
+/// `<cacheDir>`/`<asset path>`.ogg
 std::filesystem::path cookedAudioPath(const std::filesystem::path& cacheDir, const std::string& assetPath);
 
 /// What cookAudio did.

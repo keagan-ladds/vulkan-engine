@@ -34,12 +34,14 @@
 
 namespace vfx {
 
+/// Photo mode (F12): a free camera, a panel of settings, and high-quality
+/// captures (supersampled, every effect at max) written as PNGs.
 class PhotoMode : public ve::GameObject {
 public:
     PhotoMode();
 
-    ve::Key toggleKey = ve::Key::F12;
-    std::string outputDirectory = "screenshots";
+    ve::Key toggleKey = ve::Key::F12;  ///< Key that enters / leaves photo mode.
+    std::string outputDirectory = "screenshots";  ///< Folder photos are written to (relative to the working directory).
 
     /// Capture settings (also in the panel).
     int resolution = 1;        ///< index into resolutionNames(): 0 window, 1 window x2, 2 1080p, 3 1440p, 4 4K
@@ -48,13 +50,19 @@ public:
     float moveSpeed = 6.0f;    ///< m/s
     float lookSensitivity = 0.15f; ///< degrees per pixel
 
+    /// Whether photo mode is on.
     bool active() const { return m_active; }
+    /// Whether any PhotoMode object is active (gameplay can pause on it).
     static bool anyActive();
+    /// Enters photo mode (free camera at the current view, game paused).
     void enter();
+    /// Leaves photo mode (back to the game camera).
     void exit();
+    /// Starts a capture with the current settings (written when done: lastPhoto()).
     void takePhoto();
     /// Places the photo camera (scripted shots). Yaw 0 looks down -Z; degrees.
     void setView(const glm::vec3& position, float yawDegrees, float pitchDegrees);
+    /// Path of the last photo written ("" = none yet).
     const std::string& lastPhoto() const { return m_lastPhoto; }
 
     void update(float dt) override;

@@ -48,20 +48,23 @@ class Material;
 class Model;
 class Renderer;
 
+/// One LOD level's geometry, before upload.
 struct LodGeometry {
-    MeshData data;
+    MeshData data;  ///< The level's mesh data.
     std::vector<Submesh> submeshes;                    ///< materialSlot indexes `materials`
-    std::vector<std::shared_ptr<Material>> materials;
+    std::vector<std::shared_ptr<Material>> materials;  ///< Materials per submesh slot.
 };
 
+/// One variant of a model (a different tree), with its LOD levels.
 struct LodVariant {
-    std::string name;
+    std::string name;  ///< Variant name (from the glTF).
     std::vector<LodGeometry> levels; ///< nearest first
     MeshData collider;               ///< merged *_COL shapes (empty = none authored)
 };
 
+/// A glTF LOD model: variants x levels (see the top of this file; loadLodModel).
 struct LodModel {
-    std::vector<LodVariant> variants;
+    std::vector<LodVariant> variants;  ///< The variants found in the file.
     uint32_t levelCount() const;     ///< most levels of any variant
 };
 
@@ -71,7 +74,7 @@ LodModel lodModelFrom(const Model& model);
 
 /// What buildLodChain uploads.
 struct LodChainDesc {
-    std::string name;                     ///< mesh debug names: "<name> LOD<i>"
+    std::string name;                     ///< mesh debug names: "`<name>` LOD<i>"
     std::vector<LodGeometry> levels;      ///< nearest first; at least one
     /// More levels simplified (meshoptimizer) from levels[0], appended after
     /// `levels` (only for a single-submesh level 0). They use its materials.

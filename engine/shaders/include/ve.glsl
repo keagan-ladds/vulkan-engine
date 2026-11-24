@@ -67,8 +67,18 @@ struct VePointLight {
     vec4 positionRange;
     vec4 color;
     ivec4 shadow;       // cube index (-1 none), first view
-    vec4 params;        // x = shadow bias
+    vec4 params;        // x = shadow bias, y = spot: 1 / (cos inner - cos outer)
+    vec4 spot;          // spot lights: xyz = direction it shines, w = cos(outer angle); point lights: w = -2
 };
+
+// How much of point light L reaches a point in direction `l` (unit, from the
+// point towards the light): 1 for point lights; the soft cone for spot lights.
+float veSpotFactor(VePointLight L, vec3 l)
+{
+    if (L.spot.w < -1.5) return 1.0;
+    float t = clamp((dot(-l, L.spot.xyz) - L.spot.w) * L.params.y, 0.0, 1.0);
+    return t * t;
+}
 
 layout(set = 0, binding = 1, std430) readonly buffer VeLightBuffer {
     VeDirectionalLight directional[VE_MAX_DIRECTIONAL_LIGHTS];

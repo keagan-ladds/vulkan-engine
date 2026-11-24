@@ -16,6 +16,7 @@ namespace ve {
 
 struct RendererSettings;
 
+/// Builds the frame's shadow views: directional cascades and point / spot cube faces (Renderer internal).
 class ShadowSetup {
 public:
     /// `settings` is read live (the F1 overlay changes it); `depthClamp` is

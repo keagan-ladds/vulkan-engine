@@ -205,6 +205,7 @@ void Editor::drawCreateMenu()
         }
         if (ImGui::BeginMenu("Light")) {
             if (ImGui::MenuItem("Point light")) newObject("GameObject", "Point Light", Json::array({{{"type", "PointLight"}}}));
+            if (ImGui::MenuItem("Spot light")) newObject("GameObject", "Spot Light", Json::array({{{"type", "SpotLight"}}}));
             if (ImGui::MenuItem("Directional light"))
                 newObject("GameObject", "Directional Light", Json::array({{{"type", "DirectionalLight"}}}));
             ImGui::EndMenu();

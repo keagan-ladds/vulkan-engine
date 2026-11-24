@@ -297,8 +297,10 @@ vec3 veEvaluateLighting(VeSurface s, out float sun0Shadow)
         if (dist >= L.positionRange.w) continue;
         vec3 l = toLight / dist;
         if (dot(s.normal, l) <= 0.0) continue;
+        float cone = veSpotFactor(L, l);
+        if (cone <= 0.0) continue;
         float shadow = vePointShadow(i, s.position, s.normal);
-        color += veBRDF(s, V, l, L.color.rgb * vePointAttenuation(dist, L.positionRange.w) * shadow);
+        color += veBRDF(s, V, l, L.color.rgb * (vePointAttenuation(dist, L.positionRange.w) * cone * shadow));
     }
     color += veAmbient(s, V) + s.emissive;
 

@@ -304,6 +304,14 @@ uint32_t SceneGatherer::gatherLights(Scene& scene, const Inputs& in, FrameData& 
         g.color = glm::vec4(l.color * l.intensity, 0.0f);
         g.shadow = glm::ivec4(-1, 0, 0, 0);
         g.params = glm::vec4(l.shadowBias, 0, 0, 0);
+        g.spot = glm::vec4(0.0f, 0.0f, 0.0f, -2.0f); // (not a spot)
+        if (const auto* spot = dynamic_cast<const SpotLight*>(&l)) {
+            const float outer = glm::radians(std::clamp(spot->outerAngle, 1.0f, 89.0f));
+            const float inner = glm::radians(std::clamp(spot->innerAngle, 0.0f, glm::degrees(outer)));
+            const float cosOuter = std::cos(outer), cosInner = std::cos(inner);
+            g.spot = glm::vec4(glm::normalize(l.transform().forward()), cosOuter);
+            g.params.y = 1.0f / std::max(cosInner - cosOuter, 1e-4f);
+        }
 
         const bool wantsShadow = l.castShadows && cubeSlots < settings.maxShadowedPointLights &&
                                  points[i].distance - l.range < settings.maxShadowDistance;

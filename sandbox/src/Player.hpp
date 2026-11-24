@@ -14,6 +14,7 @@
 #include <ve/render/Decals.hpp>
 #include <ve/physics/Physics.hpp>
 #include <ve/scene/GameObject.hpp>
+#include <ve/scene/Components.hpp>
 #include <ve/scene/ObjectRef.hpp>
 #include <ve/scene/SaveGame.hpp>
 
@@ -84,7 +85,13 @@ public:
     float mouseSensitivity = 0.0022f;
     ve::Camera* camera() const;
 
+    /// The torch the player carries (a SpotLight on a child of the head), null if deleted.
+    ve::SpotLight* torch() const;
+    /// Switches the torch on or off (T / pad d-pad down toggles it).
+    void setTorch(bool on);
+
 private:
+    ve::ComponentRef<ve::SpotLight> m_torch; // the editor can delete it
     ve::CharacterController* m_controller = nullptr; // on this object, added in code (the editor can't remove it)
     ve::ObjectRef<> m_head; // a child (the camera): the editor can delete it
     glm::vec3 m_walkVelocity{0.0f};

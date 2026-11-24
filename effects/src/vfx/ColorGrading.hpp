@@ -35,35 +35,38 @@ class Texture;
 
 namespace vfx {
 
+/// A colour grade: exposure, white balance, contrast, tonemapping, split toning, lift / gamma / gain, LUT.
 struct ColorGradingSettings {
+    /// HDR -> display curve.
     enum class Tonemapper : int { AcesFitted, AcesHill, AgX, Filmic, Reinhard, KhronosNeutral, None };
 
     float exposureEV = 0.0f;   ///< on top of CompositePass::exposure
     float temperature = 0.0f;  ///< -100 (cool) .. 100 (warm)
     float tint = 0.0f;         ///< -100 (green) .. 100 (magenta)
-    glm::vec3 colorFilter{1.0f};
+    glm::vec3 colorFilter{1.0f};  ///< Multiplies the colour (linear).
     float contrast = 1.0f;     ///< log contrast around mid grey
-    float saturation = 1.0f;
+    float saturation = 1.0f;   ///< 1 = unchanged, 0 = grey.
     float vibrance = 0.0f;     ///< -1..1, affects muted colours most
-    Tonemapper tonemapper = Tonemapper::AcesFitted;
+    Tonemapper tonemapper = Tonemapper::AcesFitted; ///< The tonemapping curve.
     float whitePoint = 6.0f;   ///< Filmic / Reinhard: input level that maps to white
     /// Display-space (after tonemapping):
-    glm::vec3 shadowsTint{1.0f};
-    glm::vec3 highlightsTint{1.0f};
+    glm::vec3 shadowsTint{1.0f};     ///< Multiplies the darker tones.
+    glm::vec3 highlightsTint{1.0f};  ///< Multiplies the brighter tones.
     float splitBalance = 0.0f; ///< -1..1: where shadows end and highlights begin
     glm::vec3 lift{0.0f};      ///< raises blacks (per channel)
     glm::vec3 gamma{1.0f};     ///< mid-tones (>1 brighter)
     glm::vec3 gain{1.0f};      ///< scales whites
-    std::shared_ptr<ve::Texture> lut;
-    float lutContribution = 1.0f;
+    std::shared_ptr<ve::Texture> lut;  ///< Optional 3D look-up texture applied last (a strip image, e.g. lut_neutral_32.png).
+    float lutContribution = 1.0f;      ///< How much of the LUT is applied (0..1).
 
-    static ColorGradingSettings neutral() { return {}; }
+    static ColorGradingSettings neutral() { return {}; } ///< No change (the defaults).
     /// Sun-bleached heat (a starting point for hot, dusty settings): warm white balance, golden highlights,
     /// olive/teal shadows with hazy lifted blacks, punchy contrast, slightly
     /// tamed saturation and a 2008-era filmic shoulder.
     static ColorGradingSettings sunBleached();
 };
 
+/// Grades and tonemaps the HDR scene (replacing CompositePass's built-in tonemapping while enabled).
 class ColorGradingPass : public ve::FullscreenPass {
 public:
     ColorGradingPass();
@@ -71,7 +74,7 @@ public:
     void prepare(ve::FrameData& frame) override;
     void onGui() override;
 
-    ColorGradingSettings settings = ColorGradingSettings::neutral();
+    ColorGradingSettings settings = ColorGradingSettings::neutral(); ///< Change any time.
 
 private:
     ve::TextureId m_output = ve::kNoTexture;

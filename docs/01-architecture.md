@@ -220,6 +220,13 @@ Every pipeline uses **one global pipeline layout**:
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
 
+**Spot lights** are point lights with a cone (`SpotLight : PointLight`):
+`GpuPointLight::spot` holds the direction and cos(outer angle) (w = -2 for a
+plain point light), `params.y` the cone's falloff scale. Shaders multiply
+each point light by `veSpotFactor` (ve.glsl): lighting, volumetric fog,
+custom loops. A shadowed spot uses a cube slot but renders only the faces
+its cone can reach (ShadowSetup::buildPointFaces).
+
 **Clustered point lights.** The camera frustum is split into 16 × 9 screen
 tiles × 24 logarithmic depth slices. Every frame the renderer bins the point
 lights (≤ 256, already frustum culled and sorted on the CPU) into the clusters

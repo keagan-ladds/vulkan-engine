@@ -13,19 +13,21 @@
 
 namespace ve {
 
+/// One debug line as the DebugLinePass draws it.
 struct DebugLine {
     glm::vec4 a;     ///< xyz, w = thickness (pixels)
     glm::vec4 b;     ///< xyz, w = 1: depth tested
     glm::vec4 color; ///< sRGB
 };
 
+/// The debug lines to draw this frame (ve::debug fills it).
 class DebugLineBuffer {
 public:
     /// Process-wide, like ve::debug's state: lines can be drawn before the
     /// Engine (and its renderer) exists, and last across scene changes.
     static DebugLineBuffer& get();
 
-    std::vector<DebugLine> lines;
+    std::vector<DebugLine> lines;  ///< The lines, cleared after each frame.
 };
 
 } // namespace ve

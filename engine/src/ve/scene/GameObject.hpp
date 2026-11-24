@@ -81,14 +81,14 @@ public:
     virtual void start() {}
     /// Called every frame (not while the game is paused in the editor, unless
     /// GameObject::runInEditor). @param dt seconds since the last frame, scaled by Time::timeScale.
-    virtual void update(float /*dt*/) { m_noHook |= kHookUpdate; }
+    virtual void update([[maybe_unused]] float dt) { m_noHook |= kHookUpdate; }
     /// Called at a fixed rate (EngineConfig::fixedTimestep), zero or more times
     /// per frame, before update(): physics-driven movement goes here.
     /// @param dt the fixed timestep in seconds.
-    virtual void fixedUpdate(float /*dt*/) { m_noHook |= kHookFixedUpdate; }
+    virtual void fixedUpdate([[maybe_unused]] float dt) { m_noHook |= kHookFixedUpdate; }
     /// Called every frame after every update(): follow cameras, things that
     /// read where others moved to. @param dt as in update().
-    virtual void lateUpdate(float /*dt*/) { m_noHook |= kHookLateUpdate; }
+    virtual void lateUpdate([[maybe_unused]] float dt) { m_noHook |= kHookLateUpdate; }
     /// Called every frame while ImGui is open for drawing: debug windows,
     /// ImGui-based UI (game UI proper is ve::ui, ve/ui/Gui.hpp).
     virtual void onGui() { m_noHook |= kHookGui; }
@@ -197,7 +197,8 @@ public:
     bool runInEditor = false;     ///< Keeps updating while the editor has the game paused (and while loading).
     bool hideInHierarchy = false; ///< Not listed in the editor's hierarchy (editor internals, helpers).
 
-    /// Parents this object under another (null = make it a root).
+    /// Parents this object under another.
+    /// @param parent the new parent (null = make it a root).
     /// @param keepWorld keep the world position / rotation / scale (else keep
     ///        the local ones, which then become relative to the new parent).
     void setParent(GameObject* parent, bool keepWorld = true);

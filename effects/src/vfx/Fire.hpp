@@ -34,6 +34,7 @@
 
 namespace vfx {
 
+/// A fire at its object: procedural flames drawn by FirePass, rising from the object's position.
 class Fire : public ve::Component {
 public:
     float height = 1.2f;        ///< m, base to the tips
@@ -58,6 +59,7 @@ private:
     float m_time = 0.0f;
 };
 
+/// Draws every Fire component (transparent stage, additive).
 class FirePass : public ve::RenderPass {
 public:
     FirePass();
@@ -69,6 +71,7 @@ public:
     void execute(ve::RenderContext& ctx) override;
     void onGui() override;
 
+    /// Flame particles drawn per frame at most (all fires).
     static constexpr uint32_t kMaxInstances = 4096;
 
 private:

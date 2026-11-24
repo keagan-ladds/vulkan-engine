@@ -19,12 +19,15 @@
 
 namespace ve {
 
+/// World <-> screen conversions for editor overlays (the camera's matrices and the display size).
 struct ViewProjector {
-    glm::mat4 viewProj{1.0f}, invViewProj{1.0f};
-    glm::vec3 eye{0.0f};
+    glm::mat4 viewProj{1.0f};     ///< World to clip.
+    glm::mat4 invViewProj{1.0f};  ///< Clip to world.
+    glm::vec3 eye{0.0f};  ///< Camera position.
     glm::vec2 size{1.0f}; ///< display size (pixels)
-    float tanHalfFov = 0.6f;
+    float tanHalfFov = 0.6f;  ///< tan(vertical fov / 2).
 
+    /// From the frame's camera and the display size in pixels.
     static ViewProjector from(const CameraData& cam, glm::vec2 displaySize)
     {
         ViewProjector v;

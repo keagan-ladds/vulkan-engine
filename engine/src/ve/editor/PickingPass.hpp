@@ -18,6 +18,7 @@
 
 namespace ve {
 
+/// Editor picking: renders object ids at one pixel and reads the id back (a frame later).
 class PickingPass : public RenderPass {
 public:
     PickingPass();
@@ -27,7 +28,9 @@ public:
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
 
+    /// Asks which object is at `pixel` (the result arrives a frame or two later).
     void request(glm::ivec2 pixel);
+    /// Whether a pick is in flight.
     bool pending() const { return m_state != State::Idle; }
     /// The picked object id (0 = background) once, after a request completed.
     std::optional<uint64_t> result();

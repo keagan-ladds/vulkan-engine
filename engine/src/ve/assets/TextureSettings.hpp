@@ -71,7 +71,7 @@ struct TextureSettings {
     static TextureSettings forImage(const std::filesystem::path& imageFile);
     /// The type the file name suggests (the rule above).
     static TextureType typeFromName(const std::filesystem::path& imageFile);
-    /// <image>.texture
+    /// `<image>`.texture
     static std::filesystem::path settingsFile(const std::filesystem::path& imageFile);
 
     nlohmann::json toJson() const;           ///< The settings as a .texture file's JSON.

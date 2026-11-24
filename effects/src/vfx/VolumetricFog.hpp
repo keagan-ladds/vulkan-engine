@@ -17,6 +17,7 @@
 
 namespace vfx {
 
+/// Height fog raymarched per pixel (at reduced resolution): sun shafts through shadows, glow around point and spot lights.
 class VolumetricFogPass : public ve::RenderPass {
 public:
     /// resolutionScale: 0.5 = half resolution (4x cheaper), 1.0 = full.
@@ -35,11 +36,11 @@ public:
     float noise = 0.6f;          ///< 0 = uniform, 1 = very patchy
     float anisotropy = 0.55f;    ///< forward scattering: glow towards the sun
     float maxDistance = 900.0f;  ///< fog ray length for sky pixels
-    int steps = 24;
-    float ambient = 0.5f;
-    float sunShafts = 0.4f;
-    glm::vec3 albedo{1.0f, 0.97f, 0.92f};
-    float pointLightGlow = 1.0f;
+    int steps = 24;  ///< Raymarch steps per pixel (quality vs speed).
+    float ambient = 0.5f;  ///< Ambient (sky) light scattered by the fog.
+    float sunShafts = 0.4f;  ///< Strength of sun light scattered by the fog (shafts).
+    glm::vec3 albedo{1.0f, 0.97f, 0.92f};  ///< Fog colour (scattering albedo, linear RGB).
+    float pointLightGlow = 1.0f;  ///< Strength of point / spot light scattered by the fog.
     glm::vec2 windVelocity{1.5f, 0.6f}; ///< drift of the noise (m/s)
 
 private:

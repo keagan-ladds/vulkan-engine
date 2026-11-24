@@ -38,7 +38,7 @@ constexpr uint32_t kTextureCookerVersion = 1;
 
 /// Images the cooker handles (by extension).
 bool isCookableImage(const std::filesystem::path& file);
-/// Where the cooked copy of an asset lives: <cacheDir>/<asset path>.ktx2.
+/// Where the cooked copy of an asset lives: `<cacheDir>`/`<asset path>`.ktx2.
 std::filesystem::path cookedTexturePath(const std::filesystem::path& cacheDir, const std::string& assetPath);
 
 /// What cookTexture did.

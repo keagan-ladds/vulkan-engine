@@ -21,6 +21,7 @@
 
 namespace vfx {
 
+/// Base of screen-space ray-traced effects (SSR, SSGI): a trace pass at reduced resolution, temporal accumulation, and an apply pass over SceneColor.
 class ScreenSpaceTracePass : public ve::RenderPass {
 public:
     ~ScreenSpaceTracePass() override;
@@ -33,21 +34,26 @@ public:
     TemporalAccumulator temporal; ///< accumulates over frames (much less noise); temporal.enabled = false to disable
 
 protected:
+    /// The shaders and blending of a derived pass.
     struct Shaders {
         std::string prefix;      ///< "SSGI" -> SSGIBuffer + the accumulator's textures
         std::string trace;       ///< fragment shaders
-        std::string apply;
-        ve::BlendMode applyBlend;
+        std::string apply;  ///< Fragment shader that applies the result to SceneColor.
+        ve::BlendMode applyBlend;  ///< How the apply pass blends.
     };
+    /// @param resolutionScale trace resolution relative to the screen (0.5 = half).
     ScreenSpaceTracePass(std::string name, int order, float resolutionScale, Shaders shaders);
 
     /// Inputs for the shaders (bindless indices).
     struct Inputs {
-        uint32_t depth, normal, color;
+        uint32_t depth;   ///< Scene depth.
+        uint32_t normal;  ///< Thin G-buffer (normal + roughness).
+        uint32_t color;   ///< Scene colour.
     };
     /// Push constants for the trace, and for the apply (`result` = the
     /// accumulated buffer, `size` = its size in texels).
     virtual void pushTrace(ve::RenderContext& ctx, const Inputs& in) = 0;
+    /// Sets the push constants of the apply pass (`result` = the accumulated trace's bindless index).
     virtual void pushApply(ve::RenderContext& ctx, const Inputs& in, uint32_t result, glm::vec2 size) = 0;
 
 private:

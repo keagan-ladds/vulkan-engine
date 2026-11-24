@@ -31,18 +31,23 @@ class Mesh;
 class Material;
 class Texture;
 
+/// How an impostor is baked.
 struct ImpostorSettings {
     uint32_t frames = 12;          ///< frames per atlas side (N x N views)
     uint32_t frameResolution = 128; ///< pixels per frame
-    float alphaCutoff = 0.45f;
+    float alphaCutoff = 0.45f;     ///< Alpha below this is cut out when drawing.
     /// Albedo of the atlas's empty texels (alpha 0). Mips and bilinear filtering
     /// blend it into the silhouette's edge, so set it near the object's average
     /// colour (e.g. the foliage tint) to avoid dark or off-colour fringes.
     glm::vec3 backgroundAlbedo{0.3f, 0.3f, 0.3f};
 };
 
+/// An octahedral impostor: a mesh rendered from many directions into an atlas,
+/// drawn far away as one camera-facing quad picking the closest views.
 class Impostor {
 public:
+    /// Renders `mesh` (with its materials) into albedo / normal atlases on the
+    /// GPU and waits for it (load time only).
     static std::shared_ptr<Impostor> bake(Renderer& renderer, const Mesh& mesh,
                                           const std::vector<std::shared_ptr<Material>>& materials,
                                           const ImpostorSettings& settings = {});
@@ -53,10 +58,10 @@ public:
         return {m_quad, {m_material}, screenSize, maxDistance};
     }
 
-    const std::shared_ptr<Mesh>& mesh() const { return m_quad; }
-    const std::shared_ptr<Material>& material() const { return m_material; }
-    const std::shared_ptr<Texture>& albedoAtlas() const { return m_albedo; }
-    const std::shared_ptr<Texture>& normalAtlas() const { return m_normal; }
+    const std::shared_ptr<Mesh>& mesh() const { return m_quad; }               ///< The quad it's drawn with.
+    const std::shared_ptr<Material>& material() const { return m_material; }   ///< Its material (atlases + view count).
+    const std::shared_ptr<Texture>& albedoAtlas() const { return m_albedo; }   ///< Colour atlas (alpha = coverage).
+    const std::shared_ptr<Texture>& normalAtlas() const { return m_normal; }   ///< Normal atlas.
 
 private:
     std::shared_ptr<Mesh> m_quad;

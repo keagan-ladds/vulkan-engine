@@ -38,7 +38,7 @@ struct Cooker {
     };
 
     std::string name; ///< "texture"
-    /// Settings files that sit next to a source ("<image>.texture"): read by
+    /// Settings files that sit next to a source ("`<image>`.texture"): read by
     /// the cooker, never shipped.
     std::vector<std::string> settingsExtensions;
     /// Does this cooker take `source`? (Extension, and its settings: e.g. a

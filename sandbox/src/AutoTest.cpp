@@ -291,6 +291,8 @@ void AutoTest::update(float dt)
                 }
             const bool texShared = wall && wall->texture(0) == assets().loadTexture("textures/mud_wall.png");
             const bool matShared = thatch && thatch == assets().loadMaterial("materials/thatch.material").get();
+            // Spot lights: the player's torch on (checked at the live-edit step below).
+            if (auto* p = localPlayer(scene())) p->setTorch(true);
             // Compile hooks: a shader made now compiles its pipelines in the
             // background (null until done), with Started / Finished events.
             {
@@ -340,6 +342,22 @@ void AutoTest::update(float dt)
         if (auto* probe = scene().find("TestTrigger") ? scene().find("TestTrigger")->getComponent<EventProbe>() : nullptr)
             log("trigger after standing in it: " + std::to_string(probe->triggerEnters) + " enter(s): " + probe->lastTrigger);
         {
+            {
+                // The torch reached the GPU as a spot (cone in `spot`), and its
+                // shadow renders only the cube faces the cone touches.
+                const ve::FrameData& f = renderer().frameData();
+                int spots = -1;
+                uint32_t faces = 0;
+                for (uint32_t i = 0; i < f.stats.pointLights && f.lights; ++i) {
+                    if (f.lights->point[i].spot.w < -1.5f) continue;
+                    spots = int(i);
+                    for (const ve::ShadowView& v : f.shadowViews) faces += v.point && v.lightIndex == i ? 1u : 0u;
+                }
+                const auto* p = localPlayer(scene());
+                log(std::string("spot light: torch on: ") + (p && p->torch() && p->torch()->enabled ? "yes" : "NO") + ", on the GPU as a spot: " +
+                    (spots >= 0 ? "yes" : "NO") + ", shadow faces rendered: " + std::to_string(faces) + (faces > 0 && faces < 6 ? " (fewer than 6: yes)" : " NO"));
+                if (auto* pl = localPlayer(scene())) pl->setTorch(false);
+            }
             log(std::string("compile hooks: new shader ready: ") + (m_newShader && m_newShader->pipeline(ve::PassKind::Forward) ? "yes" : "NO") +
                 ", its Finished event: " + (m_newShaderFinished ? "yes" : "NO") + "; loading ended events: " + std::to_string(m_loadEnded) +
                 ", compiles " + std::to_string(m_compileStarted) + " started / " + std::to_string(m_compileFinished) + " finished, " +

@@ -47,17 +47,19 @@ class DecalSystem;
 struct Decal;
 struct RendererSettings;
 
+/// Collects a frame's draw items, lights, decals and static changes from the scene (Renderer internal).
 class SceneGatherer {
 public:
+    /// What it needs from the renderer.
     struct Inputs {
         VkExtent2D extent{1, 1};        ///< render size (camera aspect)
         glm::vec2 jitter{0.0f};         ///< sub-pixel camera offset this frame (pixels)
-        SkinningSystem* skinning = nullptr;
+        SkinningSystem* skinning = nullptr;  ///< GPU skinning (skinned renderers).
         Material* fallbackMaterial = nullptr; ///< for MeshRenderers without a material
-        const RendererSettings* settings = nullptr;
-        const ShadowSetup* shadows = nullptr;
-        StaticBatcher* statics = nullptr;
-        DecalSystem* decals = nullptr;
+        const RendererSettings* settings = nullptr;  ///< The renderer's settings (shadow limits...).
+        const ShadowSetup* shadows = nullptr;  ///< Builds shadow views.
+        StaticBatcher* statics = nullptr;  ///< Static batching (null: off).
+        DecalSystem* decals = nullptr;  ///< Fire-and-forget decals.
     };
 
     /// Resets `frame`'s per-frame lists and stats and fills them from `scene`

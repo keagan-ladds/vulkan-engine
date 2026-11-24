@@ -42,6 +42,13 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Spot lights** (`ve::SpotLight`): torches, headlights, street lamps. A cone
+  (`innerAngle` / `outerAngle`, degrees) along the object's forward, with
+  range, intensity and optional shadows (only the cube faces the cone
+  reaches); beams show in volumetric fog. Editor: Create > Light > Spot light,
+  with a cone gizmo. Custom shaders with their own point-light loop should
+  multiply by `veSpotFactor(L, l)` (the game template's toon shader does).
+  The sandbox player has a torch (T / pad d-pad down).
 - **Scene files load in the background.** `Engine::addSceneLoad(name, path,
   then)` reads and parses the file on the job pool, then creates its objects
   a time slice per frame; `then(roots)` runs before any of them start (adjust

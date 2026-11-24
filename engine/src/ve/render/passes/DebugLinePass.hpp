@@ -12,6 +12,7 @@
 
 namespace ve {
 
+/// Draws the debug lines (DebugLineBuffer) over the scene.
 class DebugLinePass : public RenderPass {
 public:
     DebugLinePass() : RenderPass("Debug lines", RenderStage::Overlay, -50) {}
@@ -22,6 +23,7 @@ public:
     void execute(RenderContext& ctx) override;
     void onGui() override;
 
+    /// Lines drawn per frame at most.
     static constexpr uint32_t kMaxLines = 1u << 17;
 
 private:

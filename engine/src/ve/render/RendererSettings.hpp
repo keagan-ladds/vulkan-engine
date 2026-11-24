@@ -12,8 +12,9 @@
 
 namespace ve {
 
+/// The renderer's options (EngineConfig::renderer; renderer().settings() at runtime).
 struct RendererSettings {
-    bool vsync = true;
+    bool vsync = true;       ///< Wait for the display's refresh (no tearing).
     /// Render into an offscreen image instead of presenting (window hidden):
     /// automated tests that shouldn't take over the screen. Env: VE_HEADLESS=1.
     bool headless = false;
@@ -26,9 +27,9 @@ struct RendererSettings {
     // --- Directional (sun/moon) shadows: cascaded shadow maps ---
     uint32_t maxShadowedDirectionalLights = 2; ///< 0..kMaxDirectionalLights
     uint32_t cascadeCount = 4;                 ///< 1..kMaxCascades
-    uint32_t directionalShadowResolution = 2048;
+    uint32_t directionalShadowResolution = 2048; ///< Pixels per cascade side.
     float cascadeSplitLambda = 0.8f; ///< 0 = uniform splits, 1 = logarithmic
-    float maxShadowDistance = 200.0f;
+    float maxShadowDistance = 200.0f; ///< Shadows end this far from the camera (m): the cascades cover it.
     /// Tallest instanced geometry (trees) above the highest regular mesh: bounds
     /// how far towards the sun directional shadow casters are gathered.
     float shadowInstanceHeight = 40.0f;
@@ -42,8 +43,8 @@ struct RendererSettings {
     /// (TAA hides most of the crawl).
     float shadowDirectionStep = 0.0f;
     // --- Point light shadows: cube maps ---
-    uint32_t maxShadowedPointLights = 4;
-    uint32_t pointShadowResolution = 512;
+    uint32_t maxShadowedPointLights = 4;  ///< Point / spot lights with cube shadows at once (the closest).
+    uint32_t pointShadowResolution = 512; ///< Pixels per cube face side.
     /// Re-render a point light's cube face only when something it depends on
     /// changed (light position/range, or any caster in range moved, appeared or
     /// changed material). Static lights over a static camp then cost nothing;
@@ -51,10 +52,10 @@ struct RendererSettings {
     bool cachePointShadows = true;
     // --- Bias (tweak in the F1 overlay) ---
     float shadowNormalBias = 1.5f;   ///< in shadow texels
-    float shadowDepthBiasConstant = 1.0f;
-    float shadowDepthBiasSlope = 2.0f;
+    float shadowDepthBiasConstant = 1.0f; ///< Constant depth bias when rendering shadow maps.
+    float shadowDepthBiasSlope = 2.0f;    ///< Slope-scaled depth bias when rendering shadow maps.
     float shadowPcfRadius = 1.0f;    ///< in texels
-    bool debugCascades = false;
+    bool debugCascades = false;      ///< Tints the scene by shadow cascade (debugging).
     // --- GPU instancing (InstanceGroup) ---
     float shadowMinCasterTexels = 2.0f;           ///< instances smaller than this (in cascade texels) cast no shadow there
     // --- Instance LOD ---

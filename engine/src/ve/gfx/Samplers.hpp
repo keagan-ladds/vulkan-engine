@@ -22,10 +22,14 @@ enum class SamplerType : uint32_t {
     Count
 };
 
+/// The shared samplers, one per SamplerType (Renderer::samplers()).
 class Samplers {
 public:
+    /// Creates them.
     void init(const Device& device);
+    /// Destroys them.
     void shutdown(const Device& device);
+    /// The sampler for `type`.
     VkSampler get(SamplerType type) const { return m_samplers[static_cast<size_t>(type)]; }
 
 private:

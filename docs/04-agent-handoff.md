@@ -44,6 +44,11 @@ For each roadmap item:
    point in the engine and putting content in `effects/` or `sandbox/`
    (dependency rule: the engine never includes effects or sandbox code).
 2. **Implement** with comments explaining the why (this is a learning codebase).
+   **Document every public declaration you add or change** in headers
+   (`///` above it, `///<` after a member): what it does in the caller's
+   terms, units, ranges, what null / 0 / negative mean, and `@param` for any
+   parameter whose name doesn't say it all (docs/03-conventions.md, "Code
+   documentation"). `python3 tools/check_docs.py --changed` must report 0.
 3. **Build warning-free**: `cmake --build build 2>&1 | grep -E "warning|error"` must print nothing
    (GCC and Clang, Debug and Release), and `python3 tools/check_layering.py` must pass.
 4. **Verify** (§4). Validation output must stay empty.
@@ -59,6 +64,7 @@ All of these run with Vulkan validation on in Debug builds. Any
 
 | Check | Command |
 |---|---|
+| Header documentation | `python3 tools/check_docs.py --changed` (headers this branch touched; exit 1 if anything is undocumented), `python3 tools/check_docs.py` (whole codebase), `cmake --build build --target docs` (HTML reference in `build/docs/html`). Needs `doxygen` |
 | Smoke test (pickup, weather, exits by itself) | `cd build/bin && SAVANNA_AUTOTEST=1 ./savanna` → `[autotest]` lines, exit code 0 |
 | Multiplayer (host + client processes) | `tools/nettest.sh build-release/bin /tmp/net` → `[nettest host]` / `[nettest client]` lines, exit 0; screenshots `net-host.png`, `net-client.png` |
 | Title screen | `VE_HEADLESS=1 SAVANNA_MENU=1 VE_CAPTURE=title.png VE_CAPTURE_FRAME=60 VE_BENCH=4,62 ./savanna` |

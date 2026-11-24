@@ -414,3 +414,21 @@ that opens files itself must be given a bridge (done: cgltf, miniaudio,
 vorbisfile, stb, ImGui fonts); archive reads hold one lock; entries are read
 whole (no streaming from inside an archive: miniaudio streams decode from
 memory).
+
+### D34. Doc comments on every public declaration; Doxygen for the reference (2026-11)
+**Decision:** headers document every public declaration with `///` / `///<`
+comments (the first sentence is the summary; units, ranges, special values,
+`@param` where a name isn't enough). `tools/check_docs.py` runs Doxygen in
+"warn if undocumented" mode; `--changed` fails for the headers a branch
+touches (CI: `.github/workflows/docs.yml`). `cmake --build build --target
+docs` builds an HTML reference (Doxygen + doxygen-awesome-css) from the
+headers and the `docs/*.md` guides.
+**Alternatives:** plain `//` comments (IntelliSense shows some, but nothing
+can check them and tools don't attach trailing ones); clang-doc (young,
+little styling); hosted generators (hdoc: a service); Sphinx + Breathe (a
+Python stack on top of Doxygen anyway).
+**Why:** `///` is what Visual Studio, VS Code (cpptools) and clangd show on
+hover, and Doxygen is a single widely packaged binary; the check keeps
+documentation from rotting as the code changes. **Cost:** a Doxygen install
+for the check and the reference (the build itself doesn't need it); comment
+discipline on every change.

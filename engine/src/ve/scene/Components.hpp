@@ -104,4 +104,19 @@ public:
     float shadowBias = 0.02f; ///< in units of range (fraction)
 };
 
+/// A light that shines in a cone: torches, headlights, stage and street lamps.
+/// It shines along transform().forward() (-Z), from the object's position, up
+/// to `range` metres, fully bright within innerAngle of the axis and fading
+/// to nothing at outerAngle. Otherwise a PointLight (colour, intensity,
+/// range, shadows): it counts towards the point-light limits, and a shadowed
+/// spot only renders the cube-map faces its cone touches.
+///   auto& beam = car.addComponent<ve::SpotLight>();   // on a child placed at the lamp
+///   beam.range = 40; beam.outerAngle = 28; beam.innerAngle = 18; beam.intensity = 60;
+class SpotLight : public PointLight {
+public:
+    SpotLight() { range = 20.0f; intensity = 30.0f; color = {1.0f, 0.95f, 0.85f}; }
+    float innerAngle = 20.0f; ///< Degrees from the axis: full brightness inside.
+    float outerAngle = 30.0f; ///< Degrees from the axis: the cone's edge (dark beyond). At most 89.
+};
+
 } // namespace ve

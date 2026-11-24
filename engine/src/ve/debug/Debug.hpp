@@ -47,6 +47,7 @@ inline constexpr glm::vec4 kOrange{1.0f, 0.6f, 0.15f, 1.0f};
 inline constexpr glm::vec4 kMagenta{1.0f, 0.3f, 0.9f, 1.0f};
 inline constexpr glm::vec4 kGrey{0.65f, 0.65f, 0.65f, 1.0f};
 
+/// How a debug shape is drawn.
 struct Style {
     float duration = 0.0f;  ///< seconds; 0 = this frame
     float thickness = 2.0f; ///< pixels
@@ -78,10 +79,11 @@ const ChannelMap& channels();
 
 // --- Engine internal -----------------------------------------------------------------------
 using Line = DebugLine; ///< kept in render's DebugLineBuffer, which DebugLinePass draws
+/// A text label at a world point.
 struct Label {
-    glm::vec3 position;
-    std::string text;
-    glm::vec4 color;
+    glm::vec3 position;  ///< World position.
+    std::string text;  ///< The text.
+    glm::vec4 color;  ///< Colour (sRGB).
 };
 const std::vector<Line>& lines();
 const std::vector<Label>& labels();

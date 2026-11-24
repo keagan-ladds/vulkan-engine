@@ -81,19 +81,19 @@ struct EngineConfig {
     bool enableAudio = true;  ///< Start the audio device (off: sounds are silent no-ops, e.g. for servers or tests).
     bool enableEditor = true; ///< F2 opens the in-engine scene editor (docs/05-editor.md)
     /// Extra asset / shader folders (relative to the executable or absolute).
-    /// <exe>/assets and <exe>/shaders are always searched.
+    /// `<exe>`/assets and `<exe>`/shaders are always searched.
     std::vector<std::filesystem::path> assetPaths;
-    std::vector<std::filesystem::path> shaderPaths;  ///< Extra shader folders (searched before <exe>/shaders).
-    /// Save games (ve::save): empty = the platform's per-user data folder ("<title>/saves").
+    std::vector<std::filesystem::path> shaderPaths;  ///< Extra shader folders (searched before `<exe>`/shaders).
+    /// Save games (ve::save): empty = the platform's per-user data folder ("`<title>`/saves").
     std::filesystem::path saveFolder;
     /// Cooked textures (assets/TextureCook.hpp): GPU-ready copies of the images,
-    /// used when current. Empty = <exe>/cooked. Relative = to the executable.
+    /// used when current. Empty = `<exe>`/cooked. Relative = to the executable.
     std::filesystem::path cookCache;
     /// Cook missing / stale textures in the background while the game runs
     /// (development). Off: only use what `vecook` made. Env VE_COOK overrides:
     /// 0 = load source images only, read = never cook, sync = cook before loading.
     bool cookOnDemand = true;
-    /// Mount <exe dir>/*.vepak (vecook --package) over the executable's folder
+    /// Mount `<exe dir>`/*.vepak (vecook --package) over the executable's folder
     /// at startup: a packaged game reads its assets, cooked files and shaders
     /// from them (core/FileSystem.hpp). Loose files on disk win over archives.
     bool mountArchives = true;
@@ -223,7 +223,7 @@ private:
     void endLoading();
     void benchFrame(float cpuMs);
 
-    /// VE_BENCH=<frames>[,<warmup>]: average CPU/GPU timings over a run, log them, quit.
+    /// VE_BENCH=`<frames>`[,`<warmup>`]: average CPU/GPU timings over a run, log them, quit.
     struct Benchmark;
     std::unique_ptr<Benchmark> m_bench;
 
