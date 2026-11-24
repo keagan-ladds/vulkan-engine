@@ -185,6 +185,10 @@ private:
     std::vector<LoadStep> m_loadSteps;
     std::vector<LoadTask> m_loadTasks;
     size_t m_loadStepsTotal = 0, m_loadStepsDone = 0;
+    uint32_t m_loadFrames = 0;
+    bool m_windowShown = false;
+    // Per loading frame, for starting new objects (the rest wait a frame).
+    static constexpr float kLoadingStartBudgetMs = 50.0f;
     float m_loadMinSeconds = 0.0f, m_loadElapsed = 0.0f;
     std::string m_loadStatus;
     glm::vec4 m_loadClearColor{0.0f, 0.0f, 0.0f, 1.0f};

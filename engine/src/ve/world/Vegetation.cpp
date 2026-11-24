@@ -214,14 +214,20 @@ FoliageType::FoliageType()
     shadowDistance = 1e6f;
 }
 
-std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
+std::string FoliageType::meshKey() const
 {
     std::ostringstream key;
     key << mesh << '|' << library << '|' << int(lodMode) << '|' << lodThresholds.x << ',' << lodThresholds.y << ','
         << lodThresholds.z << '|' << autoLods << '|' << impostor << '|' << int(collision) << '|' << colliderSize.x << ','
         << colliderSize.y << ',' << colliderSize.z << '|' << colliderUserValue << '|' << states;
-    if (key.str() == m_meshKey) return m_meshes;
-    m_meshKey = key.str();
+    return key.str();
+}
+
+std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
+{
+    std::string key = meshKey();
+    if (key == m_meshKey) return m_meshes;
+    m_meshKey = std::move(key);
     const std::string owner = "FoliageType '" + gameObject().name() + "'";
     m_meshes = buildMeshes(r, mesh, library, owner);
     // Extra states: "Name = library name or glTF path(s)"; a spec with a '.' is a file.
@@ -346,6 +352,11 @@ Foliage::Foliage() : GameObject("Foliage")
     runInEditor = true;
 }
 
+Foliage::~Foliage()
+{
+    if (m_meshesDone) m_meshesDone->store(true); // (gone mid-load: don't hold the loading screen)
+}
+
 void Foliage::start()
 {
     rebuild();
@@ -372,6 +383,10 @@ void Foliage::update(float dt)
     VE_PROFILE("Foliage rules");
     m_sinceBuild += dt;
     m_sinceCheck += dt;
+    if (m_buildingMeshes) { // (loading: the next layer's meshes, every frame)
+        rebuild();
+        return;
+    }
     if (m_sinceBuild < 0.25f) return;
     const Terrain* terrain = Terrain::find(scene());
     const Terrain* builtOn = m_terrain.get(scene());
@@ -407,8 +422,35 @@ void Foliage::update(float dt)
     if (system && check) system->setColliderFocus(colliderFocus.empty() ? nullptr : scene().find(colliderFocus));
 }
 
+bool Foliage::buildNextMeshes()
+{
+    std::vector<FoliageType*> types;
+    collect(*this, types);
+    for (FoliageType* t : types) {
+        if (t->meshesBuilt()) continue;
+        t->meshes(renderer()); // LOD chains, impostor bakes: up to a few hundred ms each
+        return true;
+    }
+    return false;
+}
+
 void Foliage::rebuild()
 {
+    // Behind a loading screen: build the layers' meshes one per frame (each
+    // frame redraws the screen), then place everything.
+    if (engine().loading() && buildNextMeshes()) {
+        m_dirty = true;
+        if (!m_buildingMeshes) {
+            m_buildingMeshes = true;
+            m_meshesDone = std::make_shared<std::atomic<bool>>(false);
+            engine().addLoadTask("Building vegetation", [done = m_meshesDone] { return done->load() ? 1.0f : 0.0f; });
+        }
+        return;
+    }
+    if (m_buildingMeshes) {
+        m_buildingMeshes = false;
+        m_meshesDone->store(true);
+    }
     m_dirty = false;
     m_sinceBuild = 0.0f;
     m_state = state();

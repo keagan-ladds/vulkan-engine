@@ -23,6 +23,17 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `texel.xyz * 2 - 1`. Cooked normal maps are BC5 (X and Y only); the helper
   rebuilds Z and gives the same result for uncooked maps.
 
+### Changed
+- **Start-up and loading stay responsive.** The window appears with the first
+  frame instead of sitting black while the engine starts. The loading screen
+  (or the editor's progress panel) is drawn before any load step runs. Objects
+  spawned while loading start within a ~50 ms budget per frame
+  (`Scene::startPending(budgetMs)`), Foliage builds one layer's meshes per
+  frame, and the clouds' noise is cached in `cooked/generated/`. Savanna
+  (Debug, software GPU): the longest loading frame went from 4 s to under 1 s.
+  Loading itself can take a little longer: the navmesh is now built with the
+  vegetation already placed, rather than rebuilt after loading.
+
 ### Added
 - **Release packaging and archives.** `vecook --package <dir>` writes a
   shippable folder: the game, its runtime libraries and `data.vepak` (zstd;

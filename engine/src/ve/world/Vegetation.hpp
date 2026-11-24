@@ -36,6 +36,7 @@
 #include <glm/glm.hpp>
 
 #include <functional>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <utility>
@@ -134,12 +135,15 @@ public:
 
     // Meshes for the current settings (cached while mesh / LOD settings stay the same).
     std::shared_ptr<const FoliageMeshes> meshes(Renderer& renderer);
+    // Would meshes() return its cache (nothing to build)?
+    bool meshesBuilt() const { return meshKey() == m_meshKey; }
     // The extra states' meshes, in `states` order (built by meshes()).
     const std::vector<std::pair<std::string, std::shared_ptr<const FoliageMeshes>>>& stateMeshes() const { return m_stateMeshes; }
 
 private:
     std::shared_ptr<const FoliageMeshes> buildMeshes(Renderer& renderer, const std::string& meshPath, const std::string& libraryName,
                                                      const std::string& owner);
+    std::string meshKey() const;
     std::string m_meshKey;
     std::shared_ptr<const FoliageMeshes> m_meshes;
     std::vector<std::pair<std::string, std::shared_ptr<const FoliageMeshes>>> m_stateMeshes;
@@ -148,6 +152,7 @@ private:
 class Foliage : public GameObject, public Saveable {
 public:
     Foliage();
+    ~Foliage() override;
     // Save games: every instance whose state changed (chopped trees, picked bushes).
     void saveState(Json& out) const override;
     void loadState(const Json& in) override;
@@ -176,6 +181,7 @@ private:
     };
     std::string state() const; // what needs a rebuild (exclusions are handled incrementally)
     void rebuild();
+    bool buildNextMeshes(); // while loading: one layer's meshes per frame (true = more to do)
     void refresh(glm::vec4 area); // terrain brush edits: re-place around `area` only
     FoliageWorld makeWorld(const std::shared_ptr<const TerrainData>& td) const;
     static std::function<float(const FoliageSample&)> makeDensity(const std::shared_ptr<const TerrainData>& td, const LayerDensity& d);
@@ -191,6 +197,8 @@ private:
     ObjectRef<const Terrain> m_terrain; // built against (compared by id: it may be deleted)
     bool m_dirty = true;
     bool m_built = false;
+    bool m_buildingMeshes = false; // loading: layers' meshes are built a frame at a time
+    std::shared_ptr<std::atomic<bool>> m_meshesDone; // the load task's view of it
     float m_sinceBuild = 1e6f;
     float m_sinceCheck = 1e6f; // since state() / exclusions / focus were last compared
 };

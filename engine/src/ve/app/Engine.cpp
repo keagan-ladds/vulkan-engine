@@ -156,7 +156,8 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     // VE_FIXED_DT=0.016667: every frame advances time by this much, however long it
     // took (headless tests on slow software rendering see real-time motion per frame).
     if (const char* f = std::getenv("VE_FIXED_DT"); f && *f) m_fixedFrameDt = std::strtof(f, nullptr);
-    m_window = std::make_unique<Window>(config.title, config.width, config.height, rs.headless);
+    // Hidden until the first frame is drawn (run()).
+    m_window = std::make_unique<Window>(config.title, config.width, config.height, true);
     m_renderer = std::make_unique<Renderer>();
     m_renderer->init(*m_window, rs, config.validation, shaderDirs);
     registerSkinnedMeshes(m_renderer->skinning()); // the renderer's skinning pass finds anim's SkinnedMeshRenderers
@@ -306,6 +307,12 @@ void Engine::run()
         Profiler::get().beginFrame();
         tickFrame();
         Profiler::get().endFrame();
+        // The window appears with its first frame (a black, unresponsive
+        // window while the engine starts up looks hung).
+        if (!m_windowShown) {
+            m_windowShown = true;
+            if (!m_renderer->settings().headless) m_window->show();
+        }
         if (m_bench && !loadingFrame) benchFrame(std::chrono::duration<float, std::milli>(Clock::now() - now).count());
         ++m_time.frameCount;
     }
@@ -322,6 +329,7 @@ void Engine::beginLoading(std::unique_ptr<Scene> loadingScene, float minSeconds,
     m_loadSteps.clear();
     m_loadTasks.clear();
     m_loadStepsTotal = m_loadStepsDone = 0;
+    m_loadFrames = 0;
     m_loadStatus = "Loading";
     m_loadClearColor = clearColor;
     m_renderer->setLoadingFrames(!loadingInEditor(), clearColor);
@@ -410,12 +418,20 @@ void Engine::tickLoading()
     m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
     m_loadElapsed += m_time.unscaledDeltaTime;
 
-    runLoadStep();
+    // The first frame only draws the loading screen (nothing on screen yet).
+    // Then one step per frame, and starting the new objects (their start():
+    // meshes, grass, ...) gets a time budget so the screen keeps moving.
+    const bool firstFrame = m_loadFrames++ == 0;
+    if (!firstFrame) {
+        runLoadStep();
+        // (What the step left of the frame's budget; at least one object starts.)
+        const float spent = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - frameStart).count();
+        m_scene->startPending(std::max(kLoadingStartBudgetMs - spent, 0.01f));
+    }
     // The world streams (runInEditor objects only), gameplay waits.
-    m_scene->startPending();
     m_scene->update(m_time.deltaTime, true);
     m_scene->lateUpdate(m_time.deltaTime, true);
-    const bool done = pollLoadTasks();
+    const bool done = !firstFrame && pollLoadTasks() && !m_scene->startsDeferred();
 
     m_loadingScene->startPending();
     m_loadingScene->update(m_time.unscaledDeltaTime);
@@ -446,10 +462,14 @@ void Engine::tickFrame()
         tickLoading();
         return;
     }
+    // (Like the loading screen: the first frame only draws, then a step per
+    // frame and new objects started within a time budget.)
+    const auto frameStart = std::chrono::steady_clock::now();
+    const bool editorLoadWork = editorLoading && m_loadFrames++ > 0;
     if (editorLoading) {
         m_renderer->setLoadingFrames(false);
         m_loadElapsed += m_time.unscaledDeltaTime;
-        runLoadStep();
+        if (editorLoadWork) runLoadStep();
     }
     m_ui->beginFrame();
     ui::System::get().route(*this); // game UI first: what it takes, gameplay doesn't see (+ ImGui's capture)
@@ -458,7 +478,12 @@ void Engine::tickFrame()
     // Editor "Edit" mode: the game is paused; only runInEditor objects update.
     const bool paused = editorPaused() || gamePaused || editorLoading;
 
-    m_scene->startPending();
+    if (!editorLoading) {
+        m_scene->startPending();
+    } else if (editorLoadWork) {
+        const float spent = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - frameStart).count();
+        m_scene->startPending(std::max(kLoadingStartBudgetMs - spent, 0.01f));
+    }
 
     // Fixed timestep: run as many fixed steps as the elapsed time requires.
     if (!paused) m_accumulator += m_time.deltaTime;
@@ -496,7 +521,7 @@ void Engine::tickFrame()
         m_net->flush(); // what we own moved / changed this frame
     }
     debug::drawEngineChannels(); // colliders, navmesh, agents (when their F1 channels are on)
-    if (editorLoading && pollLoadTasks()) endLoading(); // (no minimum time: there's no screen to read)
+    if (editorLoadWork && pollLoadTasks() && !m_scene->startsDeferred()) endLoading(); // (no minimum time: there's no screen to read)
     {
         VE_PROFILE("GUI");
         m_scene->onGui();

@@ -37,6 +37,7 @@ public:
     void waitForEvent() const; // sleep until something happens (used while minimized)
 
     void setTitle(const std::string& title);
+    void show(); // (created hidden: shown once there is something to see)
 
     VkExtent2D drawableSize() const; // pixels (HiDPI aware)
     std::vector<const char*> requiredVulkanExtensions() const;

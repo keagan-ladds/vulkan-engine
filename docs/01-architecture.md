@@ -124,6 +124,18 @@ when every step ran and every task reports 1 (and `minSeconds` passed); the
 loading scene is destroyed and the next frame is the world's.
 `VE_CAPTURE_FRAME` / benchmarks count world frames only.
 
+No long frames while loading: the window is created hidden and shown with
+the first frame (no black, unresponsive window during start-up); the first
+loading frame only draws the loading screen; after that, newly spawned
+objects are started (`start()`) within a ~50 ms budget per frame
+(`Scene::startPending(budgetMs)`; the rest start on following frames, before
+their first update, and loading waits for them). Big start-up work splits
+itself up: `Foliage` builds one layer's meshes (LOD chains, impostor bakes)
+per frame behind a load task, and generated data that never changes is
+cached in the cook cache (the clouds' 3D noise: `cooked/generated/`, shipped
+by `vecook --package`). A single step or start that is slow still holds one
+frame: split it into several steps or a load task.
+
 What a loading screen waits for is "ready to play here", not the whole
 world: foliage counts only the cells within `FoliageSettings::readyDistance`
 (300 m) of the viewer (big trees drawn kilometres away keep streaming in,

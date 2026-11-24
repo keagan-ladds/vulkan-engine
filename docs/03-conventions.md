@@ -453,6 +453,11 @@ When the editor is open the same calls show no loading scene: the editor
 draws a progress panel over the world as it fills in. So a game that can
 start in the editor should ask for Edit mode before `beginLoading`.
 
+Keep each step short (a frame is held until it returns; the screen freezes
+meanwhile): split big work into several steps, or do it on the job pool and
+report it with a load task. Objects spawned while loading start a few per
+frame (a time budget), so a heavy `start()` delays only itself.
+
 ### Fire (campfires, torches)
 
 ```cpp

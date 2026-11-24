@@ -138,7 +138,10 @@ public:
     void queueAllStatic();
 
     // --- Engine internal -----------------------------------------------------------
-    void startPending();
+    // budgetMs > 0 (loading screens): stop starting objects once that much
+    // time has passed; the rest start on later calls (startsDeferred()).
+    void startPending(float budgetMs = 0.0f);
+    bool startsDeferred() const { return m_startsDeferred; }
     void fixedUpdate(float dt);
     // editorOnly: only objects with runInEditor (and their components) update.
     void update(float dt, bool editorOnly = false);
@@ -196,6 +199,7 @@ private:
     // Objects that (or whose components) still need start(): startPending
     // walks only these instead of every object. Inactive ones stay queued.
     std::vector<GameObject*> m_unstarted, m_startScratch;
+    bool m_startsDeferred = false;
     std::vector<std::unique_ptr<Component>> m_removedComponents; // removeComponent: freed at the end of the frame
     std::unordered_map<uint64_t, GameObject*> m_byId;
     std::vector<std::unique_ptr<Bucket>> m_buckets; // stable addresses (cached in queries)

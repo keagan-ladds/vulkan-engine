@@ -199,6 +199,13 @@ TextureSettings AssetManager::textureSettings(const std::filesystem::path& path)
     } catch (const std::exception&) {
         TextureSettings s;
         s.type = TextureSettings::typeFromName(path);
+        // A packaged game: no source or .texture file, but the cooked copy
+        // stores the settings it was made with.
+        if (!m_cook.cacheDir.empty() && isCookableImage(path)) {
+            const std::string name = path.is_absolute() ? assetName(path) : path.generic_string();
+            Ktx2Texture header;
+            if (readKtx2(cookedTexturePath(m_cook.cacheDir, name), header, true)) checkCookedTexture(header, {}, nullptr, &s);
+        }
         return s;
     }
 }
@@ -320,7 +327,10 @@ std::shared_ptr<AudioClip> AssetManager::loadAudio(const std::filesystem::path& 
 std::shared_ptr<StandardMaterial> AssetManager::loadMaterial(const std::filesystem::path& path)
 {
     const std::filesystem::path& file = resolveCached(path);
-    const std::string key = file.string();
+    // Case-insensitive key: Windows and .vepak archives find "Thatch.material"
+    // as thatch.material, which must stay one shared Material.
+    std::string key = file.generic_string();
+    for (char& c : key) c = char(std::tolower(static_cast<unsigned char>(c)));
     if (auto it = m_materials.find(key); it != m_materials.end()) return it->second.material;
     LoadedMaterial e;
     e.asset = assetName(file); // (DataAssets finds the source copy in a development build: live edits)
