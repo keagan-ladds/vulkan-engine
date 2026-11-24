@@ -247,13 +247,16 @@ std::shared_ptr<Model> loadGltf(Renderer& renderer, const std::filesystem::path&
             std::shared_ptr<Material> mat;
             if (prim.material) {
                 mat = materials[static_cast<size_t>(prim.material - data->materials)];
-                if (prim.material->normal_texture.texture && !tan) needTangents = true;
             } else {
                 if (!defaultMaterial) defaultMaterial = renderer.createStandardMaterial();
                 mat = defaultMaterial;
             }
             slots.push_back(mat);
             submeshes.push_back(sm);
+            // Tangents (normal mapping) whenever the file has UVs but none: the
+            // material may get a normal map from elsewhere than the glTF (a
+            // material file, MaterialAsset.hpp; a live edit). Cheap at load.
+            if (uv && !tan) needTangents = true;
 
             if (!nrm) {
                 // Flat normals for this primitive's triangles.
