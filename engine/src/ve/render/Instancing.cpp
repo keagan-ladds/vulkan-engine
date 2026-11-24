@@ -477,6 +477,7 @@ void InstanceSystem::draw(RenderContext& ctx, uint32_t cullView, PassKind kind, 
         if (bt.group->drawnCount() == 0) continue;
 
         VkPipeline p = bt.material->shader().pipeline(kind);
+        if (!p) continue; // (still compiling)
         if (p != bound) {
             vkCmdBindPipeline(ctx.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
             bound = p;

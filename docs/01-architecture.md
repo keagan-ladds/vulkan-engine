@@ -299,8 +299,21 @@ material slot) and a local AABB.
   blend mode (opaque / alpha / additive / premultiplied), cull mode, depth
   test/write, render queue (Opaque 2000, AlphaTest 2450, Transparent 3000), shadow
   casting, and optional custom shadow vertex/fragment shaders (e.g. for wind sway).
-- `Shader` lazily builds and caches pipelines for each *pass kind* (Forward,
-  ShadowDirectional, ShadowPoint).
+- `Shader` builds and caches pipelines for each *pass kind* (Forward,
+  ShadowDirectional, ShadowPoint). With `RendererSettings::asyncPipelines`
+  (default) they're built on the job pool, starting when the shader is created
+  (`Renderer::createShader` calls `prewarm()`: forward, plus shadows if it
+  casts them); `pipeline(kind)` is null until then and the draw is skipped
+  (no frame hitch on a shader's first use; the object appears a few frames
+  later). Finished jobs are handed over at the start of a frame
+  (`finishPipelineJobs`); a job whose shader changed or died meanwhile is
+  destroyed. Loading screens wait for pending compiles ("Compiling shaders").
+  Hooks for UI: `Renderer::compileStatus()` (pending pipelines, hot-reload
+  GLSL compiles) and `compileEvents()` (Started / Finished / Failed, with name
+  and milliseconds); `Engine::loadEvents()` does the same for loading (Began,
+  StepStarted / StepFinished, TaskFinished, Ended). Both are `ve::Event`s
+  (`core/Event.hpp`: `subscribe()` returns an RAII `Subscription`).
+  `VE_ASYNC_PIPELINES=0` builds pipelines inside the frame, as before.
 - `Material` = `shared_ptr<Shader>` + a `MaterialData` block (`setVector(slot)`,
   `setTexture(slot)`). The renderer assigns each material a slot in the
   MaterialBuffer and uploads all live materials each frame.

@@ -151,7 +151,8 @@ void ShaderHotReload::startChanged()
             auto result = std::make_shared<CompileResult>();
             jobs::Handle job = jobs::submit(
                 [command = e.command, result](const std::atomic<bool>&) { *result = runCommand(command); }, jobs::Lane::Background);
-            m_jobs.push_back({&e, std::move(job), std::move(result)});
+            m_jobs.push_back({&e, std::move(job), std::move(result), std::chrono::steady_clock::now()});
+            if (onCompile) onCompile(e.name, true, false, 0.0f, {});
         }
     }
 }
@@ -170,6 +171,8 @@ std::vector<std::string> ShaderHotReload::finishJobs(bool wait)
         job.job.wait();
         Entry& e = *job.entry;
         const CompileResult r = *job.result; // (never ran if the pool shut down: ok = false)
+        const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - job.started).count();
+        const std::string name = e.name;
         if (r.ok) {
             readDepfile(e); // includes may have changed (new ones aren't in `seen` yet)
             e.stamp = std::max(e.stamp, newest(e, seen));
@@ -180,6 +183,7 @@ std::vector<std::string> ShaderHotReload::finishJobs(bool wait)
             log::error("Shader hot-reload: {} failed to compile (keeping the old version):\n{}", e.name, r.output);
         }
         m_jobs.erase(m_jobs.begin() + ptrdiff_t(i));
+        if (onCompile) onCompile(name, false, r.ok, ms, r.output);
     }
     if (!ok.empty()) {
         ++m_reloads;

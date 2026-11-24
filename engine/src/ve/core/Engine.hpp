@@ -21,6 +21,7 @@
 // wires every module, is the composition root in ve/app/Engine.cpp.
 // =============================================================================
 
+#include "ve/core/Event.hpp"
 #include "ve/core/Jobs.hpp" // the worker pool the Engine shuts down (also sizes physics threads)
 #include "ve/core/Input.hpp"
 #include "ve/core/Time.hpp"
@@ -45,6 +46,21 @@ class PhysicsWorld;
 namespace net {
 class Network;
 }
+
+// Loading progress, for UI or logs (Engine::loadEvents()).
+struct LoadEvent {
+    enum class Type {
+        Began,        // beginLoading()
+        StepStarted,  // a load step is about to run (this frame)
+        StepFinished, // ... and ran (seconds: how long)
+        TaskFinished, // a load task reached 1 (seconds: since loading began)
+        Ended,        // loading is over (seconds: how long it took)
+    };
+    Type type = Type::Began;
+    std::string name;      // step / task name
+    float seconds = 0.0f;
+    float progress = 0.0f; // loadProgress() after the event
+};
 
 struct EngineConfig {
     std::string title = "vulkan-engine";
@@ -145,6 +161,11 @@ public:
     // editor keeps running (world paused, drawn as it streams in) and shows
     // the progress itself; loading ends as soon as steps and tasks are done.
     bool loadingInEditor() const;
+    // Hooks for UI: loading steps / tasks as they happen. (Shader and pipeline
+    // compiles: renderer().compileEvents() / compileStatus(); loading also
+    // waits for the pipelines compiling then, with the status
+    // "Compiling shaders".)
+    Event<const LoadEvent&>& loadEvents() { return m_loadEvents; }
 
 private:
     std::vector<std::function<void()>> m_atShutdown;
@@ -191,6 +212,8 @@ private:
     static constexpr float kLoadingStartBudgetMs = 50.0f;
     float m_loadMinSeconds = 0.0f, m_loadElapsed = 0.0f;
     std::string m_loadStatus;
+    Event<const LoadEvent&> m_loadEvents;
+    bool compilesBlockLoading(); // pipelines still compiling (sets the status)
     glm::vec4 m_loadClearColor{0.0f, 0.0f, 0.0f, 1.0f};
     bool m_running = false;
     double m_accumulator = 0.0;

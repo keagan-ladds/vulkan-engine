@@ -153,6 +153,7 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
 
     RendererSettings rs = config.renderer;
     if (const char* h = std::getenv("VE_HEADLESS"); h && h[0] == '1') rs.headless = true;
+    if (const char* a = std::getenv("VE_ASYNC_PIPELINES"); a && *a) rs.asyncPipelines = a[0] != '0';
     // VE_FIXED_DT=0.016667: every frame advances time by this much, however long it
     // took (headless tests on slow software rendering see real-time motion per frame).
     if (const char* f = std::getenv("VE_FIXED_DT"); f && *f) m_fixedFrameDt = std::strtof(f, nullptr);
@@ -333,6 +334,7 @@ void Engine::beginLoading(std::unique_ptr<Scene> loadingScene, float minSeconds,
     m_loadStatus = "Loading";
     m_loadClearColor = clearColor;
     m_renderer->setLoadingFrames(!loadingInEditor(), clearColor);
+    m_loadEvents.emit({LoadEvent::Type::Began, {}, 0.0f, 0.0f});
 }
 
 void Engine::addLoadStep(std::string name, std::function<void()> step)
@@ -369,6 +371,7 @@ void Engine::endLoading()
     m_accumulator = 0.0; // no burst of fixed steps for the time spent loading
     Profiler::get().reset(); // loading frames have different zones and timings
     log::info("Loading done in {:.1f} s", m_loadElapsed);
+    m_loadEvents.emit({LoadEvent::Type::Ended, {}, m_loadElapsed, 1.0f});
 }
 
 void Engine::runLoadStep()
@@ -378,10 +381,13 @@ void Engine::runLoadStep()
     LoadStep step = std::move(m_loadSteps.front());
     m_loadSteps.erase(m_loadSteps.begin());
     m_loadStatus = step.name;
+    m_loadEvents.emit({LoadEvent::Type::StepStarted, step.name, 0.0f, loadProgress()});
     const auto t0 = std::chrono::steady_clock::now();
     step.run();
-    log::info("Loading: '{}' took {:.2f} s", step.name, std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count());
+    const float took = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+    log::info("Loading: '{}' took {:.2f} s", step.name, took);
     ++m_loadStepsDone;
+    m_loadEvents.emit({LoadEvent::Type::StepFinished, step.name, took, loadProgress()});
 }
 
 bool Engine::pollLoadTasks()
@@ -390,7 +396,10 @@ bool Engine::pollLoadTasks()
     for (LoadTask& t : m_loadTasks) {
         const float before = t.last;
         t.last = std::clamp(t.progress ? t.progress() : 1.0f, 0.0f, 1.0f);
-        if (t.last >= 1.0f && before < 1.0f) log::info("Loading: '{}' done at {:.1f} s", t.name, m_loadElapsed);
+        if (t.last >= 1.0f && before < 1.0f) {
+            log::info("Loading: '{}' done at {:.1f} s", t.name, m_loadElapsed);
+            m_loadEvents.emit({LoadEvent::Type::TaskFinished, t.name, m_loadElapsed, loadProgress()});
+        }
         if (t.last < 1.0f) {
             if (tasksDone && m_loadSteps.empty()) m_loadStatus = t.name;
             tasksDone = false;
@@ -398,6 +407,16 @@ bool Engine::pollLoadTasks()
     }
     if (!m_loadSteps.empty()) m_loadStatus = m_loadSteps.front().name;
     return tasksDone && m_loadSteps.empty();
+}
+
+bool Engine::compilesBlockLoading()
+{
+    // Shaders created while loading compiled their pipelines in the
+    // background: wait for them, so the world doesn't pop in after loading.
+    const CompileStatus c = m_renderer->compileStatus();
+    if (c.pipelinesPending == 0) return false;
+    m_loadStatus = "Compiling shaders";
+    return true;
 }
 
 bool Engine::editorPaused() const
@@ -431,7 +450,7 @@ void Engine::tickLoading()
     // The world streams (runInEditor objects only), gameplay waits.
     m_scene->update(m_time.deltaTime, true);
     m_scene->lateUpdate(m_time.deltaTime, true);
-    const bool done = !firstFrame && pollLoadTasks() && !m_scene->startsDeferred();
+    const bool done = !firstFrame && pollLoadTasks() && !m_scene->startsDeferred() && !compilesBlockLoading();
 
     m_loadingScene->startPending();
     m_loadingScene->update(m_time.unscaledDeltaTime);
@@ -521,7 +540,7 @@ void Engine::tickFrame()
         m_net->flush(); // what we own moved / changed this frame
     }
     debug::drawEngineChannels(); // colliders, navmesh, agents (when their F1 channels are on)
-    if (editorLoadWork && pollLoadTasks() && !m_scene->startsDeferred()) endLoading(); // (no minimum time: there's no screen to read)
+    if (editorLoadWork && pollLoadTasks() && !m_scene->startsDeferred() && !compilesBlockLoading()) endLoading(); // (no minimum time: there's no screen to read)
     {
         VE_PROFILE("GUI");
         m_scene->onGui();

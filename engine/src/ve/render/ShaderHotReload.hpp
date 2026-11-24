@@ -22,6 +22,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -41,6 +42,9 @@ public:
     std::vector<std::string> pollNow();
 
     const std::string& lastError() const { return m_lastError; }
+    size_t compiling() const { return m_jobs.size(); }
+    // Called when a recompile starts (ok and milliseconds unused) and ends.
+    std::function<void(const std::string& name, bool started, bool ok, float milliseconds, const std::string& output)> onCompile;
     uint32_t reloadCount() const { return m_reloads; }
 
 private:
@@ -60,6 +64,7 @@ private:
         Entry* entry;
         jobs::Handle job; // a background pool job running glslc
         std::shared_ptr<CompileResult> result;
+        std::chrono::steady_clock::time_point started;
     };
     static CompileResult runCommand(const std::vector<std::string>& args);
     void startChanged();                                  // launches compiles of changed, idle entries

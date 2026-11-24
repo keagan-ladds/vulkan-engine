@@ -160,6 +160,19 @@ void AutoTest::buildStep(int piece, const glm::vec3& aim, float yawDegrees)
     ++m_step;
 }
 
+void AutoTest::start()
+{
+    m_loadSub = engine().loadEvents().subscribe([this](const ve::LoadEvent& e) {
+        if (e.type == ve::LoadEvent::Type::StepFinished) ++m_loadSteps;
+        if (e.type == ve::LoadEvent::Type::Ended) ++m_loadEnded;
+    });
+    m_compileSub = renderer().compileEvents().subscribe([this](const ve::CompileEvent& e) {
+        if (e.type == ve::CompileEvent::Type::Started) ++m_compileStarted;
+        else ++m_compileFinished;
+        if (e.type == ve::CompileEvent::Type::Finished && e.name.rfind("autotest_new", 0) == 0) m_newShaderFinished = true;
+    });
+}
+
 void AutoTest::update(float dt)
 {
     m_t += dt;
@@ -278,6 +291,18 @@ void AutoTest::update(float dt)
                 }
             const bool texShared = wall && wall->texture(0) == assets().loadTexture("textures/mud_wall.png");
             const bool matShared = thatch && thatch == assets().loadMaterial("materials/thatch.material").get();
+            // Compile hooks: a shader made now compiles its pipelines in the
+            // background (null until done), with Started / Finished events.
+            {
+                ve::ShaderDesc desc = renderer().builtinShader(ve::BuiltinShader::Standard)->desc();
+                desc.name = "autotest_new";
+                desc.cull = ve::CullMode::None; // (a different pipeline from the built-in one)
+                m_newShader = renderer().createShader(desc);
+                const bool async = renderer().settings().asyncPipelines;
+                log(std::string("compile hooks: load events: ") + std::to_string(m_loadSteps) + " steps finished; new shader compiling: " +
+                    (m_newShader->compiling() ? "yes" : async ? "NO" : "no (sync)") + ", pending " +
+                    std::to_string(renderer().compileStatus().pipelinesPending));
+            }
             log(std::string("shared assets: glTF texture = direct load: ") + (texShared ? "yes" : "NO") +
                 ", thatch from material file: " + (matShared ? "yes" : "NO"));
             // Texture settings come from the files (name / .texture), and where
@@ -315,6 +340,11 @@ void AutoTest::update(float dt)
         if (auto* probe = scene().find("TestTrigger") ? scene().find("TestTrigger")->getComponent<EventProbe>() : nullptr)
             log("trigger after standing in it: " + std::to_string(probe->triggerEnters) + " enter(s): " + probe->lastTrigger);
         {
+            log(std::string("compile hooks: new shader ready: ") + (m_newShader && m_newShader->pipeline(ve::PassKind::Forward) ? "yes" : "NO") +
+                ", its Finished event: " + (m_newShaderFinished ? "yes" : "NO") + "; loading ended events: " + std::to_string(m_loadEnded) +
+                ", compiles " + std::to_string(m_compileStarted) + " started / " + std::to_string(m_compileFinished) + " finished, " +
+                std::to_string(renderer().compileStatus().pipelinesCompiled) + " pipelines in total");
+            m_newShader.reset();
             const float r = assets().loadMaterial("materials/thatch.material")->vector(1).x;
             log(std::string("material file live edit applied: ") + (std::abs(r - 0.25f) < 1e-4f ? "yes" : "NO"));
             ve::DataAssets::revert("materials/thatch.material");

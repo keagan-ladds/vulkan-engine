@@ -25,13 +25,28 @@ Shader::~Shader()
 
 VkPipeline Shader::pipeline(PassKind kind)
 {
-    VkPipeline& p = m_pipelines[static_cast<size_t>(kind)];
-    if (!p) p = m_renderer->buildMeshPipeline(m_desc, kind);
-    return p;
+    const size_t k = static_cast<size_t>(kind);
+    if (!m_pipelines[k] && !m_failed[k] && !m_jobs[k]) m_renderer->requestPipeline(*this, kind);
+    return m_pipelines[k];
+}
+
+void Shader::prewarm()
+{
+    pipeline(PassKind::Forward);
+    if (!m_desc.castShadows) return;
+    pipeline(PassKind::ShadowDirectional);
+    if (m_renderer->settings().maxShadowedPointLights > 0) pipeline(PassKind::ShadowPoint);
+}
+
+bool Shader::compiling() const
+{
+    return std::any_of(m_jobs.begin(), m_jobs.end(), [](const auto& j) { return j != nullptr; });
 }
 
 void Shader::invalidate()
 {
+    m_renderer->detachPipelineJobs(*this); // (still compiling: thrown away when done)
+    m_failed = {};
     Device* device = &m_renderer->device();
     for (VkPipeline& p : m_pipelines) {
         if (p) {

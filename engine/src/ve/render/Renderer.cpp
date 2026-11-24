@@ -13,6 +13,8 @@
 
 #include <algorithm>
 #include <array>
+#include "ve/core/Jobs.hpp"
+
 #include <chrono>
 #include <cstddef>
 #include <cstring>
@@ -106,12 +108,18 @@ void Renderer::init(Window& window, const RendererSettings& settings, bool valid
     }
     createDefaultPasses();
     m_hotReload = std::make_unique<ShaderHotReload>(m_shaderDirs);
+    m_hotReload->onCompile = [this](const std::string& name, bool started, bool ok, float ms, const std::string& output) {
+        const uint32_t pending = uint32_t(m_hotReload->compiling());
+        if (started) m_compileEvents.emit({CompileEvent::Type::Started, CompileEvent::What::Shader, name, 0.0f, pending, {}});
+        else m_compileEvents.emit({ok ? CompileEvent::Type::Finished : CompileEvent::Type::Failed, CompileEvent::What::Shader, name, ms, pending, ok ? std::string() : output});
+    };
     m_initialized = true;
 }
 
 void Renderer::shutdown()
 {
     if (!m_initialized) return;
+    finishPipelineJobs(true); // (jobs use the device)
     m_device.waitIdle();
 
     // Release everything that defers its destruction through the device first.
@@ -400,7 +408,130 @@ std::shared_ptr<Shader> Renderer::createShader(const ShaderDesc& desc)
     auto shader = std::make_shared<Shader>(*this, desc);
     std::erase_if(m_shaders, [](const std::weak_ptr<Shader>& w) { return w.expired(); });
     m_shaders.push_back(shader);
+    // Compile what it will need now (behind a loading screen, usually), not
+    // when it's first drawn.
+    if (m_settings.asyncPipelines) shader->prewarm();
     return shader;
+}
+
+// -----------------------------------------------------------------------------
+// Pipeline compiles
+// -----------------------------------------------------------------------------
+
+// One mesh pipeline being built on the job pool. The job writes only
+// pipeline / error / milliseconds; the main thread reads them once
+// handle.done(), and alone touches owner (null once the shader no longer
+// wants the result: it's destroyed then).
+struct PipelineJob {
+    Shader* owner = nullptr;
+    PassKind kind = PassKind::Forward;
+    std::string name;
+    jobs::Handle handle;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    std::string error;
+    float milliseconds = 0.0f;
+};
+
+namespace {
+const char* passKindName(PassKind k)
+{
+    switch (k) {
+    case PassKind::Forward: return "Forward";
+    case PassKind::ShadowDirectional: return "Shadow";
+    case PassKind::ShadowPoint: return "Point shadow";
+    default: return "?";
+    }
+}
+} // namespace
+
+void Renderer::requestPipeline(Shader& shader, PassKind kind)
+{
+    const size_t k = static_cast<size_t>(kind);
+    const ShaderDesc& d = shader.desc();
+    std::string name = (d.name.empty() || d.name == "unnamed" ? d.fragment : d.name) + " (" + passKindName(kind) + ")";
+    auto build = [this, desc = d, kind](std::string& error) {
+        try {
+            return buildMeshPipeline(desc, kind);
+        } catch (const std::exception& e) {
+            error = e.what();
+            return VkPipeline(VK_NULL_HANDLE);
+        }
+    };
+    m_compileEvents.emit({CompileEvent::Type::Started, CompileEvent::What::Pipeline, name, 0.0f, uint32_t(m_pipelineJobs.size() + 1), {}});
+
+    if (!m_settings.asyncPipelines) {
+        const auto t0 = std::chrono::steady_clock::now();
+        std::string error;
+        shader.m_pipelines[k] = build(error);
+        shader.m_failed[k] = !shader.m_pipelines[k];
+        ++m_pipelinesCompiled;
+        const float ms = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (!error.empty()) log::error("Pipeline {}: {}", name, error);
+        m_compileEvents.emit({error.empty() ? CompileEvent::Type::Finished : CompileEvent::Type::Failed, CompileEvent::What::Pipeline,
+                              name, ms, uint32_t(m_pipelineJobs.size()), error});
+        return;
+    }
+    auto job = std::make_shared<PipelineJob>();
+    job->owner = &shader;
+    job->kind = kind;
+    job->name = std::move(name);
+    // (vkCreateGraphicsPipelines and the pipeline cache are thread-safe; the
+    // renderer waits for these jobs before it shuts down.)
+    job->handle = jobs::submit([job = job.get(), build](const std::atomic<bool>&) {
+        const auto t0 = std::chrono::steady_clock::now();
+        job->pipeline = build(job->error);
+        job->milliseconds = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    });
+    shader.m_jobs[k] = job;
+    m_pipelineJobs.push_back(std::move(job));
+}
+
+void Renderer::detachPipelineJobs(Shader& shader)
+{
+    for (auto& job : shader.m_jobs) {
+        if (job) job->owner = nullptr;
+        job.reset();
+    }
+}
+
+void Renderer::finishPipelineJobs(bool wait)
+{
+    for (size_t i = 0; i < m_pipelineJobs.size();) {
+        std::shared_ptr<PipelineJob> job = m_pipelineJobs[i];
+        if (!wait && !job->handle.done()) {
+            ++i;
+            continue;
+        }
+        job->handle.wait();
+        m_pipelineJobs.erase(m_pipelineJobs.begin() + ptrdiff_t(i));
+        if (!job->pipeline && job->error.empty()) job->error = "not built (the job pool shut down)";
+        if (Shader* s = job->owner) {
+            const size_t k = static_cast<size_t>(job->kind);
+            s->m_jobs[k].reset();
+            s->m_pipelines[k] = job->pipeline;
+            s->m_failed[k] = !job->pipeline;
+        } else if (job->pipeline) {
+            destroyPipeline(job->pipeline); // (its shader changed or went away meanwhile)
+        }
+        ++m_pipelinesCompiled;
+        if (!job->error.empty()) log::error("Pipeline {}: {}", job->name, job->error);
+        m_compileEvents.emit({job->error.empty() ? CompileEvent::Type::Finished : CompileEvent::Type::Failed, CompileEvent::What::Pipeline,
+                              job->name, job->milliseconds, uint32_t(m_pipelineJobs.size()), job->error});
+    }
+}
+
+void Renderer::waitForPipelines()
+{
+    finishPipelineJobs(true);
+}
+
+CompileStatus Renderer::compileStatus() const
+{
+    CompileStatus s;
+    s.pipelinesPending = uint32_t(m_pipelineJobs.size());
+    s.shadersPending = m_hotReload ? uint32_t(m_hotReload->compiling()) : 0u;
+    s.pipelinesCompiled = m_pipelinesCompiled;
+    return s;
 }
 
 std::shared_ptr<Material> Renderer::createMaterial(std::shared_ptr<Shader> shader)
@@ -642,6 +773,7 @@ void Renderer::drawItems(RenderContext& ctx, const std::vector<uint32_t>& indice
         if (shadow && (!shader.desc().castShadows || !item.castShadows)) continue;
 
         VkPipeline p = shader.pipeline(kind);
+        if (!p) continue; // (still compiling)
         if (p != boundPipeline) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
             boundPipeline = p;
@@ -687,6 +819,7 @@ bool Renderer::render(Scene& scene, const Time& time)
     if (m_hotReload) {
         if (auto changed = m_hotReload->poll(); !changed.empty()) reloadShaders(changed);
     }
+    finishPipelineJobs(false);
 
     const bool photo = m_capture.beginFrame(); // starts a requested photo capture
     const bool offscreen = m_settings.headless || photo; // nothing to acquire or present

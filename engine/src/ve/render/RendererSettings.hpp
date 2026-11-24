@@ -17,6 +17,12 @@ struct RendererSettings {
     // Render into an offscreen image instead of presenting (window hidden):
     // automated tests that shouldn't take over the screen. Env: VE_HEADLESS=1.
     bool headless = false;
+    // Build mesh pipelines (a shader's first use per pass) on the job pool:
+    // no frame hitch, but an object with a new shader isn't drawn for the few
+    // frames its pipeline takes (Renderer::compileEvents() to show that).
+    // Pipelines start compiling when a shader is created, so loading screens
+    // cover most of them. Env: VE_ASYNC_PIPELINES=0 builds them in the frame.
+    bool asyncPipelines = true;
     // --- Directional (sun/moon) shadows: cascaded shadow maps ---
     uint32_t maxShadowedDirectionalLights = 2; // 0..kMaxDirectionalLights
     uint32_t cascadeCount = 4;                 // 1..kMaxCascades

@@ -17,6 +17,7 @@
 #include <ve/core/Log.hpp>
 #include <ve/gameplay/Interaction.hpp>
 #include <ve/physics/Physics.hpp>
+#include <ve/render/Renderer.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/scene/Scene.hpp>
 #include <vfx/DayNight.hpp>
@@ -155,10 +156,42 @@ void Hud::update(float dt)
 void Hud::onGui()
 {
     if (m_showControls) drawControls(); // F10 (ImGui: a tools-style window)
+    drawCompiling();
+}
+
+void Hud::drawCompiling()
+{
+    // An example of the engine's compile hooks: while pipelines (a shader's
+    // first use) or hot-reloaded shaders compile, a small note in the corner
+    // explains why something isn't drawn yet.
+    const ve::CompileStatus status = renderer().compileStatus();
+    const float now = engine().time().realTime;
+    if (status.busy()) m_compileShownUntil = std::max(m_compileShownUntil, now + 0.6f);
+    if (now >= m_compileShownUntil) return;
+    const uint32_t pending = status.pipelinesPending + status.shadersPending;
+    char text[160];
+    if (pending > 0) std::snprintf(text, sizeof(text), "Compiling shaders (%u)  %s", pending, m_compileName.c_str());
+    else std::snprintf(text, sizeof(text), "Shaders ready");
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    const ImVec2 ts = ImGui::CalcTextSize(text);
+    const ImVec2 pos(size.x - ts.x - 44.0f, size.y - ts.y - 20.0f);
+    const float alpha = std::clamp((m_compileShownUntil - now) / 0.3f, 0.0f, 1.0f);
+    dl->AddRectFilled(ImVec2(pos.x - 30.0f, pos.y - 6.0f), ImVec2(pos.x + ts.x + 10.0f, pos.y + ts.y + 6.0f), IM_COL32(0, 0, 0, int(140 * alpha)), 6.0f);
+    // A spinning arc: the game isn't stuck.
+    const ImVec2 c(pos.x - 15.0f, pos.y + ts.y * 0.5f);
+    const float a0 = now * 6.0f;
+    dl->PathArcTo(c, 6.0f, a0, a0 + 4.2f, 16);
+    dl->PathStroke(IM_COL32(230, 200, 120, int(255 * alpha)), 0, 2.0f);
+    dl->AddText(pos, IM_COL32(230, 225, 210, int(255 * alpha)), text);
 }
 
 void Hud::start()
 {
+    // (Unsubscribes with the Hud.)
+    m_compileSub = renderer().compileEvents().subscribe([this](const ve::CompileEvent& e) {
+        if (e.type == ve::CompileEvent::Type::Started) m_compileName = e.name;
+    });
     namespace ui = ve::ui;
     m_canvas = &addComponent<ui::Canvas>();
     m_canvas->tooltipFont = gui::font::body;

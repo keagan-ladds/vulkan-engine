@@ -37,6 +37,7 @@
 #include "ve/render/StaticBatcher.hpp"
 #include "ve/render/Skinning.hpp"
 #include "ve/render/Material.hpp"
+#include "ve/core/Event.hpp"
 #include "ve/render/PipelineHandle.hpp"
 #include "ve/render/ShaderHotReload.hpp"
 #include "ve/render/RenderGraph.hpp"
@@ -49,6 +50,25 @@
 #include <vector>
 
 namespace ve {
+
+struct CompileEvent {
+    enum class Type { Started, Finished, Failed };
+    enum class What { Pipeline, Shader };
+    Type type = Type::Started;
+    What what = What::Pipeline;
+    std::string name;          // "standard.frag (Forward)", "bloom_up.frag"
+    float milliseconds = 0.0f; // Finished / Failed: how long it took
+    uint32_t pending = 0;      // compiles of this kind still running after this event
+    std::string error;         // Failed
+};
+
+struct CompileStatus {
+    uint32_t pipelinesPending = 0;
+    uint32_t shadersPending = 0;    // hot-reload GLSL compiles
+    uint64_t pipelinesCompiled = 0; // since start
+    bool busy() const { return pipelinesPending + shadersPending > 0; }
+};
+
 
 class Renderer;
 class Window;
@@ -201,6 +221,20 @@ public:
 
     // --- Engine internal ------------------------------------------------------------
     VkPipeline buildMeshPipeline(const ShaderDesc& desc, PassKind kind);
+
+    // ---- Compiles (for "compiling shaders..." UI) ----
+    // Pipelines: a shader's first use per pass kind, built by the driver
+    // (async: RendererSettings::asyncPipelines). Shaders: GLSL recompiled by
+    // shader hot-reload (development builds).
+    CompileStatus compileStatus() const;
+    // Started / Finished / Failed per compile, on the main thread (async ones
+    // finish at the start of a later frame).
+    Event<const CompileEvent&>& compileEvents() { return m_compileEvents; }
+    // Blocks until every pipeline compile in flight is done (screenshots, tests).
+    void waitForPipelines();
+    // (Shader's side: starts building one of its pipelines; drops its jobs.)
+    void requestPipeline(Shader& shader, PassKind kind);
+    void detachPipelineJobs(Shader& shader);
     uint32_t allocateMaterialSlot();
     void freeMaterialSlot(uint32_t index);
     GpuMaterial& materialData(uint32_t index) { return m_materials[index]; }
@@ -291,6 +325,10 @@ private:
     std::vector<uint32_t> m_freeRawPipelines;
     std::vector<std::weak_ptr<Shader>> m_shaders; // for hot-reload
     std::unique_ptr<ShaderHotReload> m_hotReload;
+    void finishPipelineJobs(bool wait); // (start of each frame: hands finished pipelines to their shaders)
+    std::vector<std::shared_ptr<PipelineJob>> m_pipelineJobs;
+    Event<const CompileEvent&> m_compileEvents;
+    uint64_t m_pipelinesCompiled = 0;
 
     Window* m_window = nullptr;
     RendererSettings m_settings;

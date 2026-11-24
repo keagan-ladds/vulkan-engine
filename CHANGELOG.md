@@ -24,6 +24,13 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   rebuilds Z and gives the same result for uncooked maps.
 
 ### Changed
+- **Mesh pipelines compile in the background.** A shader's pipelines are
+  built on the job pool from when it's created (`RendererSettings::
+  asyncPipelines`, env `VE_ASYNC_PIPELINES=0` to turn off): no frame hitch on
+  a shader's first draw, but `Shader::pipeline()` can return null and objects
+  using it are skipped until it's ready. Custom passes binding
+  `shader->pipeline(kind)` themselves must skip a null pipeline. Loading
+  screens wait for pending compiles ("Compiling shaders").
 - **Start-up and loading stay responsive.** The window appears with the first
   frame instead of sitting black while the engine starts. The loading screen
   (or the editor's progress panel) is drawn before any load step runs. Objects
@@ -35,6 +42,12 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Hooks for loading and compile UI.** `Engine::loadEvents()` (Began, step
+  started / finished, task finished, Ended) and `Renderer::compileEvents()` /
+  `compileStatus()` (pipelines and hot-reloaded shaders: started / finished /
+  failed, pending counts), built on a new `ve::Event` / `ve::Subscription`
+  (`core/Event.hpp`). The sandbox HUD shows a "Compiling shaders" note with
+  them. `Renderer::waitForPipelines()` for screenshots and tests.
 - **Release packaging and archives.** `vecook --package <dir>` writes a
   shippable folder: the game, its runtime libraries and `data.vepak` (zstd;
   assets with images / sounds as their cooked copies only, cooked files,

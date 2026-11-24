@@ -3,6 +3,7 @@
 // The in-game HUD (crosshair, prompt, vitals, hotbar, clock; F10 controls
 // window), and the save / control-binding functions it and the menus use.
 
+#include <ve/core/Event.hpp>
 #include <ve/scene/GameObject.hpp>
 #include <ve/scene/ObjectRef.hpp>
 #include <ve/scene/SaveGame.hpp>
@@ -50,6 +51,10 @@ private:
     ve::ObjectRef<vfx::DayNightCycle> m_dayNight;
     ve::ObjectRef<vfx::Weather> m_weather;
     void drawControls(); // F10: actions, their bindings, rebinding
+    void drawCompiling(); // "Compiling shaders" corner note (Renderer::compileEvents)
+    ve::Subscription m_compileSub;
+    float m_compileShownUntil = 0.0f; // (real time: kept up briefly so quick compiles don't flicker)
+    std::string m_compileName;
     bool m_showHelp = true;
     bool m_showControls = false;
     bool m_controlsShotDone = false;

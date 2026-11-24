@@ -5,8 +5,10 @@
 //
 // Shader   = which GLSL programs to run + fixed pipeline state (blending,
 //            culling, depth, render queue, shadow casting). Create once,
-//            share between many materials. Pipelines are built lazily per
-//            pass kind (forward / directional shadow / point shadow).
+//            share between many materials. Pipelines are built per pass kind
+//            (forward / directional shadow / point shadow), on the job pool
+//            from when the shader is created (RendererSettings::asyncPipelines):
+//            pipeline() is null until then, and draws using it are skipped.
 //
 // Material = a Shader + its parameters (12 vec4s + 16 texture indices) that
 //            live in the global MaterialBuffer (set 0, binding 2). A shader
@@ -35,6 +37,7 @@ namespace ve {
 
 class Renderer;
 class Texture;
+struct PipelineJob;
 
 enum class RenderQueue : int {
     Background = 1000,
@@ -75,15 +78,23 @@ public:
 
     const ShaderDesc& desc() const { return m_desc; }
     bool transparent() const { return m_desc.queue >= RenderQueue::Transparent; }
-    // Built on first use and cached.
+    // Built on first use (or from creation, async) and cached; VK_NULL_HANDLE
+    // while it compiles in the background or if it failed: skip the draw.
     VkPipeline pipeline(PassKind kind);
+    // Starts compiling the pipelines this shader will need (forward, and
+    // shadows if it casts them). Renderer::createShader does it already.
+    void prewarm();
+    bool compiling() const;
     // Forces pipelines to be rebuilt (e.g. after changing desc or shader hot-reload).
     void invalidate();
 
 private:
+    friend class Renderer;
     Renderer* m_renderer;
     ShaderDesc m_desc;
     std::array<VkPipeline, static_cast<size_t>(PassKind::Count)> m_pipelines{};
+    std::array<std::shared_ptr<PipelineJob>, static_cast<size_t>(PassKind::Count)> m_jobs{}; // compiling
+    std::array<bool, static_cast<size_t>(PassKind::Count)> m_failed{}; // (not retried until invalidate())
 };
 
 class Material {

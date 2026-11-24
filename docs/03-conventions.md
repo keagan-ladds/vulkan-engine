@@ -166,6 +166,23 @@ made with `createFullscreenPipeline` / `createComputePipeline`. Keep those as
 `ve::PipelineHandle` members, which always give the current `VkPipeline`. New
 shader files still need a rebuild. `VE_SHADER_HOT_RELOAD=0` turns it off.
 
+**"Compiling shaders" in your UI.** A shader's pipelines compile in the
+background (from when it's created); until they're done, objects using it
+aren't drawn. To show that:
+
+```cpp
+const ve::CompileStatus c = renderer().compileStatus(); // each frame: pipelinesPending, shadersPending, busy()
+m_sub = renderer().compileEvents().subscribe([this](const ve::CompileEvent& e) {
+    if (e.type == ve::CompileEvent::Type::Started) m_compiling = e.name; // also Finished / Failed (+ ms)
+});
+m_loadSub = engine().loadEvents().subscribe([](const ve::LoadEvent& e) { /* Began, StepStarted, ... Ended */ });
+```
+
+Keep the `ve::Subscription` as a member: it unsubscribes when destroyed. The
+sandbox HUD's corner note (`Hud::drawCompiling`) is an example; loading
+screens already show "Compiling shaders" through `loadStatus()`. Create
+shaders early (while loading) so they're ready by the time they're drawn.
+
 ### Share textures and materials between models
 
 Export from Blender as **glTF Separate** (.gltf + .bin + images) with every
