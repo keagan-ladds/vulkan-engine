@@ -32,6 +32,10 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `EngineConfig::cookCache` / `cookOnDemand`; env `VE_COOK=0|read|sync`,
   `VE_COOK_DIR`. Needs BC texture support (every desktop GPU); without it the
   source images are used.
+- **Blender node group for the painted shader**
+  (`tools/blender/ve_painted_node_group.py`): "VE Painted" reproduces
+  `standard_painted.frag` in Blender so painted assets look the same while you
+  paint; `tools/blender/test_ve_painted.py` checks the two agree.
 - **`standard_painted.frag`**: the standard shader plus vertex-painted dirt
   (R), wear (G) and wetness (B), with optional triplanar dirt / grunge / wear
   textures; use it from a material file (`"fragmentShader"`). A placeholder

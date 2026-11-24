@@ -207,6 +207,13 @@ with optional dirt / grunge / wear textures in slots 5-7 and settings in
 params 4-8 (documented at the top of the shader). It's a starting point:
 copy it into your game as `mygame_painted.frag` to change it. Savanna's
 `SAVANNA_PAINTTEST=1` shows a test wall (`materials/painted_test.material`).
+**In Blender:** run `tools/blender/ve_painted_node_group.py` once (Scripting
+workspace, Run Script). It makes a "VE Painted" node group with the same maths
+and inputs named like the material file's values, plus an example material
+showing the wiring, so vertex / texture painting looks like the engine while
+you paint. Mark it as an asset (the script does) to reuse it in every
+project. `tools/blender/test_ve_painted.py` checks the group against the
+shader (needs `pip install bpy`).
 
 ### Decals: bullet holes, puddles, cracks
 

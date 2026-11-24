@@ -22,6 +22,9 @@
 //     ]
 //   }
 //
+// Blender preview: tools/blender/ve_painted_node_group.py builds a node group
+// with the same maths (keep it in step: tools/blender/test_ve_painted.py).
+//
 // Vertex colour = the paint (Blender: Color Attribute, Vertex Paint mode):
 //   R = dirt    (dirt colour / texture over the surface, rougher, a little AO)
 //   G = wear    (the "under" material showing through: chipped plaster, bare wood)
