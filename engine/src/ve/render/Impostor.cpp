@@ -185,10 +185,7 @@ std::shared_ptr<Impostor> Impostor::bake(Renderer& renderer, const Mesh& mesh,
     imp->m_normal = Texture::adopt(renderer, normal, SamplerType::LinearClamp, "impostor normal");
     imp->m_material = renderer.createMaterial(renderer.builtinShader(BuiltinShader::Impostor));
     imp->m_material->setVector(0, glm::vec4(centre, radius));
-    // Roughness of the source (StandardMaterial layout: params[1].x of its
-    // first material), so the impostor shines exactly as the mesh it replaces.
-    const float roughness = materials.empty() || !materials[0] ? 0.85f : std::clamp(materials[0]->vector(1).x, 0.02f, 1.0f);
-    imp->m_material->setVector(1, glm::vec4(float(N), settings.alphaCutoff, roughness, 0.0f));
+    imp->m_material->setVector(1, glm::vec4(float(N), settings.alphaCutoff, 0.0f, 0.0f));
     imp->m_material->setTexture(0, imp->m_albedo);
     imp->m_material->setTexture(1, imp->m_normal);
 

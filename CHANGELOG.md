@@ -71,8 +71,6 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `TerrainBiome`, `TerrainMaterial`.
 
 ### Fixed
-- Impostors used a fixed roughness of 0.85 whatever the mesh they replace;
-  they now take the roughness of the material they were baked from.
 - Vulkan validation error "SPIR-V Capability DemoteToHelperInvocation":
   the device now enables `shaderDemoteToHelperInvocation` (a Vulkan 1.3 core
   feature the shaders already used).

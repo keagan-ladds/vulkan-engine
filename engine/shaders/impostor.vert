@@ -2,7 +2,7 @@
 // Octahedral impostor: a camera-facing quad covering the object's bounding
 // sphere. The fragment shader reconstructs the object from the atlas.
 // Material: params[0] = object-space centre (xyz) + radius (w),
-//           params[1].x = frames per side, params[1].y = alpha cutoff, params[1].z = roughness,
+//           params[1].x = frames per side, params[1].y = alpha cutoff,
 //           textures[0] = albedo atlas, textures[1] = normal atlas.
 #include "ve.glsl"
 
