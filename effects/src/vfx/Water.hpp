@@ -29,16 +29,16 @@ public:
     glm::vec2 size{640.0f};
     glm::vec4 deepColor{0.05f, 0.09f, 0.06f, 1.0f};
     glm::vec4 shallowColor{0.22f, 0.25f, 0.15f, 1.0f};
-    float absorption = 1.2f;     // how quickly colour goes from shallow to deep
+    float absorption = 1.2f;     ///< how quickly colour goes from shallow to deep
     float shoreFoam = 0.5f;
     float rippleScale = 0.35f;
     float rippleStrength = 0.12f;
 
-    void rebuild(); // applies size / material fields (editor edits)
+    void rebuild(); ///< applies size / material fields (editor edits)
 
 private:
     std::shared_ptr<ve::Material> m_material;
-    ve::ComponentRef<ve::MeshRenderer> m_renderer; // (the editor may remove it)
+    ve::ComponentRef<ve::MeshRenderer> m_renderer; ///< (the editor may remove it)
 };
 
 } // namespace vfx

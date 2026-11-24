@@ -35,13 +35,13 @@ class Renderer;
 class Scene;
 class MeshRenderer;
 
-// A skinned mesh as loaded (shared by every instance of the model).
+/// A skinned mesh as loaded (shared by every instance of the model).
 struct SkinnedMeshSource {
-    MeshData data;                   // rest pose
+    MeshData data;                   ///< rest pose
     std::vector<Submesh> submeshes;
-    std::vector<glm::uvec4> joints;  // per vertex, indices into the skin's joints
-    std::vector<glm::vec4> weights;  // per vertex, sum 1
-    std::vector<float> jointRadius;  // per joint: distance of its farthest weighted vertex (bounds)
+    std::vector<glm::uvec4> joints;  ///< per vertex, indices into the skin's joints
+    std::vector<glm::vec4> weights;  ///< per vertex, sum 1
+    std::vector<float> jointRadius;  ///< per joint: distance of its farthest weighted vertex (bounds)
     std::string name;
 };
 
@@ -49,7 +49,7 @@ class SkinningSystem {
 public:
     struct Instance {
         uint32_t restBase = 0, outputBase = 0, count = 0;
-        std::shared_ptr<Mesh> mesh; // draws the output range
+        std::shared_ptr<Mesh> mesh; ///< draws the output range
         const SkinnedMeshSource* source = nullptr;
     };
 
@@ -59,18 +59,18 @@ public:
     Instance create(const std::shared_ptr<const SkinnedMeshSource>& source);
     void destroy(Instance& instance);
 
-    // What to skin comes from gatherers: render can't see the animation module
-    // (whose SkinnedMeshRenderer does the work), so anim adds one at startup
-    // (registerSkinnedMeshes, called by the Engine). Each frame Renderer::gatherScene
-    // runs them in order: each add()s the joint matrices of `scene`'s visible
-    // skinned renderers and lists them in `deformed`.
+    /// What to skin comes from gatherers: render can't see the animation module
+    /// (whose SkinnedMeshRenderer does the work), so anim adds one at startup
+    /// (registerSkinnedMeshes, called by the Engine). Each frame Renderer::gatherScene
+    /// runs them in order: each add()s the joint matrices of `scene`'s visible
+    /// skinned renderers and lists them in `deformed`.
     using Gatherer = std::function<void(Scene& scene, SkinningSystem& system, std::vector<const MeshRenderer*>& deformed)>;
     void addGatherer(Gatherer gatherer) { m_gatherers.push_back(std::move(gatherer)); }
     const std::vector<Gatherer>& gatherers() const { return m_gatherers; }
 
-    // Per frame: collect what to skin (Renderer::gatherScene), then record (SkinningPass).
+    /// Per frame: collect what to skin (Renderer::gatherScene), then record (SkinningPass).
     void beginFrame(uint32_t slot);
-    bool add(const Instance& instance, const glm::mat4* joints, uint32_t jointCount); // false = over budget
+    bool add(const Instance& instance, const glm::mat4* joints, uint32_t jointCount); ///< false = over budget
     void record(VkCommandBuffer cmd);
     uint32_t skinnedThisFrame() const { return uint32_t(m_jobs.size()); }
 
@@ -94,7 +94,7 @@ private:
 
     Renderer* m_renderer = nullptr;
     Buffer m_rest, m_weights, m_output;
-    std::vector<Buffer> m_matrices; // per frame slot, host visible
+    std::vector<Buffer> m_matrices; ///< per frame slot, host visible
     uint32_t m_maxVertices = 0, m_maxJoints = 0;
     std::vector<Range> m_freeRest, m_freeOutput;
     std::map<const SkinnedMeshSource*, SourceEntry> m_sources;

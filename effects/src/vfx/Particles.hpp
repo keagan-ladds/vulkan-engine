@@ -33,60 +33,68 @@ class Texture;
 
 namespace vfx {
 
+/// How an emitter spawns, moves and draws its particles.
 struct ParticleSettings {
-    float rate = 20.0f;               // particles per second while emitting
-    uint32_t maxParticles = 512;
-    float lifetimeMin = 1.0f, lifetimeMax = 2.0f;
-    // Spawn volume (local space of the emitter): a box, plus a random point in a sphere.
+    float rate = 20.0f;               ///< particles per second while emitting
+    uint32_t maxParticles = 512;      ///< Alive at once; spawning pauses at the limit.
+    float lifetimeMin = 1.0f;         ///< Shortest life (s).
+    float lifetimeMax = 2.0f;         ///< Longest life (s).
+    /// Spawn volume (local space of the emitter): a box, plus a random point in a sphere.
     glm::vec3 spawnBox{0.0f};
-    float spawnRadius = 0.0f;
-    // Initial velocity = velocity + random in [-velocityRandom, +velocityRandom] (world space).
+    float spawnRadius = 0.0f;         ///< Radius of the random sphere (m).
+    /// Initial velocity = velocity + random in [-velocityRandom, +velocityRandom] (world space).
     glm::vec3 velocity{0.0f, 1.0f, 0.0f};
-    glm::vec3 velocityRandom{0.2f};
-    glm::vec3 gravity{0.0f};          // acceleration (m/s^2)
-    float drag = 0.0f;                // velocity damping per second
-    float windInfluence = 0.0f;       // 0..1, pushes along globalParams[SlotWind]
-    // Collision: each particle casts one physics ray along its initial motion
-    // when it spawns and dies where that ray hits (roofs stop rain). Cheap and
-    // exact for straight-falling particles; gravity curves aren't followed.
+    glm::vec3 velocityRandom{0.2f};   ///< See velocity.
+    glm::vec3 gravity{0.0f};          ///< acceleration (m/s^2)
+    float drag = 0.0f;                ///< velocity damping per second
+    float windInfluence = 0.0f;       ///< 0..1, pushes along globalParams[SlotWind]
+    /// Collision: each particle casts one physics ray along its initial motion
+    /// when it spawns and dies where that ray hits (roofs stop rain). Cheap and
+    /// exact for straight-falling particles; gravity curves aren't followed.
     bool collide = false;
-    float collisionDistance = 40.0f;  // ray length (m)
-    float sizeStart = 0.2f, sizeEnd = 0.5f;
-    float sizeRandom = 0.3f;          // +-fraction
-    // Colour over life: start -> mid (at midPoint) -> end. RGB can exceed 1 (HDR).
+    float collisionDistance = 40.0f;  ///< ray length (m)
+    float sizeStart = 0.2f;           ///< Size (m) when born...
+    float sizeEnd = 0.5f;             ///< ...and when it dies.
+    float sizeRandom = 0.3f;          ///< +-fraction
+    /// Colour over life: start -> mid (at midPoint) -> end. RGB can exceed 1 (HDR).
     glm::vec4 colorStart{1.0f};
-    glm::vec4 colorMid{1.0f};
-    glm::vec4 colorEnd{1.0f, 1.0f, 1.0f, 0.0f};
-    float midPoint = 0.4f;
-    float rotationSpeed = 0.5f;       // random spin, radians/s
-    ve::BlendMode blend = ve::BlendMode::AlphaBlend; // AlphaBlend or Additive
-    bool stretchWithVelocity = false; // streaks (rain, sparks)
-    float stretch = 0.04f;            // seconds of motion per streak
-    float softness = 0.5f;            // soft-particle fade distance (m)
-    std::shared_ptr<ve::Texture> texture; // null = built-in soft circle
+    glm::vec4 colorMid{1.0f};                   ///< See colorStart.
+    glm::vec4 colorEnd{1.0f, 1.0f, 1.0f, 0.0f}; ///< See colorStart (alpha 0: fades out).
+    float midPoint = 0.4f;                      ///< Fraction of the life (0..1) where colorMid applies.
+    float rotationSpeed = 0.5f;       ///< random spin, radians/s
+    ve::BlendMode blend = ve::BlendMode::AlphaBlend; ///< AlphaBlend or Additive
+    bool stretchWithVelocity = false; ///< streaks (rain, sparks)
+    float stretch = 0.04f;            ///< seconds of motion per streak
+    float softness = 0.5f;            ///< soft-particle fade distance (m)
+    std::shared_ptr<ve::Texture> texture; ///< null = built-in soft circle
 };
 
+/// Spawns and simulates CPU particles from its object (ParticlePass draws them).
 class ParticleEmitter : public ve::Component {
 public:
-    // Wind drift applied on top of particle velocities (drag-free particles), m/s.
+    /// Wind drift applied on top of particle velocities (drag-free particles), m/s.
     const glm::vec3& drift() const { return m_drift; }
 
+    /// One live particle.
     struct Particle {
-        glm::vec3 position;
-        glm::vec3 velocity;
-        float age;
-        float lifetime;
-        float sizeScale;
-        float rotation;
-        float spin;
-        float killY; // collide: dies below this height (-inf = no hit)
+        glm::vec3 position; ///< World position.
+        glm::vec3 velocity; ///< m/s.
+        float age;          ///< Seconds since born.
+        float lifetime;     ///< Seconds it lives.
+        float sizeScale;    ///< Random size multiplier.
+        float rotation;     ///< Billboard rotation (radians).
+        float spin;         ///< Rotation speed (radians/s).
+        float killY; ///< collide: dies below this height (-inf = no hit)
     };
 
-    ParticleSettings settings;
-    bool emitting = true;
+    ParticleSettings settings;  ///< Change any time.
+    bool emitting = true;       ///< Spawn at `rate` (false: live particles finish their lives).
 
+    /// Spawns `count` particles at once (sparks, a puff).
     void burst(uint32_t count);
+    /// Removes every live particle.
     void clear() { m_particles.clear(); }
+    /// The live particles.
     const std::vector<Particle>& particles() const { return m_particles; }
 
     void update(float dt) override;
@@ -102,6 +110,7 @@ private:
     std::uniform_real_distribution<float> m_dist{0.0f, 1.0f};
 };
 
+/// Draws every ParticleEmitter as instanced soft billboards (transparent stage).
 class ParticlePass : public ve::RenderPass {
 public:
     ParticlePass();
@@ -113,11 +122,11 @@ public:
     void execute(ve::RenderContext& ctx) override;
     void onGui() override;
 
-    // Built-in sprites, also handy for your own emitters.
+    /// Built-in sprites, also handy for your own emitters.
     std::shared_ptr<ve::Texture> softSprite;
-    std::shared_ptr<ve::Texture> smokeSprite;
+    std::shared_ptr<ve::Texture> smokeSprite; ///< A soft, noisy puff.
 
-    static constexpr uint32_t kMaxInstances = 32768;
+    static constexpr uint32_t kMaxInstances = 32768; ///< Particles drawn per frame at most (all emitters).
 
 private:
     struct Instance {
@@ -132,10 +141,10 @@ private:
         float stretch, softness;
     };
 
-    FrameBuffers m_instances; // per frame in flight
+    FrameBuffers m_instances; ///< per frame in flight
     std::vector<Draw> m_draws;
     std::vector<uint32_t> m_order;
-    std::vector<float> m_distance; // squared camera distance per particle (sort keys)
+    std::vector<float> m_distance; ///< squared camera distance per particle (sort keys)
     VkPipeline m_alpha = VK_NULL_HANDLE;
     VkPipeline m_additive = VK_NULL_HANDLE;
     uint32_t m_slot = 0;

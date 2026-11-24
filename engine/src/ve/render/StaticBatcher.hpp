@@ -46,43 +46,43 @@ public:
 
     struct Desc {
         std::shared_ptr<Mesh> mesh;
-        // Per submesh material slot (index = Submesh::materialSlot), already
-        // resolved like MeshRenderer::material(); null = the fallback material.
+        /// Per submesh material slot (index = Submesh::materialSlot), already
+        /// resolved like MeshRenderer::material(); null = the fallback material.
         std::vector<std::shared_ptr<Material>> materials;
         bool castShadows = true;
         glm::mat4 world{1.0f};
-        const GameObject* owner = nullptr; // for DrawItem::owner (editor picking)
-        const void* source = nullptr;      // who added it (checked by remove / matches)
+        const GameObject* owner = nullptr; ///< for DrawItem::owner (editor picking)
+        const void* source = nullptr;      ///< who added it (checked by remove / matches)
     };
 
     void init(Renderer& renderer) { m_renderer = &renderer; }
 
-    Handle add(const Desc& desc); // may throw (instance buffer full: RendererSettings::maxInstances)
+    Handle add(const Desc& desc); ///< may throw (instance buffer full: RendererSettings::maxInstances)
     void remove(Handle h);
     void setTransform(Handle h, const glm::mat4& world);
-    // Can `h` keep its entry with these fields (same batch)? Otherwise the
-    // caller removes and adds it again.
+    /// Can `h` keep its entry with these fields (same batch)? Otherwise the
+    /// caller removes and adds it again.
     bool matches(Handle h, const void* source, const Mesh* mesh, const std::vector<std::shared_ptr<Material>>& materials,
                  bool castShadows) const;
-    void clear(); // drops every entry and group
-    // Hidden groups draw nothing (another scene is being rendered).
+    void clear(); ///< drops every entry and group
+    /// Hidden groups draw nothing (another scene is being rendered).
     void setHidden(bool hidden);
     bool hidden() const { return m_hidden; }
 
     size_t size() const { return m_entries.size() - m_free.size(); }
     bool empty() const { return size() == 0; }
     uint32_t groupCount() const { return static_cast<uint32_t>(m_groupByKey.size()); }
-    uint32_t submeshCount() const { return m_submeshes; } // over all entries (RenderStats::totalObjects)
-    // Highest point of any entry (-FLT_MAX if none): ShadowSetup's caster reach.
+    uint32_t submeshCount() const { return m_submeshes; } ///< over all entries (RenderStats::totalObjects)
+    /// Highest point of any entry (-FLT_MAX if none): ShadowSetup's caster reach.
     float top() const;
 
-    // Appends a DrawItem (instanced = true) per submesh of every
-    // shadow-casting entry whose bounds reach the sphere, unless this frame
-    // (`stamp`) already appended it for another light.
+    /// Appends a DrawItem (instanced = true) per submesh of every
+    /// shadow-casting entry whose bounds reach the sphere, unless this frame
+    /// (`stamp`) already appended it for another light.
     void appendPointShadowCasters(const glm::vec3& center, float range, uint64_t stamp, Material* fallback,
                                   std::vector<DrawItem>& out);
 
-    // fn(mesh, submesh, world, owner) for every submesh of entries intersecting `frustum`.
+    /// fn(mesh, submesh, world, owner) for every submesh of entries intersecting `frustum`.
     template <class F>
     void forEachInFrustum(const Frustum& frustum, F&& fn) const
     {
@@ -93,7 +93,7 @@ public:
     }
 
 private:
-    // Batch key: mesh, resolved materials per slot, castShadows.
+    /// Batch key: mesh, resolved materials per slot, castShadows.
     using Key = std::tuple<const Mesh*, std::vector<const Material*>, bool>;
     struct Group {
         Key key;
@@ -101,18 +101,18 @@ private:
         std::vector<std::shared_ptr<Material>> materials;
         bool castShadows = true;
         std::shared_ptr<InstanceGroup> instances;
-        std::vector<Handle> entryOfInstance; // InstanceGroup handle -> entry (kNone = free)
+        std::vector<Handle> entryOfInstance; ///< InstanceGroup handle -> entry (kNone = free)
         uint32_t count = 0;
     };
     struct Entry {
-        Group* group = nullptr; // null = free slot
+        Group* group = nullptr; ///< null = free slot
         InstanceGroup::Handle instance = InstanceGroup::kInvalid;
         glm::mat4 world{1.0f};
-        AABB bounds; // world space, whole mesh
+        AABB bounds; ///< world space, whole mesh
         const GameObject* owner = nullptr;
         const void* source = nullptr;
-        uint64_t stamp = 0;      // appendPointShadowCasters: last frame it was appended
-        bool large = false;      // in m_large instead of grid cells
+        uint64_t stamp = 0;      ///< appendPointShadowCasters: last frame it was appended
+        bool large = false;      ///< in m_large instead of grid cells
     };
 
     static Key makeKey(const Mesh* mesh, const std::vector<std::shared_ptr<Material>>& materials, bool castShadows);
@@ -121,9 +121,9 @@ private:
     void releaseGroup(Group& g);
     InstanceGroupDesc groupDesc(const Group& g) const;
 
-    // Grid (XZ cells) of entries, for point-light queries.
+    /// Grid (XZ cells) of entries, for point-light queries.
     static constexpr float kCellSize = 16.0f;
-    static constexpr int kMaxCellSpan = 8; // larger entries go in m_large
+    static constexpr int kMaxCellSpan = 8; ///< larger entries go in m_large
     static uint64_t cellKey(int x, int z) { return (uint64_t(uint32_t(x)) << 32) | uint32_t(z); }
     void insertGrid(Handle h);
     void eraseGrid(Handle h);

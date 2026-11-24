@@ -30,23 +30,23 @@ public:
     void execute(ve::RenderContext& ctx) override;
     void onResize(ve::RenderGraph&) override { temporal.invalidate(); }
 
-    TemporalAccumulator temporal; // accumulates over frames (much less noise); temporal.enabled = false to disable
+    TemporalAccumulator temporal; ///< accumulates over frames (much less noise); temporal.enabled = false to disable
 
 protected:
     struct Shaders {
-        std::string prefix;      // "SSGI" -> SSGIBuffer + the accumulator's textures
-        std::string trace;       // fragment shaders
+        std::string prefix;      ///< "SSGI" -> SSGIBuffer + the accumulator's textures
+        std::string trace;       ///< fragment shaders
         std::string apply;
         ve::BlendMode applyBlend;
     };
     ScreenSpaceTracePass(std::string name, int order, float resolutionScale, Shaders shaders);
 
-    // Inputs for the shaders (bindless indices).
+    /// Inputs for the shaders (bindless indices).
     struct Inputs {
         uint32_t depth, normal, color;
     };
-    // Push constants for the trace, and for the apply (`result` = the
-    // accumulated buffer, `size` = its size in texels).
+    /// Push constants for the trace, and for the apply (`result` = the
+    /// accumulated buffer, `size` = its size in texels).
     virtual void pushTrace(ve::RenderContext& ctx, const Inputs& in) = 0;
     virtual void pushApply(ve::RenderContext& ctx, const Inputs& in, uint32_t result, glm::vec2 size) = 0;
 

@@ -315,7 +315,9 @@ void spawnLantern(ve::Scene& scene, const ve::Terrain& terrain, glm::vec2 at)
     light.castShadows = false;
 }
 
-void buildLevel(ve::Engine& engine)
+// The level's code side, run right after the scene file is in (before its
+// objects start): what the file doesn't hold.
+void setUpLevel(ve::Engine& engine, const std::vector<ve::GameObject*>& level)
 {
     ve::Renderer& r = engine.renderer();
     ve::Scene& scene = engine.scene();
@@ -326,9 +328,6 @@ void buildLevel(ve::Engine& engine)
     // and the player start, plus the vegetation: a Foliage object with one
     // FoliageType per prop (meshes from the MeshLibrary, registered first),
     // GrassLayers for grass and reeds, FoliageExclusions around the camp and huts.
-    registerPropMeshes();
-    const std::string sceneFile(ve::env::get("SAVANNA_SCENE").value_or("scenes/savanna.json")); // another scene file (tests)
-    std::vector<ve::GameObject*> level = ve::SceneSerializer::load(scene, sceneFile);
     ve::Terrain* terrainPtr = ve::Terrain::find(scene);
     for (ve::GameObject* o : level) {
         if (!terrainPtr) terrainPtr = dynamic_cast<ve::Terrain*>(o);
@@ -467,6 +466,15 @@ void buildLevel(ve::Engine& engine)
 }
 
 
+// Loads the level behind the loading screen: the scene file over a few frames
+// (parsed on the job pool, objects created a slice per frame), then setUpLevel.
+void queueLevel(ve::Engine& engine)
+{
+    registerPropMeshes(); // (before the file's Foliage starts: it asks the MeshLibrary)
+    const std::string sceneFile(ve::env::get("SAVANNA_SCENE").value_or("scenes/savanna.json")); // another scene file (tests)
+    engine.addSceneLoad(kLevelStep, sceneFile, [&engine](const std::vector<ve::GameObject*>& level) { setUpLevel(engine, level); });
+}
+
 // Behind the loading screen: leave the current level, build it again as the
 // scene file has it (whatever changed, e.g. collected pickups, comes back),
 // then `then` on top (the game state: new or from a save).
@@ -477,7 +485,7 @@ void reloadLevel(ve::Engine& engine, const char* thenLabel, std::function<void()
         engine.scene().clear();
         engine.renderer().decals().clear(); // (bullet holes belong to the old level)
     });
-    engine.addLoadStep(kLevelStep, [&engine] { buildLevel(engine); });
+    queueLevel(engine);
     engine.addLoadStep(thenLabel, std::move(then));
 }
 
@@ -536,7 +544,7 @@ int main()
         savanna::Multiplayer::startFromEnvironment(engine);
         engine.beginLoading(savanna::makeLoadingScene(), 0.5f);
         engine.addLoadStep("Preparing the sky", [&] { buildEffects(engine); });
-        engine.addLoadStep(kLevelStep, [&] { buildLevel(engine); });
+        queueLevel(engine);
         engine.addLoadStep("Waking up the camp", [&] {
             if (ve::env::get("SAVANNA_EDITORTEST")) engine.scene().spawn<savanna::EditorTest>();
         });

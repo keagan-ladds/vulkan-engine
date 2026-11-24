@@ -25,7 +25,7 @@ public:
     void onGui() override;
 
     float intensity = 0.06f;
-    float threshold = 1.0f; // luminance where bloom starts (soft knee below)
+    float threshold = 1.0f; ///< luminance where bloom starts (soft knee below)
     float knee = 0.6f;
     float radius = 1.0f;
 

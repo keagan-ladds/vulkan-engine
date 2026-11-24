@@ -12,7 +12,7 @@
 
 namespace ve::str {
 
-// Without leading/trailing spaces, tabs and newlines.
+/// Without leading/trailing spaces, tabs and newlines.
 inline std::string trim(std::string_view s)
 {
     const size_t b = s.find_first_not_of(" \t\n\r");
@@ -21,7 +21,7 @@ inline std::string trim(std::string_view s)
     return std::string(s.substr(b, e - b + 1));
 }
 
-// "a; b ;;c" -> {"a", "b", "c"}: split at `sep`, trimmed, empty items dropped.
+/// "a; b ;;c" -> {"a", "b", "c"}: split at `sep`, trimmed, empty items dropped.
 inline std::vector<std::string> split(std::string_view s, char sep)
 {
     std::vector<std::string> out;
@@ -35,7 +35,7 @@ inline std::vector<std::string> split(std::string_view s, char sep)
     return out;
 }
 
-// Binary data in text files (scene JSON): standard base64 with padding.
+/// Binary data in text files (scene JSON): standard base64 with padding.
 inline std::string base64Encode(const void* data, size_t size)
 {
     static constexpr char kChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

@@ -17,19 +17,27 @@ namespace ve {
 
 class Engine;
 
+/// ImGui integration: input, frames, fonts, and the F1 debug overlay (Engine::ui()).
 class UiLayer {
 public:
+    /// Engine: sets up ImGui for the window and renderer.
     void init(Engine& engine);
+    /// Engine: tears ImGui down.
     void shutdown();
 
+    /// Engine: feeds an SDL event to ImGui.
     void processEvent(const SDL_Event& event);
+    /// Engine: starts the ImGui frame (before gameplay's onGui).
     void beginFrame();
+    /// Draws the F1 overlay (stats, settings, profiler) when debugOverlay is on.
     void drawDebugOverlay();
-    // Ends the ImGui frame if the renderer skipped drawing (e.g. minimized).
+    /// Ends the ImGui frame if the renderer skipped drawing (e.g. minimized).
     void endFrameIfNotRendered();
 
-    bool debugOverlay = false;
+    bool debugOverlay = false;  ///< Show the F1 overlay.
+    /// ImGui wants the keyboard (a text field is active): gameplay shouldn't read keys.
     bool wantsKeyboard() const;
+    /// ImGui wants the mouse (pointer over a window): gameplay shouldn't read the mouse.
     bool wantsMouse() const;
 
 private:
@@ -41,8 +49,10 @@ private:
     int m_frameTimeIndex = 0;
 };
 
+/// The render pass that draws ImGui (and the game UI) over the frame.
 class UiPass : public RenderPass {
 public:
+    /// Draws `layer`'s ImGui frame; also runs during loading screens.
     explicit UiPass(UiLayer& layer) : RenderPass("UI", RenderStage::Overlay), m_layer(layer) { runsWhileLoading = true; }
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;

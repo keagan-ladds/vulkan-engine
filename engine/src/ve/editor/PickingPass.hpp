@@ -29,7 +29,7 @@ public:
 
     void request(glm::ivec2 pixel);
     bool pending() const { return m_state != State::Idle; }
-    // The picked object id (0 = background) once, after a request completed.
+    /// The picked object id (0 = background) once, after a request completed.
     std::optional<uint64_t> result();
 
 private:
@@ -37,7 +37,7 @@ private:
     State m_state = State::Idle;
     glm::ivec2 m_pixel{0};
     uint64_t m_renderedFrame = 0;
-    std::vector<uint64_t> m_owners; // draw index - 1 -> object id
+    std::vector<uint64_t> m_owners; ///< draw index - 1 -> object id
     TextureId m_ids = kNoTexture, m_depth = kNoTexture;
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     Buffer m_readback;

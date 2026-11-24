@@ -25,12 +25,12 @@ public:
     explicit ScreenSpaceReflectionsPass(float resolutionScale = 0.5f);
     void onGui() override;
 
-    float maxDistance = 40.0f;  // ray length (m)
-    float thickness = 0.6f;     // how far behind a depth sample still counts as a hit (m)
+    float maxDistance = 40.0f;  ///< ray length (m)
+    float thickness = 0.6f;     ///< how far behind a depth sample still counts as a hit (m)
     int steps = 32;
-    float maxRoughness = 0.6f;  // rougher surfaces get no SSR
+    float maxRoughness = 0.6f;  ///< rougher surfaces get no SSR
     float intensity = 1.0f;
-    float edgeFade = 0.1f;      // fraction of the screen to fade reflections over at the edges
+    float edgeFade = 0.1f;      ///< fraction of the screen to fade reflections over at the edges
 
 protected:
     void pushTrace(ve::RenderContext& ctx, const Inputs& in) override;

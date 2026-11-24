@@ -45,27 +45,31 @@
 namespace ve {
 
 namespace detail {
-Scene& mainScene(); // Engine::get().scene() (out of line: keeps Engine.hpp out of this header)
+Scene& mainScene(); ///< Engine::get().scene() (out of line: keeps Engine.hpp out of this header)
 }
 
 template <class T = GameObject>
+/// A remembered GameObject, by id: safe across frames (get() returns null once
+/// the object is destroyed, where a raw pointer would dangle) and across
+/// save / load and the network (ids are stable).
+/// @tparam T the object's class (GameObject or a subclass); get() checks it.
 class ObjectRef {
     // (T may be only forward-declared where an ObjectRef<T> member is
     // declared, so T is checked in get(), not here.)
 public:
     ObjectRef() = default;
-    // From an object (null -> empty). Implicit, so `m_ref = &obj;` works.
+    /// From an object (null -> empty). Implicit, so `m_ref = &obj;` works.
     ObjectRef(const T* object) : m_id(object ? object->id() : 0) {}
-    // From a raw id (e.g. one read from a file). 0 = empty.
+    /// From a raw id (e.g. one read from a file). 0 = empty.
     explicit ObjectRef(uint64_t id) : m_id(id) {}
-    // An ObjectRef<Derived> converts to ObjectRef<Base>.
+    /// An ObjectRef<Derived> converts to ObjectRef<Base>.
     template <class U>
         requires(std::is_base_of_v<T, U> && !std::is_same_v<T, U>)
     ObjectRef(const ObjectRef<U>& other) : m_id(other.id())
     {
     }
 
-    // The object if it's still alive in `scene` (and still a T), else null.
+    /// The object if it's still alive in `scene` (and still a T), else null.
     T* get(const Scene& scene) const
     {
         static_assert(std::is_base_of_v<GameObject, T>, "ObjectRef<T>: T must be a GameObject (use ComponentRef for components)");
@@ -73,31 +77,34 @@ public:
         if constexpr (std::is_same_v<T, GameObject>) return o;
         else return dynamic_cast<T*>(o);
     }
-    // The same in the engine's main scene (see the header comment).
+    /// The same in the engine's main scene (see the header comment).
     T* get() const { return get(detail::mainScene()); }
 
+    /// The remembered id (0 = empty).
     uint64_t id() const { return m_id; }
+    /// Forgets the object (empty() becomes true).
     void reset() { m_id = 0; }
-    // Nothing remembered. (Not the same as "alive": a non-empty ref can still
-    // resolve to null once the object is destroyed.)
+    /// Nothing remembered. (Not the same as "alive": a non-empty ref can still
+    /// resolve to null once the object is destroyed.)
     bool empty() const { return m_id == 0; }
 
+    /// Same id.
     bool operator==(const ObjectRef&) const = default;
 
 private:
     uint64_t m_id = 0;
 };
 
-// A remembered component. An address alone isn't enough: once a component is
-// freed, the allocator may put a new one (even of the same type) at the same
-// address. So the ref also keeps the component's serial (unique per run,
-// never reused) and only trusts the pointer after finding that exact address
-// in the owner's live components() AND checking the serial there.
+/// A remembered component. An address alone isn't enough: once a component is
+/// freed, the allocator may put a new one (even of the same type) at the same
+/// address. So the ref also keeps the component's serial (unique per run,
+/// never reused) and only trusts the pointer after finding that exact address
+/// in the owner's live components() AND checking the serial there.
 template <class T>
 class ComponentRef {
 public:
     ComponentRef() = default;
-    // From an attached component (null or not yet attached -> empty).
+    /// From an attached component (null or not yet attached -> empty).
     ComponentRef(const T* component)
     {
         if (!component || component->serial() == 0) return; // serial 0: not attached to an object yet
@@ -106,7 +113,7 @@ public:
         m_serial = component->serial();
     }
 
-    // The component if it's still attached to its (live) owner in `scene`.
+    /// The component if it's still attached to its (live) owner in `scene`.
     T* get(const Scene& scene) const
     {
         static_assert(std::is_base_of_v<Component, T>, "ComponentRef<T>: T must be a Component");
@@ -121,18 +128,22 @@ public:
         }
         return nullptr;
     }
+    /// The same in the engine's main scene.
     T* get() const { return get(detail::mainScene()); }
 
-    // The owning object's ref (its id), e.g. to find it again.
+    /// The owning object's ref (its id), e.g. to find it again.
     const ObjectRef<>& owner() const { return m_owner; }
+    /// Forgets the component (empty() becomes true).
     void reset() { *this = {}; }
+    /// Nothing remembered (a non-empty ref can still resolve to null once the component is gone).
     bool empty() const { return m_serial == 0; }
 
+    /// Same component (owner, address and serial).
     bool operator==(const ComponentRef&) const = default;
 
 private:
     ObjectRef<> m_owner;
-    const Component* m_component = nullptr; // never dereferenced before verification
+    const Component* m_component = nullptr; ///< never dereferenced before verification
     uint64_t m_serial = 0;
 };
 

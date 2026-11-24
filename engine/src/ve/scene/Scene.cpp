@@ -253,6 +253,11 @@ void Scene::startPending(float budgetMs)
     // earlier frames: inactive, or with a disabled component) are visited.
     // Anything queued during this loop (start() adding components) lands in
     // the fresh m_unstarted and is handled next frame.
+    // Held (a scene loading over frames): they wait, still queued.
+    if (m_startHolds > 0) {
+        m_startsDeferred = !m_unstarted.empty();
+        return;
+    }
     std::vector<GameObject*>& work = m_startScratch;
     work.clear();
     work.swap(m_unstarted);

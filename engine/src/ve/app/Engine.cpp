@@ -22,6 +22,7 @@
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Reflection.hpp"
 #include "ve/scene/Scene.hpp"
+#include "ve/scene/SceneSerializer.hpp"
 #include "ve/ui/UiLayer.hpp"
 #include "ve/world/Terrain.hpp"
 #include "ve/world/Vegetation.hpp"
@@ -347,6 +348,35 @@ void Engine::addLoadStep(std::string name, std::function<void()> step)
     ++m_loadStepsTotal;
 }
 
+void Engine::addLoadStepOverFrames(std::string name, std::function<float()> step)
+{
+    if (!loading()) {
+        while (step() < 1.0f) {
+        }
+        return;
+    }
+    LoadStep s;
+    s.name = std::move(name);
+    s.overFrames = std::move(step);
+    m_loadSteps.push_back(std::move(s));
+    ++m_loadStepsTotal;
+}
+
+void Engine::addSceneLoad(std::string name, std::filesystem::path scenePath, std::function<void(const std::vector<GameObject*>&)> then)
+{
+    // Parsing starts when the step does (the file may not exist yet when it's queued, e.g. written by an earlier step).
+    std::shared_ptr<SceneLoad> load;
+    addLoadStepOverFrames(std::move(name), [this, load, scenePath = std::move(scenePath), then = std::move(then)]() mutable -> float {
+        if (!load) load = SceneSerializer::loadAsync(*m_scene, scenePath);
+        // Outside loading: no frames to spread it over.
+        const float p = load->step(loading() ? kLoadingStartBudgetMs : 0.0f);
+        if (!load->done()) return std::min(p, 0.999f);
+        if (then) then(load->roots());
+        load.reset();
+        return 1.0f;
+    });
+}
+
 void Engine::addLoadTask(std::string name, std::function<float()> progress)
 {
     if (loading()) m_loadTasks.push_back({std::move(name), std::move(progress), 0.0f});
@@ -358,6 +388,7 @@ float Engine::loadProgress() const
     const size_t parts = m_loadStepsTotal + m_loadTasks.size();
     if (parts == 0) return loading() ? 0.0f : 1.0f;
     float done = float(m_loadStepsDone);
+    if (!m_loadSteps.empty() && m_loadSteps.front().overFrames) done += m_loadSteps.front().progress; // (one in progress)
     for (const LoadTask& t : m_loadTasks) done += t.last;
     return std::clamp(done / float(parts), 0.0f, 1.0f);
 }
@@ -378,13 +409,24 @@ void Engine::runLoadStep()
 {
     // One main-thread step per frame (the screen is redrawn in between).
     if (m_loadSteps.empty()) return;
+    LoadStep& front = m_loadSteps.front();
+    m_loadStatus = front.name;
+    if (!front.started) {
+        front.started = true;
+        m_loadEvents.emit({LoadEvent::Type::StepStarted, front.name, 0.0f, loadProgress()});
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    if (front.overFrames) {
+        front.progress = std::clamp(front.overFrames(), 0.0f, 1.0f);
+        front.seconds += std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+        if (front.progress < 1.0f) return; // (again next frame)
+    } else {
+        front.run();
+        front.seconds += std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+    }
     LoadStep step = std::move(m_loadSteps.front());
     m_loadSteps.erase(m_loadSteps.begin());
-    m_loadStatus = step.name;
-    m_loadEvents.emit({LoadEvent::Type::StepStarted, step.name, 0.0f, loadProgress()});
-    const auto t0 = std::chrono::steady_clock::now();
-    step.run();
-    const float took = std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+    const float took = step.seconds; // (over frames: the time spent in it, not the frames in between)
     log::info("Loading: '{}' took {:.2f} s", step.name, took);
     ++m_loadStepsDone;
     m_loadEvents.emit({LoadEvent::Type::StepFinished, step.name, took, loadProgress()});

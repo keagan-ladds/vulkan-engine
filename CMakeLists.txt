@@ -53,6 +53,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)   # Vulkan, SDL2, glm, + fetched VMA/ImGui/cgltf/stb/miniaudio
 include(Shaders)        # ve_compile_shaders()
 include(Game)           # ve_setup_game(), ve_set_warnings()
+include(Docs)           # 'docs' target: API reference (when Doxygen is installed)
 
 add_subdirectory(engine)
 add_subdirectory(effects)

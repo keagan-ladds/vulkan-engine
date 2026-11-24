@@ -41,22 +41,22 @@ class Gizmo {
 public:
     struct Options {
         GizmoMode mode = GizmoMode::Translate;
-        bool local = false;     // axes follow the object's rotation (scale always uses local axes)
+        bool local = false;     ///< axes follow the object's rotation (scale always uses local axes)
         bool snap = false;
-        float snapMove = 0.5f;  // m
-        float snapAngle = 15.0f; // degrees
+        float snapMove = 0.5f;  ///< m
+        float snapAngle = 15.0f; ///< degrees
         float snapScale = 0.1f;
     };
     enum class Event { None, Began, Changed, Ended };
 
-    // Draws the handles and handles the mouse. Call every frame while an object is selected.
+    /// Draws the handles and handles the mouse. Call every frame while an object is selected.
     Event manipulate(ImDrawList* list, const ViewProjector& view, Transform& target, const Options& options);
     bool hovered() const { return m_hover >= 0; }
     bool active() const { return m_active >= 0; }
 
 private:
-    int m_hover = -1;  // handle under the mouse
-    int m_active = -1; // handle being dragged
+    int m_hover = -1;  ///< handle under the mouse
+    int m_active = -1; ///< handle being dragged
     glm::vec3 m_startPos{0.0f}, m_startScale{1.0f}, m_startHit{0.0f};
     glm::quat m_startRot{1, 0, 0, 0};
     glm::vec3 m_axis{0.0f}, m_planeNormal{0.0f};

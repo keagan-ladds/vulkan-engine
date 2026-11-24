@@ -40,49 +40,63 @@ class RenderContext;
 struct FrameData;
 class InstanceSystem;
 
-// One level of detail. Selection is by screen size if the group's first LOD
-// sets screenSize > 0, otherwise by distance.
+/// One level of detail. Selection is by screen size if the group's first LOD
+/// sets screenSize > 0, otherwise by distance.
 struct InstanceLod {
-    std::shared_ptr<Mesh> mesh;
-    std::vector<std::shared_ptr<Material>> materials; // per submesh material slot (like MeshRenderer)
-    // Screen-size mode: this LOD is used while the instance's bounding radius
-    // covers at least this fraction of half the screen height (0.1 ~ 10%).
-    // The last LOD's value is ignored.
+    std::shared_ptr<Mesh> mesh;  ///< The LOD's mesh.
+    std::vector<std::shared_ptr<Material>> materials; ///< per submesh material slot (like MeshRenderer)
+    /// Screen-size mode: this LOD is used while the instance's bounding radius
+    /// covers at least this fraction of half the screen height (0.1 ~ 10%).
+    /// The last LOD's value is ignored.
     float screenSize = 0.0f;
-    // Distance mode: camera distance up to which this LOD is used.
+    /// Distance mode: camera distance up to which this LOD is used.
     float maxDistance = FLT_MAX;
 };
 
+/// How an instance group looks and is culled (Renderer::createInstanceGroup).
 struct InstanceGroupDesc {
-    std::string name = "instances";
-    std::vector<InstanceLod> lods; // 1..4, nearest first
-    bool castShadows = true;       // directional cascades (point-light shadows skip instances)
-    float cullDistance = FLT_MAX;  // not drawn beyond this camera distance
-    float shadowDistance = FLT_MAX; // no shadow casting beyond this camera distance (small props: keep it short)
+    std::string name = "instances";  ///< Shown in stats and debug UI.
+    std::vector<InstanceLod> lods; ///< 1..4, nearest first
+    bool castShadows = true;       ///< directional cascades (point-light shadows skip instances)
+    float cullDistance = FLT_MAX;  ///< not drawn beyond this camera distance
+    float shadowDistance = FLT_MAX; ///< no shadow casting beyond this camera distance (small props: keep it short)
 };
 
+/// Thousands of copies of one mesh (with LODs), culled and drawn on the GPU:
+/// trees, rocks, grass clumps. Add instances by transform; each gets a handle.
 class InstanceGroup {
 public:
+    /// Identifies an instance in its group (stable until removed).
     using Handle = uint32_t;
+    /// An invalid handle.
     static constexpr Handle kInvalid = 0xFFFFFFFFu;
 
     ~InstanceGroup();
     InstanceGroup(const InstanceGroup&) = delete;
     InstanceGroup& operator=(const InstanceGroup&) = delete;
 
-    // Adds an instance; throws if the group is full (see capacity()).
+    /// Adds an instance; throws if the group is full (see capacity()).
     Handle add(const glm::mat4& transform, const glm::vec4& custom = glm::vec4(0.0f));
+    /// Moves an instance.
     void set(Handle h, const glm::mat4& transform);
+    /// Sets an instance's custom vec4 (shaders read it: tint, wind phase...).
     void setCustom(Handle h, const glm::vec4& custom);
+    /// Removes an instance (its handle becomes free).
     void remove(Handle h);
+    /// Removes every instance.
     void clear();
+    /// An instance's transform.
     glm::mat4 transform(Handle h) const;
 
+    /// Number of instances.
     uint32_t count() const { return static_cast<uint32_t>(m_data.size()); }
+    /// Maximum number of instances (fixed when the group was created).
     uint32_t capacity() const { return m_capacity; }
-    // Hidden groups keep their instances but cull and draw nothing.
+    /// Hidden groups keep their instances but cull and draw nothing.
     void setHidden(bool hidden) { m_hidden = hidden; }
+    /// Whether the group is hidden.
     bool hidden() const { return m_hidden; }
+    /// The description it was created with.
     const InstanceGroupDesc& desc() const { return m_desc; }
 
 private:
@@ -93,63 +107,74 @@ private:
     InstanceSystem* m_system;
     InstanceGroupDesc m_desc;
     uint32_t m_capacity;
-    uint32_t m_firstInstance; // offset in the global instance buffer
-    std::vector<GpuInstance> m_data;          // CPU mirror, [0, count)
-    std::vector<uint32_t> m_handleToSlot;     // handle -> slot (kInvalid if free)
+    uint32_t m_firstInstance; ///< offset in the global instance buffer
+    std::vector<GpuInstance> m_data;          ///< CPU mirror, [0, count)
+    std::vector<uint32_t> m_handleToSlot;     ///< handle -> slot (kInvalid if free)
     std::vector<Handle> m_slotToHandle;
     std::vector<Handle> m_freeHandles;
-    uint32_t m_dirtyBegin = 0, m_dirtyEnd = 0; // slots to upload
+    uint32_t m_dirtyBegin = 0, m_dirtyEnd = 0; ///< slots to upload
     glm::vec4 m_localSphere{0.0f};
     bool m_hidden = false;
-    uint32_t drawnCount() const { return m_hidden ? 0u : count(); } // what the GPU culls
+    uint32_t drawnCount() const { return m_hidden ? 0u : count(); } ///< what the GPU culls
 };
 
+/// Instancing counters (F1 overlay, benchmarks).
 struct InstanceStats {
-    uint32_t groups = 0;
-    uint32_t instances = 0;
-    uint32_t batches = 0;
-    uint32_t visibleCamera = 0; // instances drawn for the camera (all batches), from the GPU, 1-2 frames old
-    uint32_t visibleShadow = 0; // instance draws in shadow cascades
-    uint32_t visibleLod[4] = {}; // camera instance draws per LOD level (crossfading instances count twice)
-    uint32_t drawCalls = 0;     // indirect draws issued last frame
+    uint32_t groups = 0;  ///< Instance groups.
+    uint32_t instances = 0;  ///< Instances in all groups.
+    uint32_t batches = 0;  ///< (group, LOD, submesh) batches: one indirect draw each per view.
+    uint32_t visibleCamera = 0; ///< instances drawn for the camera (all batches), from the GPU, 1-2 frames old
+    uint32_t visibleShadow = 0; ///< instance draws in shadow cascades
+    uint32_t visibleLod[4] = {}; ///< camera instance draws per LOD level (crossfading instances count twice)
+    uint32_t drawCalls = 0;     ///< indirect draws issued last frame
 };
 
-// Engine-internal manager (owned by the Renderer).
+/// Engine-internal manager (owned by the Renderer).
 class InstanceSystem {
 public:
-    // Cull views: the camera + every possible directional shadow cascade, so
-    // shadowed lights added at runtime (applySettings) still get instances.
+    /// Cull views: the camera + every possible directional shadow cascade, so
+    /// shadowed lights added at runtime (applySettings) still get instances.
     static constexpr uint32_t kMaxViews = 1 + kMaxDirectionalLights * kMaxCascades;
 
+    /// Allocates the instance buffers (sizes fixed for the run).
     void init(Renderer& renderer, uint32_t maxInstances, uint32_t maxVisiblePerView);
+    /// Frees the GPU buffers.
     void shutdown();
 
+    /// A new group with room for `capacity` instances (Renderer::createInstanceGroup).
     std::shared_ptr<InstanceGroup> createGroup(InstanceGroupDesc desc, uint32_t capacity);
 
-    // Per frame (Renderer): build GPU data for this frame slot, assign cull views.
+    /// Per frame (Renderer): build GPU data for this frame slot, assign cull views.
     void prepare(uint32_t slot, FrameData& frame);
-    // In InstanceCullPass: upload changes, reset commands, cull.
+    /// In InstanceCullPass: upload changes, reset commands, cull.
     void recordCulling(VkCommandBuffer cmd, uint32_t slot);
-    // Occlusion: last frame's depth pyramid (HiZPass) for this frame's camera
-    // cull; `levels` = bindless indices, empty = no occlusion culling.
+    /// Occlusion: last frame's depth pyramid (HiZPass) for this frame's camera
+    /// cull; `levels` = bindless indices, empty = no occlusion culling.
     void setOcclusion(const std::array<uint32_t, kHiZLevels>* levels) { m_hiz = levels ? *levels : std::array<uint32_t, kHiZLevels>{}; m_hizValid = levels != nullptr; }
-    // In draw passes: one indirect draw per batch for `cullView`.
+    /// In draw passes: one indirect draw per batch for `cullView`.
     void draw(RenderContext& ctx, uint32_t cullView, PassKind kind, uint32_t shadowViewIndex);
-    // After the frame: copy draw counts for stats; read them back when the slot comes around again.
+    /// After the frame: copy draw counts for stats; read them back when the slot comes around again.
     void recordReadback(VkCommandBuffer cmd, uint32_t slot);
+    /// Reads back the draw counts recorded for `slot` (stats).
     void collectStats(uint32_t slot);
 
+    /// Counters of the last frames.
     const InstanceStats& stats() const { return m_stats; }
+    /// Whether there are no groups.
     bool empty() const { return m_groups.empty(); }
 
-    // Descriptor bindings for the global set.
+    /// Descriptor bindings for the global set.
     VkBuffer instanceBuffer() const { return m_instances.handle; }
+    /// Visible instance indices written by culling.
     VkBuffer visibleBuffer() const { return m_visible.handle; }
+    /// Indirect draw commands written by culling.
     VkBuffer commandBuffer() const { return m_commands.handle; }
+    /// Per-frame group data.
     VkBuffer groupBuffer(uint32_t slot) const { return m_slots[slot].groups.handle; }
+    /// Per-frame cull views.
     VkBuffer viewBuffer(uint32_t slot) const { return m_slots[slot].views.handle; }
 
-    // InstanceGroup callbacks.
+    /// InstanceGroup callbacks.
     void release(InstanceGroup* group);
 
 private:
@@ -159,20 +184,23 @@ private:
         const Mesh* mesh;
         uint32_t firstIndex, indexCount;
         Material* material;
-        uint32_t visibleOffset; // within a view's region of the visible buffer
+        uint32_t visibleOffset; ///< within a view's region of the visible buffer
     };
     struct Slot {
-        Buffer groups;   // GpuInstanceGroup[]
-        Buffer views;    // GpuCullView[]
-        Buffer commands; // DrawIndexedIndirect template (instanceCount = 0)
-        Buffer staging;  // instance uploads
-        Buffer readback; // command copies for stats
+        Buffer groups;   ///< GpuInstanceGroup[]
+        Buffer views;    ///< GpuCullView[]
+        Buffer commands; ///< DrawIndexedIndirect template (instanceCount = 0)
+        Buffer staging;  ///< instance uploads
+        Buffer readback; ///< command copies for stats
+        /// One staging -> instance buffer copy.
         struct Copy {
-            VkDeviceSize src, dst, size;
+            VkDeviceSize src;    ///< Offset in the staging buffer.
+            VkDeviceSize dst;    ///< Offset in the instance buffer.
+            VkDeviceSize size;   ///< Bytes.
         };
         std::vector<Copy> uploads;
         uint32_t batchCount = 0, viewCount = 0;
-        std::vector<uint8_t> batchLods; // LOD level of each batch (stats)
+        std::vector<uint8_t> batchLods; ///< LOD level of each batch (stats)
         bool hasReadback = false;
     };
     struct Range {
@@ -187,21 +215,21 @@ private:
     uint32_t m_maxInstances = 0, m_maxVisiblePerView = 0;
     static constexpr uint32_t kMaxGroups = 1024;
     static constexpr uint32_t kMaxBatches = 2048;
-    Buffer m_instances; // GpuInstance[maxInstances], device local
-    Buffer m_visible;   // uint[m_visibleCapacity]: active views x m_visiblePerView, grown on demand
-    Buffer m_commands;  // DrawIndexedIndirect[kMaxViews * kMaxBatches]
+    Buffer m_instances; ///< GpuInstance[maxInstances], device local
+    Buffer m_visible;   ///< uint[m_visibleCapacity]: active views x m_visiblePerView, grown on demand
+    Buffer m_commands;  ///< DrawIndexedIndirect[kMaxViews * kMaxBatches]
     uint32_t m_visibleCapacity = 0;
     Slot m_slots[2];
     std::vector<InstanceGroup*> m_groups;
     std::vector<Batch> m_batches;
-    // Batches each kind of pass draws (opaque/cutout for the camera, casters
-    // for shadows), sorted by pipeline then mesh to minimise binds.
+    /// Batches each kind of pass draws (opaque/cutout for the camera, casters
+    /// for shadows), sorted by pipeline then mesh to minimise binds.
     std::vector<uint32_t> m_forwardBatches, m_shadowBatches;
     std::vector<Range> m_freeRanges;
     uint32_t m_visiblePerView = 0;
     uint32_t m_activeViews = 1;
     uint32_t m_drawsThisFrame = 0;
-    std::vector<VkBufferCopy> m_copyRegions; // recordCulling scratch (reused every frame)
+    std::vector<VkBufferCopy> m_copyRegions; ///< recordCulling scratch (reused every frame)
     float m_lodScale = 1.0f;
     std::array<uint32_t, kHiZLevels> m_hiz{};
     bool m_hizValid = false;

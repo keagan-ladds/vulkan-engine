@@ -38,17 +38,17 @@ namespace ve {
 class FullscreenPass : public RenderPass {
 public:
     struct Desc {
-        std::string fragment;                 // SPIR-V name, e.g. "composite.frag"
-        std::string output = "SceneColor";   // graph texture to render into ("Backbuffer" for the swapchain)
-        std::vector<std::string> inputs;      // graph textures sampled by the shader
+        std::string fragment;                 ///< SPIR-V name, e.g. "composite.frag"
+        std::string output = "SceneColor";   ///< graph texture to render into ("Backbuffer" for the swapchain)
+        std::vector<std::string> inputs;      ///< graph textures sampled by the shader
         BlendMode blend = BlendMode::Opaque;
         bool clear = false;
         glm::vec4 clearColor{0.0f};
-        // Optional read-only depth test, e.g. {"SceneDepth", VK_COMPARE_OP_GREATER_OR_EQUAL}
-        // with fullscreen.vert at depth 0 => only pixels where nothing was drawn (sky).
+        /// Optional read-only depth test, e.g. {"SceneDepth", VK_COMPARE_OP_GREATER_OR_EQUAL}
+        /// with fullscreen.vert at depth 0 => only pixels where nothing was drawn (sky).
         std::string depth;
         VkCompareOp depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
-        bool samplesShadows = false;          // declare reads of the shadow maps
+        bool samplesShadows = false;          ///< declare reads of the shadow maps
     };
 
     FullscreenPass(std::string name, RenderStage stage, int order, Desc desc);
@@ -58,7 +58,7 @@ public:
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
 
-    // Bindless index of input `i` (as listed in Desc::inputs).
+    /// Bindless index of input `i` (as listed in Desc::inputs).
     uint32_t inputIndex(size_t i) const;
     TextureId inputTexture(size_t i) const { return m_inputs[i]; }
 

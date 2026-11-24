@@ -50,45 +50,45 @@ class Renderer;
 
 struct LodGeometry {
     MeshData data;
-    std::vector<Submesh> submeshes;                    // materialSlot indexes `materials`
+    std::vector<Submesh> submeshes;                    ///< materialSlot indexes `materials`
     std::vector<std::shared_ptr<Material>> materials;
 };
 
 struct LodVariant {
     std::string name;
-    std::vector<LodGeometry> levels; // nearest first
-    MeshData collider;               // merged *_COL shapes (empty = none authored)
+    std::vector<LodGeometry> levels; ///< nearest first
+    MeshData collider;               ///< merged *_COL shapes (empty = none authored)
 };
 
 struct LodModel {
     std::vector<LodVariant> variants;
-    uint32_t levelCount() const;     // most levels of any variant
+    uint32_t levelCount() const;     ///< most levels of any variant
 };
 
-// Throws if a file can't be loaded or holds no meshes.
+/// Throws if a file can't be loaded or holds no meshes.
 LodModel loadLodModel(AssetManager& assets, const std::string& paths);
 LodModel lodModelFrom(const Model& model);
 
-// What buildLodChain uploads.
+/// What buildLodChain uploads.
 struct LodChainDesc {
-    std::string name;                     // mesh debug names: "<name> LOD<i>"
-    std::vector<LodGeometry> levels;      // nearest first; at least one
-    // More levels simplified (meshoptimizer) from levels[0], appended after
-    // `levels` (only for a single-submesh level 0). They use its materials.
+    std::string name;                     ///< mesh debug names: "<name> LOD<i>"
+    std::vector<LodGeometry> levels;      ///< nearest first; at least one
+    /// More levels simplified (meshoptimizer) from levels[0], appended after
+    /// `levels` (only for a single-submesh level 0). They use its materials.
     std::vector<SimplifyOptions> simplify;
-    size_t maxLevels = SIZE_MAX;          // mesh levels kept (the impostor doesn't count)
-    bool impostor = false;                // an octahedral impostor of level 0 as the last level
-    ImpostorSettings impostorSettings;    // its bake settings (atlas size, edge colour...)
-    // Switch thresholds per level (impostor included): only screenSize and
-    // maxDistance are read; levels without an entry get InstanceLod's defaults.
+    size_t maxLevels = SIZE_MAX;          ///< mesh levels kept (the impostor doesn't count)
+    bool impostor = false;                ///< an octahedral impostor of level 0 as the last level
+    ImpostorSettings impostorSettings;    ///< its bake settings (atlas size, edge colour...)
+    /// Switch thresholds per level (impostor included): only screenSize and
+    /// maxDistance are read; levels without an entry get InstanceLod's defaults.
     std::vector<InstanceLod> switches;
 };
 
-// Optimizes and uploads every level (and bakes the impostor). Shared by the
-// FoliageType scene component, games' hand-built props and the templates.
+/// Optimizes and uploads every level (and bakes the impostor). Shared by the
+/// FoliageType scene component, games' hand-built props and the templates.
 std::vector<InstanceLod> buildLodChain(Renderer& renderer, LodChainDesc desc);
 
-// "LOD3" -> 3 (and base name), -1 if the name has no LOD suffix.
+/// "LOD3" -> 3 (and base name), -1 if the name has no LOD suffix.
 int parseLodSuffix(const std::string& nodeName, std::string* base = nullptr);
 
 } // namespace ve

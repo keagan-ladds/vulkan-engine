@@ -23,24 +23,24 @@ class Renderer;
 
 class Texture {
 public:
-    // `pixels` must be tightly packed. mipmaps = generate a full mip chain.
+    /// `pixels` must be tightly packed. mipmaps = generate a full mip chain.
     static std::shared_ptr<Texture> create2D(Renderer& renderer, uint32_t width, uint32_t height, VkFormat format,
                                              const void* pixels, size_t byteSize, bool mipmaps = true,
                                              SamplerType sampler = SamplerType::LinearRepeat, std::string name = {});
-    // 3D volume texture (e.g. cloud noise). No mips.
+    /// 3D volume texture (e.g. cloud noise). No mips.
     static std::shared_ptr<Texture> create3D(Renderer& renderer, uint32_t width, uint32_t height, uint32_t depth,
                                              VkFormat format, const void* pixels, size_t byteSize,
                                              SamplerType sampler = SamplerType::LinearRepeat, std::string name = {});
-    // Takes ownership of an image that's already in READ_ONLY_OPTIMAL layout
-    // (e.g. rendered on the GPU, like impostor atlases).
+    /// Takes ownership of an image that's already in READ_ONLY_OPTIMAL layout
+    /// (e.g. rendered on the GPU, like impostor atlases).
     static std::shared_ptr<Texture> adopt(Renderer& renderer, const Image& image, SamplerType sampler,
                                           std::string name = {});
-    // A 2D texture with a prebuilt mip chain (e.g. a cooked, block-compressed
-    // one): `data` holds every level, level i starting at levelOffsets[i].
+    /// A 2D texture with a prebuilt mip chain (e.g. a cooked, block-compressed
+    /// one): `data` holds every level, level i starting at levelOffsets[i].
     static std::shared_ptr<Texture> createWithLevels(Renderer& renderer, uint32_t width, uint32_t height, VkFormat format,
                                                      const void* data, size_t byteSize, std::span<const VkDeviceSize> levelOffsets,
                                                      SamplerType sampler, VkComponentMapping swizzle = {}, std::string name = {});
-    // Single-colour 1x1 texture.
+    /// Single-colour 1x1 texture.
     static std::shared_ptr<Texture> solid(Renderer& renderer, uint8_t r, uint8_t g, uint8_t b, uint8_t a,
                                           bool srgb, std::string name = {});
     ~Texture();
@@ -48,13 +48,13 @@ public:
     Texture(const Texture&) = delete;
     Texture& operator=(const Texture&) = delete;
 
-    uint32_t index() const { return m_index; } // bindless slot
+    uint32_t index() const { return m_index; } ///< bindless slot
     const Image& image() const { return m_image; }
     uint32_t width() const { return m_image.extent.width; }
     uint32_t height() const { return m_image.extent.height; }
     const std::string& name() const { return m_name; }
 
-    // Change filtering/wrapping after creation.
+    /// Change filtering/wrapping after creation.
     void setSampler(SamplerType sampler);
 
 private:

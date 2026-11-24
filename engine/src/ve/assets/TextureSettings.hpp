@@ -43,34 +43,42 @@
 
 namespace ve {
 
+/// What an image holds: colour (sRGB, BC7), data (linear: masks, roughness;
+/// BC4 / BC7) or a tangent-space normal map (BC5, Z rebuilt in shaders).
 enum class TextureType { Color, Data, Normal };
+/// Texture filtering: smooth, or pixel art.
 enum class TextureFilter { Linear, Nearest };
+/// What happens past the 0..1 UV range.
 enum class TextureWrap { Repeat, Clamp };
 
+/// How an image file loads and cooks: decided by the file (`<image>.texture`,
+/// else its name), not by the code that loads it (see the top of this file).
 struct TextureSettings {
-    TextureType type = TextureType::Color;
-    bool mipmaps = true;
-    bool compress = true;
-    uint32_t maxSize = 0;
-    TextureFilter filter = TextureFilter::Linear;
-    TextureWrap wrap = TextureWrap::Repeat;
+    TextureType type = TextureType::Color;        ///< Colour, data or normal map.
+    bool mipmaps = true;                          ///< Build the mip chain (off: UI images, pixel art).
+    bool compress = true;                         ///< Block-compress when cooked (off: RGBA8).
+    uint32_t maxSize = 0;                         ///< Downscale so neither side exceeds this (pixels); 0 = keep.
+    TextureFilter filter = TextureFilter::Linear; ///< Sampler filtering.
+    TextureWrap wrap = TextureWrap::Repeat;       ///< Sampler addressing.
 
+    /// Whether the texture is sampled as sRGB (colour images only).
     bool srgb() const { return type == TextureType::Color; }
+    /// The bindless sampler for filter + wrap.
     SamplerType sampler() const;
 
-    // The settings of an image file: its .texture file if there is one
-    // (fields it leaves out: from the name / defaults), else by name.
+    /// The settings of an image file: its .texture file if there is one
+    /// (fields it leaves out: from the name / defaults), else by name.
     static TextureSettings forImage(const std::filesystem::path& imageFile);
-    // The type the file name suggests (the rule above).
+    /// The type the file name suggests (the rule above).
     static TextureType typeFromName(const std::filesystem::path& imageFile);
-    // <image>.texture
+    /// <image>.texture
     static std::filesystem::path settingsFile(const std::filesystem::path& imageFile);
 
-    nlohmann::json toJson() const;
-    void applyJson(const nlohmann::json& j); // sets the fields j has
+    nlohmann::json toJson() const;           ///< The settings as a .texture file's JSON.
+    void applyJson(const nlohmann::json& j); ///< Sets the fields `j` has (others keep their values).
 
-    // Changes when the cooked result would differ (type, mipmaps, compress,
-    // maxSize; not filter / wrap, which only pick the sampler).
+    /// Changes when the cooked result would differ (type, mipmaps, compress,
+    /// maxSize; not filter / wrap, which only pick the sampler).
     uint64_t cookHash() const;
 };
 

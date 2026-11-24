@@ -53,41 +53,45 @@ class AssetManager;
 class Renderer;
 class TypeRegistry;
 
+/// A `.material` file's contents (see the top of this file): a StandardMaterial
+/// described as data. AssetManager::loadMaterial loads and applies it.
 struct MaterialAsset {
-    using Json = nlohmann::json;
+    using Json = nlohmann::json; ///< (nlohmann::json)
 
-    StandardMaterial::Mode mode = StandardMaterial::Mode::Opaque; // Cutout: alpha test, double sided
-    std::string vertexShader;   // empty = standard.vert
-    std::string fragmentShader; // empty = standard.frag
+    StandardMaterial::Mode mode = StandardMaterial::Mode::Opaque; ///< Cutout: alpha test, double sided
+    std::string vertexShader;   ///< empty = standard.vert
+    std::string fragmentShader; ///< empty = standard.frag
 
-    glm::vec4 baseColor{1.0f};
-    float roughness = 0.8f;
-    float metallic = 0.0f;
-    float normalStrength = 1.0f;
-    float alphaCutoff = 0.5f; // Cutout only
-    glm::vec3 emissive{0.0f};
-    float emissiveIntensity = 1.0f;
-    glm::vec2 uvScale{1.0f};
-    float vertexColorWeight = 1.0f; // multiply albedo by vertex colour (0 = ignore it, e.g. colours used as paint masks)
-    bool receiveDecals = true;
+    glm::vec4 baseColor{1.0f};    ///< Linear RGBA multiplier of the albedo (alpha: cutout / transparency).
+    float roughness = 0.8f;       ///< 0 = mirror-like, 1 = fully rough (multiplies the texture's G).
+    float metallic = 0.0f;        ///< 0 = dielectric, 1 = metal (multiplies the texture's B).
+    float normalStrength = 1.0f;  ///< Normal-map strength (0 = flat, 1 = as authored).
+    float alphaCutoff = 0.5f; ///< Cutout only
+    glm::vec3 emissive{0.0f};        ///< Emitted light colour (linear RGB).
+    float emissiveIntensity = 1.0f;  ///< Multiplier on emissive (HDR: > 1 glows / blooms).
+    glm::vec2 uvScale{1.0f};         ///< Texture repeats across the mesh's UVs.
+    float vertexColorWeight = 1.0f; ///< multiply albedo by vertex colour (0 = ignore it, e.g. colours used as paint masks)
+    bool receiveDecals = true;      ///< Decals project onto it.
 
-    // Asset paths (empty = none). Colour textures load as sRGB, the rest linear.
+    /// Asset paths (empty = none). Colour textures load as sRGB, the rest linear.
     std::string albedo;
-    std::string normal;
-    std::string metallicRoughness; // G = roughness, B = metallic
-    std::string occlusion;         // R = AO
-    std::string emissiveTexture;
+    std::string normal;            ///< Tangent-space normal map.
+    std::string metallicRoughness; ///< G = roughness, B = metallic
+    std::string occlusion;         ///< R = AO
+    std::string emissiveTexture;   ///< Emission colour map (times emissive * emissiveIntensity).
 
-    Json textures = Json::array(); // extra slots for custom shaders: [{"slot", "path", "srgb"}]
-    Json params = Json::array();   // extra slots for custom shaders: [{"slot", "value": [x, y, z, w]}]
+    Json textures = Json::array(); ///< extra slots for custom shaders: [{"slot", "path", "srgb"}]
+    Json params = Json::array();   ///< extra slots for custom shaders: [{"slot", "value": [x, y, z, w]}]
 
+    /// Reads a material file's JSON (fields it leaves out keep their defaults).
     static MaterialAsset fromJson(const Json& j);
+    /// The material as a material file's JSON.
     Json toJson() const;
-    // Sets `material` up as described (shader, values, textures loaded through `assets`).
+    /// Sets `material` up as described (shader, values, textures loaded through `assets`).
     void apply(StandardMaterial& material, AssetManager& assets) const;
 };
 
-// Registers MaterialAsset with the reflection (editor asset window, JSON fields).
+/// Registers MaterialAsset with the reflection (editor asset window, JSON fields).
 void registerAssetTypes(TypeRegistry& registry);
 
 } // namespace ve

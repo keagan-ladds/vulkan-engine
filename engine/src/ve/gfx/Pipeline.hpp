@@ -18,13 +18,13 @@
 namespace ve {
 
 enum class BlendMode {
-    Opaque,        // overwrite
-    AlphaBlend,    // src*a + dst*(1-a)
-    Additive,      // src*a + dst      (fire, sparks, glows)
-    Premultiplied, // src + dst*(1-a)
-    Multiply,      // src*dst
-    // Custom blend used by fog-like passes: dst = src.rgb + dst.rgb * src.a
-    // (src.rgb = in-scattered light, src.a = transmittance).
+    Opaque,        ///< overwrite
+    AlphaBlend,    ///< src*a + dst*(1-a)
+    Additive,      ///< src*a + dst      (fire, sparks, glows)
+    Premultiplied, ///< src + dst*(1-a)
+    Multiply,      ///< src*dst
+    /// Custom blend used by fog-like passes: dst = src.rgb + dst.rgb * src.a
+    /// (src.rgb = in-scattered light, src.a = transmittance).
     InscatterTransmittance,
 };
 
@@ -32,21 +32,21 @@ enum class CullMode { None, Back, Front };
 
 VkShaderModule loadShaderModule(VkDevice device, const std::filesystem::path& spirvPath);
 
-// The VkPipelineCache every pipeline below is created with (owned by Device,
-// which sets it at init and clears it at shutdown). VK_NULL_HANDLE = none.
+/// The VkPipelineCache every pipeline below is created with (owned by Device,
+/// which sets it at init and clears it at shutdown). VK_NULL_HANDLE = none.
 void setPipelineCache(VkPipelineCache cache);
 
 class PipelineBuilder {
 public:
     PipelineBuilder();
 
-    PipelineBuilder& shaders(VkShaderModule vertex, VkShaderModule fragment); // fragment may be VK_NULL_HANDLE (depth-only)
+    PipelineBuilder& shaders(VkShaderModule vertex, VkShaderModule fragment); ///< fragment may be VK_NULL_HANDLE (depth-only)
     PipelineBuilder& vertexInput(std::span<const VkVertexInputBindingDescription> bindings,
                                  std::span<const VkVertexInputAttributeDescription> attributes);
     PipelineBuilder& topology(VkPrimitiveTopology topology);
     PipelineBuilder& polygonMode(VkPolygonMode mode);
     PipelineBuilder& cull(CullMode mode, VkFrontFace front = VK_FRONT_FACE_COUNTER_CLOCKWISE);
-    // write = false: the attachment is bound but this pipeline doesn't touch it.
+    /// write = false: the attachment is bound but this pipeline doesn't touch it.
     PipelineBuilder& colorAttachment(VkFormat format, BlendMode blend = BlendMode::Opaque, bool write = true);
     PipelineBuilder& depthAttachment(VkFormat format);
     PipelineBuilder& depthTest(bool test, bool write, VkCompareOp op);

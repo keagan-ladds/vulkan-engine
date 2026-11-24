@@ -25,12 +25,12 @@ public:
     static constexpr uint32_t kMaxLines = 1u << 17;
 
 private:
-    VkPipeline m_visible = VK_NULL_HANDLE; // depth-tested, in front
-    VkPipeline m_hidden = VK_NULL_HANDLE;  // depth-tested, behind something: faint
-    VkPipeline m_onTop = VK_NULL_HANDLE;   // no depth test
-    std::array<Buffer, Device::kFramesInFlight> m_buffers{}; // one per frame in flight
+    VkPipeline m_visible = VK_NULL_HANDLE; ///< depth-tested, in front
+    VkPipeline m_hidden = VK_NULL_HANDLE;  ///< depth-tested, behind something: faint
+    VkPipeline m_onTop = VK_NULL_HANDLE;   ///< no depth test
+    std::array<Buffer, Device::kFramesInFlight> m_buffers{}; ///< one per frame in flight
     uint32_t m_slot = 0;
-    uint32_t m_tested = 0, m_untested = 0; // this frame's counts (tested first in the buffer)
+    uint32_t m_tested = 0, m_untested = 0; ///< this frame's counts (tested first in the buffer)
 };
 
 } // namespace ve

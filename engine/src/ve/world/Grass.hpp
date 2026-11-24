@@ -56,133 +56,146 @@ class Mesh;
 class Shader;
 class Texture;
 
+/// One level of detail of a grass field.
 struct GrassLod {
-    MeshData mesh;                     // empty = procedural blades; else root at origin, height 1 (like cardMesh)
-    std::shared_ptr<Texture> texture;  // RGBA (alpha = coverage); null = white
-    float maxDistance = FLT_MAX;       // camera distance up to which this LOD is drawn
-    std::string fragmentShader;        // empty = grass_field.frag (blades) / grass_card.frag (meshes)
+    MeshData mesh;                     ///< empty = procedural blades; else root at origin, height 1 (like cardMesh)
+    std::shared_ptr<Texture> texture;  ///< RGBA (alpha = coverage); null = white
+    float maxDistance = FLT_MAX;       ///< camera distance up to which this LOD is drawn
+    std::string fragmentShader;        ///< empty = grass_field.frag (blades) / grass_card.frag (meshes)
 };
 
+/// Everything a GrassPass needs: where (bounds, height, mask), what (blades,
+/// cards or LOD meshes) and how it looks. GrassLayer builds one from its fields.
 struct GrassDesc {
-    std::string name = "Grass";
-    glm::vec2 boundsMin{-256.0f}, boundsMax{256.0f};
-    uint32_t resolution = 513; // height samples per side (include both edges)
-    uint32_t maskResolution = 512;
-    // > 0: the height / mask textures cover only a window this wide around
-    // the camera, re-baked on a worker thread as it moves (any world size).
-    // Keep it >= 4 x radius. 0 = the whole bounds, baked once.
+    std::string name = "Grass";      ///< The pass's name (F1 overlay, timings).
+    glm::vec2 boundsMin{-256.0f};    ///< World x, z of the grass area's minimum corner.
+    glm::vec2 boundsMax{256.0f};     ///< ...maximum corner.
+    uint32_t resolution = 513; ///< height samples per side (include both edges)
+    uint32_t maskResolution = 512;   ///< Mask texels per side.
+    /// > 0: the height / mask textures cover only a window this wide around
+    /// the camera, re-baked on a worker thread as it moves (any world size).
+    /// Keep it >= 4 x radius. 0 = the whole bounds, baked once.
     float window = 0.0f;
-    // Sampled into the textures (whole bounds: once in setup(), then released
-    // with whatever they capture; windowed: on a worker thread whenever the
-    // window moves, so they must be thread-safe, and own what they capture
-    // (by value / shared_ptr): a bake in flight when the pass is destroyed
-    // isn't waited for, it stops at its next row).
-    std::function<float(glm::vec2)> height;   // required; must match the rendered ground
-    std::function<glm::vec4(glm::vec2)> mask; // x density 0..1, y colour mix A->B, z height scale, w free; null = full
-    glm::vec3 colorA{0.55f, 0.6f, 0.25f};
-    glm::vec3 colorB{0.75f, 0.65f, 0.35f};
+    /// Sampled into the textures (whole bounds: once in setup(), then released
+    /// with whatever they capture; windowed: on a worker thread whenever the
+    /// window moves, so they must be thread-safe, and own what they capture
+    /// (by value / shared_ptr): a bake in flight when the pass is destroyed
+    /// isn't waited for, it stops at its next row).
+    std::function<float(glm::vec2)> height;   ///< required; must match the rendered ground
+    std::function<glm::vec4(glm::vec2)> mask; ///< x density 0..1, y colour mix A->B, z height scale, w free; null = full
+    glm::vec3 colorA{0.55f, 0.6f, 0.25f};  ///< First tint (linear RGB), mask.y = 0.
+    glm::vec3 colorB{0.75f, 0.65f, 0.35f}; ///< Second tint, mask.y = 1.
 
-    float spacing = 0.8f;      // clump spacing at full density (m)
-    float radius = 110.0f;     // drawn within this distance of the camera
-    float fadeStart = 30.0f;   // density starts thinning here...
-    float farDensity = 0.3f;   // ...down to this fraction at the radius
-    float minHeight = 0.45f, maxHeight = 1.0f;
-    float bladeWidth = 0.05f;
-    uint32_t bladesPerClump = 4;
-    float clumpRadius = 0.25f;
-    // Per-clump random rotation: always a full random yaw (around up), plus a
-    // tilt of up to maxTilt radians around a random horizontal axis, so clumps
-    // don't all look the same from the side.
+    float spacing = 0.8f;      ///< clump spacing at full density (m)
+    float radius = 110.0f;     ///< drawn within this distance of the camera
+    float fadeStart = 30.0f;   ///< density starts thinning here...
+    float farDensity = 0.3f;   ///< ...down to this fraction at the radius
+    float minHeight = 0.45f;   ///< Shortest clump (m), before the mask's height scale.
+    float maxHeight = 1.0f;    ///< Tallest clump (m).
+    float bladeWidth = 0.05f;  ///< Procedural blades: width at the base (m).
+    uint32_t bladesPerClump = 4; ///< Procedural blades per clump.
+    float clumpRadius = 0.25f; ///< Procedural blades: spread of a clump's roots (m).
+    /// Per-clump random rotation: always a full random yaw (around up), plus a
+    /// tilt of up to maxTilt radians around a random horizontal axis, so clumps
+    /// don't all look the same from the side.
     float maxTilt = 0.2f;
-    float tileSize = 16.0f;
+    float tileSize = 16.0f;    ///< Culling tile size (m): clumps are culled and drawn per tile.
 
     // ---- Grass cards (alpha-clipped textured quads, Valheim-style) ----
-    // Set cardMesh to draw it instead of the procedural blades: authored with
-    // the root at the origin and height 1 (scaled per clump to min..maxHeight,
-    // width scales with it). uv goes to the card texture; vertex y (0..1) is
-    // the sway weight. cardMeshCrossed() builds the usual crossed quads.
-    // colorA/colorB multiply the texture (use white for the texture's own colours).
+    /// Set cardMesh to draw it instead of the procedural blades: authored with
+    /// the root at the origin and height 1 (scaled per clump to min..maxHeight,
+    /// width scales with it). uv goes to the card texture; vertex y (0..1) is
+    /// the sway weight. cardMeshCrossed() builds the usual crossed quads.
+    /// colorA/colorB multiply the texture (use white for the texture's own colours).
     MeshData cardMesh;
-    std::shared_ptr<Texture> cardTexture; // RGBA, alpha = blade coverage
-    float alphaCutoff = 0.5f;
+    std::shared_ptr<Texture> cardTexture; ///< RGBA, alpha = blade coverage
+    float alphaCutoff = 0.5f;  ///< Card / texture alpha below this is cut out.
+    /// `quads` crossed vertical quads (a star seen from above), root at the
+    /// origin, height 1, `width` wide: the usual grass card mesh.
     static MeshData cardMeshCrossed(uint32_t quads = 3, float width = 1.0f);
-    int windSlot = 0;          // frame.globalParams index with wind; -1 = no wind
-    // Shadows: clumps within shadowDistance of the camera are drawn into the
-    // sun's shadow cascades (cards alpha-tested), so grass shadows the ground,
-    // itself and anything under it. Cascades whose texels are coarser than
-    // shadowMaxTexel (m) are skipped: blades would be sub-texel there anyway.
+    int windSlot = 0;          ///< frame.globalParams index with wind; -1 = no wind
+    /// Shadows: clumps within shadowDistance of the camera are drawn into the
+    /// sun's shadow cascades (cards alpha-tested), so grass shadows the ground,
+    /// itself and anything under it. Cascades whose texels are coarser than
+    /// shadowMaxTexel (m) are skipped: blades would be sub-texel there anyway.
     bool castShadows = true;
-    float shadowDistance = 30.0f;
-    float shadowMaxTexel = 0.12f;
-    float sway = 1.0f;
+    float shadowDistance = 30.0f; ///< See above (m).
+    float shadowMaxTexel = 0.12f; ///< See above (m).
+    float sway = 1.0f;            ///< Wind sway strength (0 = still).
 
-    std::string vertexShader = "grass_field.vert";
-    std::string fragmentShader;        // empty = grass_field.frag (blades) or grass_card.frag (cards)
+    std::string vertexShader = "grass_field.vert"; ///< Vertex program (SPIR-V name).
+    std::string fragmentShader;        ///< empty = grass_field.frag (blades) or grass_card.frag (cards)
 
-    // LOD chain, nearest first. Empty = one LOD from cardMesh / cardTexture /
-    // fragmentShader above (procedural blades if cardMesh is empty).
-    // GrassPass uploads the meshes in setup() and then frees these CPU copies.
+    /// LOD chain, nearest first. Empty = one LOD from cardMesh / cardTexture /
+    /// fragmentShader above (procedural blades if cardMesh is empty).
+    /// GrassPass uploads the meshes in setup() and then frees these CPU copies.
     std::vector<GrassLod> lods;
-    float lodBlend = 4.0f; // m over which neighbouring LODs are dithered
+    float lodBlend = 4.0f; ///< m over which neighbouring LODs are dithered
 };
 
-// Pushes grass aside around its object (players, animals, rolling rocks).
-// Each frame the kMaxGrassBenders benders nearest the camera go to every
-// grass pass (frame.grassBenders); blades within `radius` of the object's
-// position (its feet) lean away, more the closer they are.
+/// Pushes grass aside around its object (players, animals, rolling rocks).
+/// Each frame the kMaxGrassBenders benders nearest the camera go to every
+/// grass pass (frame.grassBenders); blades within `radius` of the object's
+/// position (its feet) lean away, more the closer they are.
 class GrassBender : public Component {
 public:
-    float radius = 0.8f;   // m
-    float strength = 1.0f; // 0..1: how far blades lean over
+    float radius = 0.8f;   ///< m
+    float strength = 1.0f; ///< 0..1: how far blades lean over
 };
 
+/// GPU grass: clumps generated in the vertex shader from baked height / mask
+/// textures, culled per tile, drawn with LODs, casting into the sun's cascades.
+/// GrassLayer creates one; add it to the render graph yourself otherwise.
 class GrassPass : public RenderPass, public ShadowCaster {
 public:
+    /// A pass for `desc` (textures are baked in setup()).
     explicit GrassPass(GrassDesc desc);
     ~GrassPass() override;
 
     void setup(RenderGraph& graph) override;
-    void prepare(FrameData& frame) override; // window streaming + material, before the shadow and colour draws
+    void prepare(FrameData& frame) override; ///< window streaming + material, before the shadow and colour draws
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
     void onGui() override;
     void drawShadow(RenderContext& ctx, const ShadowView& view) override;
 
-    // Parameters are live: change them any time (LOD meshes / shaders excepted).
+    /// Parameters are live: change them any time (LOD meshes / shaders excepted).
     GrassDesc& desc() { return m_desc; }
-    // The ground changed (e.g. terrain brush edits): new height / mask
-    // functions; the baked area is re-baked on a worker thread and swapped in
-    // when ready (the old textures stay meanwhile).
+    /// The ground changed (e.g. terrain brush edits): new height / mask
+    /// functions; the baked area is re-baked on a worker thread and swapped in
+    /// when ready (the old textures stay meanwhile).
     void refresh(std::function<float(glm::vec2)> height, std::function<glm::vec4(glm::vec2)> mask);
+    /// An LOD's material (set extra parameters for a custom shader).
     Material& material(size_t lod = 0) { return *m_lods.at(lod).material; }
+    /// Number of LODs.
     size_t lodCount() const { return m_lods.size(); }
 
 private:
-    bool m_refresh = false; // re-bake the current area (refresh())
-    // Height + mask samples and per-tile height ranges for one area.
+    bool m_refresh = false; ///< re-bake the current area (refresh())
+    /// Height + mask samples and per-tile height ranges for one area.
     struct Baked {
-        glm::vec2 lo{0.0f}, size{0.0f}; // world area covered
+        glm::vec2 lo{0.0f}, size{0.0f}; ///< world area covered
         uint32_t res = 0, maskRes = 0;
         std::vector<float> heights;
         std::vector<uint8_t> mask;
-        std::vector<glm::vec2> tileHeights; // min/max ground height per tile
+        std::vector<glm::vec2> tileHeights; ///< min/max ground height per tile
         int tilesX = 0, tilesZ = 0;
     };
-    // What a bake reads: only this is copied to the worker (not the whole
-    // GrassDesc with its LOD meshes).
+    /// What a bake reads: only this is copied to the worker (not the whole
+    /// GrassDesc with its LOD meshes).
     struct BakeInput {
         std::function<float(glm::vec2)> height;
         std::function<glm::vec4(glm::vec2)> mask;
         float tileSize;
     };
     BakeInput bakeInput() const { return {m_desc.height, m_desc.mask, m_desc.tileSize}; }
-    // `cancel` (optional) is polled per row: an abandoned bake returns early.
+    /// `cancel` (optional) is polled per row: an abandoned bake returns early.
     static Baked bake(const BakeInput& in, glm::vec2 lo, glm::vec2 size, uint32_t res, uint32_t maskRes,
                       const std::atomic<bool>* cancel = nullptr);
-    void startBake(glm::vec2 lo); // m_pending = bake of `lo` (m_area's size and resolutions) as a pool job
-    void bakeFinished(); // if m_pending is done: applies it (unless cancelled) and clears it
-    void apply(Baked&& baked); // upload the textures, switch to the new area
-    glm::vec2 windowFor(glm::vec2 eye) const; // window origin for a camera position
+    void startBake(glm::vec2 lo); ///< m_pending = bake of `lo` (m_area's size and resolutions) as a pool job
+    void bakeFinished(); ///< if m_pending is done: applies it (unless cancelled) and clears it
+    void apply(Baked&& baked); ///< upload the textures, switch to the new area
+    glm::vec2 windowFor(glm::vec2 eye) const; ///< window origin for a camera position
 
     struct Lod {
         std::shared_ptr<Mesh> mesh;
@@ -194,17 +207,17 @@ private:
     };
     void updateMaterial();
     MeshData bladeClump() const;
-    // Draws the visible tiles of one LOD; returns {tiles, clumps}.
+    /// Draws the visible tiles of one LOD; returns {tiles, clumps}.
     glm::uvec2 drawTiles(RenderContext& ctx, const Lod& lod, const Frustum& frustum, float maxDistance, uint32_t viewIndex);
 
     GrassDesc m_desc;
     std::shared_ptr<Texture> m_height, m_mask;
     std::vector<Lod> m_lods;
-    Baked m_area;                      // what the textures hold now (samples freed after upload)
-    float m_windowSize = 0.0f;         // 0 = whole bounds
-    // A window being re-baked. The job owns its inputs (a copy of the
-    // callbacks) and its output, so the pass can go away without waiting:
-    // it cancels the job (which stops at its next row) and drops it.
+    Baked m_area;                      ///< what the textures hold now (samples freed after upload)
+    float m_windowSize = 0.0f;         ///< 0 = whole bounds
+    /// A window being re-baked. The job owns its inputs (a copy of the
+    /// callbacks) and its output, so the pass can go away without waiting:
+    /// it cancels the job (which stops at its next row) and drops it.
     struct PendingBake {
         jobs::Handle job;
         std::shared_ptr<Baked> result;

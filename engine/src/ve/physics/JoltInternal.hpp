@@ -71,16 +71,16 @@ inline glm::quat toG(JPH::QuatArg q) { return glm::quat(q.GetW(), q.GetX(), q.Ge
 // A Jolt object layer = a kind (low 2 bits: how the engine treats it) + the
 // game's collision layer (PhysicsWorld::addLayer, the bits above).
 namespace Layers {
-constexpr JPH::ObjectLayer NonMoving = 0; // static bodies
-constexpr JPH::ObjectLayer Moving = 1;    // dynamic + kinematic bodies
-constexpr JPH::ObjectLayer Character = 2; // the capsule that lets bodies hit characters
-constexpr JPH::ObjectLayer Sensor = 3;    // trigger volumes (Rigidbody::isTrigger)
+constexpr JPH::ObjectLayer NonMoving = 0; ///< static bodies
+constexpr JPH::ObjectLayer Moving = 1;    ///< dynamic + kinematic bodies
+constexpr JPH::ObjectLayer Character = 2; ///< the capsule that lets bodies hit characters
+constexpr JPH::ObjectLayer Sensor = 3;    ///< trigger volumes (Rigidbody::isTrigger)
 } // namespace Layers
 inline JPH::ObjectLayer kindOf(JPH::ObjectLayer l) { return JPH::ObjectLayer(l & 3u); }
 inline int gameLayerOf(JPH::ObjectLayer l) { return int(l >> 2); }
 inline JPH::ObjectLayer makeLayer(JPH::ObjectLayer kind, int gameLayer) { return JPH::ObjectLayer(kind | (uint32_t(gameLayer & 31) << 2)); }
 
-// The game's layers: names and who collides with whom (a bit per layer).
+/// The game's layers: names and who collides with whom (a bit per layer).
 struct LayerTable {
     std::vector<std::string> names{"Default"};
     uint32_t collide[32];
@@ -132,16 +132,16 @@ public:
     const LayerTable* table = nullptr;
 };
 
-// Collects contact callbacks (from Jolt's worker threads) for main-thread dispatch.
+/// Collects contact callbacks (from Jolt's worker threads) for main-thread dispatch.
 class ContactQueue final : public JPH::ContactListener {
 public:
     enum class Kind : uint8_t { Added, Persisted, Removed };
     struct Event {
         Kind kind;
         bool sensor;
-        JPH::BodyID a, b; // a < b
+        JPH::BodyID a, b; ///< a < b
         glm::vec3 point{0.0f};
-        glm::vec3 normal{0.0f}; // from a to b
+        glm::vec3 normal{0.0f}; ///< from a to b
         float speed = 0.0f;
     };
 
@@ -180,7 +180,7 @@ private:
     }
 };
 
-// Jolt's global state (allocator, factory, types) is set up: PhysicsWorld::init / shutdown.
+/// Jolt's global state (allocator, factory, types) is set up: PhysicsWorld::init / shutdown.
 inline bool g_joltInitialized = false;
 
 } // namespace physics_detail
@@ -198,9 +198,9 @@ struct PhysicsWorld::Impl {
     std::unique_ptr<JPH::PhysicsSystem> system;
     uint32_t addedSinceOptimize = 0;
     physics_detail::LayerTable layers;
-    std::vector<Joint*> joints; // attached ones
-    std::vector<Joint*> jointScratch; // step()'s copy of `joints`
-    // Surfaces: names interned; bodies without a component to hold one (createStaticBody) by id.
+    std::vector<Joint*> joints; ///< attached ones
+    std::vector<Joint*> jointScratch; ///< step()'s copy of `joints`
+    /// Surfaces: names interned; bodies without a component to hold one (createStaticBody) by id.
     std::vector<std::string> surfaceNames{""};
     std::unordered_map<uint32_t, uint16_t> staticSurfaces;
     uint16_t surfaceId(const std::string& name)
@@ -212,18 +212,18 @@ struct PhysicsWorld::Impl {
         return uint16_t(surfaceNames.size() - 1);
     }
 
-    // Contact pairs (body level; Jolt reports sub-shape pairs, so count them).
+    /// Contact pairs (body level; Jolt reports sub-shape pairs, so count them).
     physics_detail::ContactQueue contacts;
     struct Pair {
         int count = 0;
         bool sensor = false;
         bool persisted = false;
-        bool enteredNow = false; // began in this step's events (no "stay" for it yet)
+        bool enteredNow = false; ///< began in this step's events (no "stay" for it yet)
         glm::vec3 point{0.0f}, normal{0.0f};
     };
     std::unordered_map<uint64_t, Pair> pairs;
     std::vector<physics_detail::ContactQueue::Event> scratch;
-    // What dispatchContacts reports this step (kept: no allocation per step).
+    /// What dispatchContacts reports this step (kept: no allocation per step).
     enum class Phase { Enter, Stay, Exit };
     struct ContactOut {
         Phase phase;
@@ -234,8 +234,8 @@ struct PhysicsWorld::Impl {
     };
     std::vector<ContactOut> contactOut;
 
-    // drawDebug: triangles of each shape in its centre-of-mass space (holding a
-    // reference to the shape, so its address can't be reused). Cleared in shutdown.
+    /// drawDebug: triangles of each shape in its centre-of-mass space (holding a
+    /// reference to the shape, so its address can't be reused). Cleared in shutdown.
     struct ShapeTriangles {
         JPH::RefConst<JPH::Shape> keep;
         std::vector<glm::vec3> tris;
@@ -257,9 +257,9 @@ inline bool physicsAlive()
     return g_joltInitialized && Engine::exists() && Engine::get().physics().impl().system;
 }
 
-// Body user data, tagged in the low 2 bits (pointers are 8-byte aligned):
-//   0: Rigidbody*   1: (value << 2) for GameObject-less static bodies
-//   2: CharacterController* (its inner body)
+/// Body user data, tagged in the low 2 bits (pointers are 8-byte aligned):
+///   0: Rigidbody*   1: (value << 2) for GameObject-less static bodies
+///   2: CharacterController* (its inner body)
 inline JPH::uint64 staticUserData(uint32_t value)
 {
     return (JPH::uint64(value) << 2) | 1u;
@@ -276,13 +276,13 @@ struct BodyOwner {
     uint32_t userValue = 0;
 };
 
-// Defined in PhysicsWorld.cpp.
+/// Defined in PhysicsWorld.cpp.
 BodyOwner ownerOf(JPH::uint64 userData);
 std::string surfaceOf(const JPH::Body& body);
-// A collision layer name -> its index (warns about unknown ones, which become Default).
+/// A collision layer name -> its index (warns about unknown ones, which become Default).
 int resolveLayer(const std::string& name, const std::string& who);
 
-// Defined in Collider.cpp: the collider's shape with a world scale baked in (Jolt ScaledShape).
+/// Defined in Collider.cpp: the collider's shape with a world scale baked in (Jolt ScaledShape).
 JPH::RefConst<JPH::Shape> scaledShape(const Collider& collider, const glm::vec3& scale);
 
 } // namespace physics_detail

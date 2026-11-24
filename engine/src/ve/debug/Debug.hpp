@@ -36,7 +36,7 @@
 
 namespace ve::debug {
 
-// Colours are sRGB (like the UI's).
+/// Colours are sRGB (like the UI's).
 inline constexpr glm::vec4 kWhite{1.0f, 1.0f, 1.0f, 1.0f};
 inline constexpr glm::vec4 kRed{1.0f, 0.25f, 0.2f, 1.0f};
 inline constexpr glm::vec4 kGreen{0.3f, 1.0f, 0.35f, 1.0f};
@@ -48,36 +48,36 @@ inline constexpr glm::vec4 kMagenta{1.0f, 0.3f, 0.9f, 1.0f};
 inline constexpr glm::vec4 kGrey{0.65f, 0.65f, 0.65f, 1.0f};
 
 struct Style {
-    float duration = 0.0f;  // seconds; 0 = this frame
-    float thickness = 2.0f; // pixels
-    bool depthTest = true;  // false: always on top
+    float duration = 0.0f;  ///< seconds; 0 = this frame
+    float thickness = 2.0f; ///< pixels
+    bool depthTest = true;  ///< false: always on top
 };
 
 // --- Shapes ----------------------------------------------------------------------------
 void line(const glm::vec3& a, const glm::vec3& b, const glm::vec4& color, const Style& style = {});
-void ray(const glm::vec3& origin, const glm::vec3& direction, const glm::vec4& color, const Style& style = {}); // origin + direction
+void ray(const glm::vec3& origin, const glm::vec3& direction, const glm::vec4& color, const Style& style = {}); ///< origin + direction
 void arrow(const glm::vec3& from, const glm::vec3& to, const glm::vec4& color, const Style& style = {});
 void path(std::span<const glm::vec3> points, const glm::vec4& color, const Style& style = {});
 void cross(const glm::vec3& p, float size, const glm::vec4& color, const Style& style = {});
-void axes(const glm::vec3& position, const glm::quat& rotation, float size = 1.0f, const Style& style = {}); // x red, y green, z blue
+void axes(const glm::vec3& position, const glm::quat& rotation, float size = 1.0f, const Style& style = {}); ///< x red, y green, z blue
 void box(const glm::vec3& center, const glm::vec3& halfExtents, const glm::quat& rotation, const glm::vec4& color, const Style& style = {});
 void aabb(const glm::vec3& min, const glm::vec3& max, const glm::vec4& color, const Style& style = {});
 void circle(const glm::vec3& center, const glm::vec3& normal, float radius, const glm::vec4& color, const Style& style = {}, int segments = 32);
 void sphere(const glm::vec3& center, float radius, const glm::vec4& color, const Style& style = {});
-void capsule(const glm::vec3& a, const glm::vec3& b, float radius, const glm::vec4& color, const Style& style = {}); // segment a-b
+void capsule(const glm::vec3& a, const glm::vec3& b, float radius, const glm::vec4& color, const Style& style = {}); ///< segment a-b
 void cylinder(const glm::vec3& base, const glm::vec3& top, float radius, const glm::vec4& color, const Style& style = {});
 void text(const glm::vec3& position, const std::string& text, const glm::vec4& color = kWhite, const Style& style = {});
-void clear(); // everything, including lines that would have lasted
+void clear(); ///< everything, including lines that would have lasted
 
 // --- Channels ----------------------------------------------------------------------------
-// (std::less<>: looked up by string_view, so enabled("literal") doesn't build a std::string each call.)
+/// (std::less<>: looked up by string_view, so enabled("literal") doesn't build a std::string each call.)
 using ChannelMap = std::map<std::string, bool, std::less<>>;
-bool enabled(std::string_view channel); // registers the channel (off) the first time it's asked about
+bool enabled(std::string_view channel); ///< registers the channel (off) the first time it's asked about
 void setChannel(const std::string& channel, bool on);
 const ChannelMap& channels();
 
 // --- Engine internal -----------------------------------------------------------------------
-using Line = DebugLine; // kept in render's DebugLineBuffer, which DebugLinePass draws
+using Line = DebugLine; ///< kept in render's DebugLineBuffer, which DebugLinePass draws
 struct Label {
     glm::vec3 position;
     std::string text;
@@ -85,9 +85,9 @@ struct Label {
 };
 const std::vector<Line>& lines();
 const std::vector<Label>& labels();
-void drawEngineChannels(); // colliders, navmesh, agents (once per frame, before rendering)
-void drawLabels();         // into ImGui's background list (in the GUI phase)
-void endFrame(double now); // drops what expired
+void drawEngineChannels(); ///< colliders, navmesh, agents (once per frame, before rendering)
+void drawLabels();         ///< into ImGui's background list (in the GUI phase)
+void endFrame(double now); ///< drops what expired
 size_t lineCount();
 
 } // namespace ve::debug

@@ -14,11 +14,11 @@ namespace ve {
 class Device;
 
 enum class SamplerType : uint32_t {
-    LinearRepeat,   // default for material textures (with anisotropy + mips)
-    LinearClamp,    // render targets / post-processing
-    NearestRepeat,  // pixel-art / Valheim-style crunchy textures
-    NearestClamp,   // exact texel fetches
-    ShadowCompare,  // depth comparison (hardware PCF) for shadow maps
+    LinearRepeat,   ///< default for material textures (with anisotropy + mips)
+    LinearClamp,    ///< render targets / post-processing
+    NearestRepeat,  ///< pixel-art / Valheim-style crunchy textures
+    NearestClamp,   ///< exact texel fetches
+    ShadowCompare,  ///< depth comparison (hardware PCF) for shadow maps
     Count
 };
 

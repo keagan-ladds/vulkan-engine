@@ -10,7 +10,7 @@
 
 namespace ve::editor_internal {
 
-// Panel layout (the menu bar on top, hierarchy left, inspector right).
+/// Panel layout (the menu bar on top, hierarchy left, inspector right).
 inline constexpr float kMenuHeight = 22.0f;
 inline constexpr float kHierarchyWidth = 290.0f;
 inline constexpr float kInspectorWidth = 370.0f;
@@ -22,7 +22,7 @@ void forSubtree(GameObject& o, F&& fn)
     for (Transform* c : o.transform().children()) forSubtree(c->gameObject(), fn);
 }
 
-// The world bounds of every mesh in an object's subtree (false: it has none).
+/// The world bounds of every mesh in an object's subtree (false: it has none).
 inline bool subtreeBounds(GameObject& o, AABB& out)
 {
     bool any = false;

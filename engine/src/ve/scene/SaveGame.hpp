@@ -40,20 +40,23 @@ namespace ve {
 
 class Scene;
 
-// Implement on a GameObject or Component subclass to be part of save games.
+/// Implement on a GameObject or Component subclass to be part of save games.
 class Saveable {
 public:
     virtual ~Saveable() = default;
+    /// Writes this object's state into `out` (a JSON object) when a game is saved.
     virtual void saveState(Json& out) const = 0;
+    /// Restores the state saveState() wrote (`in` is that JSON; fields may be missing in older saves).
     virtual void loadState(const Json& in) = 0;
 };
 
 namespace save {
 
+/// A save slot on disk (save::slots()).
 struct SlotInfo {
-    std::string name;
-    std::filesystem::file_time_type time;
-    uintmax_t bytes = 0;
+    std::string name;  ///< The slot's name (what save::write / read take).
+    std::filesystem::file_time_type time;  ///< When it was last written.
+    uintmax_t bytes = 0;  ///< File size in bytes.
 };
 
 std::filesystem::path folder();
@@ -61,18 +64,18 @@ Json capture(Scene& scene);
 void apply(Scene& scene, const Json& save);
 bool write(const std::string& slot, const Json& save);
 std::optional<Json> read(const std::string& slot);
-std::vector<SlotInfo> slots(); // newest first
+std::vector<SlotInfo> slots(); ///< newest first
 bool remove(const std::string& slot);
 
-// capture + the game's own data + write; read + apply, returning the game's data.
+/// capture + the game's own data + write; read + apply, returning the game's data.
 bool saveGame(Scene& scene, const std::string& slot, const Json& gameData = Json::object());
 std::optional<Json> loadGame(Scene& scene, const std::string& slot);
 
-// Small per-user settings files ("settings", "controls"...), kept in
-// folder()/config so they never show up in slots(). Written atomically
-// (temporary file + rename); read returns nullopt if missing or damaged.
-//   if (auto j = ve::save::readConfig("controls")) input.loadBindings(*j);
-//   ve::save::writeConfig("controls", input.saveBindings());
+/// Small per-user settings files ("settings", "controls"...), kept in
+/// folder()/config so they never show up in slots(). Written atomically
+/// (temporary file + rename); read returns nullopt if missing or damaged.
+///   if (auto j = ve::save::readConfig("controls")) input.loadBindings(*j);
+///   ve::save::writeConfig("controls", input.saveBindings());
 std::optional<Json> readConfig(const std::string& name);
 bool writeConfig(const std::string& name, const Json& json);
 

@@ -34,22 +34,22 @@ public:
     explicit ShaderHotReload(const std::vector<std::filesystem::path>& shaderDirectories);
 
     size_t watchedCount() const { return m_entries.size(); }
-    // Starts recompiling shaders whose sources changed (throttled; call every
-    // frame) without waiting. Returns the names (e.g. "bloom_up.frag") of
-    // earlier compiles that have finished successfully since the last call.
+    /// Starts recompiling shaders whose sources changed (throttled; call every
+    /// frame) without waiting. Returns the names (e.g. "bloom_up.frag") of
+    /// earlier compiles that have finished successfully since the last call.
     std::vector<std::string> poll();
-    // Checks right now, ignoring the throttle, and waits for every compile.
+    /// Checks right now, ignoring the throttle, and waits for every compile.
     std::vector<std::string> pollNow();
 
     const std::string& lastError() const { return m_lastError; }
     size_t compiling() const { return m_jobs.size(); }
-    // Called when a recompile starts (ok and milliseconds unused) and ends.
+    /// Called when a recompile starts (ok and milliseconds unused) and ends.
     std::function<void(const std::string& name, bool started, bool ok, float milliseconds, const std::string& output)> onCompile;
     uint32_t reloadCount() const { return m_reloads; }
 
 private:
     struct Entry {
-        std::string name; // "bloom_up.frag"
+        std::string name; ///< "bloom_up.frag"
         std::filesystem::path depfile;
         std::vector<std::string> command;
         std::vector<std::filesystem::path> sources;
@@ -62,22 +62,22 @@ private:
     };
     struct Job {
         Entry* entry;
-        jobs::Handle job; // a background pool job running glslc
+        jobs::Handle job; ///< a background pool job running glslc
         std::shared_ptr<CompileResult> result;
         std::chrono::steady_clock::time_point started;
     };
     static CompileResult runCommand(const std::vector<std::string>& args);
-    void startChanged();                                  // launches compiles of changed, idle entries
-    std::vector<std::string> finishJobs(bool wait);       // collects finished (or all) compiles
+    void startChanged();                                  ///< launches compiles of changed, idle entries
+    std::vector<std::string> finishJobs(bool wait);       ///< collects finished (or all) compiles
 
     void readDepfile(Entry& e);
-    // Newest modification time of e's sources. `seen` caches stat() results
-    // within one poll: shared includes (ve.glsl) are checked once, not per shader.
+    /// Newest modification time of e's sources. `seen` caches stat() results
+    /// within one poll: shared includes (ve.glsl) are checked once, not per shader.
     using StampCache = std::unordered_map<std::string, std::filesystem::file_time_type>;
     static std::filesystem::file_time_type newest(const Entry& e, StampCache& seen);
 
-    std::vector<Entry> m_entries; // fixed after construction (jobs point into it)
-    std::vector<Job> m_jobs;      // compiles in flight
+    std::vector<Entry> m_entries; ///< fixed after construction (jobs point into it)
+    std::vector<Job> m_jobs;      ///< compiles in flight
     std::chrono::steady_clock::time_point m_lastPoll{};
     std::string m_lastError;
     uint32_t m_reloads = 0;

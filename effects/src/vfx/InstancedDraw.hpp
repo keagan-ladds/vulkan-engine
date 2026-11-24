@@ -32,14 +32,14 @@ struct FrameBuffers {
         for (ve::Buffer& b : buffers)
             b = device.createBuffer(bytes, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, ve::MemoryUsage::CpuToGpu, name);
     }
-    // Deferred: the GPU may still read them.
+    /// Deferred: the GPU may still read them.
     void destroy(ve::Device& device)
     {
         ve::Device* d = &device;
         for (ve::Buffer b : buffers) d->deferDestroy([d, b]() mutable { d->destroyBuffer(b); });
         buffers = {};
     }
-    // Index of this frame's buffer.
+    /// Index of this frame's buffer.
     static uint32_t slot(const ve::Renderer& r) { return uint32_t(r.frameNumber() % ve::Device::kFramesInFlight); }
     ve::Buffer& operator[](uint32_t slot) { return buffers[slot]; }
 };

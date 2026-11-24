@@ -26,11 +26,11 @@ public:
     explicit ScreenSpaceGIPass(float resolutionScale = 0.5f);
     void onGui() override;
 
-    float radius = 2.5f;     // ray length (m)
-    float intensity = 1.0f;  // bounce light strength
-    float aoStrength = 0.7f; // 0 = no occlusion
-    int rays = 3;            // per pixel per frame (x 16 rotations in the 4x4 upsample, x ~10 frames accumulated)
-    int steps = 8;           // per ray
+    float radius = 2.5f;     ///< ray length (m)
+    float intensity = 1.0f;  ///< bounce light strength
+    float aoStrength = 0.7f; ///< 0 = no occlusion
+    int rays = 3;            ///< per pixel per frame (x 16 rotations in the 4x4 upsample, x ~10 frames accumulated)
+    int steps = 8;           ///< per ray
 
 protected:
     void pushTrace(ve::RenderContext& ctx, const Inputs& in) override;

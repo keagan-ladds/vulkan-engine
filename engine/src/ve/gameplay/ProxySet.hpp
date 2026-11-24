@@ -72,57 +72,63 @@ namespace ve {
 
 class ProxySet;
 
-// One thing in a set.
+/// One thing in a set.
 struct ProxyEntry {
-    uint64_t id = 0;   // stable across save/load and level reloads
-    uint32_t type = 0; // ProxySet::typeIndex
-    glm::vec3 position{0.0f};
-    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
-    glm::vec3 scale{1.0f};
-    uint32_t state = 0; // the game's: what it means is up to the type's objects
-    Json data;          // optional small game payload (null = none)
-    // The promoted object's Saveable state, captured when it was demoted and
-    // given back when it's promoted again (the set manages it).
+    uint64_t id = 0;   ///< stable across save/load and level reloads
+    uint32_t type = 0; ///< ProxySet::typeIndex
+    glm::vec3 position{0.0f};  ///< World position.
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};  ///< World rotation.
+    glm::vec3 scale{1.0f};  ///< Scale.
+    uint32_t state = 0; ///< the game's: what it means is up to the type's objects
+    Json data;          ///< optional small game payload (null = none)
+    /// The promoted object's Saveable state, captured when it was demoted and
+    /// given back when it's promoted again (the set manages it).
     Json objectState;
 
+    /// The entry's world matrix (position, rotation, scale).
     glm::mat4 matrix() const;
 };
 
-// What a kind of entry looks like far away, and what it becomes up close.
+/// What a kind of entry looks like far away, and what it becomes up close.
 struct ProxyType {
-    std::string name = "proxy";
-    // The far look: up to 4 LODs (ve::buildLodChain, or an InstanceGroupDesc's
-    // lods). Empty = invisible while it's data.
+    std::string name = "proxy";  ///< Identifies the type (typeIndex, save games).
+    /// The far look: up to 4 LODs (ve::buildLodChain, or an InstanceGroupDesc's
+    /// lods). Empty = invisible while it's data.
     std::vector<InstanceLod> lods;
-    bool castShadows = true;
-    float cullDistance = 200.0f;
-    float shadowDistance = 60.0f;
+    bool castShadows = true;  ///< The far look casts shadows.
+    float cullDistance = 200.0f;  ///< Metres beyond which the far look isn't drawn.
+    float shadowDistance = 60.0f;  ///< Metres beyond which it casts no shadow.
 
-    // > 0: entries this close to the set's focus become GameObjects.
+    /// > 0: entries this close to the set's focus become GameObjects.
     float promoteDistance = 0.0f;
-    float demoteMargin = 0.25f; // back to data beyond promoteDistance * (1 + margin)
-    // Creates the promoted object (null = not now). Without it: `prefab`
-    // (instantiated, not recorded by save games: the set saves it), else a
-    // plain GameObject named like the type. Either way the set positions it,
-    // adds a ProxyLink and, unless the object has its own, a MeshRenderer
-    // with the first LOD and a static body with `collider`.
+    float demoteMargin = 0.25f; ///< back to data beyond promoteDistance * (1 + margin)
+    /// Creates the promoted object (null = not now). Without it: `prefab`
+    /// (instantiated, not recorded by save games: the set saves it), else a
+    /// plain GameObject named like the type. Either way the set positions it,
+    /// adds a ProxyLink and, unless the object has its own, a MeshRenderer
+    /// with the first LOD and a static body with `collider`.
     std::function<GameObject*(Scene&, const ProxyEntry&)> promote;
-    std::string prefab;
-    Collider collider; // optional
+    std::string prefab;  ///< Prefab asset path instantiated for promotion when `promote` isn't set.
+    Collider collider; ///< optional
 };
 
-// On every promoted object: which entry it stands for, and the way to change
-// it (changes outlive the object: the set keeps them).
+/// On every promoted object: which entry it stands for, and the way to change
+/// it (changes outlive the object: the set keeps them).
 class ProxyLink : public Component {
 public:
-    ProxySet* set() const; // null if the set is gone
+    ProxySet* set() const; ///< null if the set is gone
+    /// The entry's id in its set.
     uint64_t entry() const { return m_entry; }
+    /// The entry this object stands for (null if the set or entry is gone).
     const ProxyEntry* entryData() const;
+    /// The entry's game state (0 if gone).
     uint32_t state() const;
+    /// Changes the entry's state (kept after the object is demoted).
     void setState(uint32_t state);
+    /// Changes the entry's game data (kept after the object is demoted).
     void setData(Json data);
-    // Removes the entry and destroys this object (destroying the object
-    // alone does the same, a frame later).
+    /// Removes the entry and destroys this object (destroying the object
+    /// alone does the same, a frame later).
     void consume();
 
 private:
@@ -131,57 +137,71 @@ private:
     uint64_t m_entry = 0;
 };
 
+/// A ProxySet's counters.
 struct ProxyStats {
-    uint32_t entries = 0;
-    uint32_t promoted = 0;
-    uint32_t promotions = 0; // since start (counters: tests, the F1 overlay)
-    uint32_t demotions = 0;
-    uint32_t consumed = 0;   // entries removed because gameplay destroyed their object
+    uint32_t entries = 0;  ///< Entries in the set.
+    uint32_t promoted = 0;  ///< Entries currently standing as GameObjects.
+    uint32_t promotions = 0; ///< since start (counters: tests, the F1 overlay)
+    uint32_t demotions = 0;  ///< Since start.
+    uint32_t consumed = 0;   ///< entries removed because gameplay destroyed their object
 };
 
+/// Many things (thousands of crates, rocks, pickups) kept as data and drawn
+/// instanced far away, each becoming a real GameObject when the focus comes
+/// close and data again when it leaves (see the top of this file).
 class ProxySet : public GameObject, public Saveable {
 public:
+    /// An empty set; add types, then entries.
     explicit ProxySet(std::string name = "Proxy set");
     ~ProxySet() override;
 
     // ---- Types ----
-    // Adds a type (or redefines the one with the same name); returns its index.
+    /// Adds a type (or redefines the one with the same name); returns its index.
     uint32_t addType(ProxyType type);
-    int typeIndex(const std::string& name) const; // -1 = unknown
-    const ProxyType* type(uint32_t index) const;  // null if only named by entries so far
+    int typeIndex(const std::string& name) const; ///< -1 = unknown
+    const ProxyType* type(uint32_t index) const;  ///< null if only named by entries so far
+    /// Number of types.
     uint32_t typeCount() const { return uint32_t(m_types.size()); }
 
     // ---- Entries ----
-    // id 0 = a new one (sequential before start(): level content; random after).
+    /// id 0 = a new one (sequential before start(): level content; random after).
     uint64_t add(uint32_t type, const glm::vec3& position, const glm::quat& rotation = glm::quat(1, 0, 0, 0),
                  const glm::vec3& scale = glm::vec3(1.0f), uint32_t state = 0, Json data = {}, uint64_t id = 0);
-    bool remove(uint64_t id); // also destroys its promoted object
+    bool remove(uint64_t id); ///< also destroys its promoted object
+    /// The entry with this id, or null.
     const ProxyEntry* find(uint64_t id) const;
+    /// Changes an entry's game state; false if there's no such entry.
     bool setState(uint64_t id, uint32_t state);
+    /// Changes an entry's game data; false if there's no such entry.
     bool setData(uint64_t id, Json data);
+    /// Moves an entry (and its promoted object); false if there's no such entry.
     bool setTransform(uint64_t id, const glm::vec3& position, const glm::quat& rotation, const glm::vec3& scale);
+    /// Number of entries.
     size_t size() const { return m_entries.size(); }
-    void forEach(const std::function<void(const ProxyEntry&)>& fn) const; // unordered
-    // Entries within `radius` of `p` (3D distance), unordered.
+    void forEach(const std::function<void(const ProxyEntry&)>& fn) const; ///< unordered
+    /// Entries within `radius` of `p` (3D distance), unordered.
     void query(const glm::vec3& p, float radius, const std::function<void(const ProxyEntry&)>& fn) const;
-    // The nearest entry within `radius` (of `type`, or any if -1).
+    /// The nearest entry within `radius` (of `type`, or any if -1).
     const ProxyEntry* nearest(const glm::vec3& p, float radius, int type = -1) const;
 
     // ---- Promotion ----
-    // Promotion follows this object (the player); 0 / gone = the main camera.
+    /// Promotion follows this object (the player); 0 / gone = the main camera.
     ObjectRef<> focus;
-    uint32_t promotionsPerFrame = 8;
-    uint32_t demotionsPerFrame = 8;
-    GameObject* promoted(uint64_t id) const; // the object standing in for an entry, else null
+    uint32_t promotionsPerFrame = 8;  ///< At most this many entries become objects per frame (spreads the cost).
+    uint32_t demotionsPerFrame = 8;  ///< At most this many objects become data again per frame.
+    GameObject* promoted(uint64_t id) const; ///< the object standing in for an entry, else null
+    /// Number of entries standing as GameObjects now.
     uint32_t promotedCount() const { return uint32_t(m_promotedIds.size()); }
+    /// The set's counters.
     const ProxyStats& stats() const;
 
     // ---- Persistence ----
-    // Save games: the difference to the level's entries.
+    /// Save games: the difference to the level's entries.
     void saveState(Json& out) const override;
     void loadState(const Json& in) override;
-    // Scene files (the hidden `entries` field): every entry, as level content.
+    /// Scene files (the hidden `entries` field): every entry, as level content.
     Json entriesJson() const;
+    /// Replaces every entry with the ones `json` lists (scene loading).
     void setEntriesJson(const Json& json);
 
     void start() override;
@@ -192,14 +212,14 @@ private:
     friend class ProxyLink;
     struct Slot {
         ProxyEntry e;
-        int group = -1; // index into its type's groups, -1 = not drawn
+        int group = -1; ///< index into its type's groups, -1 = not drawn
         InstanceGroup::Handle handle = InstanceGroup::kInvalid;
-        uint64_t promoted = 0; // GameObject id while promoted
+        uint64_t promoted = 0; ///< GameObject id while promoted
     };
     struct TypeData {
         ProxyType desc;
-        bool defined = false; // false: only named by entries (scene file / save) so far
-        std::vector<std::shared_ptr<InstanceGroup>> groups; // more are added when they fill up
+        bool defined = false; ///< false: only named by entries (scene file / save) so far
+        std::vector<std::shared_ptr<InstanceGroup>> groups; ///< more are added when they fill up
     };
 
     uint32_t typeIndexOrAdd(const std::string& name);
@@ -212,9 +232,9 @@ private:
     void erase(uint64_t id, bool destroyObject);
     void gridAdd(const ProxyEntry& e);
     void gridRemove(const ProxyEntry& e);
-    void place(Slot& s, const ProxyEntry& from); // update an existing slot to `from`
+    void place(Slot& s, const ProxyEntry& from); ///< update an existing slot to `from`
     void upsert(const ProxyEntry& e);
-    std::optional<ProxyEntry> current(const Slot& s) const; // the entry as it is now (promoted: from its object); null = consumed
+    std::optional<ProxyEntry> current(const Slot& s) const; ///< the entry as it is now (promoted: from its object); null = consumed
     Json entryJson(const ProxyEntry& e, std::unordered_map<uint32_t, uint32_t>& typeMap, Json& types) const;
     std::optional<ProxyEntry> entryFromJson(const Json& j, const std::vector<uint32_t>& typeMap) const;
     bool focusPosition(glm::vec3* out) const;
@@ -223,10 +243,10 @@ private:
 
     std::vector<TypeData> m_types;
     std::unordered_map<uint64_t, Slot> m_entries;
-    std::unordered_map<int64_t, std::vector<uint64_t>> m_grid; // XZ cell -> entry ids
+    std::unordered_map<int64_t, std::vector<uint64_t>> m_grid; ///< XZ cell -> entry ids
     float m_cellSize = 16.0f;
     std::vector<uint64_t> m_promotedIds;
-    std::unordered_map<uint64_t, ProxyEntry> m_baseline; // the level's entries (taken at start())
+    std::unordered_map<uint64_t, ProxyEntry> m_baseline; ///< the level's entries (taken at start())
     bool m_hasBaseline = false;
     uint64_t m_nextId = 1;
     glm::vec3 m_scanFocus{1e30f};
@@ -235,7 +255,7 @@ private:
 };
 
 class TypeRegistry;
-// Reflection (scene files, editor): ProxySet. The Engine calls it at startup.
+/// Reflection (scene files, editor): ProxySet. The Engine calls it at startup.
 void registerProxyTypes(TypeRegistry& r);
 
 } // namespace ve

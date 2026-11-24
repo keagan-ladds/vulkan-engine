@@ -25,8 +25,8 @@ public:
     uint32_t minImageCount() const { return m_minImageCount; }
     VkImage image(uint32_t i) const { return m_images[i]; }
     VkImageView view(uint32_t i) const { return m_views[i]; }
-    // One per image: the presentation engine may still hold it after the
-    // frame's fence signalled, so it can only be reused when the image is.
+    /// One per image: the presentation engine may still hold it after the
+    /// frame's fence signalled, so it can only be reused when the image is.
     VkSemaphore renderFinished(uint32_t i) const { return m_renderFinished[i]; }
 
 private:

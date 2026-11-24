@@ -15,15 +15,15 @@
 
 namespace ve {
 
-// The one vertex layout every mesh uses (64 bytes). Having a single format
-// means any material/shader can draw any mesh. Unused attributes cost a bit
-// of memory but keep everything simple.
+/// The one vertex layout every mesh uses (64 bytes). Having a single format
+/// means any material/shader can draw any mesh. Unused attributes cost a bit
+/// of memory but keep everything simple.
 struct Vertex {
     glm::vec3 position{0.0f};
     glm::vec3 normal{0.0f, 1.0f, 0.0f};
     glm::vec2 uv{0.0f};
-    glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f}; // xyz = tangent, w = bitangent sign
-    glm::vec4 color{1.0f};                     // vertex colour (great for low-poly art)
+    glm::vec4 tangent{1.0f, 0.0f, 0.0f, 1.0f}; ///< xyz = tangent, w = bitangent sign
+    glm::vec4 color{1.0f};                     ///< vertex colour (great for low-poly art)
 
     static VkVertexInputBindingDescription binding()
     {
@@ -43,7 +43,7 @@ struct Vertex {
 };
 static_assert(sizeof(Vertex) == 64);
 
-// Axis-aligned bounding box.
+/// Axis-aligned bounding box.
 struct AABB {
     glm::vec3 min{FLT_MAX};
     glm::vec3 max{-FLT_MAX};
@@ -64,8 +64,8 @@ struct AABB {
         expand(b.max);
     }
 
-    // Bounds of this box after an affine transform (Arvo's method: project
-    // the extents through the absolute rotation/scale matrix).
+    /// Bounds of this box after an affine transform (Arvo's method: project
+    /// the extents through the absolute rotation/scale matrix).
     AABB transformed(const glm::mat4& m) const
     {
         const glm::vec3 c = glm::vec3(m * glm::vec4(center(), 1.0f));
@@ -78,7 +78,7 @@ struct AABB {
     }
 };
 
-// Six planes (ax + by + cz + d >= 0 is inside) extracted from a view-projection matrix.
+/// Six planes (ax + by + cz + d >= 0 is inside) extracted from a view-projection matrix.
 struct Frustum {
     std::array<glm::vec4, 6> planes{};
 

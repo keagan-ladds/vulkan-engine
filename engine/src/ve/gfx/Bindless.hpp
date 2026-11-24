@@ -38,20 +38,20 @@ public:
     VkDescriptorSetLayout layout() const { return m_layout; }
     VkDescriptorSet set() const { return m_set; }
 
-    // Image views must be in VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL when sampled.
+    /// Image views must be in VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL when sampled.
     uint32_t addTexture(VkImageView view, VkSampler sampler);
     void updateTexture(uint32_t index, VkImageView view, VkSampler sampler);
-    // Freed slots are recycled kFramesInFlight frames later and point at the
-    // fallback texture meanwhile.
+    /// Freed slots are recycled kFramesInFlight frames later and point at the
+    /// fallback texture meanwhile.
     void removeTexture(uint32_t index);
 
-    // Storage images must be in VK_IMAGE_LAYOUT_GENERAL when accessed.
+    /// Storage images must be in VK_IMAGE_LAYOUT_GENERAL when accessed.
     uint32_t addStorageImage(VkImageView view);
     void updateStorageImage(uint32_t index, VkImageView view);
     void removeStorageImage(uint32_t index);
 
-    // Texture written into freed slots (set by the renderer once its default
-    // white texture exists).
+    /// Texture written into freed slots (set by the renderer once its default
+    /// white texture exists).
     void setFallback(VkImageView view, VkSampler sampler);
 
 private:

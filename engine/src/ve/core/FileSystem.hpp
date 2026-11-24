@@ -31,27 +31,27 @@
 
 namespace ve::vfs {
 
-// Mounts an archive over the folder `root`. False (and `error`) if it can't be read.
+/// Mounts an archive over the folder `root`. False (and `error`) if it can't be read.
 bool mount(const std::filesystem::path& archive, const std::filesystem::path& root, std::string* error = nullptr);
-// Mounts every *.vepak in `folder` over that folder; returns how many.
+/// Mounts every *.vepak in `folder` over that folder; returns how many.
 int mountAll(const std::filesystem::path& folder);
 void unmountAll();
-// The mounted archives, in lookup order (last mounted first).
+/// The mounted archives, in lookup order (last mounted first).
 std::vector<std::filesystem::path> mounted();
 
-// A file (not a folder) on disk or in an archive.
+/// A file (not a folder) on disk or in an archive.
 bool exists(const std::filesystem::path& file);
-// True if `file` isn't on disk but an archive has it.
+/// True if `file` isn't on disk but an archive has it.
 bool inArchive(const std::filesystem::path& file);
 std::optional<uint64_t> fileSize(const std::filesystem::path& file);
 
-// The whole file, or nothing if it doesn't exist / can't be read.
+/// The whole file, or nothing if it doesn't exist / can't be read.
 std::optional<std::vector<uint8_t>> read(const std::filesystem::path& file);
 std::optional<std::string> readText(const std::filesystem::path& file);
-// A seekable binary stream (disk: the file; archive: its bytes in memory), or null.
+/// A seekable binary stream (disk: the file; archive: its bytes in memory), or null.
 std::unique_ptr<std::istream> open(const std::filesystem::path& file);
 
-// Files under `folder` (disk and archives merged, sorted, no duplicates).
+/// Files under `folder` (disk and archives merged, sorted, no duplicates).
 std::vector<std::filesystem::path> list(const std::filesystem::path& folder, bool recursive);
 
 } // namespace ve::vfs

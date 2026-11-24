@@ -43,9 +43,9 @@ class Renderer;
 class TerrainLod {
 public:
     struct Settings {
-        int nodeCells = 32;          // cells per node side
-        float lodFactor = 2.5f;      // split within lodFactor x node size
-        size_t maxNodes = 1500;      // meshes kept (least recently drawn are freed beyond this)
+        int nodeCells = 32;          ///< cells per node side
+        float lodFactor = 2.5f;      ///< split within lodFactor x node size
+        size_t maxNodes = 1500;      ///< meshes kept (least recently drawn are freed beyond this)
         uint32_t uploadsPerFrame = 12;
     };
     struct Drawn {
@@ -54,23 +54,23 @@ public:
     };
     struct Stats {
         uint32_t drawn = 0, pending = 0;
-        uint32_t missing = 0; // nodes the view wants that have no mesh yet (a coarser one stands in)
+        uint32_t missing = 0; ///< nodes the view wants that have no mesh yet (a coarser one stands in)
     };
 
     explicit TerrainLod(Renderer& renderer);
     ~TerrainLod();
 
-    // New terrain (or edited): nodes rebuild lazily and keep their old mesh meanwhile.
-    // `changed` (world x0, z0, x1, z1): only brush edits there; other nodes keep their meshes.
+    /// New terrain (or edited): nodes rebuild lazily and keep their old mesh meanwhile.
+    /// `changed` (world x0, z0, x1, z1): only brush edits there; other nodes keep their meshes.
     void setData(std::shared_ptr<const TerrainData> data, const TerrainLook& look, const Settings& settings,
                  const glm::vec4* changed = nullptr);
-    // Per frame: choose nodes for `camera`, queue missing meshes, upload finished ones.
-    // preload = build everything needed for this view first (synchronously).
-    void update(const glm::vec3& camera, bool preload, bool uploadAll = false); // uploadAll: no per-frame budget (loading screens)
+    /// Per frame: choose nodes for `camera`, queue missing meshes, upload finished ones.
+    /// preload = build everything needed for this view first (synchronously).
+    void update(const glm::vec3& camera, bool preload, bool uploadAll = false); ///< uploadAll: no per-frame budget (loading screens)
 
     const std::vector<Drawn>& drawn() const { return m_drawn; }
     int levels() const { return m_levels; }
-    // The distance range over which a level-L node morphs into its parent (shader params).
+    /// The distance range over which a level-L node morphs into its parent (shader params).
     glm::vec2 morphRange(int level) const;
     const Stats& stats() const { return m_stats; }
 
@@ -87,7 +87,7 @@ private:
     };
     struct Node {
         std::shared_ptr<Mesh> mesh;
-        uint64_t version = 0;  // data version the mesh was built from
+        uint64_t version = 0;  ///< data version the mesh was built from
         float minY = 0.0f, maxY = 0.0f;
         uint64_t lastUse = 0;
         bool queued = false;
@@ -97,7 +97,7 @@ private:
         uint64_t version;
         int nodeCells;
         std::shared_ptr<const TerrainData> data;
-        std::shared_ptr<const TerrainLook> look; // shared: jobs are queued every frame
+        std::shared_ptr<const TerrainLook> look; ///< shared: jobs are queued every frame
     };
     struct Result {
         Key key;
@@ -106,21 +106,21 @@ private:
         float minY, maxY;
     };
 
-    float nodeSize(int level) const; // metres
-    bool exists(const Key& k) const;  // overlaps the world
+    float nodeSize(int level) const; ///< metres
+    bool exists(const Key& k) const;  ///< overlaps the world
     void select(const Key& k, const glm::vec3& camera, std::vector<Key>& want);
     void request(const Key& k, float priority);
     static MeshData build(const Job& job, float& minY, float& maxY);
-    // What the build jobs share with the main thread. Owned jointly, so this
-    // object can die without waiting for a build in flight.
+    /// What the build jobs share with the main thread. Owned jointly, so this
+    /// object can die without waiting for a build in flight.
     struct Queue {
         std::mutex mutex;
-        std::deque<Job> jobs; // nearest / coarsest first
+        std::deque<Job> jobs; ///< nearest / coarsest first
         std::vector<Result> results;
-        int busy = 0;         // jobs being built
+        int busy = 0;         ///< jobs being built
         bool quit = false;
     };
-    static void drain(Queue& q, const std::atomic<bool>& cancelled); // a pool job
+    static void drain(Queue& q, const std::atomic<bool>& cancelled); ///< a pool job
     void upload(Result& r);
     void evict();
 
@@ -133,7 +133,7 @@ private:
     uint64_t m_frame = 0;
     std::unordered_map<Key, Node, KeyHash> m_nodes;
     std::vector<Drawn> m_drawn;
-    std::vector<std::pair<float, Key>> m_requests; // this frame's missing meshes, by priority
+    std::vector<std::pair<float, Key>> m_requests; ///< this frame's missing meshes, by priority
     Stats m_stats;
 
     std::shared_ptr<Queue> m_queue = std::make_shared<Queue>();

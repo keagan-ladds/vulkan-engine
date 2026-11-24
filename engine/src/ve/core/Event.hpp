@@ -21,12 +21,15 @@
 
 namespace ve {
 
-// Keeps one callback subscribed; movable, unsubscribes when destroyed.
+/// Keeps one callback subscribed; movable, unsubscribes when destroyed.
 class Subscription {
 public:
     Subscription() = default;
+    /// Made by Event::subscribe; `unsubscribe` removes the callback.
     explicit Subscription(std::function<void()> unsubscribe) : m_unsubscribe(std::move(unsubscribe)) {}
+    /// Takes over `o`'s subscription (`o` becomes empty).
     Subscription(Subscription&& o) noexcept : m_unsubscribe(std::exchange(o.m_unsubscribe, nullptr)) {}
+    /// Unsubscribes the current callback, then takes over `o`'s.
     Subscription& operator=(Subscription&& o) noexcept
     {
         if (this != &o) {
@@ -39,10 +42,12 @@ public:
     Subscription& operator=(const Subscription&) = delete;
     ~Subscription() { reset(); }
 
+    /// Unsubscribes now (safe to call twice, or after the Event is gone).
     void reset()
     {
         if (m_unsubscribe) std::exchange(m_unsubscribe, nullptr)();
     }
+    /// Whether this still holds a subscription (reset() not called yet).
     bool active() const { return m_unsubscribe != nullptr; }
 
 private:
@@ -50,10 +55,15 @@ private:
 };
 
 template <class... Args>
+/// A list of callbacks notified by emit() (an observer / signal).
+/// @tparam Args what each callback receives.
 class Event {
 public:
+    /// The callback type: `void(Args...)`.
     using Callback = std::function<void(Args...)>;
 
+    /// Adds a callback; it's called on every emit() until the returned
+    /// Subscription is destroyed or reset(). Keep the Subscription (as a member).
     [[nodiscard]] Subscription subscribe(Callback callback)
     {
         const uint64_t id = ++m_state->nextId;
@@ -64,6 +74,7 @@ public:
         });
     }
 
+    /// Calls every subscribed callback with `args`, in subscription order.
     void emit(Args... args) const
     {
         if (m_state->entries.empty()) return;
@@ -75,6 +86,7 @@ public:
         }
     }
 
+    /// Whether nobody is subscribed.
     bool empty() const { return m_state->entries.empty(); }
 
 private:

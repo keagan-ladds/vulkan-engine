@@ -1,0 +1,57 @@
+# Doxygen configuration for the API reference (cmake --build build --target docs).
+# Only the settings that differ from Doxygen's defaults. @VAR@ values come from
+# cmake/Docs.cmake; $(VAR) ones from the environment (tools/check_docs.py).
+
+PROJECT_NAME           = "vulkan-engine"
+PROJECT_NUMBER         = @PROJECT_VERSION@
+PROJECT_BRIEF          = "A small Vulkan game engine"
+OUTPUT_DIRECTORY       = @VE_DOCS_OUTPUT@
+STRIP_FROM_PATH        = @PROJECT_SOURCE_DIR@/engine/src @PROJECT_SOURCE_DIR@/effects/src @PROJECT_SOURCE_DIR@
+STRIP_FROM_INC_PATH    = @PROJECT_SOURCE_DIR@/engine/src @PROJECT_SOURCE_DIR@/effects/src
+
+INPUT                  = @PROJECT_SOURCE_DIR@/README.md \
+                         @PROJECT_SOURCE_DIR@/docs \
+                         @PROJECT_SOURCE_DIR@/engine/src \
+                         @PROJECT_SOURCE_DIR@/effects/src
+FILE_PATTERNS          = *.hpp *.md
+RECURSIVE              = YES
+EXCLUDE                = @PROJECT_SOURCE_DIR@/docs/api
+EXCLUDE_PATTERNS       = *Internal.hpp
+IMAGE_PATH             = @PROJECT_SOURCE_DIR@/docs
+USE_MDFILE_AS_MAINPAGE = @PROJECT_SOURCE_DIR@/README.md
+
+# `///` comments; the first sentence is the brief (what tooltips show first).
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
+MARKDOWN_SUPPORT       = YES
+AUTOLINK_SUPPORT       = YES
+BUILTIN_STL_SUPPORT    = YES
+INLINE_INHERITED_MEMB  = YES
+EXTRACT_ALL            = $(VE_DOCS_EXTRACT_ALL)
+EXTRACT_STATIC         = YES
+EXTRACT_PRIVATE        = NO
+HIDE_UNDOC_RELATIONS   = YES
+SORT_MEMBER_DOCS       = NO
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+PREDEFINED             = VE_PROFILE(x)=
+
+QUIET                  = YES
+WARNINGS               = YES
+WARN_IF_UNDOCUMENTED   = $(VE_DOCS_WARN_UNDOCUMENTED)
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = NO
+WARN_LOGFILE           = @VE_DOCS_OUTPUT@/warnings.log
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_TREEVIEW      = YES
+DISABLE_INDEX          = NO
+FULL_SIDEBAR           = NO
+HTML_COLORSTYLE        = LIGHT
+HTML_EXTRA_STYLESHEET  = @VE_DOCS_THEME@/doxygen-awesome.css \
+                         @VE_DOCS_THEME@/doxygen-awesome-sidebar-only.css
+SEARCHENGINE           = YES
+SOURCE_BROWSER         = NO
+HAVE_DOT               = NO
+CLASS_GRAPH            = NO

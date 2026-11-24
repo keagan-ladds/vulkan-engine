@@ -61,30 +61,39 @@ using Json = nlohmann::json;
 
 namespace ve::net {
 
+/// Identifies a machine in a session: kServer (the host), clients from 1.
 using PeerId = uint32_t;
-constexpr PeerId kServer = 0;             // the host (also "offline")
-constexpr PeerId kEveryone = 0xffffffffu; // toClients target
+constexpr PeerId kServer = 0;             ///< the host (also "offline")
+constexpr PeerId kEveryone = 0xffffffffu; ///< toClients target
+/// The UDP port host() / join() use unless told otherwise.
 constexpr uint16_t kDefaultPort = 7777;
 
+/// What this machine is in the session.
 enum class Role { Offline, Host, Client };
+/// Connection progress (Network::status()).
 enum class Status { Offline, Hosting, Connecting, Joining, Connected, Failed };
 
-// Implement on a GameObject or Component (with a NetworkObject on the object)
-// to replicate custom state. The owner writes, everyone else reads.
+/// Implement on a GameObject or Component (with a NetworkObject on the object)
+/// to replicate custom state. The owner writes, everyone else reads.
 class NetReplicated {
 public:
     virtual ~NetReplicated() = default;
+    /// Owner: writes the replicated state into `out` (sent when markDirty() was called).
     virtual void netWrite(Writer& out) const = 0;
+    /// Everyone else: reads what netWrite wrote, in the same order.
     virtual void netRead(Reader& in) = 0;
 };
 
+/// Makes its object exist on every machine of a session (with the same id):
+/// who owns it, and replication of its NetReplicated state.
 class NetworkObject : public Component {
 public:
+    /// The peer that owns (simulates) it; kServer for the host's objects.
     PeerId owner() const { return m_owner; }
-    bool isOwner() const;       // this machine owns it (offline: always)
-    void markDirty() { m_dirty = true; } // NetReplicated state changed (owner)
-    bool despawnWithOwner = true; // the owner left: the host removes it
-    bool spawned() const { return m_spawned; } // created by Network::spawn (vs a level object)
+    bool isOwner() const;       ///< this machine owns it (offline: always)
+    void markDirty() { m_dirty = true; } ///< NetReplicated state changed (owner)
+    bool despawnWithOwner = true; ///< the owner left: the host removes it
+    bool spawned() const { return m_spawned; } ///< created by Network::spawn (vs a level object)
 
 private:
     friend class Network;
@@ -94,13 +103,14 @@ private:
     std::string m_prefab;
 };
 
+/// Replicates its object's position and rotation from the owner to everyone else, interpolated.
 class NetworkTransform : public Component {
 public:
-    float sendRate = 20.0f;            // per second, while it moves
-    float interpolationDelay = 0.1f;   // seconds behind the newest sample
-    float teleportDistance = 15.0f;    // jumps further than this snap instead of sliding
+    float sendRate = 20.0f;            ///< per second, while it moves
+    float interpolationDelay = 0.1f;   ///< seconds behind the newest sample
+    float teleportDistance = 15.0f;    ///< jumps further than this snap instead of sliding
 
-    void lateUpdate(float dt) override; // others: follow the samples
+    void lateUpdate(float dt) override; ///< others: follow the samples
 
 private:
     friend class Network;
@@ -115,69 +125,88 @@ private:
     double m_lastSend = -1e9;
 };
 
+/// Multiplayer sessions (host / join over UDP, ENet): peers, named messages,
+/// networked objects. Engine::net(); offline until host() or join().
+/// The host is the authority; offline behaves like a host with no clients.
 class Network {
 public:
+    /// Session settings (set before host() / join()).
     struct Config {
-        std::string game = "ve-game"; // clients of another game are turned away
-        uint32_t version = 1;         // ... and of another protocol version
-        uint32_t maxPlayers = 8;      // clients, besides the host
+        std::string game = "ve-game"; ///< clients of another game are turned away
+        uint32_t version = 1;         ///< ... and of another protocol version
+        uint32_t maxPlayers = 8;      ///< clients, besides the host
     };
+    /// One machine in the session.
     struct PeerInfo {
-        PeerId id = 0;
-        std::string name;
-        uint32_t roundTripMs = 0;
+        PeerId id = 0;  ///< Its peer id (kServer = the host).
+        std::string name;  ///< The player name it gave.
+        uint32_t roundTripMs = 0;  ///< Latency to it in milliseconds.
     };
 
+    /// Made by the Engine.
     explicit Network(Engine& engine);
     ~Network();
 
-    Config config;
-    std::string playerName = "Player";
+    Config config;  ///< Game / version / player limits (set before host() or join()).
+    std::string playerName = "Player";  ///< This player's name, sent when joining.
 
     // --- Session ------------------------------------------------------------------
+    /// Starts hosting a session on `port` (UDP). False (lastError()) if the port can't be opened.
     bool host(uint16_t port = kDefaultPort);
+    /// Starts joining the session at `address` (host name or IP); watch status() / onJoined. False if it can't start.
     bool join(const std::string& address, uint16_t port = kDefaultPort);
-    void leave(); // back to offline (the host: everyone is disconnected)
+    void leave(); ///< back to offline (the host: everyone is disconnected)
 
+    /// Offline, Host or Client.
     Role role() const { return m_role; }
+    /// Connection progress.
     Status status() const { return m_status; }
-    bool isServer() const { return m_role != Role::Client; } // host or offline: the authority
+    bool isServer() const { return m_role != Role::Client; } ///< host or offline: the authority
+    /// Whether this machine joined someone else's session.
     bool isClient() const { return m_role == Role::Client; }
+    /// Whether a session is running (host or client).
     bool online() const { return m_role != Role::Offline; }
+    /// This machine's peer id (kServer on the host and offline).
     PeerId localPeer() const { return m_localPeer; }
-    const std::vector<PeerInfo>& peers() const { return m_peerList; } // everyone in the session, the host (0) first
+    const std::vector<PeerInfo>& peers() const { return m_peerList; } ///< everyone in the session, the host (0) first
+    /// Why the last host / join / connection failed.
     const std::string& lastError() const { return m_error; }
 
     // --- The game's hooks ---------------------------------------------------------
-    std::function<void(PeerId)> onPeerJoined; // host: a client is in (world sent)
-    std::function<void(PeerId)> onPeerLeft;    // host: ... and gone (its objects despawned)
-    // Host: what a joining player gets. Default: ve::save::capture(scene).
+    std::function<void(PeerId)> onPeerJoined; ///< host: a client is in (world sent)
+    std::function<void(PeerId)> onPeerLeft;    ///< host: ... and gone (its objects despawned)
+    /// Host: what a joining player gets. Default: ve::save::capture(scene).
     std::function<Json(PeerId)> worldSnapshot;
-    // Client: the host accepted us; apply its world. Default: ve::save::apply.
-    // May start loading (rebuild the level first): later messages wait for it.
+    /// Client: the host accepted us; apply its world. Default: ve::save::apply.
+    /// May start loading (rebuild the level first): later messages wait for it.
     std::function<void(const Json& world)> onJoined;
-    std::function<void(const std::string& reason)> onDisconnected; // client: lost / refused / host left
+    std::function<void(const std::string& reason)> onDisconnected; ///< client: lost / refused / host left
 
     // --- Messages -------------------------------------------------------------------
+    /// A message handler: `from` = the sender, `in` = the payload.
     using Handler = std::function<void(PeerId from, Reader& in)>;
+    /// Handles messages called `name` (replacing an earlier handler for it).
     void on(const std::string& name, Handler handler);
+    /// Stops handling messages called `name`.
     void off(const std::string& name);
-    // To the host (the authority). On the host / offline the handler runs now, from = kServer.
+    /// To the host (the authority). On the host / offline the handler runs now, from = kServer.
     void toServer(const std::string& name, const Writer& payload = {});
-    // Host -> clients (one, or kEveryone). includeHost: also run it here (from = kServer).
+    /// Host -> clients (one, or kEveryone). includeHost: also run it here (from = kServer).
     void toClients(const std::string& name, const Writer& payload = {}, PeerId target = kEveryone, bool includeHost = false);
 
     // --- World objects (host) ---------------------------------------------------------
-    // Instantiate a prefab here and on every client (with the same id); it gets
-    // a NetworkObject if the prefab has none. Clients can't: null (ask with toServer).
+    /// Instantiate a prefab here and on every client (with the same id); it gets
+    /// a NetworkObject if the prefab has none. Clients can't: null (ask with toServer).
     GameObject* spawn(const std::string& prefab, const glm::vec3& position, const glm::quat& rotation = glm::quat(1, 0, 0, 0),
                       PeerId owner = kServer);
-    void despawn(GameObject& object); // destroy here and on every client
+    void despawn(GameObject& object); ///< destroy here and on every client
+    /// Host: hands an object to another peer (it simulates and replicates it from then on).
     void setOwner(GameObject& object, PeerId owner);
 
     // --- Engine ---------------------------------------------------------------------------
-    void poll();  // frame start: receive (dispatch waits while loading)
-    void flush(); // frame end: send transforms / dirty state
+    void poll();  ///< frame start: receive (dispatch waits while loading)
+    void flush(); ///< frame end: send transforms / dirty state
+    /// Connection statistics to a peer (round trip, bytes).
     Transport::Stats stats(PeerId peer = kServer) const;
 
 private:
@@ -204,7 +233,7 @@ private:
     Writer spawnMessage(const NetworkObject& no) const;
     bool writeState(GameObject& o, Writer& w) const;
     void readState(GameObject& o, Reader& r);
-    bool applyTransform(uint64_t id, const glm::vec3& p, const glm::quat& q, PeerId sender); // false: ignored (not theirs to move...)
+    bool applyTransform(uint64_t id, const glm::vec3& p, const glm::quat& q, PeerId sender); ///< false: ignored (not theirs to move...)
     void refreshPeerList();
     void reset();
     Scene& scene() const;
@@ -217,12 +246,12 @@ private:
     Role m_role = Role::Offline;
     Status m_status = Status::Offline;
     PeerId m_localPeer = kServer;
-    ConnectionId m_hostConnection = 0; // client: the connection to the host
+    ConnectionId m_hostConnection = 0; ///< client: the connection to the host
     PeerId m_nextPeer = 1;
     std::vector<Peer> m_peers;
     std::vector<PeerInfo> m_peerList;
-    std::vector<ConnectionId> m_sendList; // sendToClients' scratch (no allocation per message)
-    std::deque<Pending> m_pending; // received while loading
+    std::vector<ConnectionId> m_sendList; ///< sendToClients' scratch (no allocation per message)
+    std::deque<Pending> m_pending; ///< received while loading
     std::unordered_map<std::string, Handler> m_handlers;
     std::string m_error;
     double m_lastFlush = 0.0;
@@ -232,6 +261,6 @@ private:
 
 namespace ve {
 class TypeRegistry;
-// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
+/// Reflection (scene files, editor): this module's components. The Engine calls it at startup.
 void registerNetworkTypes(TypeRegistry& r);
 } // namespace ve

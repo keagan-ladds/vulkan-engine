@@ -23,33 +23,40 @@ namespace ve {
 
 using Json = nlohmann::json;
 
+/// A grid of item stacks (items by name), e.g. a backpack or a chest. Plain
+/// data: no UI, no GameObject; save it with toJson / fromJson.
 class Inventory {
 public:
-    // Items the max-stack function doesn't know about (or with none set).
+    /// Items the max-stack function doesn't know about (or with none set).
     static constexpr int kDefaultMaxStack = 99;
 
+    /// One slot's contents.
     struct Stack {
-        std::string item; // empty = free slot
-        int count = 0;
+        std::string item; ///< empty = free slot
+        int count = 0;  ///< How many (0 for a free slot).
     };
-    // How many of an item fit in one slot.
+    /// How many of an item fit in one slot.
     using MaxStack = std::function<int(const std::string& item)>;
 
+    /// An inventory with `slotCount` empty slots; `maxStack` says how many of an item fit in a slot (none: kDefaultMaxStack).
     explicit Inventory(int slotCount, MaxStack maxStack = {});
 
-    std::vector<Stack> slots; // always slotCount long
+    std::vector<Stack> slots; ///< always slotCount long
 
+    /// Number of slots.
     int size() const { return int(slots.size()); }
-    int maxStack(const std::string& item) const; // the function's answer, or kDefaultMaxStack
-    int add(const std::string& item, int count);    // tops up stacks, then fills free slots; returns how many didn't fit
-    int remove(const std::string& item, int count); // from the last slots first; returns how many were taken
+    int maxStack(const std::string& item) const; ///< the function's answer, or kDefaultMaxStack
+    int add(const std::string& item, int count);    ///< tops up stacks, then fills free slots; returns how many didn't fit
+    int remove(const std::string& item, int count); ///< from the last slots first; returns how many were taken
+    /// How many of `item` it holds in all.
     int count(const std::string& item) const;
-    void move(int from, int to);                    // merge what fits, or swap
+    void move(int from, int to);                    ///< merge what fits, or swap
+    /// Empties every slot.
     void clear();
 
-    // One entry per slot: {"item", "count"}, or null for a free slot.
+    /// One entry per slot: {"item", "count"}, or null for a free slot.
     Json save() const;
-    void load(const Json& j); // (extra entries are ignored, missing ones left free)
+    void load(const Json& j); ///< (extra entries are ignored, missing ones left free)
 
 private:
     MaxStack m_maxStack;

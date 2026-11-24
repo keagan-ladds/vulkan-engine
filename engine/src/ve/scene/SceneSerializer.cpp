@@ -8,6 +8,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 
+#include <chrono>
 #include <fstream>
 #include <functional>
 
@@ -228,19 +229,111 @@ bool SceneSerializer::save(const Scene& scene, const std::filesystem::path& path
     return true;
 }
 
-std::vector<GameObject*> SceneSerializer::loadJson(Scene& scene, const Json& json)
+void SceneSerializer::markLevelObjects(Scene& scene, const std::vector<GameObject*>& roots)
 {
-    std::vector<GameObject*> roots;
-    if (const Json& objects = member(json, "objects"); objects.is_array())
-        for (const Json& oj : objects) roots.push_back(createObject(scene, oj));
     // Remember the level's objects (save games record which ones are gone).
     std::function<void(GameObject&)> mark = [&](GameObject& o) {
         if (o.persistent) scene.addLevelObject(o.id());
         for (Transform* c : o.transform().children()) mark(c->gameObject());
     };
     for (GameObject* r : roots)
-        if (r) mark(*r);
+        if (r && !r->isDestroyed()) mark(*r);
+}
+
+std::vector<GameObject*> SceneSerializer::loadJson(Scene& scene, const Json& json)
+{
+    std::vector<GameObject*> roots;
+    if (const Json& objects = member(json, "objects"); objects.is_array())
+        for (const Json& oj : objects) roots.push_back(createObject(scene, oj));
+    markLevelObjects(scene, roots);
     return roots;
+}
+
+// -----------------------------------------------------------------------------
+// SceneLoad (over frames)
+// -----------------------------------------------------------------------------
+
+std::shared_ptr<SceneLoad> SceneSerializer::loadAsync(Scene& scene, const std::filesystem::path& path)
+{
+    return std::make_shared<SceneLoad>(scene, path);
+}
+
+SceneLoad::SceneLoad(Scene& scene, std::filesystem::path path) : m_scene(&scene), m_path(std::move(path))
+{
+    m_parsed = std::make_shared<Parsed>();
+    try {
+        m_parsed->file = Engine::get().assets().resolve(m_path); // (main thread: the asset manager isn't thread-safe)
+    } catch (const std::exception& e) {
+        m_parsed->error = e.what();
+        return;
+    }
+    // The job owns what it writes (Jobs.hpp rules): the parsed JSON only.
+    m_job = jobs::submit([parsed = m_parsed](const std::atomic<bool>&) {
+        const std::unique_ptr<std::istream> in = vfs::open(parsed->file); // (disk, or a packaged game's archive)
+        try {
+            if (!in) throw std::runtime_error("can't read");
+            *in >> parsed->json;
+        } catch (const std::exception& e) {
+            parsed->error = parsed->file.string() + " is not valid JSON: " + e.what();
+        }
+    });
+}
+
+SceneLoad::~SceneLoad()
+{
+    m_job.cancel();
+    if (!m_done) m_job.wait(); // (it only touches m_parsed, but don't leave it running for nothing)
+    if (m_holding) m_scene->releaseStarts();
+}
+
+float SceneLoad::progress() const
+{
+    if (m_done) return 1.0f;
+    if (m_total == 0) return 0.05f;
+    return 0.1f + 0.9f * float(m_next) / float(m_total);
+}
+
+float SceneLoad::step(float budgetMs)
+{
+    if (m_done) return 1.0f;
+    if (!m_job.done()) return progress(); // still parsing
+    if (!m_parsed->error.empty()) {
+        m_error = m_parsed->error;
+        log::error("Scene: {}", m_error);
+        finish();
+        return 1.0f;
+    }
+    const Json& objects = member(m_parsed->json, "objects");
+    m_total = objects.is_array() ? objects.size() : 0;
+    if (!m_holding) {
+        m_holding = true;
+        m_scene->holdStarts();
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    while (m_next < m_total) {
+        m_roots.push_back(SceneSerializer::createObject(*m_scene, objects[m_next++]));
+        if (budgetMs > 0.0f && std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count() >= budgetMs) break;
+    }
+    if (m_next >= m_total) finish();
+    return progress();
+}
+
+void SceneLoad::finish()
+{
+    m_done = true;
+    if (m_error.empty()) {
+        SceneSerializer::markLevelObjects(*m_scene, m_roots);
+        SceneSerializer::s_lastPath = m_path;
+        log::info("Scene loaded: {} ({} root objects, over frames)", m_path.string(), m_roots.size());
+    }
+    m_parsed.reset(); // (the JSON can be big)
+    // The objects may start from the next Scene::startPending() on: code that
+    // wants to adjust them first does it right after the step() that finished
+    // (Engine::addSceneLoad's `then`).
+    if (m_holding) {
+        m_holding = false;
+        m_scene->releaseStarts();
+    }
 }
 
 std::vector<GameObject*> SceneSerializer::load(Scene& scene, const std::filesystem::path& path)

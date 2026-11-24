@@ -34,42 +34,46 @@
 
 namespace ve {
 
-// Bump when the cooker's output changes: every cooked sound is redone.
+/// Bump when the cooker's output changes: every cooked sound is redone.
 constexpr uint32_t kAudioCookerVersion = 1;
 
+/// How a sound is cooked: from its `<sound>.audio` file (JSON), defaults otherwise.
 struct AudioSettings {
-    bool compress = true;
-    float quality = 0.4f;
-    bool mono = false;
-    uint32_t sampleRate = 0;
+    bool compress = true;    ///< Cook to Ogg Vorbis; false = ship and play the source file as it is.
+    float quality = 0.4f;    ///< Vorbis quality, -0.1..1 (0.4 ~ 128 kbit/s stereo).
+    bool mono = false;       ///< Mix down to one channel (positional sounds don't need stereo).
+    uint32_t sampleRate = 0; ///< Resample to this rate in Hz; 0 = keep the source's.
 
-    // <sound>.audio if there is one (fields it leaves out: defaults).
+    /// <sound>.audio if there is one (fields it leaves out: defaults).
     static AudioSettings forFile(const std::filesystem::path& soundFile);
-    static std::filesystem::path settingsFile(const std::filesystem::path& soundFile); // <sound>.audio
-    nlohmann::json toJson() const;
-    void applyJson(const nlohmann::json& j);
-    uint64_t cookHash() const;
+    static std::filesystem::path settingsFile(const std::filesystem::path& soundFile); ///< <sound>.audio
+    nlohmann::json toJson() const;            ///< The settings as a .audio file's JSON.
+    void applyJson(const nlohmann::json& j);  ///< Sets the fields `j` has (others keep their values).
+    uint64_t cookHash() const;                ///< Changes whenever the cooked result would (stamped in cooked files).
 };
 
-// Sound files the cooker handles (by extension: .wav, .flac).
+/// Sound files the cooker handles (by extension: .wav, .flac).
 bool isCookableAudio(const std::filesystem::path& file);
-// <cacheDir>/<asset path>.ogg
+/// <cacheDir>/<asset path>.ogg
 std::filesystem::path cookedAudioPath(const std::filesystem::path& cacheDir, const std::string& assetPath);
 
+/// What cookAudio did.
 struct AudioCookResult {
-    bool ok = false;
-    std::string error;
-    uint32_t channels = 0, sampleRate = 0;
-    double seconds = 0;     // length of the sound
-    uint64_t bytes = 0;     // of the cooked file
-    double milliseconds = 0;
+    bool ok = false;          ///< The cooked file was written.
+    std::string error;        ///< Why not (when !ok).
+    uint32_t channels = 0;    ///< Channels in the cooked file.
+    uint32_t sampleRate = 0;  ///< Its sample rate (Hz).
+    double seconds = 0;     ///< length of the sound
+    uint64_t bytes = 0;     ///< of the cooked file
+    double milliseconds = 0;  ///< How long cooking took.
 };
-// Cooks `source` into `output` (via a temporary file, then renamed).
+/// Cooks `source` into `output` (via a temporary file, then renamed).
+/// Pure CPU work (safe on job threads); `cancelled` (optional) is polled.
 AudioCookResult cookAudio(const std::filesystem::path& source, const AudioSettings& settings,
                           const std::filesystem::path& output, const std::atomic<bool>* cancelled = nullptr);
 
-// Reads a cooked file's stamp and checks it (see Cook.hpp). `settings` null
-// (no source to read them from): `settingsOut` gets the stored ones.
+/// Reads a cooked file's stamp and checks it (see Cook.hpp). `settings` null
+/// (no source to read them from): `settingsOut` gets the stored ones.
 CookedState checkCookedAudio(const std::filesystem::path& cooked, const std::filesystem::path& source,
                              const AudioSettings* settings, AudioSettings* settingsOut = nullptr);
 

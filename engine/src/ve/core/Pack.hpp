@@ -32,26 +32,31 @@
 
 namespace ve {
 
+/// Reads a .vepak archive (written by PackWriter / vecook --package): an index
+/// of named entries, each zstd-compressed or stored. Usually used through ve::vfs.
 class PackReader {
 public:
+    /// One file in the archive.
     struct Entry {
-        std::string name;
-        uint64_t offset = 0;
-        uint64_t storedSize = 0;
-        uint64_t size = 0;
-        uint8_t method = 0;
-        uint64_t hash = 0;
+        std::string name;  ///< Path inside the archive, '/' separated ("assets/textures/a.png").
+        uint64_t offset = 0;  ///< Byte offset of the stored data in the archive file.
+        uint64_t storedSize = 0;  ///< Bytes stored in the archive (compressed size).
+        uint64_t size = 0;  ///< Bytes once uncompressed.
+        uint8_t method = 0;  ///< 0 = stored as is, 1 = zstd.
+        uint64_t hash = 0;  ///< FNV-1a hash of the uncompressed bytes (integrity check).
     };
 
-    // Reads the index. False (and `error`) if it isn't a readable .vepak.
+    /// Reads the index. False (and `error`) if it isn't a readable .vepak.
     bool open(const std::filesystem::path& file, std::string* error = nullptr);
+    /// The archive file opened.
     const std::filesystem::path& file() const { return m_file; }
 
-    // The entry for a name ('/' separated); exact match first, then ignoring
-    // case (so a path that works on a case-insensitive disk works here too).
+    /// The entry for a name ('/' separated); exact match first, then ignoring
+    /// case (so a path that works on a case-insensitive disk works here too).
     const Entry* find(const std::string& name) const;
-    // The entry's uncompressed bytes. Thread-safe.
+    /// The entry's uncompressed bytes. Thread-safe.
     std::optional<std::vector<uint8_t>> read(const Entry& entry) const;
+    /// Every entry, in archive order.
     const std::vector<Entry>& entries() const { return m_entries; }
 
 private:
@@ -59,21 +64,26 @@ private:
     std::vector<Entry> m_entries;
     std::unordered_map<std::string, size_t> m_byName;
     std::unordered_map<std::string, size_t> m_byLowerName;
-    mutable std::mutex m_lock; // m_stream is shared by reading threads
+    mutable std::mutex m_lock; ///< m_stream is shared by reading threads
     mutable std::ifstream m_stream;
 };
 
+/// Writes a .vepak archive: begin(), add() each file, finish().
 class PackWriter {
 public:
-    // `level`: zstd level (1 fast .. 19 small; 0 = store everything).
+    /// `level`: zstd level (1 fast .. 19 small; 0 = store everything).
     bool begin(const std::filesystem::path& file, int level = 9, std::string* error = nullptr);
-    // Adds an entry; compressed unless that saves under 3% (already
-    // compressed data: JPEG, Ogg, ...), then stored as is.
+    /// Adds an entry; compressed unless that saves under 3% (already
+    /// compressed data: JPEG, Ogg, ...), then stored as is.
     bool add(const std::string& name, const void* data, size_t size);
+    /// Writes the index and closes the file. False (and `error`) on a write failure.
     bool finish(std::string* error = nullptr);
 
+    /// Total uncompressed bytes added so far.
     uint64_t rawBytes() const { return m_raw; }
+    /// Total bytes written for the entries (after compression).
     uint64_t storedBytes() const { return m_stored; }
+    /// Number of entries added.
     size_t count() const { return m_entries.size(); }
 
 private:
@@ -84,7 +94,7 @@ private:
     uint64_t m_raw = 0, m_stored = 0;
 };
 
-// 64-bit FNV-1a.
+/// 64-bit FNV-1a.
 uint64_t fnv1a64(const void* data, size_t size, uint64_t seed = 1469598103934665603ull);
 
 } // namespace ve

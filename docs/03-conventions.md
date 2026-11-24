@@ -19,6 +19,34 @@
 - Comments explain intent and Vulkan "why". This codebase doubles as a
   learning resource.
 
+### Code documentation
+
+Every public declaration in a header (`engine/src`, `effects/src`) has a doc
+comment: what IntelliSense / clangd shows on hover, and what the API reference
+(`cmake --build build --target docs` -> `build/docs/html/index.html`) is made of.
+
+- `///` above a declaration, `///<` after a member or enum value on the same
+  line. Plain `//` is for implementation notes and section separators; tools
+  don't attach it to anything.
+- The first sentence is the summary (shown first in tooltips): say what it
+  does or is, in the caller's terms. Then units (s, m, degrees, 0..1), ranges,
+  defaults' meaning, ownership / lifetime, threading ("main thread only"),
+  and what null / empty / negative means.
+- Name every parameter whose meaning isn't obvious from its name and type with
+  `@param` (e.g. `@param duck music volume (0..1) while the stinger plays`),
+  and `@return` when the result isn't obvious. Don't restate the obvious
+  (`@param name the name`).
+- Keep the file's top comment block (what the file is for, why, short usage
+  example); write it as `//` - it is the file's overview, not a declaration's.
+- Private members and internals: document them when the code relies on an
+  invariant; they don't count towards the check.
+
+**Check before you commit:** `python3 tools/check_docs.py --changed` lists the
+undocumented declarations in headers your branch touched and fails if there
+are any (CI runs it too). `python3 tools/check_docs.py` shows the whole
+codebase's state; `--list <header>` every gap in one header. Needs Doxygen
+(`apt install doxygen`, `winget install DimitriVanHeesch.Doxygen`, `brew install doxygen`).
+
 ## Coordinate & rendering conventions
 
 | Thing | Convention |

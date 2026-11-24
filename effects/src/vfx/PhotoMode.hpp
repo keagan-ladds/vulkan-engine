@@ -41,19 +41,19 @@ public:
     ve::Key toggleKey = ve::Key::F12;
     std::string outputDirectory = "screenshots";
 
-    // Capture settings (also in the panel).
-    int resolution = 1;        // index into resolutionNames(): 0 window, 1 window x2, 2 1080p, 3 1440p, 4 4K
-    int samples = 64;          // frames averaged
-    bool maxQuality = true;    // raise every effect's quality for the capture
-    float moveSpeed = 6.0f;    // m/s
-    float lookSensitivity = 0.15f; // degrees per pixel
+    /// Capture settings (also in the panel).
+    int resolution = 1;        ///< index into resolutionNames(): 0 window, 1 window x2, 2 1080p, 3 1440p, 4 4K
+    int samples = 64;          ///< frames averaged
+    bool maxQuality = true;    ///< raise every effect's quality for the capture
+    float moveSpeed = 6.0f;    ///< m/s
+    float lookSensitivity = 0.15f; ///< degrees per pixel
 
     bool active() const { return m_active; }
     static bool anyActive();
     void enter();
     void exit();
     void takePhoto();
-    // Places the photo camera (scripted shots). Yaw 0 looks down -Z; degrees.
+    /// Places the photo camera (scripted shots). Yaw 0 looks down -Z; degrees.
     void setView(const glm::vec3& position, float yawDegrees, float pitchDegrees);
     const std::string& lastPhoto() const { return m_lastPhoto; }
 
@@ -67,11 +67,11 @@ private:
     ve::Renderer::PhotoCaptureSettings captureSettings() const;
 
     bool m_active = false;
-    ve::ObjectRef<> m_camera; // (the editor may delete it)
-    float m_yaw = 0.0f, m_pitch = 0.0f; // degrees
+    ve::ObjectRef<> m_camera; ///< (the editor may delete it)
+    float m_yaw = 0.0f, m_pitch = 0.0f; ///< degrees
     float m_fov = 60.0f;
 
-    // Restored on exit.
+    /// Restored on exit.
     bool m_savedPaused = false;
     float m_savedTimeScale = 1.0f;
     bool m_savedMouseCaptured = false;
@@ -80,8 +80,8 @@ private:
     float m_savedExposureEV = 0.0f;
     float m_exposureEV = 0.0f;
 
-    // Capture state.
-    int m_pendingFrames = -1; // >= 0: counting down to beginPhotoCapture (lets the panel show "Rendering...")
+    /// Capture state.
+    int m_pendingFrames = -1; ///< >= 0: counting down to beginPhotoCapture (lets the panel show "Rendering...")
     bool m_capturing = false;
     bool m_qualityRaised = false;
     std::string m_lastPhoto;
