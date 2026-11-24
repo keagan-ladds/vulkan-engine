@@ -90,7 +90,7 @@ void Player::start()
     cam.farPlane = 4000.0f;
     // A torch held a little right of and below the eyes (a ve::SpotLight
     // shines along its object's forward, like the camera): T / pad d-pad down.
-    ve::GameObject& torch = scene().spawn("Torch");
+    ve::GameObject& torch = scene().spawn("Flashlight"); // (not "Torch": the camp torches are found by that name)
     torch.setParent(&head, false);
     torch.transform().setLocalPosition({0.25f, -0.2f, 0.0f});
     auto& beam = torch.addComponent<ve::SpotLight>();
