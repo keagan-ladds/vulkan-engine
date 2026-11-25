@@ -584,6 +584,95 @@ def terrain_textures(size=512):
     save("rock", albedo, height, rough, 14.0)
 
 
+
+# --------------------------------------------------------------------------- grime masks
+def grime_masks(size=1024):
+    """Greyscale grime masks (white = grime) in textures/grime/.
+
+    *_gradient_*: wall dirt that fades with height. They tile left-right; the
+    top and bottom are the ends of the gradient (map V over the wall's height).
+    *_patches_*: blotches that tile both ways, to blend one material into
+    another (rust patches over painted metal, moss over stone...).
+    The `_mask` suffix makes the engine load them as data (BC4 when cooked)."""
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    k = np.fft.fftfreq(size) * size  # integer frequencies: the result wraps around exactly
+    kx, ky = np.meshgrid(k, k)
+
+    def noise(beta=2.0, lo=1.0, hi=None, stretch=1.0):
+        """Periodic noise with a 1/f^beta spectrum, normalised to 0..1.
+        stretch > 1 elongates features vertically (streaks)."""
+        r = np.sqrt(kx ** 2 + (ky * stretch) ** 2)
+        amp = np.where(r >= lo, np.maximum(r, 1e-6) ** (-beta / 2.0 - 0.5), 0.0)
+        if hi:
+            amp *= np.exp(-(r / hi) ** 2)
+        spectrum = amp * np.exp(2j * np.pi * rng.random((size, size)))
+        v = np.real(np.fft.ifft2(spectrum))
+        return (v - v.min()) / (v.max() - v.min())
+
+    def warp(img, strength, beta=2.2):
+        """Domain warp (periodic): organic, smeared shapes instead of plain blobs."""
+        dx = (noise(beta) - 0.5) * strength * size
+        dy = (noise(beta) - 0.5) * strength * size
+        ys, xs = np.mgrid[0:size, 0:size].astype(np.float64)
+        sx = (xs + dx) % size
+        sy = (ys + dy) % size
+        x0, y0 = np.floor(sx).astype(int), np.floor(sy).astype(int)
+        tx, ty = sx - x0, sy - y0
+        x1, y1 = (x0 + 1) % size, (y0 + 1) % size
+        a = img[y0, x0] * (1 - tx) + img[y0, x1] * tx
+        b = img[y1, x0] * (1 - tx) + img[y1, x1] * tx
+        return a * (1 - ty) + b * ty
+
+    def smoothstep(e0, e1, v):
+        t = np.clip((v - e0) / (e1 - e0), 0.0, 1.0)
+        return t * t * (3 - 2 * t)
+
+    def patches(base_beta, lo, coverage, softness, edge_detail, seed_shift=0, interior=0.25):
+        """Blotches covering about `coverage` of the image, with ragged edges."""
+        field = warp(noise(base_beta, lo=lo), 0.08) * (1 - edge_detail) + noise(1.2, lo=8) * edge_detail
+        t = np.quantile(field, 1.0 - coverage)
+        m = smoothstep(t - softness, t + softness, field)
+        # Some variation inside the patches (still near white), none outside.
+        return m * (1.0 - interior + interior * noise(1.6, lo=4))
+
+    def save(name, v):
+        v = np.clip(v, 0.0, 1.0)
+        Image.fromarray((v * 255.0 + 0.5).astype(np.uint8), "L").save(out("textures", "grime", name + "_mask.png"), optimize=True)
+
+    y = np.linspace(0.0, 1.0, size)[:, None]  # 0 = top of the image, 1 = bottom
+
+    # 1. Rising damp / splash-back: dirt from the ground up, ragged top edge.
+    height = 1.0 - y  # 0 at the bottom
+    edge = 0.35 + (noise(1.8, lo=2) - 0.5) * 0.35 + (noise(1.2, lo=16) - 0.5) * 0.12
+    m = 1.0 - smoothstep(edge - 0.18, edge + 0.04, height)
+    m *= 0.55 + 0.45 * warp(noise(2.0, lo=3), 0.05)
+    m = np.maximum(m, (1.0 - smoothstep(0.0, 0.06 + 0.1 * noise(1.6, lo=4), height)) * (0.7 + 0.3 * noise(1.4, lo=8)))
+    save("grime_gradient_ground", m)
+
+    # 2. Rain streaks: dirt washed down from the top, in vertical runs.
+    streaks = noise(1.6, lo=2, stretch=10.0)
+    streaks = smoothstep(0.35, 0.85, streaks)
+    fade = (1.0 - smoothstep(0.0, 0.35 + 0.55 * noise(2.0, lo=2, stretch=6.0), y)) ** 1.2
+    top = (1.0 - smoothstep(0.0, 0.03 + 0.07 * noise(1.6, lo=4), y)) * (0.5 + 0.5 * noise(1.4, lo=8))
+    m = np.maximum(streaks * fade, top * 0.8) * (0.7 + 0.3 * noise(1.4, lo=6))
+    save("grime_gradient_streaks", m)
+
+    # 3. Soft overall gradient (dark at the bottom), broken up by blotches: general wear.
+    m = smoothstep(0.1, 1.0, y) ** 1.5
+    m = np.clip(m * 0.75 + (warp(noise(2.0, lo=2), 0.1) - 0.5) * 0.6 * (0.3 + 0.7 * y), 0.0, 1.0)
+    save("grime_gradient_soft", m)
+
+    # 4. Patches: medium blotches with ragged edges (rust on a roof sheet).
+    save("grime_patches", patches(2.4, 2, coverage=0.35, softness=0.04, edge_detail=0.25))
+    # 5. Large soft blotches (broad weathering, moss, water stains).
+    save("grime_patches_large", patches(2.6, 2, coverage=0.45, softness=0.1, edge_detail=0.1))
+    # 6. Small spots and pitting, harder edges (rust spots, flaking paint).
+    spots = patches(1.6, 6, coverage=0.22, softness=0.02, edge_detail=0.35, interior=0.15)
+    save("grime_patches_spots", spots)
+
+
 # --------------------------------------------------------------------------- skinned villager
 def decal_textures(size=256):
     """Decal textures (ve::Decal): albedo alpha / mask alpha = where the decal
@@ -939,7 +1028,7 @@ def torch_cookie(size=256):
 
 
 GENERATORS = [villager, terrain_textures, decal_textures, lut_neutral, textures, reed_screen, rondavel, test_tree, audio,
-              footsteps, torch_cookie]
+              footsteps, torch_cookie, grime_masks]
 
 if __name__ == "__main__":
     # Every generator, or only the ones named: python3 tools/generate_assets.py test_tree rondavel

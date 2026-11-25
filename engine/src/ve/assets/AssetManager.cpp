@@ -280,7 +280,9 @@ std::shared_ptr<Model> AssetManager::loadModel(const std::filesystem::path& path
     const std::filesystem::path modelPath = std::filesystem::path(name).is_absolute() ? source : std::filesystem::path(name);
     std::shared_ptr<Model> model;
     const char* how = "parsed";
-    if (isCookableModel(path) && m_cook.useCooked && !m_cook.cacheDir.empty()) {
+    // Only models in the asset folders cook (the cache mirrors their asset
+    // paths); a file elsewhere (an absolute path) is just parsed.
+    if (isCookableModel(path) && m_cook.useCooked && !m_cook.cacheDir.empty() && !std::filesystem::path(name).is_absolute()) {
         const std::filesystem::path cooked = cookedModelPath(m_cook.cacheDir, name);
         ModelData data;
         std::string error;
