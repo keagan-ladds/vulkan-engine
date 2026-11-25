@@ -9,6 +9,7 @@
 // =============================================================================
 
 #include "ve/gfx/Resources.hpp"
+#include "ve/core/BinaryIO.hpp"
 #include "ve/render/Geometry.hpp"
 
 #include <memory>
@@ -66,6 +67,11 @@ struct MeshData {
     /// Reorders triangles/vertices for the GPU's vertex cache and memory
     /// fetches (same mesh, renders faster). Cheap; do it for static meshes.
     void optimize();
+
+    /// Appends the mesh to a binary stream (cooked models, the derived-data cache).
+    void write(BinaryWriter& out) const;
+    /// Reads a mesh written by write(). False if the data is truncated.
+    bool read(BinaryReader& in);
 };
 
 /// Geometry on the GPU: a vertex and an index buffer with submeshes. Shared

@@ -212,6 +212,20 @@ TextureCookResult cookTexture(const std::filesystem::path& source, const Texture
     return r;
 }
 
+bool encodeRgbaLevel(const uint8_t* rgba, uint32_t width, uint32_t height, VkFormat format, std::vector<uint8_t>& out,
+                     const std::atomic<bool>* cancelled)
+{
+    initEncoders();
+    Level level;
+    level.w = width;
+    level.h = height;
+    level.px.assign(rgba, rgba + size_t(width) * height * 4);
+    bc7enc_compress_block_params bc7;
+    bc7enc_compress_block_params_init(&bc7);
+    if (format != VK_FORMAT_BC7_SRGB_BLOCK) bc7enc_compress_block_params_init_linear_weights(&bc7);
+    return encodeLevel(level, format, bc7, out, cancelled);
+}
+
 bool decodeCookedTexture(const Ktx2Texture& t, uint32_t level, uint32_t& width, uint32_t& height, std::vector<uint8_t>& rgba)
 {
     if (level >= t.levelOffsets.size()) return false;

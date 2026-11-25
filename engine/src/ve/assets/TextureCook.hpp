@@ -57,7 +57,14 @@ struct TextureCookResult {
 TextureCookResult cookTexture(const std::filesystem::path& source, const TextureSettings& settings,
                               const std::filesystem::path& output, const std::atomic<bool>* cancelled = nullptr);
 
-/// Decodes one level of a cooked texture to 8-bit RGBA on the CPU (BC4 -> R,R,R,255;
+//// Block-compresses one RGBA8 image level into `format` (BC4 / BC5 / BC7,
+/// sRGB or not; an uncompressed format is copied), appending to `out`. For
+/// textures made at runtime that get cached (impostor atlases). Pure CPU.
+/// @return false if `cancelled` was set meanwhile.
+bool encodeRgbaLevel(const uint8_t* rgba, uint32_t width, uint32_t height, VkFormat format, std::vector<uint8_t>& out,
+                     const std::atomic<bool>* cancelled = nullptr);
+
+// Decodes one level of a cooked texture to 8-bit RGBA on the CPU (BC4 -> R,R,R,255;
 /// BC5 -> X, Y, rebuilt Z, 255, like veUnpackNormal; BC7 / RGBA8 as stored). For
 /// code that wants pixels while only the cooked copy exists (a packaged game).
 bool decodeCookedTexture(const Ktx2Texture& texture, uint32_t level, uint32_t& width, uint32_t& height,

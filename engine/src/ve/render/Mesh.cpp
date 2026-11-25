@@ -11,6 +11,19 @@
 
 namespace ve {
 
+void MeshData::write(BinaryWriter& out) const
+{
+    out.putVector(vertices);
+    out.putVector(indices);
+}
+
+bool MeshData::read(BinaryReader& in)
+{
+    vertices = in.getVector<Vertex>();
+    indices = in.getVector<uint32_t>();
+    return in.ok();
+}
+
 void MeshData::append(const MeshData& other, const glm::mat4& transform, const glm::vec4& tint)
 {
     const auto base = static_cast<uint32_t>(vertices.size());

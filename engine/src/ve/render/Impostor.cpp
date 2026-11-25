@@ -183,11 +183,74 @@ std::shared_ptr<Impostor> Impostor::bake(Renderer& renderer, const Mesh& mesh,
     auto imp = std::shared_ptr<Impostor>(new Impostor());
     imp->m_albedo = Texture::adopt(renderer, albedo, SamplerType::LinearClamp, "impostor albedo");
     imp->m_normal = Texture::adopt(renderer, normal, SamplerType::LinearClamp, "impostor normal");
-    imp->m_material = renderer.createMaterial(renderer.builtinShader(BuiltinShader::Impostor));
-    imp->m_material->setVector(0, glm::vec4(centre, radius));
-    imp->m_material->setVector(1, glm::vec4(float(N), settings.alphaCutoff, 0.0f, 0.0f));
-    imp->m_material->setTexture(0, imp->m_albedo);
-    imp->m_material->setTexture(1, imp->m_normal);
+    imp->m_framing = {centre, radius, N, settings.alphaCutoff};
+    imp->finish(renderer);
+    return imp;
+}
+
+std::shared_ptr<Impostor> Impostor::fromAtlases(Renderer& renderer, std::shared_ptr<Texture> albedo, std::shared_ptr<Texture> normal,
+                                                const Framing& framing)
+{
+    auto imp = std::shared_ptr<Impostor>(new Impostor());
+    imp->m_albedo = std::move(albedo);
+    imp->m_normal = std::move(normal);
+    imp->m_framing = framing;
+    imp->finish(renderer);
+    return imp;
+}
+
+Impostor::Pixels Impostor::readPixels(Renderer& renderer) const
+{
+    Device& device = renderer.device();
+    const Image& a = m_albedo->image();
+    const Image& n = m_normal->image();
+    Pixels px;
+    px.size = a.extent.width;
+    px.mips = a.mipLevels;
+    size_t total = 0;
+    for (uint32_t m = 0; m < px.mips; ++m) {
+        px.levelOffsets.push_back(total);
+        const size_t side = std::max(1u, px.size >> m);
+        total += side * side * 4;
+    }
+    // One readback buffer: albedo levels, then normal levels.
+    Buffer staging = device.createBuffer(total * 2, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryUsage::GpuToCpu, "impostor readback");
+    device.immediateSubmit([&](VkCommandBuffer cmd) {
+        for (int img = 0; img < 2; ++img) {
+            const Image& image = img == 0 ? a : n;
+            imageBarrier(cmd, image.handle, VK_IMAGE_ASPECT_COLOR_BIT, 0, px.mips, VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL,
+                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                         VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            for (uint32_t m = 0; m < px.mips; ++m) {
+                const uint32_t side = std::max(1u, px.size >> m);
+                VkBufferImageCopy region{};
+                region.bufferOffset = VkDeviceSize(img) * total + px.levelOffsets[m];
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, m, 0, 1};
+                region.imageExtent = {side, side, 1};
+                vkCmdCopyImageToBuffer(cmd, image.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.handle, 1, &region);
+            }
+            imageBarrier(cmd, image.handle, VK_IMAGE_ASPECT_COLOR_BIT, 0, px.mips, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        }
+    });
+    vmaInvalidateAllocation(device.allocator(), staging.allocation, 0, VK_WHOLE_SIZE);
+    const auto* bytes = static_cast<const uint8_t*>(staging.mapped);
+    px.albedo.assign(bytes, bytes + total);
+    px.normal.assign(bytes + total, bytes + 2 * total);
+    device.destroyBuffer(staging);
+    return px;
+}
+
+void Impostor::finish(Renderer& renderer)
+{
+    const glm::vec3 centre = m_framing.centre;
+    const float radius = m_framing.radius;
+    m_material = renderer.createMaterial(renderer.builtinShader(BuiltinShader::Impostor));
+    m_material->setVector(0, glm::vec4(centre, radius));
+    m_material->setVector(1, glm::vec4(float(m_framing.frames), m_framing.alphaCutoff, 0.0f, 0.0f));
+    m_material->setTexture(0, m_albedo);
+    m_material->setTexture(1, m_normal);
 
     // The quad's vertices only carry UVs (the shader builds the billboard), but
     // its positions span the bounding sphere so its bounds are meaningful.
@@ -200,8 +263,7 @@ std::shared_ptr<Impostor> Impostor::bake(Renderer& renderer, const Mesh& mesh,
         quad.vertices.push_back(v);
     }
     quad.indices = {0, 1, 2, 0, 2, 3};
-    imp->m_quad = Mesh::create(renderer, quad, {}, "impostor quad");
-    return imp;
+    m_quad = Mesh::create(renderer, quad, {}, "impostor quad");
 }
 
 } // namespace ve
