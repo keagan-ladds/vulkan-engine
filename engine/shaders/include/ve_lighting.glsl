@@ -196,15 +196,40 @@ float vePointAttenuation(float dist, float range)
 // Sun visibility of the ground a surface receives bounce light from.
 // frame.ambientGround.w = fraction of the ground ambient that is sunlit-ground
 // bounce (set by whoever drives the ambient, e.g. vfx::AtmospherePass); that
-// part must vanish where the sun is hidden (behind terrain at sunset). Sampled
-// 2 m out along the normal so a face turned away from the sun isn't "shadowed"
-// by its own object.
+// part must vanish where the sun is hidden (behind terrain at sunset).
+//
+// Bounce comes from an area of ground, not one point, so this averages four
+// shadow lookups on a 1.5 m ring centred 2.5 m out along the normal's
+// horizontal part (so a face turned away from the sun isn't "shadowed" by its
+// own object), 1.5 m above the surface point:
+// - The height keeps small props out of it: with the sun above the horizon a
+//   crate or rock shorter than ~1.5 m can't shadow a point above its top, so
+//   it no longer prints a crisp, cube-shaped patch of missing bounce (sky
+//   only, so blue) on a wall beside it. Huts, trees, cliffs and terrain are
+//   taller, so their shade (the case this is for) still removes the bounce.
+// - Four taps soften what's left into a gradient instead of a hard copy of
+//   the occluder's outline.
+// - Only the horizontal part of the normal is used, so faces turned down (the
+//   bevel under a crate) don't sample underground, where the terrain always
+//   hides the sun (that gave a blue rim along every bottom edge).
 float veGroundBounceVisibility(VeSurface s)
 {
     if (frame.lightCounts.x == 0u || frame.ambientGround.w <= 0.0) return 1.0;
-    vec3 p = s.position + s.normal * 2.0;
-    float viewDepth = dot(p - frame.cameraPosition.xyz, frame.cameraForward.xyz);
-    return veDirectionalShadow(0u, p, vec3(0.0, 1.0, 0.0), viewDepth);
+    vec2 h = s.normal.xz;
+    float len = length(h);
+    vec2 dir = len > 1e-3 ? h / len : vec2(1.0, 0.0);
+    vec2 side = vec2(-dir.y, dir.x);
+    vec3 centre = s.position + vec3(0.0, 1.5, 0.0) + (len > 1e-3 ? vec3(dir.x, 0.0, dir.y) * 2.5 : vec3(0.0));
+    // Ring taps at 45 degrees to the normal: two nearer the surface, two further out.
+    const vec2 ring[4] = vec2[](vec2(1.06, 1.06), vec2(1.06, -1.06), vec2(-1.06, 1.06), vec2(-1.06, -1.06));
+    float sum = 0.0;
+    for (int k = 0; k < 4; ++k) {
+        vec2 o = dir * ring[k].x + side * ring[k].y;
+        vec3 p = centre + vec3(o.x, 0.0, o.y);
+        float viewDepth = dot(p - frame.cameraPosition.xyz, frame.cameraForward.xyz);
+        sum += veDirectionalShadow(0u, p, vec3(0.0, 1.0, 0.0), viewDepth);
+    }
+    return sum * 0.25;
 }
 
 // Ground ambient colour with the sunlit-bounce part scaled by visibility.
@@ -297,10 +322,10 @@ vec3 veEvaluateLighting(VeSurface s, out float sun0Shadow)
         if (dist >= L.positionRange.w) continue;
         vec3 l = toLight / dist;
         if (dot(s.normal, l) <= 0.0) continue;
-        float cone = veSpotFactor(L, l);
-        if (cone <= 0.0) continue;
+        vec3 cone = veSpotColor(L, l);
+        if (all(lessThanEqual(cone, vec3(0.0)))) continue;
         float shadow = vePointShadow(i, s.position, s.normal);
-        color += veBRDF(s, V, l, L.color.rgb * (vePointAttenuation(dist, L.positionRange.w) * cone * shadow));
+        color += veBRDF(s, V, l, L.color.rgb * cone * (vePointAttenuation(dist, L.positionRange.w) * shadow));
     }
     color += veAmbient(s, V) + s.emissive;
 

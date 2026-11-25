@@ -27,4 +27,11 @@ void spawnStress(ve::Scene& scene, const ve::Terrain& terrain, std::string_view 
 // a wet stripe on the left (B). Seen from SAVANNA_POSE=33.1,3.2,10.6,30,-4.
 void spawnPaintTest(ve::Scene& scene, const ve::Terrain& terrain);
 
+// SAVANNA_BOUNCETEST=1: a 4 x 2 m grey wall at (36, 4) with a 1 m cube 2.6 m
+// in front of each face. The face turned away from the sun must be evenly lit
+// by the ambient: no cube-shaped blue patch (ground-bounce visibility,
+// ve_lighting.glsl). Seen from SAVANNA_POSE=36,2.2,10,0,-12 (south face) or
+// SAVANNA_POSE=36,2.2,-2,180,-12 (north face).
+void spawnBounceTest(ve::Scene& scene, const ve::Terrain& terrain);
+
 } // namespace savanna

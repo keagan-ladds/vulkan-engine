@@ -8,12 +8,14 @@
 #include "ve/scene/GameObject.hpp"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace ve {
 
 class Mesh;
 class Material;
+class Texture;
 
 /// The renderer draws from the active Camera with the highest priority.
 class Camera : public Component {
@@ -112,11 +114,35 @@ public:
 /// spot only renders the cube-map faces its cone touches.
 ///   auto& beam = car.addComponent<ve::SpotLight>();   // on a child placed at the lamp
 ///   beam.range = 40; beam.outerAngle = 28; beam.innerAngle = 18; beam.intensity = 60;
+///
+/// Optional extras for a less perfect beam (an old torch, a cheap lens):
+///   beam.cookie = "textures/torch_cookie.png"; // mask projected across the cone
+///   beam.chromaticAberration = 0.06f;           // red fringe outside, blue inside
 class SpotLight : public PointLight {
 public:
     SpotLight() { range = 20.0f; intensity = 30.0f; color = {1.0f, 0.95f, 0.85f}; }
     float innerAngle = 20.0f; ///< Degrees from the axis: full brightness inside.
     float outerAngle = 30.0f; ///< Degrees from the axis: the cone's edge (dark beyond). At most 89.
+    /// Asset path of a mask ("cookie") projected across the beam: its RGB
+    /// multiplies the light. The image's centre is the beam's axis and its
+    /// inscribed circle reaches the outer angle; image up = the light's up
+    /// (+Y). Rings, a dark spot from the bulb, smudges: an unfocused torch.
+    /// Empty = keep whatever cookieTexture code set (none: a clean cone).
+    /// Load it with the image's TextureSettings (use a *_mask name or a
+    /// .texture file for linear data). Changing it from code: call reload().
+    std::string cookie;
+    std::shared_ptr<Texture> cookieTexture; ///< The loaded mask (set from code instead of `cookie` if you like); null = none.
+    /// Lens colour fringing, 0..0.3: red spreads this fraction wider than
+    /// green and blue this much narrower, so the cone's edge (and the
+    /// cookie's rings) get a red outer and a blue inner fringe. 0 = off.
+    float chromaticAberration = 0.0f;
+
+    void start() override { reload(); } ///< (fields set after addComponent)
+    /// Loads `cookie` if it changed since the last load (a cleared path drops the texture).
+    void reload();
+
+private:
+    std::string m_loadedCookie; ///< the path cookieTexture came from
 };
 
 } // namespace ve

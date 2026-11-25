@@ -47,6 +47,14 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   of every VE Painted material a glTF export includes (into the `assets`
   folder the .gltf is saved under), and the VE Engine panel gains **Export all
   VE materials**.
+- **Spot light cookies and chromatic aberration** (`SpotLight::cookie`,
+  `cookieTexture`, `chromaticAberration`): a mask projected across the beam
+  (an old, badly focused torch: rings, a bulb hole, smudges) and red / blue
+  lens fringes at the cone's and the cookie's edges. They also show in
+  volumetric fog. New shader helper `veSpotColor(L, l)` (vec3); `veSpotFactor`
+  stays a float (now including the cookie's pattern). Editor fields on the
+  SpotLight inspector. Savanna: the player's torch uses
+  `textures/torch_cookie_mask.png` (`SAVANNA_TORCH_COOKIE=0`: plain cone).
 - **Cooked models, LODs and impostors.** glTF models cook to `.vemodel` in
   the cook cache (no glTF parsing at load; the sandbox villager loads in
   0.7 ms). An optional `<model>.model` file asks for generated LOD levels
@@ -159,6 +167,15 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `TerrainBiome`, `TerrainMaterial`.
 
 ### Fixed
+- **Blue, prop-shaped "shadows" on walls next to props** (and a blue rim along
+  the bottom edge of objects). The ambient ground-bounce check (`veAmbient`)
+  read the sun shadow at one point 2 m out along the normal, so a crate's sun
+  shadow in that spot removed the warm bounce and printed the crate's outline
+  in sky blue on the wall, and downward faces sampled underground. It now
+  averages four lookups 1.5 m above the surface, around a point 2.5 m out
+  horizontally: props under ~1.5 m can't affect it, and the shade of terrain,
+  huts and trees still removes the bounce, as a soft gradient. Savanna:
+  `SAVANNA_BOUNCETEST=1` (wall + cubes).
 - Vulkan validation error "SPIR-V Capability DemoteToHelperInvocation":
   the device now enables `shaderDemoteToHelperInvocation` (a Vulkan 1.3 core
   feature the shaders already used).

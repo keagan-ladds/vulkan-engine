@@ -67,18 +67,10 @@ struct VePointLight {
     vec4 positionRange;
     vec4 color;
     ivec4 shadow;       // cube index (-1 none), first view
-    vec4 params;        // x = shadow bias, y = spot: 1 / (cos inner - cos outer)
+    vec4 params;        // x = shadow bias, y = spot: 1 / (cos inner - cos outer), z = cookie texture (-1 none), w = chromatic aberration
     vec4 spot;          // spot lights: xyz = direction it shines, w = cos(outer angle); point lights: w = -2
+    vec4 spotBasis;     // spot lights: xyz = the light's right axis, w = 1 / tan(outer angle)
 };
-
-// How much of point light L reaches a point in direction `l` (unit, from the
-// point towards the light): 1 for point lights; the soft cone for spot lights.
-float veSpotFactor(VePointLight L, vec3 l)
-{
-    if (L.spot.w < -1.5) return 1.0;
-    float t = clamp((dot(-l, L.spot.xyz) - L.spot.w) * L.params.y, 0.0, 1.0);
-    return t * t;
-}
 
 layout(set = 0, binding = 1, std430) readonly buffer VeLightBuffer {
     VeDirectionalLight directional[VE_MAX_DIRECTIONAL_LIGHTS];
@@ -228,6 +220,54 @@ vec4 veSampleLod(uint index, vec2 uv, float lod) { return textureLod(veTextures[
 vec4 veSampleGrad(uint index, vec2 uv, vec2 dx, vec2 dy) { return textureGrad(veTextures[nonuniformEXT(index)], uv, dx, dy); }
 vec4 veSample3D(uint index, vec3 uvw) { return texture(veTextures3D[nonuniformEXT(index)], uvw); }
 vec4 veSample3DLod(uint index, vec3 uvw, float lod) { return textureLod(veTextures3D[nonuniformEXT(index)], uvw, lod); }
+
+// How much of point light L reaches a point in direction `l` (unit, from the
+// point towards the light), per colour channel: 1 for point lights. For spot
+// lights the soft cone, times the cookie mask (if any) projected across it,
+// and with chromatic aberration each channel's pattern is scaled about the
+// axis (red wider, blue narrower) so edges and rings get coloured fringes.
+vec3 veSpotColor(VePointLight L, vec3 l)
+{
+    if (L.spot.w < -1.5) return vec3(1.0);
+    vec3 d = -l;
+    float c = dot(d, L.spot.xyz);
+    float ca = L.params.w;
+    vec3 shrink = vec3(1.0); // per channel: angles / cookie coordinates are multiplied by this
+    vec3 cone;
+    if (ca > 0.0) {
+        shrink = 1.0 / vec3(1.0 + ca, 1.0, 1.0 - ca);
+        vec3 a = min(acos(clamp(c, -1.0, 1.0)) * shrink, vec3(3.14159265));
+        vec3 t = clamp((cos(a) - L.spot.w) * L.params.y, 0.0, 1.0);
+        cone = t * t;
+    } else {
+        float t = clamp((c - L.spot.w) * L.params.y, 0.0, 1.0);
+        cone = vec3(t * t);
+    }
+    if (L.params.z >= 0.0 && c > 1e-3 && any(greaterThan(cone, vec3(0.0)))) {
+        // Where the ray from the light crosses its image plane: -1..1 across
+        // the outer cone's circle; image up = the light's up.
+        vec3 R = L.spotBasis.xyz;
+        vec3 U = cross(R, L.spot.xyz);
+        vec2 p = vec2(dot(d, R), -dot(d, U)) / c * L.spotBasis.w;
+        uint tex = uint(L.params.z);
+        // Level 0: called from lighting loops (no derivatives there); keep cookies small (256 px).
+        if (ca > 0.0) {
+            cone.r *= veSampleLod(tex, clamp(0.5 + 0.5 * p * shrink.r, 0.0, 1.0), 0.0).r;
+            cone.g *= veSampleLod(tex, clamp(0.5 + 0.5 * p, 0.0, 1.0), 0.0).g;
+            cone.b *= veSampleLod(tex, clamp(0.5 + 0.5 * p * shrink.b, 0.0, 1.0), 0.0).b;
+        } else {
+            cone *= veSampleLod(tex, clamp(0.5 + 0.5 * p, 0.0, 1.0), 0.0).rgb;
+        }
+    }
+    return cone;
+}
+
+// veSpotColor averaged to one number, for lighting loops that work in grey:
+// the cone and the cookie's pattern, without the colour fringes.
+float veSpotFactor(VePointLight L, vec3 l)
+{
+    return dot(veSpotColor(L, l), vec3(1.0 / 3.0));
+}
 
 // Tangent-space normal from a normal-map sample. Uses only X and Y and
 // rebuilds Z: cooked normal maps are BC5 (two channels, B reads 0), and for

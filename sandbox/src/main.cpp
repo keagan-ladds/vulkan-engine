@@ -404,6 +404,7 @@ void setUpLevel(ve::Engine& engine, const std::vector<ve::GameObject*>& level)
     // SAVANNA_STRESS=pieces:<n>: n static building pieces in a grid by the camp (Stress.hpp).
     if (const auto st = ve::env::get("SAVANNA_STRESS")) spawnStress(scene, terrain, *st);
     if (ve::env::flag("SAVANNA_PAINTTEST")) spawnPaintTest(scene, terrain); // standard_painted.frag (Stress.hpp)
+    if (ve::env::flag("SAVANNA_BOUNCETEST")) spawnBounceTest(scene, terrain); // ambient ground bounce (Stress.hpp)
     // SAVANNA_SCULPT=1: brush a hill and a desert patch in front of the camera.
     if (ve::env::flag("SAVANNA_SCULPT")) scene.spawn<SculptTest>(terrainPtr);
     // SAVANNA_MOVER=1: a textured box sliding sideways 5 m in front of the camera.

@@ -222,9 +222,12 @@ Every pipeline uses **one global pipeline layout**:
 
 **Spot lights** are point lights with a cone (`SpotLight : PointLight`):
 `GpuPointLight::spot` holds the direction and cos(outer angle) (w = -2 for a
-plain point light), `params.y` the cone's falloff scale. Shaders multiply
-each point light by `veSpotFactor` (ve.glsl): lighting, volumetric fog,
-custom loops. A shadowed spot uses a cube slot but renders only the faces
+plain point light), `params.y` the cone's falloff scale, `params.z` the
+cookie's bindless texture index (-1 = none), `params.w` the chromatic
+aberration and `spotBasis` the light's right axis (cookie orientation) and
+1 / tan(outer angle). Shaders multiply each point light by `veSpotColor`
+(vec3: cone × cookie, per-channel cone widths for the fringes; lighting,
+volumetric fog) or `veSpotFactor` (its average, for grey custom loops). A shadowed spot uses a cube slot but renders only the faces
 its cone can reach (ShadowSetup::buildPointFaces).
 
 **Clustered point lights.** The camera frustum is split into 16 × 9 screen
@@ -1110,9 +1113,11 @@ Optional add-ons built only on public engine APIs:
   using a CPU-generated 3D Perlin-Worley noise texture. It also sets the
   hemispherical ambient light in frame globals from the sun elevation. The ground
   term reports its sunlit-bounce share (`Environment::groundSunFraction`, i.e.
-  `ambientGround.w`), and `veAmbient` scales that share by the sun shadow 2 m
-  out from the surface. Objects therefore stop glowing orange once the sun is
-  behind terrain.
+  `ambientGround.w`), and `veAmbient` scales that share by the sun shadow
+  averaged over four points 1.5 m above the surface, around a point 2.5 m out
+  along the normal's horizontal part. Objects therefore stop glowing orange
+  once the sun is behind terrain, huts or trees, while props shorter than
+  ~1.5 m don't print their outline onto nearby walls (`SAVANNA_BOUNCETEST=1`).
 - `VolumetricFogPass`: a half-resolution raymarch from the camera to scene depth
   into `FogBuffer`. It uses exponential height fog, 3D noise, a Henyey-Greenstein
   phase function, shadow-cascade sampling for god rays, and only the point lights
@@ -1225,7 +1230,8 @@ Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..4`,
 `SAVANNA_NET=host[:port]` / `SAVANNA_NET=join:<address>[:port]` + `SAVANNA_NAME=<name>` (multiplayer),
 `SAVANNA_DRAW=colliders,terrain,characters,navmesh,agents,villagers,shapes` (debug-draw channels), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
 camera), `SAVANNA_AUTOTEST=1` / `SAVANNA_EDITORTEST=1` (scripted smoke tests
-that exit), `SAVANNA_SCENE=file.json` (another scene), and
+that exit), `SAVANNA_SCENE=file.json` (another scene), `SAVANNA_BOUNCETEST=1` (a wall
+with a cube by each face: ambient ground bounce, see `sandbox/src/Stress.hpp`), and
 `VE_VALIDATION=0/1`. Any engine game: `VE_HEADLESS=1` (no window shown,
 offscreen rendering) and `VE_CAPTURE=out.png` + `VE_CAPTURE_FRAME=N` (save
 a frame; headless only), e.g.
