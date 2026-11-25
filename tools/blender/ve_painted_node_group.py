@@ -12,13 +12,20 @@ rebuilds, so it's safe to run again after updating the script):
   * material "VE Painted Example": the group wired up the way the engine
     samples things (see "Wiring" below). Copy it, or copy its nodes.
 
-Exporting the engine's material file
-------------------------------------
-Properties editor > Material tab > "VE Engine" panel > Export VE material
-writes assets/materials/<material name>.material from the material's VE
-Painted node (values, images, the overlay scale and the UV Mapping scale), so
-the engine replaces the exported glTF material with the same look. The
-assets folder is found above the .blend (or set it in the panel). Export the
+Exporting the engine's material files
+-------------------------------------
+Every material using a VE Painted node becomes
+assets/materials/<material name>.material (values, images, the overlay scale
+and the UV Mapping scale), so the engine replaces the exported glTF material
+with the same look (it looks material files up by the glTF material's name).
+  * Automatically with the model: File > Export > glTF 2.0 writes the
+    material files of the materials it exports (add-on installed, "Write
+    with glTF export" on in the panel). The assets folder is the one the
+    .gltf is saved in or under, else the panel's / the one above the .blend.
+  * By hand: Properties editor > Material tab > "VE Engine" panel >
+    Export VE material (this material) or Export all VE materials (every
+    VE Painted material in the file). The assets folder is found above the
+    .blend (or set it in the panel). Export the
 model itself as glTF Separate with Data > Mesh > Vertex Color = Active (the
 paint is in the vertex colours; "Material" may drop it, the group hides the
 Color Attribute node). Images must be files under assets/ (not packed).
@@ -88,7 +95,7 @@ Not reproduced (small differences)
 bl_info = {
     "name": "VE Painted (vulkan-engine materials)",
     "author": "vulkan-engine",
-    "version": (1, 1, 0),
+    "version": (1, 2, 0),
     "blender": (4, 0, 0),
     "location": "Properties > Material > VE Engine",
     "description": "The engine's painted shader as a node group, and export of its .material files",
@@ -498,7 +505,7 @@ def connect_example_images(mat):
 # Properties editor > Material tab > "VE Engine" panel:
 #   Assets folder   the game's assets/ folder (found by itself when the .blend
 #                   lives inside the project; saved in the .blend)
-#   Export VE material
+#   Export VE material / Export all VE materials / (automatically) glTF export
 #       writes <assets>/materials/<material name>.material from the active
 #       material's "VE Painted" node: its values and the images plugged into
 #       it (paths relative to the assets folder). Fields the export doesn't
@@ -667,6 +674,74 @@ def export_material(mat, assets_root):
     return path, warnings
 
 
+def painted_node(mat):
+    """The material's VE Painted group node, or None."""
+    if mat is None or not mat.use_nodes or mat.node_tree is None:
+        return None
+    return next((n for n in mat.node_tree.nodes if n.type == "GROUP" and n.node_tree and n.node_tree.name.startswith(GROUP_NAME)), None)
+
+
+def export_materials(materials, assets_root):
+    """Exports every VE Painted material in `materials` (once per file name:
+    "Rust" and "Rust.001" share materials/Rust.material, the first one wins).
+    Returns (written paths, warnings)."""
+    written, warnings, done = [], [], set()
+    for mat in materials:
+        if painted_node(mat) is None:
+            continue
+        base = material_base_name(mat.name)
+        if base in done:
+            continue
+        done.add(base)
+        try:
+            path, w = export_material(mat, assets_root)
+            written.append(path)
+            warnings += [f"{mat.name}: {x}" for x in w]
+        except (RuntimeError, OSError) as e:
+            warnings.append(f"{mat.name}: {e}")
+    return written, warnings
+
+
+# Shown in the panel: what the last automatic export (with a glTF) did.
+_last_gltf_export = ""
+
+
+class glTF2ExportUserExtension:
+    """Hook of Blender's glTF exporter (it calls this class of every enabled
+    add-on): writes the .material file of each VE Painted material the glTF
+    export includes. Only active when this file is installed as an add-on."""
+
+    def __init__(self):
+        self.enabled = bool(getattr(bpy.context.scene, "ve_export_with_gltf", True))
+
+    def gather_material_hook(self, gltf2_material, blender_material, *args):
+        global _last_gltf_export
+        export_settings = args[-1] if args and isinstance(args[-1], dict) else {}
+        if not self.enabled or painted_node(blender_material) is None:
+            return
+        state = export_settings.setdefault("ve_painted_export", {"done": set(), "written": 0, "warnings": 0})
+        base = material_base_name(blender_material.name)
+        if base in state["done"]:  # (the hook runs once per mesh using the material)
+            return
+        state["done"].add(base)
+        root = _assets_root(bpy.context)
+        gltf_path = export_settings.get("gltf_filepath", "")
+        if gltf_path and not bpy.context.scene.ve_assets_root:
+            root = find_assets_root(os.path.dirname(os.path.abspath(gltf_path))) or root
+        if not root or not os.path.isdir(root):
+            print(f"VE Painted: {blender_material.name}: no assets folder found (set it in the VE Engine panel): material file not written")
+            state["warnings"] += 1
+        else:
+            written, warnings = export_materials([blender_material], root)
+            for w in warnings:
+                print("VE Painted: warning:", w)
+            for path in written:
+                print("VE Painted: wrote", path)
+            state["written"] += len(written)
+            state["warnings"] += len(warnings)
+        _last_gltf_export = f"Last glTF export: {state['written']} material file(s), {state['warnings']} warning(s) (see the console)"
+
+
 class VE_OT_export_material(bpy.types.Operator):
     """Write the engine's .material file for this material (its VE Painted node's values and images)"""
     bl_idname = "ve.export_material"
@@ -690,6 +765,27 @@ class VE_OT_export_material(bpy.types.Operator):
         for w in warnings:
             self.report({"WARNING"}, w)
         self.report({"INFO"}, f"Wrote {path}")
+        return {"FINISHED"}
+
+
+class VE_OT_export_all_materials(bpy.types.Operator):
+    """Write the .material file of every material in this file that uses a VE Painted node"""
+    bl_idname = "ve.export_all_materials"
+    bl_label = "Export all VE materials"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        root = _assets_root(context)
+        if not root or not os.path.isdir(root):
+            self.report({"ERROR"}, "Set the assets folder (VE Engine panel) first")
+            return {"CANCELLED"}
+        written, warnings = export_materials(bpy.data.materials, root)
+        for w in warnings:
+            self.report({"WARNING"}, w)
+        if not written and not warnings:
+            self.report({"WARNING"}, f"No material in this file uses a '{GROUP_NAME}' node")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Wrote {len(written)} material file(s) to {os.path.join(root, 'materials')}")
         return {"FINISHED"}
 
 
@@ -719,18 +815,31 @@ class VE_PT_material(bpy.types.Panel):
             layout.label(text=f"Found: {root}", icon="INFO")
         mat = getattr(context, "material", None)
         if mat is not None:
-            layout.label(text="-> materials/" + material_base_name(mat.name) + ".material")
-        layout.operator(VE_OT_export_material.bl_idname, icon="EXPORT")
+            if painted_node(mat) is not None:
+                layout.label(text="-> materials/" + material_base_name(mat.name) + ".material")
+            else:
+                layout.label(text=f"No '{GROUP_NAME}' node in this material", icon="ERROR")
+        row = layout.row(align=True)
+        row.operator(VE_OT_export_material.bl_idname, icon="EXPORT")
+        row.operator(VE_OT_export_all_materials.bl_idname, icon="EXPORT")
+        layout.prop(context.scene, "ve_export_with_gltf")
+        if __name__ == "__main__":
+            layout.label(text="Install this file as an add-on for the glTF export hook", icon="INFO")
+        elif _last_gltf_export:
+            layout.label(text=_last_gltf_export, icon="CHECKMARK")
         layout.operator(VE_OT_build_group.bl_idname, icon="NODETREE")
 
 
-_classes = (VE_OT_export_material, VE_OT_build_group, VE_PT_material)
+_classes = (VE_OT_export_material, VE_OT_export_all_materials, VE_OT_build_group, VE_PT_material)
 
 
 def register():
     bpy.types.Scene.ve_assets_root = bpy.props.StringProperty(
         name="Assets folder", subtype="DIR_PATH",
-        description="The game's assets/ folder (empty: found above this .blend)")
+        description="The game's assets/ folder (empty: found above the exported .gltf, else above this .blend)")
+    bpy.types.Scene.ve_export_with_gltf = bpy.props.BoolProperty(
+        name="Write with glTF export", default=True,
+        description="When exporting glTF (File > Export > glTF 2.0), also write the .material file of every VE Painted material it exports")
     for c in _classes:
         try:
             bpy.utils.unregister_class(c)  # (running the script again)
@@ -743,6 +852,7 @@ def unregister():
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)
     del bpy.types.Scene.ve_assets_root
+    del bpy.types.Scene.ve_export_with_gltf
 
 
 def main():

@@ -265,12 +265,16 @@ you paint. Mark it as an asset (the script does) to reuse it in every
 project. `tools/blender/test_ve_painted.py` checks the group against the
 shader (needs `pip install bpy`). **Getting it into the engine:** the glTF
 exporter can't describe the group, so the engine uses a material file named
-after the Blender material instead: Material tab > VE Engine > **Export VE
-material** writes `assets/materials/<name>.material` from the node's values
-and images. Export the model as glTF Separate with Data > Mesh > Vertex Color
-= **Active** (the paint lives in the vertex colours). The script also installs
-as an add-on (Preferences > Add-ons > Install from Disk) to have the panel in
-every file.
+after the Blender material instead (`assets/materials/<name>.material`, from
+the node's values and images). With the script installed as an add-on
+(Preferences > Add-ons > Install from Disk), **File > Export > glTF 2.0 writes
+them by itself**: one file per VE Painted material in the export, into the
+`assets` folder the .gltf is saved under ("Write with glTF export" in the
+panel turns it off; the panel shows what the last export wrote, the console
+lists warnings). By hand: Material tab > VE Engine > **Export VE material**
+(this one) or **Export all VE materials** (every one in the .blend). Export the
+model as glTF Separate with Data > Mesh > Vertex Color = **Active** (the paint
+lives in the vertex colours).
 
 ### Decals: bullet holes, puddles, cracks
 

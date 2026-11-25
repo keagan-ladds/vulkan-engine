@@ -42,6 +42,11 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Blender: VE Painted materials export with the model.** Installed as an
+  add-on, `tools/blender/ve_painted_node_group.py` writes the `.material` file
+  of every VE Painted material a glTF export includes (into the `assets`
+  folder the .gltf is saved under), and the VE Engine panel gains **Export all
+  VE materials**.
 - **Cooked models, LODs and impostors.** glTF models cook to `.vemodel` in
   the cook cache (no glTF parsing at load; the sandbox villager loads in
   0.7 ms). An optional `<model>.model` file asks for generated LOD levels
