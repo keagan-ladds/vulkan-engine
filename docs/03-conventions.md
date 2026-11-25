@@ -281,7 +281,10 @@ wear images **world-space triplanar** like the shader (helper groups "VE
 Triplanar Coords" / "VE Triplanar Blend"; pick the image in the first of the
 three image nodes), so the preview matches the game on rotated and joined
 objects; materials wired with a Box-projected image node get a **Convert
-overlays to triplanar** button in the panel.
+overlays to triplanar** button in the panel. Damage brush alphas for painting wear
+and concrete damage (edge chips, flakes, scratches, spalls, pitting, cracks,
+crumble) are in `tools/blender/brushes/` (made by
+`tools/blender/make_damage_brushes.py`; its header says how to set them up).
 
 ### Decals: bullet holes, puddles, cracks
 
