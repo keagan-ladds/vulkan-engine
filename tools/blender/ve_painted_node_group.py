@@ -416,7 +416,13 @@ def build_group():
         b.link(v.outputs[0], xyz.inputs[0])
         x = b.math("MULTIPLY", xyz.outputs[0], I(strength_name), -800, y)
         yy = b.math("MULTIPLY", xyz.outputs[1], I(strength_name), -800, y - 40)
-        return x, yy, xyz.outputs[2]
+        # Z eased towards 1 below strength 1, so strength 0 = no effect at all,
+        # whatever colour an unconnected input holds (the engine skips a map
+        # that isn't set; only X / Y are scaled there, a small difference
+        # between strengths 0 and 1).
+        t = b.math("MINIMUM", I(strength_name), 1.0, -800, y - 80)
+        z = b.math("MULTIPLY_ADD", b.math("SUBTRACT", xyz.outputs[2], 1.0, -950, y - 80), t, -650, y - 80, c=1.0)
+        return x, yy, z
 
     x1, y1, z1 = decoded("Normal Map", "Normal Strength", -450)
     x2, y2, z2 = decoded("Baked Normal", "Baked Normal Strength", -560)
@@ -782,6 +788,22 @@ def _image_node(sock):
     return node if node is not None and node.type == "TEX_IMAGE" else None
 
 
+_NORMAL_WORDS = {"normal", "nrm", "nor", "norm", "n"}
+_DATA_WORDS = {"rough", "roughness", "metal", "metallic", "metalness", "ao", "occlusion", "orm", "arm", "rma", "mr", "mask",
+               "height", "disp", "displacement", "detail", "noise", "data", "lut", "opacity", "gloss", "spec", "specular"}
+
+
+def texture_type_from_name(path):
+    """What the engine loads an image as from its name (TextureSettings::typeFromName):
+    the last word of the file name that isn't a size tag decides."""
+    import re
+    for word in reversed([w for w in re.split(r"[_\-. ]", os.path.splitext(os.path.basename(path))[0].lower()) if w]):
+        if word.isdigit() or (len(word) >= 2 and word.endswith("k") and word[:-1].isdigit()):
+            continue
+        return "Normal" if word in _NORMAL_WORDS else "Data" if word in _DATA_WORDS else "Color"
+    return "Color"
+
+
 def find_assets_root(start):
     """The nearest folder named "assets" at or above `start` (the .blend's folder)."""
     d = os.path.abspath(start) if start else ""
@@ -873,6 +895,27 @@ def export_material(mat, assets_root):
     data["metallicRoughness"] = orm or ""
     data["occlusion"] = orm or ""  # glTF ORM: R = ambient occlusion (the engine uses it; Blender's preview doesn't)
     normal, _ = image_path(inp("Normal Map"), "Normal Map")
+
+    def check_normal_map(rel, what):
+        # The engine decides how to load an image by its name or <image>.texture,
+        # not by the slot: a normal map it takes for colour (sRGB BC7) is wrong.
+        if not rel:
+            return
+        full = rel if os.path.isabs(rel) else os.path.join(assets_root, rel)
+        settings = full + ".texture"
+        if os.path.isfile(settings):
+            try:
+                with open(settings, encoding="utf-8") as f:
+                    if str(json.load(f).get("type", "")).lower() == "normal":
+                        return
+            except (OSError, ValueError, AttributeError):
+                pass
+        elif texture_type_from_name(rel) == "Normal":
+            return
+        warnings.append(f"{what}: the engine won't load {os.path.basename(rel)} as a normal map: name it *_normal "
+                        f"(or *_n, *_nrm) or add {os.path.basename(rel)}.texture with {{\"type\": \"Normal\"}}")
+
+    check_normal_map(normal, "Normal Map")
     data["normal"] = normal or ""
     data["roughness"] = value("Roughness")
     data["metallic"] = value("Metallic")
@@ -909,6 +952,11 @@ def export_material(mat, assets_root):
     # Baked normal (slot 8) and params[9]: strength, its UV scale (a Mapping node on its UVs).
     baked, baked_node = image_path(inp("Baked Normal"), "Baked Normal")
     baked_scale = [1.0, 1.0]
+    if baked and value("Baked Normal Strength") <= 0:
+        # (The engine reads strength 0 as 1: a material without the value.)
+        warnings.append("Baked Normal: strength 0: left out of the material file")
+        baked = None
+    check_normal_map(baked, "Baked Normal")
     if baked:
         textures.append({"slot": 8, "path": baked})
         mapping, _ = _upstream(socket(baked_node.inputs, "Vector"))
@@ -1159,11 +1207,26 @@ def unregister():
     del bpy.types.Scene.ve_export_with_gltf
 
 
+def flatten_unconnected_normals():
+    """Unconnected Normal Map / Baked Normal inputs of every VE Painted node
+    back to flat (0.5, 0.5, 1): a constant there is never meant (the engine
+    ignores it), and a socket added by an update can start out black or grey."""
+    flat = (0.5, 0.5, 1.0, 1.0)
+    for mat in bpy.data.materials:
+        g = painted_node(mat)
+        if g is None:
+            continue
+        for s in g.inputs:
+            if s.name in ("Normal Map", "Baked Normal") and not s.is_linked and tuple(round(v, 3) for v in s.default_value) != flat:
+                s.default_value = flat
+
+
 def main():
     if bpy.app.version < (4, 0, 0):
         raise RuntimeError("VE Painted needs Blender 4.0 or newer (node group interface API)")
     group = build_group()
     build_triplanar_groups()
+    flatten_unconnected_normals()
     mat = bpy.data.materials.get(EXAMPLE_MATERIAL)
     if mat is not None and mat.node_tree and any(n.get("ve_connect_to") for n in mat.node_tree.nodes):
         connect_example_images(mat)  # re-run: keep the user's images, just wire the newly picked ones

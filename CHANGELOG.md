@@ -53,6 +53,11 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   overlays to triplanar** rewires existing materials. Exporting from a .blend
   whose VE Painted group is older than the add-on no longer fails (missing
   inputs export their defaults, with a warning).
+- **Blender: normal map fixes.** A normal-map input at strength 0 no longer
+  bends the preview whatever colour its socket holds; Create / update resets
+  unconnected normal inputs to flat. The export warns when a normal map's
+  name (or `.texture` file) won't make the engine load it as a normal map, and
+  leaves out a baked normal at strength 0.
 - **Spot light cookies and chromatic aberration** (`SpotLight::cookie`,
   `cookieTexture`, `chromaticAberration`): a mask projected across the beam
   (an old, badly focused torch: rings, a bulb hole, smudges) and red / blue
