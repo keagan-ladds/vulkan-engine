@@ -47,6 +47,12 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   of every VE Painted material a glTF export includes (into the `assets`
   folder the .gltf is saved under), and the VE Engine panel gains **Export all
   VE materials**.
+- **Blender: exact preview of the painted overlays.** The VE Painted example
+  material samples grunge / dirt / wear world-space triplanar, as the engine
+  does (Box projection was wrong on rotated or joined objects); **Convert
+  overlays to triplanar** rewires existing materials. Exporting from a .blend
+  whose VE Painted group is older than the add-on no longer fails (missing
+  inputs export their defaults, with a warning).
 - **Spot light cookies and chromatic aberration** (`SpotLight::cookie`,
   `cookieTexture`, `chromaticAberration`): a mask projected across the beam
   (an old, badly focused torch: rings, a bulb hole, smudges) and red / blue

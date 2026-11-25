@@ -276,7 +276,12 @@ panel turns it off; the panel shows what the last export wrote, the console
 lists warnings). By hand: Material tab > VE Engine > **Export VE material**
 (this one) or **Export all VE materials** (every one in the .blend). Export the
 model as glTF Separate with Data > Mesh > Vertex Color = **Active** (the paint
-lives in the vertex colours).
+lives in the vertex colours). The example material samples the grunge / dirt /
+wear images **world-space triplanar** like the shader (helper groups "VE
+Triplanar Coords" / "VE Triplanar Blend"; pick the image in the first of the
+three image nodes), so the preview matches the game on rotated and joined
+objects; materials wired with a Box-projected image node get a **Convert
+overlays to triplanar** button in the panel.
 
 ### Decals: bullet holes, puddles, cracks
 
