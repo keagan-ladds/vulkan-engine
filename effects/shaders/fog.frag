@@ -130,7 +130,7 @@ void main()
             vec3 toLight = L.positionRange.xyz - p;
             float d = length(toLight);
             float r = d / L.positionRange.w;
-            if (r < 1.0) light += L.color.rgb * ((1.0 - r * r) * (1.0 - r * r) / (d * d + 1.0)) * veSpotFactor(L, toLight / max(d, 1e-4)) * pc.tint.w / (4.0 * VE_PI);
+            if (r < 1.0) light += L.color.rgb * ((1.0 - r * r) * (1.0 - r * r) / (d * d + 1.0)) * veSpotColor(L, toLight / max(d, 1e-4)) * pc.tint.w / (4.0 * VE_PI);
         }
         light *= pc.tint.rgb;
         float stepT = exp(-sigma * ds);

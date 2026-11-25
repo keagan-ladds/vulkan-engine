@@ -373,6 +373,13 @@ void AutoTest::update(float dt)
                 const auto* p = localPlayer(scene());
                 log(std::string("spot light: torch on: ") + (p && p->torch() && p->torch()->enabled ? "yes" : "NO") + ", on the GPU as a spot: " +
                     (spots >= 0 ? "yes" : "NO") + ", shadow faces rendered: " + std::to_string(faces) + (faces > 0 && faces < 6 ? " (fewer than 6: yes)" : " NO"));
+                // Its cookie (beam mask) loaded and reached the GPU with the chromatic aberration amount.
+                if (const ve::SpotLight* t = p ? p->torch() : nullptr; t && !t->cookie.empty()) {
+                    const ve::GpuPointLight* g = spots >= 0 ? &f.lights->point[spots] : nullptr;
+                    const bool onGpu = g && t->cookieTexture && g->params.z == float(t->cookieTexture->index());
+                    log(std::string("spot light cookie: '") + t->cookie + "' loaded: " + (t->cookieTexture ? "yes" : "NO") +
+                        ", on the GPU: " + (onGpu ? "yes" : "NO") + ", chromatic aberration " + std::to_string(g ? g->params.w : -1.0f));
+                }
                 if (auto* pl = localPlayer(scene())) pl->setTorch(false);
             }
             log(std::string("compile hooks: new shader ready: ") + (m_newShader && m_newShader->pipeline(ve::PassKind::Forward) ? "yes" : "NO") +

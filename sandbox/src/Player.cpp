@@ -97,9 +97,20 @@ void Player::start()
     beam.color = {1.0f, 0.9f, 0.75f};
     beam.intensity = 40.0f;
     beam.range = 30.0f;
-    beam.innerAngle = 12.0f;
-    beam.outerAngle = 24.0f;
     beam.castShadows = true;
+    // An old torch: the cookie shapes the beam (dim bulb hole, hot ring,
+    // dented-reflector ripples, a wide dim spill) and the cheap lens fringes
+    // it red outside / blue inside. The cone itself is only the outer edge
+    // now. SAVANNA_TORCH_COOKIE=0: the plain cone, for comparison.
+    if (ve::env::flag("SAVANNA_TORCH_COOKIE", true)) {
+        beam.innerAngle = 26.0f;
+        beam.outerAngle = 32.0f;
+        beam.cookie = "textures/torch_cookie_mask.png";
+        beam.chromaticAberration = 0.03f;
+    } else {
+        beam.innerAngle = 12.0f;
+        beam.outerAngle = 24.0f;
+    }
     beam.enabled = ve::env::flag("SAVANNA_TORCH"); // SAVANNA_TORCH=1: start with it on (screenshots)
     m_torch = &beam;
     input().setMouseCaptured(true);

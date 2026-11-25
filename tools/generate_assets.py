@@ -906,8 +906,40 @@ def villager():
         json.dump(gltf, f, indent=1)
 
 
+def torch_cookie(size=256):
+    """Spot light cookie (ve::SpotLight::cookie) for the player's torch: an
+    old, badly focused torch. Centre = the beam's axis, the inscribed circle =
+    the outer cone angle. A dim hole where the bulb blocks the reflector, a
+    hot ring around it, ripples from a dented reflector, uneven blotches
+    around the ring, then a wide dim spill fading to black at the edge.
+    Grey (the light's colour tints it); *_mask = linear data. Pure Python."""
+    rnd = random.Random(4711)
+    lobes = [(rnd.uniform(0.04, 0.10), rnd.randint(2, 7), rnd.uniform(0.0, 6.283)) for _ in range(5)]
+    blots = [(rnd.uniform(-0.6, 0.6), rnd.uniform(-0.6, 0.6), rnd.uniform(0.08, 0.2), rnd.uniform(-0.25, 0.2)) for _ in range(7)]
+    smooth = lambda e0, e1, x: (lambda t: t * t * (3.0 - 2.0 * t))(min(max((x - e0) / (e1 - e0), 0.0), 1.0))
+    data = []
+    for y in range(size):
+        for x in range(size):
+            u, v = (x + 0.5) / size * 2.0 - 1.0, (y + 0.5) / size * 2.0 - 1.0
+            r, a = math.hypot(u, v), math.atan2(v, u)
+            # The reflector's shape, wobbling with the angle (dents).
+            rr = r * (1.0 + sum(amp * math.sin(k * a + ph) for amp, k, ph in lobes) * 0.2)
+            hot = math.exp(-((rr - 0.24) / 0.08) ** 2)                  # bright ring
+            core = 0.4 + 0.6 * smooth(0.03, 0.17, rr)                 # bulb shadow in the middle
+            spill = 0.3 * (1.0 - smooth(0.3, 1.0, rr))                # unfocused halo
+            ripple = 1.0 + 0.14 * math.sin(rr * 52.0) * (1.0 - smooth(0.3, 0.9, rr))
+            val = (0.5 * core * (1.0 - smooth(0.22, 0.5, rr)) + 0.42 * hot + spill) * ripple
+            for bx, by, br, bs in blots:                                 # smudges on the lens
+                val *= 1.0 + bs * math.exp(-((u - bx) ** 2 + (v - by) ** 2) / (br * br))
+            val *= 1.0 - smooth(0.88, 1.0, r)                            # black outside the circle
+            data.append(int(min(max(val, 0.0), 1.0) * 255.0 + 0.5))
+    img = Image.new("L", (size, size))
+    img.putdata(data)
+    img.save(out("textures", "torch_cookie_mask.png"))
+
+
 GENERATORS = [villager, terrain_textures, decal_textures, lut_neutral, textures, reed_screen, rondavel, test_tree, audio,
-              footsteps]
+              footsteps, torch_cookie]
 
 if __name__ == "__main__":
     # Every generator, or only the ones named: python3 tools/generate_assets.py test_tree rondavel

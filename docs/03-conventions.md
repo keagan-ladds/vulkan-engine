@@ -166,7 +166,9 @@ go.addComponent<Spin>().speed = 3.0f;
    the pixel's cluster: `VeLightList list = veLightList(P);` then
    `lights.point[veLightAt(list, k)]` for `k < list.count` (see the template's
    `mygame_toon.frag`), multiplying each light by `veSpotFactor(L, l)` (`l`:
-   unit direction towards the light) so spot lights keep their cone.
+   unit direction towards the light) so spot lights keep their cone and
+   cookie, or by `veSpotColor(L, l)` (a `vec3`) to also keep the cookie's
+   colour and the chromatic aberration fringes.
 2. Document the parameter layout at the top of the shader.
 3. In C++:
    ```cpp
@@ -1159,6 +1161,26 @@ It is a `PointLight` underneath (colour, intensity, range, shadows, the point
 light limits and clusters), so `forEach<PointLight>` sees spots too. Beams
 show in volumetric fog. Editor: Create > Light > Spot light (the gizmo draws
 the cone). The sandbox's player has a torch on T / pad d-pad down.
+
+**An imperfect beam** (an old torch, a cheap lens): a *cookie* is a mask
+projected across the cone. Its RGB multiplies the light, the image's centre
+is the beam's axis, its inscribed circle reaches `outerAngle`, and image up is
+the light's up (+Y). `chromaticAberration` (0..0.3) scales each channel's
+pattern about the axis, red wider and blue narrower, so the cone's edge and
+the cookie's rings get a red outer and a blue inner fringe.
+
+```cpp
+beam.cookie = "textures/torch_cookie_mask.png"; // *_mask: loaded as linear data
+beam.innerAngle = 26.0f; beam.outerAngle = 32.0f; // the cookie shapes the beam; the cone is only its edge
+beam.chromaticAberration = 0.03f;
+```
+
+Keep cookies small (256 px, black at the border): they are sampled at mip 0
+inside the lighting loop. Set `cookieTexture` from code instead of a path if
+you build one at runtime; after changing `cookie` from code call `reload()`
+(the editor does). The sandbox's torch uses `tools/generate_assets.py
+torch_cookie` (dim bulb hole, hot ring, dented-reflector ripples, a wide
+dim spill); `SAVANNA_TORCH_COOKIE=0` gives the plain cone for comparison.
 
 `DirectionalLight` is for infinitely distant light (sun, moon): it lights
 everything from one direction and has no position or range.

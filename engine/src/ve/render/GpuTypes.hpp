@@ -73,9 +73,11 @@ struct GpuPointLight {
     glm::vec4 positionRange; ///< xyz = position, w = range
     glm::vec4 color;         ///< rgb = colour * intensity
     glm::ivec4 shadow;       ///< x = cube index in PointShadowMap (-1 = none), y = first shadow view index
-    glm::vec4 params;        ///< x = shadow bias, y = spot: 1 / (cos inner - cos outer), zw reserved
+    glm::vec4 params;        ///< x = shadow bias, y = spot: 1 / (cos inner - cos outer), z = cookie texture index (-1 = none), w = chromatic aberration (0 = off)
     glm::vec4 spot;          ///< spot lights: xyz = direction it shines, w = cos(outer angle); point lights: w = -2
+    glm::vec4 spotBasis;     ///< spot lights: xyz = the light's right axis (cookie orientation), w = 1 / tan(outer angle)
 };
+static_assert(sizeof(GpuPointLight) == 96);
 
 /// set 0, binding 1 (storage buffer)
 struct LightBuffer {
