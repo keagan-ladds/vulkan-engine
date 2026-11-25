@@ -9,6 +9,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 
 namespace ve {
@@ -45,10 +46,20 @@ void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
 
 } // namespace
 
+namespace {
+std::atomic<uint32_t> g_bakes{0};
+}
+
+uint32_t Impostor::bakeCount()
+{
+    return g_bakes.load();
+}
+
 std::shared_ptr<Impostor> Impostor::bake(Renderer& renderer, const Mesh& mesh,
                                          const std::vector<std::shared_ptr<Material>>& materials,
                                          const ImpostorSettings& settings)
 {
+    ++g_bakes;
     Device& device = renderer.device();
     const uint32_t N = std::max(2u, settings.frames);
     const uint32_t res = settings.frameResolution;

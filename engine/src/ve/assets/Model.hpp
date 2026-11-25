@@ -20,6 +20,7 @@ class Material;
 class Texture;
 class AnimationClip;
 struct SkinnedMeshSource;
+struct ModelVariantLods;
 
 /// One node of a model's hierarchy (a glTF node).
 struct ModelNode {
@@ -56,6 +57,13 @@ public:
     /// Per mesh: its skinned version (rest pose + joint weights), null if it has no joints.
     std::vector<std::shared_ptr<const SkinnedMeshSource>> skinnedMeshes;
     std::vector<std::shared_ptr<const AnimationClip>> animations; ///< The file's animation clips.
+    /// The file's materials, in file order (null where a mesh slot uses the default).
+    std::vector<std::shared_ptr<Material>> materials;
+    /// Per mesh, per material slot: index into `materials` (-1 = a default material).
+    std::vector<std::vector<int>> meshMaterialIds;
+    /// LOD levels and impostors generated when the model was cooked (ModelSettings), per
+    /// variant; null when nothing was generated. Read by loadLodModel (world/LodModel.hpp).
+    std::shared_ptr<const std::vector<ModelVariantLods>> cookedLods;
 };
 
 } // namespace ve

@@ -25,6 +25,7 @@
 #include "ve/scene/SceneSerializer.hpp"
 #include "ve/ui/UiLayer.hpp"
 #include "ve/world/Terrain.hpp"
+#include "ve/world/LodModel.hpp"
 #include "ve/world/Vegetation.hpp"
 
 #include <SDL.h>
@@ -67,6 +68,7 @@ void registerAllTypes()
     registerAudioTypes(r);
     registerTerrainTypes(r);
     registerVegetationTypes(r);
+    registerModelLodGenerator(); // the model cooker's LOD / impostor step (world/LodModel.hpp)
     registerAssetTypes(r); // MaterialAsset (.material files)
 }
 } // namespace

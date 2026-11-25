@@ -1,5 +1,7 @@
 #include "ve/world/Vegetation.hpp"
 
+#include "ve/assets/ModelData.hpp"
+
 #include "ve/gameplay/Placement.hpp"
 
 #include "ve/core/Engine.hpp"
@@ -284,13 +286,24 @@ std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const
             hulls.push_back(v.levels.front().data);
             LodChainDesc c;
             c.name = v.name;
-            if (v.levels.size() == 1 && autoLods > 0 && v.levels[0].submeshes.size() == 1) {
+            // Levels and impostors the model's cooking generated (its .model
+            // settings) come first; this component's autoLods / impostor only
+            // fill in for models cooked without them (generated at load).
+            const bool cookedLevels = v.cooked && !v.cooked->generated.empty();
+            if (cookedLevels) {
+                for (const ModelLodLevelData& g : v.cooked->generated)
+                    v.levels.push_back({g.data, g.submeshes, v.levels.front().materials});
+            } else if (v.levels.size() == 1 && autoLods > 0 && v.levels[0].submeshes.size() == 1) {
                 for (int k = 1; k <= std::min(autoLods, 2); ++k)
                     c.simplify.push_back({.ratio = std::pow(0.35f, float(k)), .maxError = 0.08f * float(k)});
             }
+            c.cookedImpostor = v.cooked && v.cooked->impostor.valid() ? &v.cooked->impostor : nullptr;
+            if (impostor && !c.cookedImpostor)
+                log::infoOnce(owner + ": the impostor of " + meshPath + " is baked at load: add {\"impostor\": true} to " + meshPath +
+                              ".model to cook it");
             if (levelCount == 0) levelCount = v.levels.size() + c.simplify.size();
             c.levels = std::move(v.levels);
-            c.maxLevels = impostor ? 3 : 4;
+            c.maxLevels = impostor || c.cookedImpostor ? 3 : 4;
             c.impostor = impostor;
             for (size_t i = 0; i < 4; ++i) c.switches.push_back(threshold(i));
             std::vector<InstanceLod> chain = buildLodChain(r, std::move(c));
@@ -305,7 +318,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const
                 log::warnOnce(owner + ": some variants have *_COL shapes and some don't: colliders ignored");
         }
         log::info("{}: {} variant(s) from {}, {} level(s){}, {} authored collider(s)", owner, model.variants.size(), meshPath,
-                  levelCount, impostor ? " + impostor" : "", authoredColliders.size());
+                  levelCount, model.cooked ? " (cooked LODs)" : impostor ? " + impostor" : "", authoredColliders.size());
     } else {
         return nullptr;
     }

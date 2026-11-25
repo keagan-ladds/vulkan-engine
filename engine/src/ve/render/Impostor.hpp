@@ -52,6 +52,10 @@ public:
                                           const std::vector<std::shared_ptr<Material>>& materials,
                                           const ImpostorSettings& settings = {});
 
+    /// Impostors baked (rendered) so far in this run: 0 in a game whose
+    /// impostors all come cooked (tests check it).
+    static uint32_t bakeCount();
+
     /// Ready-made LOD level for an InstanceGroup.
     InstanceLod lod(float screenSize = 0.0f, float maxDistance = FLT_MAX) const
     {

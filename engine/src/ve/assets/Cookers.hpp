@@ -6,8 +6,9 @@
 // new kind (meshes, ...) = one registerCooker() call; vecook and
 // `vecook --package` need no changes.
 //
-// Built in: "texture" (TextureCook.hpp: images -> KTX2) and "audio"
-// (AudioCook.hpp: WAV / FLAC -> Ogg Vorbis). A game can register its own
+// Built in: "texture" (TextureCook.hpp: images -> KTX2), "audio"
+// (AudioCook.hpp: WAV / FLAC -> Ogg Vorbis) and "model" (ModelCook.hpp:
+// glTF -> .vemodel, with generated LODs / impostors from `<model>.model`). A game can register its own
 // before calling into the tools (e.g. from a custom cooking tool's main()).
 //
 // The AssetManager has its own load paths per kind (it needs the cooked
@@ -50,6 +51,13 @@ struct Cooker {
     std::function<CookedState(const std::filesystem::path& cooked, const std::filesystem::path& source)> check;
     /// Cooks `source` into `cooked` (pure CPU work, run on job threads; poll `cancelled`).
     std::function<Result(const std::filesystem::path& source, const std::filesystem::path& cooked, const std::atomic<bool>* cancelled)> cook;
+    /// Does cooking `source` need the main thread and a running Engine (the
+    /// renderer: impostor baking)? vecook then starts a headless Engine and
+    /// cooks it there, after the other cooks. Null = never.
+    std::function<bool(const std::filesystem::path& source)> needsRenderer;
+    /// Files `source` is made from besides itself (a glTF's .bin buffers): they
+    /// don't ship when the cooked copy does. Null = none.
+    std::function<std::vector<std::filesystem::path>(const std::filesystem::path& source)> dependencies;
 };
 
 /// Every registered cooker (the built-in ones first).

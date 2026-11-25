@@ -97,7 +97,10 @@ public:
     std::shared_ptr<Texture> loadTexture(const std::filesystem::path& path);
     /// The settings loadTexture uses for an image (defaults if it can't be found).
     TextureSettings textureSettings(const std::filesystem::path& path);
-    /// glTF 2.0 (.gltf with external/embedded buffers, or .glb).
+    /// glTF 2.0 (.gltf with external/embedded buffers, or .glb): its cooked
+    /// copy (.vemodel, ModelCook.hpp) when current, else the file itself,
+    /// cooking it on the way (generated LODs / impostors from its `.model`
+    /// settings included). One Model per file.
     std::shared_ptr<Model> loadModel(const std::filesystem::path& path);
     /// WAV/MP3/FLAC/OGG. stream = decode while playing (long music) instead of up front.
     std::shared_ptr<AudioClip> loadAudio(const std::filesystem::path& path, bool stream = false);
@@ -114,6 +117,8 @@ public:
     /// The material file for a glTF material (its "material" extras property,
     /// else by name; see materialFolder), or null. Logs a missing named file.
     std::shared_ptr<StandardMaterial> materialForGltf(const std::string& name, const std::string& extrasJson);
+    /// The material file materialForGltf would load for a glTF material ("" = none).
+    std::string materialFileForGltf(const std::string& name, const std::string& extrasJson) const;
     /// The shader for a material file: built-in for its mode, or a custom
     /// vertex / fragment pair with that mode's state (shared per combination).
     std::shared_ptr<Shader> materialShader(StandardMaterial::Mode mode, const std::string& vertex, const std::string& fragment);
@@ -138,6 +143,8 @@ public:
         uint32_t texturesSource = 0; ///< textures loaded from source images
         uint32_t soundsCooked = 0;   ///< sounds playing cooked (Ogg Vorbis) files
         uint32_t soundsSource = 0;   ///< sounds playing their source files
+        uint32_t modelsCooked = 0;   ///< models loaded from cooked files (.vemodel)
+        uint32_t modelsSource = 0;   ///< models parsed from their glTF files
         uint32_t cooking = 0;        ///< cook jobs running or queued
         uint32_t cookedNow = 0;      ///< cooks finished this run
         uint32_t failed = 0;         ///< cooks that failed this run (logged)

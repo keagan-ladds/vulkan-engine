@@ -432,3 +432,24 @@ hover, and Doxygen is a single widely packaged binary; the check keeps
 documentation from rotting as the code changes. **Cost:** a Doxygen install
 for the check and the reference (the build itself doesn't need it); comment
 discipline on every change.
+
+### D35. Models cook to .vemodel; LODs and impostors are cooked offline by vecook on a headless renderer (2026-11)
+**Decision:** glTF files cook like images and sounds: `ModelData` (the parsed
+model, CPU only) written as `<asset path>.vemodel`, used when current. A
+`<model>.model` file next to the model asks cooking for generated LODs, an
+impostor and material remaps. Impostors are rendered, so those cooks run on
+the main thread with an `Engine`: `vecook` starts a headless one (after the
+CPU cooks, only if needed), and a game run cooks a stale model on its first
+load. Impostor atlases are stored BC7 with all mips. The cooked file holds
+material file *references* (remaps resolved), so material edits stay live.
+**Alternatives:** (B) bake on the first game run and keep it in a derived-data
+cache (the game would ship without them or the first player would pay for
+them; nothing for CI to check); (C) a separate offscreen-rendering cooker
+without the engine (a second renderer to maintain, materials and custom
+shaders would render differently); settings in the scene's `FoliageType` only
+(cooking can't see scenes, and one model is used by many scenes).
+**Why:** hand-made models are the common case, so their derived data should
+be made once, before shipping, with the same renderer that draws them.
+**Cost:** vecook needs a Vulkan device and a display for those models
+(`xvfb-run` on servers); a material change recooks the models whose impostors
+use it; code-built meshes still bake at load.

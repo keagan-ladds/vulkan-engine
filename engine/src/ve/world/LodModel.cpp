@@ -2,6 +2,11 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/assets/Model.hpp"
+#include "ve/assets/ModelCook.hpp"
+#include "ve/assets/ModelData.hpp"
+#include "ve/core/Engine.hpp"
+#include "ve/core/Log.hpp"
+#include "ve/render/Texture.hpp"
 #include "ve/core/Strings.hpp"
 #include "ve/render/Impostor.hpp"
 #include "ve/render/Material.hpp"
@@ -9,6 +14,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <functional>
 #include <stdexcept>
 
@@ -200,6 +206,13 @@ LodModel lodModelFrom(const Model& model)
         }
     }
     std::erase_if(result.variants, [](const LodVariant& v) { return v.levels.empty(); });
+    // What cooking generated, by variant name.
+    if (model.cookedLods) {
+        result.cooked = model.cookedLods;
+        for (LodVariant& v : result.variants)
+            for (const ModelVariantLods& c : *model.cookedLods)
+                if (c.variant == v.name) v.cooked = &c;
+    }
 
     // Colliders: matched by name, or shared ("COL") by every variant.
     for (const auto& [base, node] : colliders) {
@@ -278,8 +291,91 @@ std::vector<InstanceLod> buildLodChain(Renderer& renderer, LodChainDesc desc)
         l.materials = g.materials;
         chain.push_back(withSwitch(std::move(l)));
     }
-    if (desc.impostor) chain.push_back(withSwitch(Impostor::bake(renderer, *chain.front().mesh, chain.front().materials, desc.impostorSettings)->lod()));
+    std::shared_ptr<Impostor> impostor;
+    if (desc.cookedImpostor) impostor = impostorFromCooked(renderer, *desc.cookedImpostor);
+    if (!impostor && (desc.impostor || desc.cookedImpostor))
+        impostor = Impostor::bake(renderer, *chain.front().mesh, chain.front().materials, desc.impostorSettings);
+    if (impostor) chain.push_back(withSwitch(impostor->lod()));
     return chain;
+}
+
+std::shared_ptr<Impostor> impostorFromCooked(Renderer& renderer, const ModelImpostorData& data)
+{
+    if (!data.valid()) return nullptr;
+    const auto albedoFormat = VkFormat(data.albedoFormat), normalFormat = VkFormat(data.normalFormat);
+    const bool compressed = albedoFormat == VK_FORMAT_BC7_SRGB_BLOCK || normalFormat == VK_FORMAT_BC7_UNORM_BLOCK;
+    if (compressed && !renderer.device().features().textureCompressionBC) return nullptr; // (baked instead)
+    std::vector<VkDeviceSize> offsets(data.levelOffsets.begin(), data.levelOffsets.end());
+    // Each atlas has its own level layout when compressed; levelOffsets
+    // describe both (compressModelImpostors encodes them alike).
+    auto albedo = Texture::createWithLevels(renderer, data.size, data.size, albedoFormat, data.albedo.data(), data.albedo.size(), offsets,
+                                            SamplerType::LinearClamp, {}, "impostor albedo (cooked)");
+    auto normal = Texture::createWithLevels(renderer, data.size, data.size, normalFormat, data.normal.data(), data.normal.size(), offsets,
+                                            SamplerType::LinearClamp, {}, "impostor normal (cooked)");
+    return Impostor::fromAtlases(renderer, std::move(albedo), std::move(normal), {data.centre, data.radius, data.frames, data.alphaCutoff});
+}
+
+bool generateModelLods(ModelData& data, const Model& model, const ModelSettings& settings, std::string& error)
+{
+    if (!Engine::exists()) {
+        error = "no renderer";
+        return false;
+    }
+    Renderer& renderer = Engine::get().renderer();
+    const LodModel lods = lodModelFrom(model);
+    data.lods.clear();
+    for (const LodVariant& v : lods.variants) {
+        ModelVariantLods out;
+        out.variant = v.name;
+        const LodGeometry& base = v.levels.front();
+        // Simplified levels, for variants authored with a single level.
+        if (v.levels.size() == 1 && settings.autoLods > 0) {
+            if (base.submeshes.size() > 1) {
+                log::warnOnce("Model " + model.name + ": variant '" + v.name + "' has several materials: no automatic LODs (author them)");
+            } else {
+                for (int k = 1; k <= settings.autoLods; ++k) {
+                    ModelLodLevelData level;
+                    level.data = base.data.simplified({.ratio = std::pow(settings.lodRatio, float(k)),
+                                                       .maxError = settings.lodMaxError * float(k),
+                                                       .faceted = settings.lodFaceted});
+                    level.data.optimize();
+                    out.generated.push_back(std::move(level));
+                }
+            }
+        }
+        if (settings.impostor) {
+            std::vector<std::shared_ptr<Material>> materials = base.materials;
+            for (auto& m : materials)
+                if (!m) m = renderer.createStandardMaterial();
+            auto mesh = Mesh::create(renderer, base.data, base.submeshes.size() > 1 ? base.submeshes : std::vector<Submesh>{},
+                                     model.name + " " + v.name + " (impostor bake)");
+            ImpostorSettings is;
+            is.frames = settings.impostorFrames;
+            is.frameResolution = settings.impostorResolution;
+            is.alphaCutoff = settings.impostorAlphaCutoff;
+            is.backgroundAlbedo = settings.impostorBackground;
+            const auto imp = Impostor::bake(renderer, *mesh, materials, is);
+            Impostor::Pixels px = imp->readPixels(renderer);
+            ModelImpostorData& d = out.impostor;
+            d.albedoFormat = VK_FORMAT_R8G8B8A8_SRGB; // (block-compressed when written: compressModelImpostors)
+            d.normalFormat = VK_FORMAT_R8G8B8A8_UNORM;
+            d.size = px.size;
+            d.levelOffsets.assign(px.levelOffsets.begin(), px.levelOffsets.end());
+            d.albedo = std::move(px.albedo);
+            d.normal = std::move(px.normal);
+            d.centre = imp->framing().centre;
+            d.radius = imp->framing().radius;
+            d.frames = imp->framing().frames;
+            d.alphaCutoff = imp->framing().alphaCutoff;
+        }
+        if (!out.generated.empty() || out.impostor.valid()) data.lods.push_back(std::move(out));
+    }
+    return true;
+}
+
+void registerModelLodGenerator()
+{
+    setModelLodGenerator(generateModelLods);
 }
 
 } // namespace ve

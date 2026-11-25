@@ -15,10 +15,13 @@ downloads (and so the engine's importers get exercised on real files):
                                               Idle and Walk animations (F2 animation test)
   sandbox/assets/models/rondavel.gltf (+.bin) round African hut: walls + thatched
                                               roof (one mesh, two materials) + door node
+  sandbox/assets/models/test_tree.gltf (+.bin, .model) small vertex-coloured tree cooked with an
+                                              automatic LOD and an impostor (model cooking test)
   sandbox/assets/audio/*.wav                  wind / fire / rain loops, pickup chime
 
 Requires Pillow (python3-pil) and numpy (terrain materials). Run from anywhere:
-    python3 tools/generate_assets.py
+    python3 tools/generate_assets.py               (everything)
+    python3 tools/generate_assets.py test_tree     (only the named generators)
 """
 import base64
 import json
@@ -159,10 +162,11 @@ class GltfBuilder:
         self.accessors.append(acc)
         return len(self.accessors) - 1
 
-    def primitive(self, pos, nrm, uv, idx, material):
-        return {"attributes": {"POSITION": self.accessor(pos, 3), "NORMAL": self.accessor(nrm, 3),
-                               "TEXCOORD_0": self.accessor(uv, 2)},
-                "indices": self.accessor(idx, 1, True), "material": material}
+    def primitive(self, pos, nrm, uv, idx, material, colors=None):
+        attributes = {"POSITION": self.accessor(pos, 3), "NORMAL": self.accessor(nrm, 3), "TEXCOORD_0": self.accessor(uv, 2)}
+        if colors:
+            attributes["COLOR_0"] = self.accessor(colors, 4)
+        return {"attributes": attributes, "indices": self.accessor(idx, 1, True), "material": material}
 
 
 def cylinder(r0, r1, y0, y1, seg, uv_repeat, gap=None):
@@ -251,6 +255,67 @@ def rondavel():
         f.write(g.bin)
     with open(out("models", "rondavel.gltf"), "w") as f:
         json.dump(gltf, f, indent=1)
+
+
+def test_tree():
+    """A small vertex-coloured tree in one mesh (one material), cooked with an
+    automatic LOD level and an impostor (test_tree.gltf.model): exercises
+    model cooking (the sandbox's own trees are generated in code)."""
+    g = GltfBuilder()
+    pos, nrm, uv, idx, col = [], [], [], [], []
+
+    def add(part, color):
+        p, n, u, i = part
+        base = len(pos)
+        pos.extend(p)
+        nrm.extend(n)
+        uv.extend(u)
+        col.extend([color] * len(p))
+        idx.extend(base + k for k in i)
+
+    def cap(y, r, seg, color, up):
+        """Closed disc at height y (the canopy's underside)."""
+        base = len(pos)
+        pos.append((0.0, y, 0.0))
+        nrm.append((0.0, 1.0 if up else -1.0, 0.0))
+        uv.append((0.5, 0.5))
+        col.append(color)
+        for k in range(seg + 1):
+            a = k / seg * 2 * math.pi
+            pos.append((math.cos(a) * r, y, -math.sin(a) * r))
+            nrm.append((0.0, 1.0 if up else -1.0, 0.0))
+            uv.append((0.5 + math.cos(a) * 0.5, 0.5 - math.sin(a) * 0.5))
+            col.append(color)
+        for k in range(seg):
+            a, b = base + 1 + k, base + 2 + k
+            idx.extend((base, a, b) if up else (base, b, a))
+
+    bark, leaf, leaf2 = (0.36, 0.25, 0.16, 1.0), (0.30, 0.45, 0.16, 1.0), (0.38, 0.52, 0.20, 1.0)
+    add(cylinder(0.22, 0.14, 0.0, 2.2, 10, 1.0), bark)
+    add(cylinder(2.0, 0.0, 1.9, 4.3, 16, 1.0), leaf)      # canopy cone...
+    cap(1.9, 2.0, 16, leaf, False)
+    add(cylinder(1.4, 0.0, 3.4, 5.2, 14, 1.0), leaf2)     # ...and a smaller one on top
+    cap(3.4, 1.4, 14, leaf2, False)
+    g.meshes.append({"name": "TestTree", "primitives": [g.primitive(pos, nrm, uv, idx, 0, col)]})
+    gltf = {
+        "asset": {"version": "2.0", "generator": "vulkan-engine tools/generate_assets.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"name": "TestTree", "mesh": 0}],
+        "meshes": g.meshes,
+        "materials": [{"name": "TestTreeColours", "pbrMetallicRoughness": {"metallicFactor": 0.0, "roughnessFactor": 0.9}}],
+        "buffers": [{"uri": "test_tree.bin", "byteLength": len(g.bin)}],
+        "bufferViews": g.buffer_views,
+        "accessors": g.accessors,
+    }
+    with open(out("models", "test_tree.bin"), "wb") as f:
+        f.write(g.bin)
+    with open(out("models", "test_tree.gltf"), "w") as f:
+        json.dump(gltf, f, indent=1)
+    with open(out("models", "test_tree.gltf.model"), "w") as f:
+        json.dump({"autoLods": 1, "impostor": True, "impostorFrames": 8, "impostorResolution": 64,
+                   "impostorBackground": [0.32, 0.45, 0.18]}, f, indent=2)
+        f.write("\n")
 
 
 # --------------------------------------------------------------------------- audio
@@ -841,14 +906,17 @@ def villager():
         json.dump(gltf, f, indent=1)
 
 
+GENERATORS = [villager, terrain_textures, decal_textures, lut_neutral, textures, reed_screen, rondavel, test_tree, audio,
+              footsteps]
+
 if __name__ == "__main__":
-    villager()
-    terrain_textures()
-    decal_textures()
-    lut_neutral()
-    textures()
-    reed_screen()
-    rondavel()
-    audio()
-    footsteps()
+    # Every generator, or only the ones named: python3 tools/generate_assets.py test_tree rondavel
+    import sys
+    wanted = sys.argv[1:]
+    unknown = [w for w in wanted if w not in {g.__name__ for g in GENERATORS}]
+    if unknown:
+        sys.exit("unknown generator(s): %s (have: %s)" % (", ".join(unknown), ", ".join(g.__name__ for g in GENERATORS)))
+    for generate in GENERATORS:
+        if not wanted or generate.__name__ in wanted:
+            generate()
     print("Assets written to", os.path.normpath(ROOT))

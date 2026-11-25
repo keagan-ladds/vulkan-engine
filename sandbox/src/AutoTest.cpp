@@ -38,7 +38,10 @@
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/scene/Scene.hpp>
+#include <ve/assets/ModelData.hpp>
+#include <ve/render/Impostor.hpp>
 #include <ve/world/Foliage.hpp>
+#include <ve/world/LodModel.hpp>
 #include <ve/world/Terrain.hpp>
 #include <ve/world/Vegetation.hpp>
 #include <vfx/DayNight.hpp>
@@ -319,6 +322,20 @@ void AutoTest::update(float dt)
                 std::to_string(ts.texturesCooked) + " cooked, " + std::to_string(ts.texturesSource) + " from source images; sounds: " +
                 std::to_string(ts.soundsCooked) + " cooked, " + std::to_string(ts.soundsSource) + " source files; " +
                 std::to_string(ts.cooking) + " cooking");
+            // Cooked models (.vemodel): the test tree's .model file asks for a
+            // generated LOD and an impostor, so its cooked copy carries them and
+            // foliage makes its impostor from the cooked atlases without baking.
+            {
+                const auto tree = assets().loadModel("models/test_tree.gltf");
+                const ve::ModelVariantLods* lods = tree && tree->cookedLods && !tree->cookedLods->empty() ? &tree->cookedLods->front() : nullptr;
+                const uint32_t bakesBefore = ve::Impostor::bakeCount();
+                const auto impostor = lods && lods->impostor.valid() ? ve::impostorFromCooked(renderer(), lods->impostor) : nullptr;
+                const bool noBake = ve::Impostor::bakeCount() == bakesBefore;
+                log(std::string("cooked model: test tree has cooked LODs: ") + (lods ? "yes" : "NO") + ", generated levels: " +
+                    std::to_string(lods ? lods->generated.size() : 0) + (lods && !lods->generated.empty() ? " (yes)" : " NO") +
+                    ", impostor from the cooked atlases: " + (impostor ? "yes" : "NO") + ", without baking: " + (noBake ? "yes" : "NO") +
+                    "; models loaded: " + std::to_string(ts.modelsCooked) + " cooked, " + std::to_string(ts.modelsSource) + " parsed");
+            }
             // A live edit (like the editor's, unsaved): checked and reverted in step 1.
             ve::Json edited = *ve::DataAssets::get("materials/thatch.material");
             edited["roughness"] = 0.25f;

@@ -42,6 +42,17 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Cooked models, LODs and impostors.** glTF models cook to `.vemodel` in
+  the cook cache (no glTF parsing at load; the sandbox villager loads in
+  0.7 ms). An optional `<model>.model` file asks for generated LOD levels
+  (`autoLods`), a baked octahedral impostor and material remaps
+  (`"materials": {"Bark": "materials/bark.material"}`); `vecook` cooks those
+  on a headless renderer (a game run cooks them on first load otherwise), and
+  `FoliageType` uses the cooked levels and impostor instead of baking at load.
+  Packaging ships the cooked model without its `.bin` / `.model` files, and
+  now includes `cooked/generated/`. New API: `ve::ModelData`, `parseGltf`,
+  `buildModel`, `ModelSettings` (`assets/ModelData.hpp`), `assets/ModelCook.hpp`,
+  `Model::cookedLods`, `impostorFromCooked`, `log::infoOnce`, `core/BinaryIO.hpp`.
 - **Spot lights** (`ve::SpotLight`): torches, headlights, street lamps. A cone
   (`innerAngle` / `outerAngle`, degrees) along the object's forward, with
   range, intensity and optional shadows (only the cube faces the cone

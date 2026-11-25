@@ -3,6 +3,8 @@
 #include "ve/assets/DataAsset.hpp"
 #include "ve/assets/AudioCook.hpp"
 #include "ve/assets/Cookers.hpp"
+#include "ve/assets/ModelCook.hpp"
+#include "ve/assets/ModelData.hpp"
 #include "ve/assets/MaterialAsset.hpp"
 #include "ve/assets/TextureCook.hpp"
 #include "ve/gfx/Device.hpp"
@@ -255,14 +257,87 @@ AssetManager::~AssetManager()
 
 std::shared_ptr<Model> AssetManager::loadModel(const std::filesystem::path& path)
 {
-    const std::filesystem::path& file = resolveCached(path);
-    const std::string key = file.string();
+    // Like loadTexture: the source if it's there (a packaged game may only
+    // have the cooked copy), the cooked copy when it is current, else the
+    // source - cooked on the way for next time.
+    std::filesystem::path source;
+    std::string name;
+    try {
+        source = resolveCached(path);
+        name = assetName(source);
+    } catch (const std::exception&) {
+        if (m_cook.cacheDir.empty()) throw;
+        name = path.is_absolute() ? assetName(path) : path.generic_string();
+        if (std::filesystem::path(name).is_absolute()) throw;
+    }
+    const std::string key = source.empty() ? "cooked:" + name : source.string();
     if (auto it = m_models.find(key); it != m_models.end()) return it->second;
     const auto t0 = std::chrono::steady_clock::now();
-    auto model = loadGltf(*m_renderer, file, this);
+
+    const ModelSettings settings = source.empty() ? ModelSettings{} : ModelSettings::forModel(source);
+    // Texture URIs are relative to the model's folder: an asset path when the
+    // model is in the asset folders (works with only cooked textures too).
+    const std::filesystem::path modelPath = std::filesystem::path(name).is_absolute() ? source : std::filesystem::path(name);
+    std::shared_ptr<Model> model;
+    const char* how = "parsed";
+    if (isCookableModel(path) && m_cook.useCooked && !m_cook.cacheDir.empty()) {
+        const std::filesystem::path cooked = cookedModelPath(m_cook.cacheDir, name);
+        ModelData data;
+        std::string error;
+        if (checkCookedModel(cooked, source, settings) == CookedState::Current && readCookedModel(cooked, nullptr, &data, &error)) {
+            model = buildModel(*m_renderer, data, this, modelPath, settings);
+            ++m_cookStats.modelsCooked;
+            how = "cooked";
+        } else if (!source.empty() && m_cook.cookOnDemand) {
+            // Cook now: parse, build, generate LODs / impostors (they need the
+            // renderer: this thread), use the result, and write the cooked copy
+            // in the background (impostor compression is slow).
+            std::vector<std::filesystem::path> deps = modelDependencies(source);
+            auto d = std::make_shared<ModelData>(parseGltf(source));
+            for (ModelMaterialData& m : d->materials)
+                if (auto it = settings.materials.find(m.name); it != settings.materials.end()) m.file = it->second;
+            std::vector<std::filesystem::path> materialFiles;
+            model = buildModel(*m_renderer, *d, this, modelPath, settings, &materialFiles);
+            if (settings.generatesLods()) {
+                std::string genError;
+                if (!modelLodGenerator()) log::warnOnce("Model " + name + ": LODs / impostors asked for, but no generator is registered");
+                else if (modelLodGenerator()(*d, *model, settings, genError))
+                    model->cookedLods = std::make_shared<const std::vector<ModelVariantLods>>(d->lods);
+                else log::warn("Model {}: generating LODs / impostors failed: {}", name, genError);
+            }
+            for (const std::filesystem::path& f : materialFiles) {
+                try {
+                    deps.push_back(resolve(f));
+                } catch (const std::exception&) {
+                }
+            }
+            const nlohmann::json stamp = makeModelStamp(source, settings, deps);
+            auto work = [d, stamp, cooked](const std::atomic<bool>& cancelled) {
+                if (!compressModelImpostors(*d, &cancelled)) return CookJobResult{false, "cancelled", {}};
+                std::string err;
+                const bool ok = writeCookedModel(cooked, stamp, *d, &err);
+                char summary[96];
+                std::snprintf(summary, sizeof(summary), "%zu meshes, %zu LOD variants", d->meshes.size(), d->lods.size());
+                return CookJobResult{ok, err, summary};
+            };
+            if (m_cook.synchronous) {
+                const std::atomic<bool> never{false};
+                const CookJobResult r = work(never);
+                if (!r.ok) log::warn("Cooking {} failed: {}", name, r.error);
+            } else {
+                queueCook(name, std::move(work));
+            }
+            ++m_cookStats.modelsSource;
+            how = "parsed, cooking";
+        }
+    }
+    if (!model) {
+        if (source.empty()) throw std::runtime_error("Asset not found: " + path.string() + " (no source model or cooked copy)");
+        model = buildModel(*m_renderer, parseGltf(source), this, modelPath, settings);
+        ++m_cookStats.modelsSource;
+    }
     const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-    log::info("Loaded model {} ({} meshes, {} nodes) in {:.1f} ms", path.string(), model->meshes.size(),
-              model->nodes.size(), ms);
+    log::info("Loaded model {} ({} meshes, {} nodes; {}) in {:.1f} ms", path.string(), model->meshes.size(), model->nodes.size(), how, ms);
     m_models[key] = model;
     return model;
 }
@@ -342,45 +417,42 @@ std::shared_ptr<StandardMaterial> AssetManager::loadMaterial(const std::filesyst
     return m_materials.emplace(key, std::move(e)).first->second.material;
 }
 
-std::shared_ptr<StandardMaterial> AssetManager::materialForGltf(const std::string& name, const std::string& extrasJson)
+std::string AssetManager::materialFileForGltf(const std::string& name, const std::string& extrasJson) const
 {
     // 1. An explicit "material" custom property.
     if (!extrasJson.empty()) {
         const nlohmann::json extras = nlohmann::json::parse(extrasJson, nullptr, false);
-        if (extras.is_object() && extras.contains("material") && extras["material"].is_string()) {
-            const std::string path = extras["material"].get<std::string>();
-            try {
-                return loadMaterial(path);
-            } catch (const std::exception& e) {
-                log::warn("glTF material '{}': {}", name, e.what());
-                return nullptr;
-            }
-        }
+        if (extras.is_object() && extras.contains("material") && extras["material"].is_string()) return extras["material"].get<std::string>();
     }
     // 2. A file named after it. Blender names copies "Concrete.001": those
-    // use Concrete's file too. File systems differ in case: also try lower case.
-    if (materialFolder.empty() || name.empty()) return nullptr;
+    // use Concrete's file too. File systems differ in case: lower case first
+    // (the usual file name, and what Windows / archives match for "Concrete").
+    if (materialFolder.empty() || name.empty()) return {};
     std::string base = name;
     if (const size_t dot = base.rfind('.'); dot != std::string::npos && dot + 1 < base.size() &&
         std::all_of(base.begin() + long(dot) + 1, base.end(), [](unsigned char c) { return std::isdigit(c); }))
         base.resize(dot);
     std::string lower = base;
     for (char& c : lower) c = char(std::tolower(static_cast<unsigned char>(c)));
-    // (Lower case first: the usual file name, and what Windows / archives
-    // would match for "Thatch" anyway; the Material's name is the file's.)
     for (const std::string& candidate : {lower, base}) {
         const std::filesystem::path p = std::filesystem::path(materialFolder) / (candidate + ".material");
-        if (!exists(p)) continue;
-        try {
-            auto material = loadMaterial(p);
-            log::info("glTF material '{}' uses {}", name, p.generic_string()); // (a file overrides by name: say so)
-            return material;
-        } catch (const std::exception& e) {
-            log::warn("glTF material '{}': {}", name, e.what());
-            return nullptr;
-        }
+        if (exists(p)) return p.generic_string();
     }
-    return nullptr;
+    return {};
+}
+
+std::shared_ptr<StandardMaterial> AssetManager::materialForGltf(const std::string& name, const std::string& extrasJson)
+{
+    const std::string file = materialFileForGltf(name, extrasJson);
+    if (file.empty()) return nullptr;
+    try {
+        auto material = loadMaterial(file);
+        log::info("glTF material '{}' uses {}", name, file); // (a file overrides by name: say so)
+        return material;
+    } catch (const std::exception& e) {
+        log::warn("glTF material '{}': {}", name, e.what());
+        return nullptr;
+    }
 }
 
 std::shared_ptr<Shader> AssetManager::materialShader(StandardMaterial::Mode mode, const std::string& vertex,

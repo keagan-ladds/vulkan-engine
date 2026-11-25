@@ -418,10 +418,39 @@ seamless. Author in WAV / FLAC; to tune one, put `<sound>.audio` next to it:
 sounds; `"compress": false` keeps the source file). MP3 / Ogg files are used
 as they are.
 
+**Models cook too:** a `.gltf` / `.glb` becomes `<model>.vemodel` in the cache
+(parsed, normals and tangents computed: loading is reading arrays). Put
+`<model>.model` next to a model to make cooking do more:
+
+```json
+{
+  "autoLods": 2,              // simplified levels for variants with one level (0..3); authored _LOD1.. levels are kept as they are
+  "lodRatio": 0.35,           // triangles kept per level
+  "lodMaxError": 0.08,        // allowed deviation (relative to the size), doubles per level
+  "lodFaceted": false,        // low-poly flat-shaded art: keep it faceted
+  "impostor": true,           // an octahedral impostor of LOD0 as the last level (foliage)
+  "impostorFrames": 12, "impostorResolution": 128, "impostorAlphaCutoff": 0.45,
+  "impostorBackground": [0.3, 0.3, 0.3],   // colour of empty atlas texels: near the model's average
+  "materials": { "Bark": "materials/acacia_bark.material" }   // slot (Blender material name) -> material file
+}
+```
+
+(No comments in the real file.) A material slot's file is, in order: the
+`.model` remap, the material's `material` custom property,
+`materials/<name>.material`, else the glTF's own values. Material files stay
+live (the cooked model references them); impostors are rendered with them,
+so a material change recooks the model. LODs and impostors are rendered by the
+engine, so `vecook` starts a headless renderer for those models (on a Linux
+server without a display: `xvfb-run -a build/bin/vecook`); a game run cooks
+them on the first load of a stale model instead. Code-built meshes
+(`Mesh::fromData`) aren't cooked: their impostors still bake at load.
+
 **Packaging a release:** `build/bin/vecook --package <dir>` (cooks what's
 stale first) writes the game executable, its runtime libraries and one
-`data.vepak` archive: assets (images and sounds only as their cooked copies),
-cooked files and shaders. `.texture` / `.audio` files, hidden files and
+`data.vepak` archive: assets (images, sounds and glTF models only as their
+cooked copies; a glTF's `.bin` buffers stay out), cooked files (with
+`cooked/generated/`, engine data the game made on its first run) and shaders.
+`.texture` / `.audio` / `.model` files, hidden files and
 `*.blend` stay out; list more in `assets/.vepackignore` (globs: `*`, `?`,
 `**`, `folder/`). `--loose` writes folders instead of the archive (to look
 inside), `--level N` sets the zstd level. Read files through `ve::vfs`

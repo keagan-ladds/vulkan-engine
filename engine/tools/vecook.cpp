@@ -19,18 +19,27 @@
 // assets folder (build/bin/ve-source-assets.txt, written by ve_setup_game),
 // else build/bin/assets; the cache is build/bin/cooked, where the game looks.
 //
+// Most cooks are pure CPU work, spread over the worker threads. Cooks that
+// need the renderer (models whose <model>.model asks for LODs / an impostor:
+// impostors are rendered) run afterwards on the main thread, on a headless
+// ve::Engine that vecook starts only when one is needed.
+//
 // Packaging: every file under the asset folders ships, except
-//   - files a cooker takes (images, WAV / FLAC sounds): their cooked copies
-//     ship instead (cooked/<asset path>.<ext>);
-//   - cooker settings files (.texture, .audio);
+//   - files a cooker takes (images, WAV / FLAC sounds, glTF models): their
+//     cooked copies ship instead (cooked/<asset path>.<ext>);
+//   - files those are made from (a glTF's .bin buffers: in the .vemodel);
+//   - cooker settings files (.texture, .audio, .model);
 //   - hidden files / folders, Blender files and temporaries (*.blend, *.blend1,
 //     *.tmp, *~), and anything matched by <assets>/.vepackignore: one glob per
 //     line, '#' comments; '*' and '?' within a path segment, '**' across
 //     segments; no '/' = matched against the file name; a trailing '/' = a folder.
-// plus the compiled shaders (build/bin/shaders/*.spv).
+// plus the compiled shaders (build/bin/shaders/*.spv) and data the engine
+// generated into the cache (cooked/generated/: e.g. the cloud noise, written
+// by the first run of the game).
 // =============================================================================
 
 #include <ve/assets/Cookers.hpp>
+#include <ve/core/Engine.hpp>
 #include <ve/core/Jobs.hpp>
 #include <ve/core/Pack.hpp>
 #include <ve/core/Window.hpp>
@@ -42,6 +51,7 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -57,7 +67,7 @@ void usage()
     std::puts("usage: vecook [--out <cache dir>] [--force] [--check] [--clean] [--quiet] [assets folder...]\n"
               "       vecook --package <release dir> [--loose] [--game <executable>] [--level <0-19>] [...]\n"
               "Cooks every cookable file under the asset folders into the cook cache (images -> BC4 / BC5 / BC7 KTX2,\n"
-              "WAV / FLAC -> Ogg Vorbis; settings: <file>.texture / <file>.audio). --package then writes a release folder:\n"
+              "WAV / FLAC -> Ogg Vorbis, glTF -> .vemodel with LODs / impostors; settings: <file>.texture / .audio / .model). --package then writes a release folder:\n"
               "the game's executable and data.vepak (or, with --loose, assets/ cooked/ shaders/). See the header of\n"
               "engine/tools/vecook.cpp for what ships.");
 }
@@ -251,8 +261,14 @@ int main(int argc, char** argv)
     if (clean || check) {
         std::error_code ec;
         for (auto it = fs::recursive_directory_iterator(out, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+        {
+            if (it->is_directory() && it->path() == out / "generated") { // engine-made data, not cooked from an asset
+                it.disable_recursion_pending();
+                continue;
+            }
             if (it->is_regular_file() && !it->path().filename().string().ends_with(".tmp") && !expected.count(it->path().lexically_normal()))
                 orphans.push_back(it->path());
+        }
     }
     if (check) {
         for (const fs::path& o : orphans) std::printf("  orphan: %s\n", o.string().c_str());
@@ -266,8 +282,13 @@ int main(int argc, char** argv)
     std::mutex printLock;
     std::map<std::string, std::pair<uint64_t, uint64_t>> sizes; // per cooker: source bytes, cooked bytes
     std::atomic<int> failed{0};
-    ve::jobs::parallelFor(todo.size(), [&](size_t k) {
-        const Asset& a = assets[todo[k]];
+    // CPU cooks on the worker threads; cooks that need the renderer after them, on this thread.
+    std::vector<size_t> cpuTodo, gpuTodo;
+    for (size_t i : todo) {
+        const Asset& a = assets[i];
+        (a.cooker->needsRenderer && a.cooker->needsRenderer(a.source) ? gpuTodo : cpuTodo).push_back(i);
+    }
+    auto cookOne = [&](const Asset& a) {
         const auto c0 = std::chrono::steady_clock::now();
         const ve::Cooker::Result r = a.cooker->cook(a.source, a.cooked, nullptr);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - c0).count();
@@ -282,7 +303,35 @@ int main(int argc, char** argv)
         sizes[a.cooker->name].first += before;
         sizes[a.cooker->name].second += r.bytes;
         if (!quiet) std::printf("  %-48s %s %8s %6.0f ms\n", a.name.c_str(), r.summary.c_str(), human(r.bytes).c_str(), ms);
-    });
+    };
+    ve::jobs::parallelFor(cpuTodo.size(), [&](size_t k) { cookOne(assets[cpuTodo[k]]); });
+    if (!gpuTodo.empty()) {
+        // A headless engine for the renderer, reading the same asset folders and
+        // cook cache (textures and materials the models use resolve as in the game).
+        ve::EngineConfig config;
+        config.title = "vecook";
+        config.width = 64;
+        config.height = 64;
+        config.renderer.headless = true;
+        config.enableAudio = false;
+        config.enableEditor = false;
+        config.mountArchives = false;
+        config.cookOnDemand = false; // textures were cooked above; nothing else to cook in the background
+        config.cookCache = out;
+        config.assetPaths = roots;
+        std::unique_ptr<ve::Engine> engine;
+        try {
+            engine = std::make_unique<ve::Engine>(config);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr,
+                         "vecook: can't start the renderer for %zu model(s) with LODs / impostors: %s\n"
+                         "  (it needs a Vulkan device and a display, like the game: on a Linux server run vecook under xvfb-run -a)\n",
+                         gpuTodo.size(), e.what());
+            failed += int(gpuTodo.size());
+        }
+        if (engine)
+            for (size_t i : gpuTodo) cookOne(assets[i]);
+    }
     if (clean) {
         for (const fs::path& o : orphans) {
             std::error_code ec;
@@ -310,11 +359,19 @@ int main(int argc, char** argv)
         fs::path from;
     };
     std::vector<Ship> ship;
+    std::set<fs::path> madeInto; // files a cooked asset is made from (a glTF's .bin buffers): inside the cooked copy
+    for (const Asset& a : assets)
+        if (a.cooker && a.cooker->dependencies)
+            for (const fs::path& d : a.cooker->dependencies(a.source)) madeInto.insert(d.lexically_normal());
     for (const Asset& a : assets) {
         if (a.cooker) ship.push_back({"cooked/" + fs::relative(a.cooked, out).generic_string(), a.cooked});
-        else ship.push_back({"assets/" + a.name, a.source});
+        else if (!madeInto.count(a.source.lexically_normal())) ship.push_back({"assets/" + a.name, a.source});
     }
     std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(out / "generated", ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
+        if (it->is_regular_file() && !it->path().filename().string().ends_with(".tmp"))
+            ship.push_back({"cooked/" + fs::relative(it->path(), out).generic_string(), it->path()});
+    ec.clear(); // (no generated/ folder is fine)
     for (const auto& e : fs::directory_iterator(exeDir / "shaders", ec))
         if (e.is_regular_file() && e.path().extension() == ".spv") ship.push_back({"shaders/" + e.path().filename().string(), e.path()});
     std::sort(ship.begin(), ship.end(), [](const Ship& a, const Ship& b) { return a.name < b.name; });

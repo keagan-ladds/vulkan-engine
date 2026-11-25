@@ -1,6 +1,7 @@
 #include "ve/assets/Cookers.hpp"
 
 #include "ve/assets/AudioCook.hpp"
+#include "ve/assets/ModelCook.hpp"
 #include "ve/assets/TextureCook.hpp"
 
 #include <cstdio>
@@ -68,9 +69,31 @@ Cooker audioCooker()
     return c;
 }
 
+Cooker modelCooker()
+{
+    Cooker c;
+    c.name = "model";
+    c.settingsExtensions = {".model"};
+    c.handles = [](const std::filesystem::path& source) { return isCookableModel(source); };
+    c.cookedPath = cookedModelPath;
+    c.check = [](const std::filesystem::path& cooked, const std::filesystem::path& source) {
+        return checkCookedModel(cooked, source, ModelSettings::forModel(source));
+    };
+    c.cook = [](const std::filesystem::path& source, const std::filesystem::path& cooked, const std::atomic<bool>* cancelled) {
+        const ModelCookResult r = cookModel(source, ModelSettings::forModel(source), cooked, cancelled);
+        char summary[160];
+        std::snprintf(summary, sizeof(summary), "%-6s %-10s %3u meshes, %u LOD levels, %u impostors", "Model", "vemodel", r.meshes,
+                      r.generatedLevels, r.impostors);
+        return Cooker::Result{r.ok, r.error, summary, r.bytes};
+    };
+    c.needsRenderer = [](const std::filesystem::path& source) { return ModelSettings::forModel(source).generatesLods(); };
+    c.dependencies = modelDependencies;
+    return c;
+}
+
 std::vector<Cooker>& registry()
 {
-    static std::vector<Cooker> list{textureCooker(), audioCooker()};
+    static std::vector<Cooker> list{textureCooker(), audioCooker(), modelCooker()};
     return list;
 }
 

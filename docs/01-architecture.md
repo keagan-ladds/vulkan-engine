@@ -984,6 +984,22 @@ never see Jolt types. The module is split by concern: `PhysicsWorld.cpp`
   (canonical path + colour/data + sampler), so models exported side by side
   ("glTF Separate") share one GPU texture per file; `.glb`-embedded images
   stay per model.
+- Model cooking (`assets/ModelData`, `ModelCook`): loading is split into
+  `parseGltf` (CPU only: `ModelData` with normals / tangents computed) and
+  `buildModel` (GPU upload, materials). A glTF cooks to
+  `<cache>/<asset path>.vemodel`: `ModelData` written with `core/BinaryIO`,
+  after a JSON stamp that also covers its `.bin` buffers and the material files
+  it uses. Loading a current cooked copy is array reads and uploads. An
+  optional `<model>.model` (`ModelSettings`) asks cooking for generated LOD
+  levels (`autoLods`, meshoptimizer) and an octahedral impostor of LOD0 per
+  variant, and remaps material slots to material files (resolved into the
+  cooked file: `.model` doesn't ship). LODs / impostors need the renderer, so
+  the world module registers the step (`setModelLodGenerator`,
+  `world/LodModel`): it runs on the main thread in the game (first load of a
+  stale model; atlases then compress to BC7 on a job and the file is written),
+  or in `vecook` on a headless `Engine` after the CPU cooks. `Model::cookedLods`
+  carries the result; `FoliageType` appends the cooked levels and makes its
+  impostor from the cooked atlases (`impostorFromCooked`) instead of baking.
 - Material files (`*.material`, `assets/MaterialAsset.hpp`): a
   `StandardMaterial` (optionally with a custom vertex / fragment shader in its
   layout, plus extra texture and parameter slots) described as JSON. A glTF
