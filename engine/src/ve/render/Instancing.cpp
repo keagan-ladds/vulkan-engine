@@ -311,8 +311,10 @@ void InstanceSystem::ensureVisibleCapacity(uint32_t entries)
     m_visible = d.createBuffer(VkDeviceSize(m_visibleCapacity) * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                                MemoryUsage::GpuOnly, "visible instances");
     m_renderer->writeInstanceDescriptors();
-    log::info("InstanceSystem: visible list grown to {} entries ({:.1f} MB)", m_visibleCapacity,
-              m_visibleCapacity * 4.0 / (1024.0 * 1024.0));
+    // Reserved room, not a count: every view (camera + shadow cascades) gets a
+    // slot per instance the groups *could* hold, per LOD and submesh batch.
+    log::info("InstanceSystem: room for {} visible-instance entries ({} views x {} slots: group capacities x LOD / submesh "
+              "batches), {:.1f} MB", m_visibleCapacity, m_activeViews, m_visiblePerView, m_visibleCapacity * 4.0 / (1024.0 * 1024.0));
 }
 
 void InstanceSystem::prepare(uint32_t slotIndex, FrameData& frame)
