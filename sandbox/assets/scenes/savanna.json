@@ -3162,6 +3162,171 @@
       "type": "Sunstone"
     },
     {
+      "id": "5a1e00000e000001",
+      "type": "SplineInstancer",
+      "name": "Paddock fence",
+      "active": true,
+      "position": [
+        70.0,
+        0.0,
+        40.0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "fields": {
+        "mesh": "models/fence_post.gltf",
+        "spacing": 2.5,
+        "collision": true,
+        "cableAttach": "0,1.0,0; 0,0.55,0",
+        "cableRadius": 0.04,
+        "cableColor": [
+          0.3,
+          0.21,
+          0.13
+        ],
+        "randomYaw": 4.0,
+        "seed": 3
+      },
+      "components": [
+        {
+          "type": "Spline",
+          "enabled": true,
+          "fields": {
+            "closed": true,
+            "points": [
+              [
+                -15,
+                0,
+                -14,
+                1
+              ],
+              [
+                16,
+                0,
+                -15,
+                1
+              ],
+              [
+                17,
+                0,
+                13,
+                1
+              ],
+              [
+                -3,
+                0,
+                17,
+                1
+              ],
+              [
+                -16,
+                0,
+                8,
+                1
+              ]
+            ]
+          }
+        },
+        {
+          "type": "FoliageExclusion",
+          "enabled": true,
+          "fields": {
+            "spline": true,
+            "width": 3.0,
+            "falloff": 0.5,
+            "foliage": true,
+            "grass": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "5a1e00000e000002",
+      "type": "SplineInstancer",
+      "name": "Powerline",
+      "active": true,
+      "position": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ],
+      "fields": {
+        "mesh": "models/power_pole.gltf",
+        "spacing": 45.0,
+        "cableAttach": "0,8.65,-1.0; 0,8.65,0; 0,8.65,1.0",
+        "cableSag": 0.03,
+        "cableRadius": 0.012,
+        "viewDistance": 2500.0,
+        "randomYaw": 1.5
+      },
+      "components": [
+        {
+          "type": "Spline",
+          "enabled": true,
+          "fields": {
+            "closed": false,
+            "points": [
+              [
+                300,
+                0,
+                -250,
+                1
+              ],
+              [
+                220,
+                0,
+                -185,
+                1
+              ],
+              [
+                150,
+                0,
+                -30,
+                1
+              ],
+              [
+                52,
+                0,
+                -6,
+                1
+              ]
+            ]
+          }
+        },
+        {
+          "type": "FoliageExclusion",
+          "enabled": true,
+          "fields": {
+            "spline": true,
+            "width": 14.0,
+            "falloff": 2.0,
+            "foliage": true,
+            "grass": false
+          }
+        }
+      ]
+    },
+    {
       "active": true,
       "id": "efbe1843525a7fe6",
       "name": "PlayerStart",

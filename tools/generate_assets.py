@@ -318,6 +318,49 @@ def test_tree():
         f.write("\n")
 
 
+def spline_props():
+    """Props repeated along splines (SplineInstancer): a fence post and a
+    wooden powerline pole with a crossarm. Vertex coloured, one material each.
+    Item axes: +X along the path, +Y up, +Z across (to the right)."""
+    def write(name, parts, material):
+        g = GltfBuilder()
+        pos, nrm, uv, idx, col = [], [], [], [], []
+        for (p, n, u, i), offset, color in parts:
+            base = len(pos)
+            pos.extend(tuple(a + b for a, b in zip(v, offset)) for v in p)
+            nrm.extend(n)
+            uv.extend(u)
+            col.extend([color] * len(p))
+            idx.extend(base + k for k in i)
+        g.meshes.append({"name": name, "primitives": [g.primitive(pos, nrm, uv, idx, 0, col)]})
+        gltf = {
+            "asset": {"version": "2.0", "generator": "vulkan-engine tools/generate_assets.py"},
+            "scene": 0, "scenes": [{"nodes": [0]}],
+            "nodes": [{"name": name, "mesh": 0}],
+            "meshes": g.meshes,
+            "materials": [{"name": material, "pbrMetallicRoughness": {"metallicFactor": 0.0, "roughnessFactor": 0.85}}],
+            "buffers": [{"uri": name + ".bin", "byteLength": len(g.bin)}],
+            "bufferViews": g.buffer_views, "accessors": g.accessors,
+        }
+        with open(out("models", name + ".bin"), "wb") as f:
+            f.write(g.bin)
+        with open(out("models", name + ".gltf"), "w") as f:
+            json.dump(gltf, f, indent=1)
+
+    wood, dark = (0.42, 0.30, 0.19, 1.0), (0.30, 0.21, 0.13, 1.0)
+    # Fence post: 1.25 m, rails attach at y = 1.0 and 0.55 (SplineInstancer.cableAttach).
+    write("fence_post", [(box(0.12, 1.25, 0.12), (0.0, 0.625, 0.0), wood),
+                         (box(0.15, 0.04, 0.15), (0.0, 1.25, 0.0), dark)], "FencePostWood")
+    # Powerline pole: 9 m, a 2.4 m crossarm across the line, three insulators
+    # (cables attach at y = 8.65, z = -1.0, 0, +1.0).
+    insulator = (0.78, 0.80, 0.82, 1.0)
+    parts = [(cylinder(0.16, 0.11, 0.0, 9.0, 10, 1.0), (0.0, 0.0, 0.0), dark),
+             (box(0.12, 0.12, 2.4), (0.0, 8.4, 0.0), wood)]
+    for z in (-1.0, 0.0, 1.0):
+        parts.append((cylinder(0.05, 0.035, 0.0, 0.2, 8, 1.0), (0.0, 8.46, z), insulator))
+    write("power_pole", parts, "PowerPoleWood")
+
+
 # --------------------------------------------------------------------------- audio
 RATE = 22050
 
@@ -1028,7 +1071,7 @@ def torch_cookie(size=256):
 
 
 GENERATORS = [villager, terrain_textures, decal_textures, lut_neutral, textures, reed_screen, rondavel, test_tree, audio,
-              footsteps, torch_cookie, grime_masks]
+              footsteps, torch_cookie, grime_masks, spline_props]
 
 if __name__ == "__main__":
     # Every generator, or only the ones named: python3 tools/generate_assets.py test_tree rondavel

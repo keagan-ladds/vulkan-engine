@@ -73,6 +73,8 @@ public:
     float length() const { return m_samples.empty() ? 0.0f : m_samples.back().distance; }
     /// Whether the end joins the start.
     bool closed() const { return m_closed; }
+    /// The largest width factor along the path.
+    float maxWidth() const { return m_maxWidth; }
     /// The point `distance` metres along (clamped to the ends; wrapped when closed).
     Sample at(float distance) const;
     /// The nearest point of the path to `p`.
@@ -96,6 +98,7 @@ private:
     std::vector<Sample> m_samples;
     std::vector<float> m_pointDistances;
     bool m_closed = false;
+    float m_maxWidth = 1.0f;
     glm::vec3 m_min{0.0f}, m_max{0.0f};
     float m_cell = 16.0f;                                   ///< grid cell size (m)
     std::unordered_map<uint64_t, std::vector<uint32_t>> m_grid; ///< XZ cell -> segments (index of their first sample)

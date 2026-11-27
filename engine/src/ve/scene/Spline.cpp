@@ -101,7 +101,9 @@ SplinePath SplinePath::build(const std::vector<SplinePoint>& points, bool closed
         path.m_samples[i].tangent = l > 1e-6f ? d / l : (i > 0 ? path.m_samples[i - 1].tangent : glm::vec3(0, 0, 1));
     }
     path.m_min = path.m_max = path.m_samples.front().position;
+    path.m_maxWidth = 0.0f;
     for (const Sample& s : path.m_samples) {
+        path.m_maxWidth = std::max(path.m_maxWidth, s.width);
         path.m_min = glm::min(path.m_min, s.position);
         path.m_max = glm::max(path.m_max, s.position);
     }

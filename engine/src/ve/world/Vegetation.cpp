@@ -109,6 +109,13 @@ glm::vec4 changedArea(const std::vector<FoliageExclusionShape>& a, const std::ve
 FoliageExclusionShape FoliageExclusion::shape() const
 {
     FoliageExclusionShape e;
+    if (spline) {
+        if (Spline* s = gameObject().getComponent<Spline>()) {
+            e.path = s->path();
+            e.halfWidth = std::max(width, 0.0f) * 0.5f;
+            return e;
+        }
+    }
     const Transform& t = transform();
     const glm::vec3 c = t.transformPoint(glm::vec3(offset.x, 0.0f, offset.y));
     e.center = {c.x, c.z};
@@ -1081,6 +1088,8 @@ void registerVegetationTypes(TypeRegistry& r)
 
     r.add<FoliageExclusion>("FoliageExclusion", [](TypeBuilder<FoliageExclusion>& t) {
         t.field("box", &FoliageExclusion::box).tooltip("a box (size, turning with the object) instead of a circle (radius)");
+        t.field("spline", &FoliageExclusion::spline).tooltip("a corridor along this object's Spline (width): roads, fences, powerlines");
+        t.field("width", &FoliageExclusion::width).range(0.0f, 1000.0f).speed(0.05f).tooltip("spline: full corridor width (m)");
         t.field("size", &FoliageExclusion::size).tooltip("box: full extents along the object's local x and z");
         t.field("offset", &FoliageExclusion::offset).tooltip("centre in the object's local x, z");
         t.category("World");

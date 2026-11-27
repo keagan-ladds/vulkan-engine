@@ -44,6 +44,7 @@
 #include <ve/render/Impostor.hpp>
 #include <ve/world/Foliage.hpp>
 #include <ve/world/LodModel.hpp>
+#include <ve/world/SplineInstancer.hpp>
 #include <ve/world/Terrain.hpp>
 #include <ve/world/Vegetation.hpp>
 #include <vfx/DayNight.hpp>
@@ -242,6 +243,33 @@ void AutoTest::update(float dt)
             line.destroy();
             ring.destroy();
             if (copy) copy->destroy();
+        }
+        // Things along splines (scene: "Paddock fence", "Powerline"): posts and
+        // poles placed with rails / cables, and no trees in the powerline's
+        // 14 m corridor (FoliageExclusion on the spline) while there are beside it.
+        {
+            ve::SplineInstancer* fence = nullptr;
+            ve::SplineInstancer* power = nullptr;
+            for (const auto& o : scene().objects())
+                if (auto* si = dynamic_cast<ve::SplineInstancer*>(o.get()); si && !si->isDestroyed()) {
+                    if (si->name() == "Paddock fence") fence = si;
+                    if (si->name() == "Powerline") power = si;
+                }
+            int inside = 0, beside = 0;
+            if (power) {
+                const auto path = power->getComponent<ve::Spline>()->path();
+                for (float d = 10.0f; d < path->length(); d += 12.0f) {
+                    const auto s = path->at(d);
+                    const glm::vec3 right = glm::normalize(glm::vec3(-s.tangent.z, 0.0f, s.tangent.x));
+                    inside += foliageAt(s.position, 6.0f);
+                    beside += foliageAt(s.position + right * 30.0f, 6.0f) + foliageAt(s.position - right * 30.0f, 6.0f);
+                }
+            }
+            log("spline instancer: fence posts " + std::to_string(fence ? fence->items().size() : 0) + ", rails " +
+                std::to_string(fence ? fence->cableCount() : 0) + (fence && fence->items().size() > 20 && fence->cableCount() == 2 * fence->items().size() ? " (yes)" : " NO") +
+                "; powerline poles " + std::to_string(power ? power->items().size() : 0) + ", cables " + std::to_string(power ? power->cableCount() : 0) +
+                (power && power->items().size() >= 6 && power->cableCount() == 3 * (power->items().size() - 1) ? " (yes)" : " NO") +
+                "; trees in its corridor " + std::to_string(inside) + (inside == 0 ? " (yes)" : " NO") + ", beside it " + std::to_string(beside));
         }
         // Physics: ray straight down onto the terrain, player standing, crates resting.
         const glm::vec3 above(layout::kCamp.x + 3.0f, 200.0f, layout::kCamp.y + 3.0f);

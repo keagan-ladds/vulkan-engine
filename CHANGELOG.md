@@ -48,6 +48,13 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   grid-accelerated `closest()`, side of the path). Editor: Create > Spline,
   point editing in the viewport (Tab; drag, Ctrl+click to add / insert,
   Delete), snap to ground, undo.
+- **Fences, powerlines and props along splines** (`ve::SplineInstancer`,
+  `world/SplineInstancer.hpp`): a mesh repeated along a spline (spacing or one
+  per control point, dropped onto the terrain, random yaw / scale / jitter,
+  LOD chain + impostor, optional box colliders), with sagging cables or
+  straight rails between items. `FoliageExclusion::spline` clears a corridor of
+  trees and / or grass along a spline. Editor: Create > Spline > Fence /
+  Powerline.
 - **Blender: VE Painted materials export with the model.** Installed as an
   add-on, `tools/blender/ve_painted_node_group.py` writes the `.material` file
   of every VE Painted material a glTF export includes (into the `assets`

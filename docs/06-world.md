@@ -76,6 +76,38 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
 - The log says what was found, e.g. `FoliageType 'Plants': 1 variant(s) from
   plant.glb, 3 level(s) + impostor, 1 authored collider(s)`.
 
+## Splines: fences, powerlines, roads
+
+A `Spline` component (scene/Spline.hpp; editing: docs/05-editor.md
+"Splines") is the path; what follows it is another component or object on
+the same GameObject:
+
+- **`SplineInstancer`** (world/SplineInstancer.hpp; Create > Spline > Fence /
+  Powerline): a mesh repeated along the path, as GPU instances with the
+  model's LOD chain, impostor and variants (picked at random per item).
+  - Items every `spacing` m (`fitEnds` lands them on both ends), or one per
+    control point (`atPoints`: poles exactly where you put them).
+  - Items are dropped onto the terrain (`followGround`) and stand upright unless
+    `tiltWithGround`. Their axes are +X along the path, +Y up, +Z to the right;
+    `offset`, `yaw`, `randomYaw`, `scaleRange` and `jitter` vary them.
+  - Cables or rails: `cableAttach` lists points in the item's local space;
+    each gets a tube from every item to the next. `cableSag` is the sag at
+    mid-span as a fraction of the span (0 for rails, about 0.03 for powerlines).
+  - `collision` gives each item a static box collider (from LOD0's bounds).
+  - Everything rebuilds when the spline, the fields or the terrain change,
+    live while you drag points in the editor.
+- **Keeping vegetation off the line:** `FoliageExclusion` with `spline` on is
+  a corridor `width` metres wide (times each point's width factor) along the
+  object's spline. `foliage` / `grass` choose what it clears (grass thins out
+  over `falloff`). The Fence preset clears trees 3 m wide and keeps the grass;
+  the Powerline preset clears a 14 m corridor of trees. Like every exclusion,
+  moving it re-places only the vegetation around it.
+
+Savanna: a paddock fence east of the camp (a closed spline, posts and two
+rails) and a powerline from the south-east to the camp. The autotest checks
+their posts, rails and cables, and that the powerline's corridor holds no
+trees while the land beside it does.
+
 ## Design notes
 
 **Terrain.**

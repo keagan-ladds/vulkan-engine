@@ -41,6 +41,7 @@
 // system is alive. Add layers and exclusions before the first update/preload.
 // =============================================================================
 
+#include "ve/scene/Spline.hpp"
 #include "ve/core/Jobs.hpp"
 #include "ve/physics/Physics.hpp"
 #include "ve/render/Instancing.hpp"
@@ -203,13 +204,18 @@ private:
     uint64_t m_system = 0; ///< FoliageSystem object id
 };
 
-/// An area nothing is placed in: a circle, or a box turned by `yaw` (radians, about Y).
+/// An area nothing is placed in: a circle, a box turned by `yaw` (radians,
+/// about Y), or a corridor along a spline path (roads, fences, powerlines).
 struct FoliageExclusionShape {
     glm::vec2 center{0.0f};           ///< World x, z.
     float radius = 0.0f;              ///< circle
     bool box = false;                 ///< A box (halfExtents, yaw) instead of a circle.
     glm::vec2 halfExtents{0.0f};      ///< box (local x, z)
     float yaw = 0.0f;                 ///< Box rotation about Y (radians).
+    /// A corridor `halfWidth` (x the path's width factor) either side of this
+    /// path instead (wins over circle / box; center unused).
+    std::shared_ptr<const SplinePath> path;
+    float halfWidth = 0.0f;           ///< path: half the corridor's width (m), scaled by the path's width factor.
 
     /// Distance from p to the shape's edge: <= 0 inside.
     float distance(glm::vec2 p) const;

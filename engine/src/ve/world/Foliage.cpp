@@ -84,6 +84,17 @@ uint32_t FoliageSystem::addLayer(FoliageLayer layer)
 
 float FoliageExclusionShape::distance(glm::vec2 p) const
 {
+    if (path) {
+        // Far from the path's bounds: a cheap lower bound is enough (callers
+        // only care about the inside and a falloff of a few metres).
+        constexpr float kNear = 32.0f;
+        const float reach = halfWidth * path->maxWidth();
+        const glm::vec2 lo(path->boundsMin().x, path->boundsMin().z), hi(path->boundsMax().x, path->boundsMax().z);
+        const float outside = glm::length(glm::max(glm::max(lo - p, p - hi), glm::vec2(0.0f)));
+        if (outside > reach + kNear) return outside - reach;
+        const auto c = path->closest({p.x, 0.0f, p.y}, reach + kNear, true);
+        return std::isfinite(c.separation) ? c.separation - halfWidth * c.width : kNear;
+    }
     if (!box) return glm::length(p - center) - radius;
     const glm::vec2 d = p - center;
     const float c = std::cos(yaw), s = std::sin(yaw);
@@ -95,6 +106,10 @@ float FoliageExclusionShape::distance(glm::vec2 p) const
 
 glm::vec4 FoliageExclusionShape::bounds() const
 {
+    if (path) {
+        const float r = halfWidth * path->maxWidth();
+        return {path->boundsMin().x - r, path->boundsMin().z - r, path->boundsMax().x + r, path->boundsMax().z + r};
+    }
     const float r = box ? glm::length(halfExtents) : radius;
     return {center.x - r, center.y - r, center.x + r, center.y + r};
 }

@@ -1,0 +1,136 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "vulkan-engine tools/generate_assets.py"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "power_pole",
+   "mesh": 0
+  }
+ ],
+ "meshes": [
+  {
+   "name": "power_pole",
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "NORMAL": 1,
+      "TEXCOORD_0": 2,
+      "COLOR_0": 3
+     },
+     "indices": 4,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "PowerPoleWood",
+   "pbrMetallicRoughness": {
+    "metallicFactor": 0.0,
+    "roughnessFactor": 0.85
+   }
+  }
+ ],
+ "buffers": [
+  {
+   "uri": "power_pole.bin",
+   "byteLength": 5760
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 1200,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 1200,
+   "byteLength": 1200,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 2400,
+   "byteLength": 800,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 3200,
+   "byteLength": 1600,
+   "target": 34962
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 4800,
+   "byteLength": 960,
+   "target": 34963
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 100,
+   "type": "VEC3",
+   "min": [
+    -0.16,
+    0.0,
+    -1.2
+   ],
+   "max": [
+    0.16,
+    9.0,
+    1.2
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 100,
+   "type": "VEC3",
+   "min": [
+    -1,
+    -1,
+    -1
+   ],
+   "max": [
+    1,
+    1,
+    1
+   ]
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5126,
+   "count": 100,
+   "type": "VEC2"
+  },
+  {
+   "bufferView": 3,
+   "componentType": 5126,
+   "count": 100,
+   "type": "VEC4"
+  },
+  {
+   "bufferView": 4,
+   "componentType": 5125,
+   "count": 240,
+   "type": "SCALAR"
+  }
+ ]
+}
