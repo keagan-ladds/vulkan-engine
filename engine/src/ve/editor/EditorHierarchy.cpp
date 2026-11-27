@@ -219,6 +219,18 @@ void Editor::drawCreateMenu()
                    {"components", Json::array({{{"type", "DecalProjector"}}})}};
             createObject(j, nullptr, "Create Decal");
         }
+        if (ImGui::MenuItem("Spline")) {
+            // A short straight spline on the ground in front of the camera, ready to edit.
+            const glm::vec3 p = placementPoint(*m_engine, view);
+            Json j{{"type", "GameObject"}, {"name", "Spline"}, {"position", {p.x, p.y, p.z}},
+                   {"components", Json::array({{{"type", "Spline"},
+                                                {"fields", {{"points", Json::array({{-5.0f, 0.0f, 0.0f, 1.0f}, {5.0f, 0.0f, 0.0f, 1.0f}})}}}}})}};
+            if (GameObject* o = createObject(j, nullptr, "Create Spline")) {
+                select(o);
+                m_splineEdit = true; // straight into point editing (Ctrl+click adds points)
+                m_splinePoint = 1;
+            }
+        }
         if (ImGui::BeginMenu("Audio")) {
             if (ImGui::MenuItem("Audio source")) newObject("GameObject", "Audio Source", Json::array({{{"type", "AudioSource"}}}));
             if (ImGui::MenuItem("Audio zone"))

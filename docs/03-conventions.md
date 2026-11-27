@@ -286,6 +286,27 @@ and concrete damage (edge chips, flakes, scratches, spalls, pitting, cracks,
 crumble) are in `tools/blender/brushes/` (made by
 `tools/blender/make_damage_brushes.py`; its header says how to set them up).
 
+### Splines: paths through the world
+`ve::Spline` (scene/Spline.hpp) is a smooth curve through control points (in
+the object's local space; the curve passes through every point). Lay them in
+the editor (Create > Spline, docs/05-editor.md "Splines") or from code:
+
+```cpp
+auto& s = obj.addComponent<ve::Spline>();
+s.setPoints({{{0, 0, 0}}, {{20, 0, 5}, 2.0f}, {{40, 0, 0}}});  // position, width factor
+auto path = s.path();                        // world space, cached; shared_ptr: safe to keep on another thread
+for (float d = 0; d < path->length(); d += 5.0f) {
+    auto p = path->at(d);                    // position, tangent (unit), width, distance
+    spawnPost(p.position, p.tangent);
+}
+auto c = path->closest(pos, 10.0f);          // nearest within 10 m (horizontal); c.separation = inf if none
+if (c.separation < 3.0f && c.side > 0.0f) { /* within 3 m, on the right-hand side */ }
+```
+
+Something that follows a spline polls `spline.version()` and rebuilds when it
+changes (points edited, the object moved). `closest()` uses a grid of the
+path's segments, so querying many points (terrain samples) stays cheap.
+
 ### Decals: bullet holes, puddles, cracks
 
 A decal is a box that projects along its -Z (forward) onto every surface

@@ -42,6 +42,12 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Splines** (`ve::Spline`, `scene/Spline.hpp`): smooth curves through
+  control points (centripetal Catmull-Rom) with a width factor per point;
+  `path()` gives a world-space `SplinePath` (length, `at(distance)`,
+  grid-accelerated `closest()`, side of the path). Editor: Create > Spline,
+  point editing in the viewport (Tab; drag, Ctrl+click to add / insert,
+  Delete), snap to ground, undo.
 - **Blender: VE Painted materials export with the model.** Installed as an
   add-on, `tools/blender/ve_painted_node_group.py` writes the `.material` file
   of every VE Painted material a glTF export includes (into the `assets`

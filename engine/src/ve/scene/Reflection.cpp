@@ -4,6 +4,7 @@
 #include "ve/scene/Decal.hpp"
 #include "ve/scene/MeshComponents.hpp"
 #include "ve/scene/Prefab.hpp"
+#include "ve/scene/Spline.hpp"
 
 #include <algorithm>
 
@@ -106,6 +107,16 @@ void registerBuiltinTypes()
         t.field("castShadows", &MeshRenderer::castShadows);
         t.field("visible", &MeshRenderer::visible);
         t.onChanged([](MeshRenderer& m) { m.refresh(); });
+    });
+    r.add<Spline>("Spline", [](TypeBuilder<Spline>& t) {
+        t.category("World");
+        // Points are edited in the viewport (select the object; Spline > Edit points).
+        t.property("closed", FieldKind::Bool, [](const Spline& s) { return Json(s.closed()); },
+                   [](Spline& s, const Json& j) { s.setClosed(j.is_boolean() && j.get<bool>()); })
+            .tooltip("The last point joins back to the first (a loop: fences around a field, a race track)");
+        t.property("points", FieldKind::Json, [](const Spline& s) { return s.pointsJson(); },
+                   [](Spline& s, const Json& j) { s.setPointsJson(j); })
+            .hidden();
     });
     r.add<DecalProjector>("DecalProjector", [](TypeBuilder<DecalProjector>& t) {
         t.category("Rendering");

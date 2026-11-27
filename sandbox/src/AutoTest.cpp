@@ -37,6 +37,8 @@
 #include <ve/render/Texture.hpp>
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SaveGame.hpp>
+#include <ve/scene/SceneSerializer.hpp>
+#include <ve/scene/Spline.hpp>
 #include <ve/scene/Scene.hpp>
 #include <ve/assets/ModelData.hpp>
 #include <ve/render/Impostor.hpp>
@@ -207,6 +209,39 @@ void AutoTest::update(float dt)
             log("PointLight subclass seen by forEach<PointLight>: " + std::string(seen == 1 ? "yes" : "NO"));
             probe.destroy();
             m_destroyProbe = &scene().spawn<SpawnOnDestroy>();
+        }
+        // Splines: a straight two-point spline is a 10 m line; a closed square
+        // of points makes a smooth loop; closest() / side; scene file round trip.
+        {
+            ve::GameObject& line = scene().spawn("SplineProbe");
+            line.transform().setPosition({100.0f, 5.0f, 100.0f});
+            auto& sp = line.addComponent<ve::Spline>();
+            line.persistent = sp.persistent = true; // (code-made objects aren't saved otherwise)
+            sp.setPoints({{{-5.0f, 0.0f, 0.0f}, 1.0f}, {{5.0f, 0.0f, 0.0f}, 3.0f}});
+            const auto path = sp.path();
+            const auto mid = path->at(path->length() * 0.5f);
+            const auto c = path->closest({100.0f, 5.0f, 102.0f}, 5.0f); // 2 m along +Z of the middle
+            const bool lineOk = std::abs(path->length() - 10.0f) < 0.01f && glm::length(mid.position - glm::vec3(100, 5, 100)) < 0.01f &&
+                                std::abs(mid.width - 2.0f) < 0.01f && std::abs(c.separation - 2.0f) < 0.01f && c.side > 0.0f;
+            const uint64_t v0 = sp.version();
+            line.transform().setPosition({110.0f, 5.0f, 100.0f});
+            const bool movedOk = sp.version() != v0 && std::abs(sp.path()->samples().front().position.x - 105.0f) < 0.01f;
+            ve::GameObject& ring = scene().spawn("SplineLoop");
+            auto& lp = ring.addComponent<ve::Spline>();
+            lp.setPoints({{{10, 0, 0}}, {{0, 0, 10}}, {{-10, 0, 0}}, {{0, 0, -10}}});
+            lp.setClosed(true);
+            const float ringLen = lp.path()->length(); // between the square's 56.6 and the circle's 62.8
+            const ve::Json saved = ve::SceneSerializer::serializeObject(line);
+            ve::GameObject* copy = ve::SceneSerializer::createObject(scene(), saved, nullptr, true);
+            auto* cs = copy ? copy->getComponent<ve::Spline>() : nullptr;
+            const bool roundTrip = cs && cs->points().size() == 2 && std::abs(cs->points()[1].width - 3.0f) < 1e-4f &&
+                                   std::abs(cs->path()->length() - 10.0f) < 0.01f;
+            log(std::string("splines: line length / middle / width / closest: ") + (lineOk ? "yes" : "NO") + ", follows its object: " +
+                (movedOk ? "yes" : "NO") + ", closed loop " + std::to_string(int(ringLen)) + " m" +
+                (ringLen > 58.0f && ringLen < 64.0f ? " (smooth: yes)" : " NO") + ", scene file round trip: " + (roundTrip ? "yes" : "NO"));
+            line.destroy();
+            ring.destroy();
+            if (copy) copy->destroy();
         }
         // Physics: ray straight down onto the terrain, player standing, crates resting.
         const glm::vec3 above(layout::kCamp.x + 3.0f, 200.0f, layout::kCamp.y + 3.0f);

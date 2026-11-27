@@ -15,6 +15,7 @@
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Decal.hpp"
 #include "ve/scene/Scene.hpp"
+#include "ve/scene/Spline.hpp"
 #include "ve/world/Terrain.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -210,6 +211,12 @@ void Editor::drawViewport()
             dd.circle(glm::vec3(m[3]), {0, 1, 0}, a->maxDistance, IM_COL32(230, 120, 255, 110));
         }
 
+        if (auto* spline = sel->getComponent<Spline>()) {
+            // Editing points: they own the mouse (no gizmo, no picking).
+            if (splineViewport(*spline, view, dd, mouse)) return;
+        } else {
+            m_splineEdit = false;
+        }
         auto* terrain = dynamic_cast<Terrain*>(sel);
         if (terrain && m_terrainTool >= 0) {
             // Sculpting / painting: the brush owns the mouse (no gizmo, no picking).

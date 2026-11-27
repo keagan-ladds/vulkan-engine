@@ -115,6 +115,26 @@ Load with `ve::SceneSerializer::load(scene, "scenes/x.json")`.
   in place; structural changes (create, delete, reparent, add/remove
   component) re-create the object.
 
+### Splines
+**Create > Spline** makes a short spline in front of the camera and starts
+point editing. Select any object with a `Spline` component; its curve is drawn
+in the viewport. Press **Tab** (or the inspector's **Edit points**) to edit:
+
+| Input | Does |
+|---|---|
+| Click a point | select it; drag to move it along the ground |
+| Shift + drag | move the point up / down |
+| Ctrl + click | add a point: on the curve it is inserted there, else after the selected point (or at the end) |
+| Delete | remove the selected point (not the object) |
+| Esc / Tab | stop editing (the move gizmo is back: it moves the whole spline) |
+
+"Snap to ground" puts dragged and added points on the terrain or on colliders
+(whichever the mouse ray meets first); off, they move in the horizontal plane
+at their height. The inspector shows the selected point's local position and
+width (systems on the spline use it: a road narrowing), plus **Reverse** and
+**Drop all to ground**. Every change is one undo step. The yellow tick at the
+start shows the direction of travel.
+
 ### Terrain tools (E4)
 Select the Terrain: the inspector's **Terrain tools** section has a brush
 (Raise, Lower, Smooth, Flatten, Paint biome), radius and strength. In the
