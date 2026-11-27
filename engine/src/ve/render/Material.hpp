@@ -180,8 +180,11 @@ private:
 ///   params[2] = emissive rgb, emissive intensity
 ///   params[3] = uv scale xy, vertex colour weight (0..1),
 ///               w = decal layers it does NOT receive (uint bits; 0 = receives every decal)
+///   params[11] = translucency: rgb = colour of the light passing through
+///               (times the albedo), w = amount 0..1 (0 = off)
 ///   textures  = 0 albedo, 1 normal, 2 metallic-roughness (glTF: G=rough, B=metal),
-///               3 emissive, 4 occlusion (R)
+///               3 emissive, 4 occlusion (R), 15 translucency map (R)
+/// Custom shaders may use params 4-10 and textures 5-14 for their own inputs.
 class StandardMaterial : public Material {
 public:
     /// Opaque; Cutout (alpha-tested, double sided); Transparent (blended, sorted).
@@ -220,6 +223,22 @@ public:
     StandardMaterial& setEmissiveTexture(std::shared_ptr<Texture> t) { setTexture(3, std::move(t)); return *this; }
     /// Ambient-occlusion texture (R), slot 4.
     StandardMaterial& setOcclusionTexture(std::shared_ptr<Texture> t) { setTexture(4, std::move(t)); return *this; }
+
+    static constexpr uint32_t kTranslucencyParam = 11;   ///< params slot of the translucency (see setTranslucency)
+    static constexpr uint32_t kTranslucencyTexture = 15; ///< texture slot of the translucency map
+
+    /// Thin translucent surfaces (leaves, paper, cloth, lampshades): light
+    /// reaching the back passes through, spread evenly (like Blender's
+    /// Translucent BSDF). That share is no longer reflected at the front:
+    /// the front's diffuse colour becomes albedo * (1 - amount), and the back
+    /// lets albedo * color * amount through. Metals don't transmit.
+    /// @param amount 0..1 (0 = off: no cost), times the translucency map's R.
+    /// @param color Linear tint of the transmitted light (white = the albedo's colour).
+    StandardMaterial& setTranslucency(float amount, const glm::vec3& color = glm::vec3(1.0f));
+    /// The translucency amount (params[11].w).
+    float translucency() const { return vector(kTranslucencyParam).w; }
+    /// Where light gets through (R, linear: 1 = thin leaf, 0 = veins / stem), slot 15.
+    StandardMaterial& setTranslucencyTexture(std::shared_ptr<Texture> t) { setTexture(kTranslucencyTexture, std::move(t)); return *this; }
 };
 
 } // namespace ve

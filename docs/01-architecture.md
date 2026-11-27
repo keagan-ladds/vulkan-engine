@@ -220,6 +220,13 @@ Every pipeline uses **one global pipeline layout**:
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
 
+**Translucency** (thin surfaces: leaves, paper) is part of StandardMaterial's
+layout (params[11]: colour, amount; textures[15]: map). `veStandardTranslucency`
+moves the transmitted share out of the surface's albedo and
+`veTranslucentLighting` adds the lights behind the surface (the ones
+`veEvaluateLighting` skips, so each light is still shadow-tested once) and
+the hemisphere ambient behind it, through that colour.
+
 **Spot lights** are point lights with a cone (`SpotLight : PointLight`):
 `GpuPointLight::spot` holds the direction and cos(outer angle) (w = -2 for a
 plain point light), `params.y` the cone's falloff scale, `params.z` the

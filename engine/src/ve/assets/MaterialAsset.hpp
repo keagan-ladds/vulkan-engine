@@ -12,7 +12,9 @@
 //     "metallicRoughness": "textures/concrete_orm.png",   // glTF: G = roughness, B = metallic
 //     "occlusion": "textures/concrete_orm.png",           // R = AO (same file = one ORM texture)
 //     "roughness": 1.0, "metallic": 1.0,                  // multiply the texture
-//     "uvScale": [2, 2]
+//     "uvScale": [2, 2],
+//     "translucency": 0.4, "translucencyColor": [1, 1, 0.8],  // leaves: sunlight through the back
+//     "translucencyTexture": "textures/leaf_translucency.png"  // R = where it gets through (optional)
 //   }
 //
 // How models pick them up (AssetManager::loadModel): a glTF material uses a
@@ -32,11 +34,11 @@
 // that static renderers use to or from Transparent needs a level reload.
 //
 // Custom shaders: `fragment` (and optionally `vertex`) replace standard.frag /
-// standard.vert but keep StandardMaterial's layout (params 0-3, textures 0-4),
-// so a copy of standard.frag works as a starting point. Extra inputs for it
-// (each image's TextureSettings decide colour / data / normal):
-//   "textures": [{"slot": 5, "path": "textures/grunge.png"}],   // slots 5-15
-//   "params":   [{"slot": 4, "value": [1, 0.5, 0, 0]}]                          // slots 4-11
+// standard.vert but keep StandardMaterial's layout (params 0-3 and 11,
+// textures 0-4 and 15), so a copy of standard.frag works as a starting point.
+// Extra inputs for it (each image's TextureSettings decide colour / data / normal):
+//   "textures": [{"slot": 5, "path": "textures/grunge.png"}],   // slots 5-14
+//   "params":   [{"slot": 4, "value": [1, 0.5, 0, 0]}]                          // slots 4-10
 // =============================================================================
 
 #include "ve/render/Material.hpp"
@@ -72,6 +74,10 @@ struct MaterialAsset {
     glm::vec2 uvScale{1.0f};         ///< Texture repeats across the mesh's UVs.
     float vertexColorWeight = 1.0f; ///< multiply albedo by vertex colour (0 = ignore it, e.g. colours used as paint masks)
     bool receiveDecals = true;      ///< Decals project onto it.
+    /// Light passing through thin surfaces (leaves, paper, cloth), 0..1:
+    /// StandardMaterial::setTranslucency. 0 = off.
+    float translucency = 0.0f;
+    glm::vec3 translucencyColor{1.0f}; ///< Linear tint of the light passing through (white = the albedo's colour).
 
     /// Asset paths (empty = none). Colour textures load as sRGB, the rest linear.
     std::string albedo;
@@ -79,6 +85,7 @@ struct MaterialAsset {
     std::string metallicRoughness; ///< G = roughness, B = metallic
     std::string occlusion;         ///< R = AO
     std::string emissiveTexture;   ///< Emission colour map (times emissive * emissiveIntensity).
+    std::string translucencyTexture; ///< R = where light gets through (times translucency); linear: name it *_mask or add a .texture file.
 
     Json textures = Json::array(); ///< extra slots for custom shaders: [{"slot", "path", "srgb"}]
     Json params = Json::array();   ///< extra slots for custom shaders: [{"slot", "value": [x, y, z, w]}]

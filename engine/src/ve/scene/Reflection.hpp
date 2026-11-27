@@ -27,6 +27,8 @@
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <functional>
 #include <memory>
 #include <string>
@@ -216,7 +218,8 @@ public:
     }
 
     template <class E, class C>
-    /// Registers an enum member, shown as a drop-down.
+    /// Registers an enum member, shown as a drop-down. Saved as its number;
+    /// read from a number or one of `names` (any case: "Cutout", "cutout").
     /// @param names display name of each enum value, in value order (0, 1, 2...).
     FieldRef enumField(const char* name, E C::*member, std::vector<std::string> names)
     {
@@ -225,10 +228,23 @@ public:
         FieldInfo fi;
         fi.name = name;
         fi.kind = FieldKind::Enum;
-        fi.enumNames = std::move(names);
+        fi.enumNames = names;
         fi.get = [member](const void* o) { return Json(static_cast<int>(static_cast<const T*>(o)->*member)); };
-        fi.set = [member](void* o, const Json& j) {
-            if (j.is_number()) static_cast<T*>(o)->*member = static_cast<E>(j.get<int>());
+        fi.set = [member, names](void* o, const Json& j) {
+            if (j.is_number()) {
+                static_cast<T*>(o)->*member = static_cast<E>(j.get<int>());
+            } else if (j.is_string()) {
+                const std::string& s = j.get_ref<const std::string&>();
+                for (size_t i = 0; i < names.size(); ++i) {
+                    const std::string& n = names[i];
+                    if (n.size() == s.size() && std::equal(n.begin(), n.end(), s.begin(), [](char a, char b) {
+                            return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+                        })) {
+                        static_cast<T*>(o)->*member = static_cast<E>(int(i));
+                        return;
+                    }
+                }
+            }
         };
         return push(std::move(fi));
     }

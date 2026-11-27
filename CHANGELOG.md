@@ -11,6 +11,11 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 ## [Unreleased]
 
 ### Breaking
+- **Material extra slots end at params 10 / textures 14.** The standard
+  layout now uses params[11] and textures[15] for translucency, so a material
+  file's `"params"` / `"textures"` entries for those slots are ignored (with
+  a warning) and `MaterialAsset::apply` no longer clears them. Migration: move
+  a custom shader's inputs from slot 11 / 15 to a free one (4-10 / 5-14).
 - **`AssetManager::loadTexture(path)` takes only the path.** How an image
   loads (colour / data / normal map, mips, compression, sampler) is now decided
   by the image: a settings file next to it (`rock.png.texture`) or its name
@@ -50,6 +55,20 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Material translucency** (leaves, paper, cloth): `"translucency"`,
+  `"translucencyColor"`, `"translucencyTexture"` in material files,
+  `StandardMaterial::setTranslucency` / `setTranslucencyTexture`. Light
+  reaching the back comes through (like Blender's Translucent BSDF); the front
+  reflects less by the same share. In standard.frag and standard_painted.frag;
+  custom shaders: `veStandardTranslucency` + `veTranslucentLighting`
+  (ve_lighting.glsl). Savanna: `SAVANNA_LEAFTEST=1`.
+- **Blender: "VE Standard" node group** (tools/blender/ve_painted_node_group.py,
+  now the "VE materials" add-on): the standard material with the material
+  file's fields as inputs, exported like VE Painted (by hand or with the glTF
+  export). Panel: Mode / Cutoff per material, **Convert to VE Standard** for
+  imported Principled (+ Translucent) materials; an alpha wired from a
+  separate image is merged into `<albedo>_rgba.png`. VE Painted gains the
+  translucency inputs. Tested by `tools/blender/test_ve_standard.py`.
 - **Installable engine package**: `cmake --install <build> --component
   VulkanEngine --prefix <dir>` makes a relocatable package (headers, static
   libraries, vecook, compiled shaders + GLSL includes, a
@@ -241,6 +260,9 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `TerrainBiome`, `TerrainMaterial`.
 
 ### Fixed
+- Enum fields in data files (material `"mode"`, ...) read their names
+  (`"Cutout"`, any case) as well as numbers; a name used to be ignored
+  silently (the material stayed Opaque).
 - **"Instance buffer full" after many rebuilds.** Freed instance ranges were
   never merged with their neighbours, so repeated foliage / grass rebuilds
   fragmented the buffer until no run was big enough. They're merged now, and

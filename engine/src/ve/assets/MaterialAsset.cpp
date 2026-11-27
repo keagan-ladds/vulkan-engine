@@ -36,7 +36,8 @@ void MaterialAsset::apply(StandardMaterial& mat, AssetManager& assets) const
         .setEmissive(emissive, emissiveIntensity)
         .setUvScale(uvScale)
         .setVertexColorWeight(vertexColorWeight)
-        .setDecalLayers(receiveDecals ? kDecalLayerAll : 0u);
+        .setDecalLayers(receiveDecals ? kDecalLayerAll : 0u)
+        .setTranslucency(translucency, translucencyColor);
 
     // (Colour / data / normal is each image's own TextureSettings.)
     auto load = [&](const std::string& path) -> std::shared_ptr<Texture> {
@@ -53,6 +54,7 @@ void MaterialAsset::apply(StandardMaterial& mat, AssetManager& assets) const
     mat.setMetallicRoughnessTexture(load(metallicRoughness));
     mat.setOcclusionTexture(load(occlusion));
     mat.setEmissiveTexture(load(emissiveTexture));
+    mat.setTranslucencyTexture(load(translucencyTexture));
 
     // Extra inputs for custom shaders. Slots this file doesn't name are cleared,
     // so removing an entry (live edit) takes its texture / value away again.
@@ -60,22 +62,22 @@ void MaterialAsset::apply(StandardMaterial& mat, AssetManager& assets) const
     if (textures.is_array()) {
         for (const Json& e : textures) {
             const int slot = e.is_object() ? e.value("slot", -1) : -1;
-            if (slot < 5 || slot >= int(kMaterialTextureCount)) {
-                log::warn("Material '{}': extra texture slots are 5..{} (got {})", mat.name, kMaterialTextureCount - 1, slot);
+            if (slot < 5 || slot >= int(StandardMaterial::kTranslucencyTexture)) {
+                log::warn("Material '{}': extra texture slots are 5..{} (got {})", mat.name, StandardMaterial::kTranslucencyTexture - 1, slot);
                 continue;
             }
             mat.setTexture(uint32_t(slot), load(e.value("path", std::string())));
             texSet[slot] = true;
         }
     }
-    for (uint32_t s = 5; s < kMaterialTextureCount; ++s)
+    for (uint32_t s = 5; s < StandardMaterial::kTranslucencyTexture; ++s)
         if (!texSet[s]) mat.setTexture(s, nullptr);
     bool paramSet[kMaterialParamCount] = {};
     if (params.is_array()) {
         for (const Json& e : params) {
             const int slot = e.is_object() ? e.value("slot", -1) : -1;
-            if (slot < 4 || slot >= int(kMaterialParamCount)) {
-                log::warn("Material '{}': extra param slots are 4..{} (got {})", mat.name, kMaterialParamCount - 1, slot);
+            if (slot < 4 || slot >= int(StandardMaterial::kTranslucencyParam)) {
+                log::warn("Material '{}': extra param slots are 4..{} (got {})", mat.name, StandardMaterial::kTranslucencyParam - 1, slot);
                 continue;
             }
             glm::vec4 v(0.0f);
@@ -85,7 +87,7 @@ void MaterialAsset::apply(StandardMaterial& mat, AssetManager& assets) const
             paramSet[slot] = true;
         }
     }
-    for (uint32_t s = 4; s < kMaterialParamCount; ++s)
+    for (uint32_t s = 4; s < StandardMaterial::kTranslucencyParam; ++s)
         if (!paramSet[s]) mat.setVector(s, glm::vec4(0.0f));
 }
 
@@ -108,18 +110,22 @@ void registerAssetTypes(TypeRegistry& r)
         t.field("vertexColorWeight", &MaterialAsset::vertexColorWeight).range(0.0f, 1.0f).speed(0.01f)
             .tooltip("multiply albedo by the vertex colour (0 = ignore it)");
         t.field("receiveDecals", &MaterialAsset::receiveDecals);
+        t.field("translucency", &MaterialAsset::translucency).range(0.0f, 1.0f).speed(0.01f)
+            .tooltip("light through thin surfaces (leaves): the front reflects albedo x (1 - t), the back lets albedo x colour x t through");
+        t.field("translucencyColor", &MaterialAsset::translucencyColor).color().tooltip("tint of the light passing through (linear)");
         const char* images = ".png .jpg .jpeg .tga";
         t.field("albedo", &MaterialAsset::albedo).assets(images).tooltip("sRGB colour, A = opacity");
         t.field("normal", &MaterialAsset::normal).assets(images).tooltip("tangent-space normal map (linear)");
         t.field("metallicRoughness", &MaterialAsset::metallicRoughness).assets(images).tooltip("G = roughness, B = metallic (linear)");
         t.field("occlusion", &MaterialAsset::occlusion).assets(images).tooltip("R = ambient occlusion (the ORM file again for a packed texture)");
         t.field("emissiveTexture", &MaterialAsset::emissiveTexture).assets(images);
+        t.field("translucencyTexture", &MaterialAsset::translucencyTexture).assets(images).tooltip("R = where light gets through (linear)");
         t.property("textures", FieldKind::Json, [](const MaterialAsset& m) { return m.textures; },
                    [](MaterialAsset& m, const Json& j) { m.textures = j.is_array() ? j : Json::array(); })
-            .tooltip(R"(custom shaders: [{"slot": 5, "path": "textures/x.png"}], slots 5-15)");
+            .tooltip(R"(custom shaders: [{"slot": 5, "path": "textures/x.png"}], slots 5-14)");
         t.property("params", FieldKind::Json, [](const MaterialAsset& m) { return m.params; },
                    [](MaterialAsset& m, const Json& j) { m.params = j.is_array() ? j : Json::array(); })
-            .tooltip(R"(custom shaders: [{"slot": 4, "value": [1, 0, 0, 0]}], slots 4-11)");
+            .tooltip(R"(custom shaders: [{"slot": 4, "value": [1, 0, 0, 0]}], slots 4-10)");
     });
 }
 
