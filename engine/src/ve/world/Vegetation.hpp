@@ -169,6 +169,8 @@ public:
     void loadState(const Json& in) override;
     void start() override;
     void update(float dt) override;
+    /// The layers' names, in FoliageSystem layer order (index = layer).
+    const std::vector<std::string>& layerNames() const { return m_layerNames; }
 
     float edgeMargin = 45.0f;            ///< keep this far inside the terrain's edges
     float cellSize = 64.0f;              ///< Streaming cell size (m); see FoliageSettings.
@@ -190,6 +192,7 @@ private:
     struct LayerDensity { // to rebind a layer's density to a new terrain snapshot
         std::vector<std::pair<int, float>> weights;
         float threshold = 0.0f;
+        std::string layer; ///< its name (sub-biomes' per-layer factors)
     };
     std::string state() const; ///< what needs a rebuild (exclusions are handled incrementally)
     void rebuild();

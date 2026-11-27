@@ -453,3 +453,26 @@ be made once, before shipping, with the same renderer that draws them.
 **Cost:** vecook needs a Vulkan device and a display for those models
 (`xvfb-run` on servers); a material change recooks the models whose impostors
 use it; code-built meshes still bake at load.
+
+### D36. Splines are a component; what follows them is separate; sub-biomes are overlays (2026-11)
+**Decision:** `Spline` (scene) only holds points and builds an immutable,
+shareable world-space `SplinePath` (sampled polyline + segment grid). Things
+built on it are separate: `SplineInstancer` (props and cables),
+`TerrainSpline` (roads: applied by the Terrain after its generator and
+edits), `FoliageExclusion::spline` (vegetation corridors), `TerrainMask`
+(sub-biomes). Road and mask edits are area-limited terrain changes, like brush
+strokes. Sub-biomes are named overlays defined on the Terrain that scale
+foliage / grass inside whatever biome is there; they never take a biome's
+place.
+**Alternatives:** one "road tool" object doing everything (fences and
+powerlines would each need their own copy of the curve logic); roads as brush
+edits baked into the heightfield (no re-editing the curve later); sub-biomes
+as ordinary biomes (a powerline corridor would replace savanna's ground and
+plant list, and every foliage rule would have to know about it); masks
+painted into a texture (fixed resolution and size; areas follow their
+splines and stay editable).
+**Why:** one curve type for every path-like thing; the terrain stays
+procedural and re-editable; a sub-biome is defined once and affects every
+layer without touching each FoliageType. **Cost:** closest-point queries per
+terrain sample / foliage candidate near roads and masks (a grid keeps them
+cheap); navmeshes are not rebuilt automatically after road edits.

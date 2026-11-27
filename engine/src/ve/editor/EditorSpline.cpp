@@ -100,6 +100,10 @@ bool Editor::splineViewport(Spline& spline, const ViewProjector& view, DebugDraw
     for (const auto& c : spline.gameObject().components())
         if (auto* fe = dynamic_cast<FoliageExclusion*>(c.get()); fe && fe->spline && !fe->isRemoved())
             edges(fe->width * 0.5f, fe->foliage ? IM_COL32(90, 230, 120, 120) : IM_COL32(170, 230, 90, 100));
+        else if (auto* tm = dynamic_cast<TerrainMask*>(c.get()); tm && !tm->isRemoved()) {
+            edges(tm->width * 0.5f, IM_COL32(200, 120, 255, 160));               // the sub-biome at full strength...
+            edges(tm->width * 0.5f + tm->falloff, IM_COL32(200, 120, 255, 70)); // ...and where it fades out
+        }
     if (samples.size() >= 2) {
         // Direction of travel at the start.
         const glm::vec3 a = samples[0].position;

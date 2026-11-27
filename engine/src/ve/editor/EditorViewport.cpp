@@ -178,6 +178,12 @@ void Editor::drawViewport()
             dd.circle(c, {0, 1, 0}, st->radius + st->falloff, IM_COL32(255, 160, 60, 110), 64);
             if (!st->biome.empty()) dd.circle(c, {0, 1, 0}, st->biomeRadius + st->biomeFalloff * 0.5f, IM_COL32(120, 255, 140, 160), 64);
         }
+        if (auto* tm = sel->getComponent<TerrainMask>(); tm && !sel->getComponent<Spline>()) {
+            // A sub-biome circle (on a spline, the spline overlay shows its corridor).
+            const glm::vec3 c(m[3]);
+            dd.circle(c, {0, 1, 0}, std::max(tm->radius, 0.05f), IM_COL32(200, 120, 255, 220), 64);
+            dd.circle(c, {0, 1, 0}, tm->radius + tm->falloff, IM_COL32(200, 120, 255, 100), 64);
+        }
         if (auto* spot = sel->getComponent<SpotLight>()) {
             // The cone: its axis, and the outer / inner edges at the range.
             const glm::vec3 apex(m[3]);

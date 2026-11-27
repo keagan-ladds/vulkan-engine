@@ -52,6 +52,7 @@
 #include <vfx/Weather.hpp>
 
 #include <cmath>
+#include <set>
 #include <cstdio>
 #include <functional>
 #include <stdexcept>
@@ -256,21 +257,45 @@ void AutoTest::update(float dt)
                     if (si->name() == "Paddock fence") fence = si;
                     if (si->name() == "Powerline") power = si;
                 }
-            int inside = 0, beside = 0;
+            // The powerline lays the "Powerline corridor" sub-biome (TerrainMask):
+            // still savanna, but no trees (rocks stay, a few bushes) and grass at 45 % height.
+            int inside = 0, beside = 0, rocksInside = 0;
+            float grassHeight = 1.0f, corridorWeight = 0.0f;
+            auto* foliage = scene().findFirst<ve::Foliage>();
+            auto treesAt = [&](const glm::vec3& p, float r, bool rocks) {
+                int n = 0;
+                if (!foliage || !foliage->system()) return 0;
+                static const std::set<std::string> trees{"Baobabs", "Acacias", "Fever trees", "Jungle trees", "Palms", "Quiver trees",
+                                                         "Test trees (glTF)"};
+                const auto& names = foliage->layerNames();
+                for (uint32_t l = 0; l < foliage->system()->layerCount() && l < names.size(); ++l)
+                    if (rocks ? names[l] == "Rocks" || names[l] == "Boulders" : trees.count(names[l]) > 0)
+                        n += int(foliage->system()->query(l, {p.x, p.z}, r).size());
+                return n;
+            };
             if (power) {
                 const auto path = power->getComponent<ve::Spline>()->path();
+                auto td = ve::Terrain::find(scene()) ? ve::Terrain::find(scene())->data() : nullptr;
                 for (float d = 10.0f; d < path->length(); d += 12.0f) {
                     const auto s = path->at(d);
                     const glm::vec3 right = glm::normalize(glm::vec3(-s.tangent.z, 0.0f, s.tangent.x));
-                    inside += foliageAt(s.position, 6.0f);
-                    beside += foliageAt(s.position + right * 30.0f, 6.0f) + foliageAt(s.position - right * 30.0f, 6.0f);
+                    inside += treesAt(s.position, 6.0f, false);
+                    rocksInside += treesAt(s.position, 6.0f, true);
+                    beside += treesAt(s.position + right * 30.0f, 6.0f, false) + treesAt(s.position - right * 30.0f, 6.0f, false);
+                    if (td) {
+                        const int sub = td->subBiomeIndex("Powerline corridor");
+                        corridorWeight = std::max(corridorWeight, sub >= 0 ? td->subBiomeWeight(sub, s.position.x, s.position.z) : 0.0f);
+                        grassHeight = std::min(grassHeight, td->grassFactors({s.position.x, s.position.z}).y);
+                    }
                 }
             }
             log("spline instancer: fence posts " + std::to_string(fence ? fence->items().size() : 0) + ", rails " +
                 std::to_string(fence ? fence->cableCount() : 0) + (fence && fence->items().size() > 20 && fence->cableCount() == 2 * fence->items().size() ? " (yes)" : " NO") +
                 "; powerline poles " + std::to_string(power ? power->items().size() : 0) + ", cables " + std::to_string(power ? power->cableCount() : 0) +
                 (power && power->items().size() >= 6 && power->cableCount() == 3 * (power->items().size() - 1) ? " (yes)" : " NO") +
-                "; trees in its corridor " + std::to_string(inside) + (inside == 0 ? " (yes)" : " NO") + ", beside it " + std::to_string(beside));
+                "; trees in its corridor " + std::to_string(inside) + (inside == 0 ? " (yes)" : " NO") + ", beside it " + std::to_string(beside) +
+                "; sub-biome there: " + (corridorWeight > 0.99f ? "yes" : "NO") + ", grass height x" + std::to_string(grassHeight) +
+                (std::abs(grassHeight - 0.45f) < 0.01f ? " (yes)" : " NO") + ", rocks kept " + std::to_string(rocksInside));
         }
         // Roads (TerrainSpline "Dirt road"): flat across its width, painted with
         // its biome, no trees on it. Then a footpath point moves: the terrain

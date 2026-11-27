@@ -166,6 +166,52 @@ struct TerrainSplineShape {
     float biomeFalloff = 2.0f;   ///< The painted biome blends out over this distance beyond the width (m).
 };
 
+/// A sub-biome: a variation laid over whatever biome is there (the ground and
+/// its plants stay that biome's) where TerrainMask areas put it: under
+/// powerlines (no trees, short grass), along roads, in a clearing, a burnt
+/// patch. Defined on the Terrain (`subBiomes`), referenced by name.
+struct TerrainSubBiome {
+    std::string name;            ///< Referenced by TerrainMask::subBiome and in foliage / grass biome rules.
+    float foliage = 1.0f;        ///< Every foliage layer's density x this inside (0 = none).
+    /// Per-layer factors that win over `foliage`: "Acacias:0, Bushes:0.4, Rocks:1"
+    /// (FoliageType object names).
+    std::string layers;
+    float grass = 1.0f;          ///< Grass density x this inside.
+    float grassHeight = 1.0f;    ///< Grass height x this inside (0.4 = mown).
+};
+/// A sub-biome as JSON (the Terrain's `subBiomes` entries).
+Json subBiomeToJson(const TerrainSubBiome& s);
+/// A sub-biome from JSON (missing keys keep their defaults).
+TerrainSubBiome subBiomeFromJson(const Json& j);
+
+/// Where a sub-biome is laid (plain data, copied into every TerrainData).
+struct TerrainMaskShape {
+    std::string subBiome;        ///< The Terrain sub-biome's name.
+    float strength = 1.0f;       ///< 0..1: how much of it is laid at full effect.
+    float width = 12.0f;         ///< On a spline: full width of the corridor (m), times each point's width factor.
+    float radius = 10.0f;        ///< Without a spline: a circle around the object (m).
+    float falloff = 4.0f;        ///< Blends out over this distance (m).
+};
+
+/// Lays a sub-biome along the Spline on this object (a corridor `width` wide)
+/// or, without one, in a circle around it. See TerrainSubBiome.
+class TerrainMask : public Component, public TerrainMaskShape {};
+
+/// Everything laid over the generated terrain, in a TerrainData snapshot:
+/// road splines (applied in order) and sub-biome masks.
+struct TerrainOverlays {
+    /// Road / path splines: world-space path and shape.
+    std::vector<std::pair<std::shared_ptr<const SplinePath>, TerrainSplineShape>> roads;
+    std::vector<TerrainSubBiome> subBiomes; ///< The terrain's sub-biome definitions.
+    /// One sub-biome area.
+    struct Mask {
+        std::shared_ptr<const SplinePath> path; ///< corridor along it (null: a circle at `centre`)
+        glm::vec2 centre{0.0f};                 ///< circle centre (world x, z)
+        TerrainMaskShape shape;                 ///< Which sub-biome, how wide, how strong.
+    };
+    std::vector<Mask> masks; ///< Sub-biome areas.
+};
+
 /// The terrain's shape parameters (plain data, copied into every TerrainData).
 struct TerrainShape {
     int seed = 1;               ///< Seed of every noise (another seed = another landscape).
@@ -244,10 +290,10 @@ public:
     /// A snapshot of a terrain centred at `centre` (Terrain::data() makes them).
     /// @param stamps each stamp's position and shape.
     /// @param cacheBytes memory budget of the sample-tile cache.
-    /// @param splines road / path splines (world-space path and shape), applied in order over everything else.
+    /// @param overlays road splines (applied in order over everything else) and sub-biome masks.
     TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vector<TerrainBiome> biomes,
                 std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes, TerrainEdits edits = {},
-                std::vector<std::pair<std::shared_ptr<const SplinePath>, TerrainSplineShape>> splines = {});
+                TerrainOverlays overlays = {});
     /// After brush edits only: reuse `old`'s cached sample tiles outside the
     /// world-space rectangle `changed` (x0, z0, x1, z1).
     void adoptTiles(const TerrainData& old, glm::vec4 changed);
@@ -267,6 +313,20 @@ public:
     float biomeWeight(int biome, float x, float z) const;
     /// A biome's index by name, or -1.
     int biomeIndex(const std::string& name) const;
+
+    // ---- Sub-biomes (TerrainSubBiome, laid by TerrainMask areas) ----
+    /// The sub-biome definitions.
+    const std::vector<TerrainSubBiome>& subBiomes() const { return m_subBiomes; }
+    /// A sub-biome's index by name, or -1.
+    int subBiomeIndex(const std::string& name) const;
+    /// How much of sub-biome `index` is at x, z (0..1).
+    float subBiomeWeight(int index, float x, float z) const;
+    /// Whether any sub-biome is laid anywhere (else the factors below are all 1).
+    bool hasSubBiomeAreas() const { return !m_masks.empty(); }
+    /// Density factor of the foliage layer named `layer` at p (1 = unchanged).
+    float foliageFactor(const std::string& layer, glm::vec2 p) const;
+    /// Grass factors at p: x density, y height (1 = unchanged).
+    glm::vec2 grassFactors(glm::vec2 p) const;
     /// Whether x, z is on the terrain, at least `margin` metres inside its edges.
     bool inBounds(float x, float z, float margin = 0.0f) const;
     /// The far corner (x, z) of the sample grid.
@@ -328,6 +388,15 @@ private:
     std::vector<TerrainBiome> m_biomes;
     std::vector<Stamp> m_stamps;
     std::vector<RoadSpline> m_roads;
+    std::vector<TerrainSubBiome> m_subBiomes;
+    std::vector<std::vector<std::pair<std::string, float>>> m_subBiomeLayers; ///< parsed TerrainSubBiome::layers
+    struct MaskArea {
+        TerrainOverlays::Mask m;
+        int subBiome; ///< index, -1 = unknown name
+        float reach;  ///< widest influence from the path / centre (m)
+    };
+    std::vector<MaskArea> m_masks;
+    float maskWeight(const MaskArea& a, glm::vec2 p) const;
     TerrainEdits m_edits;
     int m_half = 0; ///< centre sample index (edit coordinates)
     uint64_t m_uid; ///< tells thread-local lookup caches apart
@@ -374,6 +443,9 @@ public:
     int wetnessSlot = 1; ///< frame.globalParams slot whose .x is wetness (effects' weather); -1 none
 
     std::vector<TerrainBiome> biomes{TerrainBiome{}}; ///< Biome 0 covers whatever no other claims.
+    /// Variations laid over the biomes by TerrainMask areas (powerline
+    /// corridors, clearings): see TerrainSubBiome.
+    std::vector<TerrainSubBiome> subBiomes;
 
     // ---- Queries (thread-safe) ----
     std::shared_ptr<const TerrainData> data() const; ///< builds on first use
@@ -442,8 +514,8 @@ public:
 
 private:
     std::shared_ptr<TerrainData> generate(bool quiet = false) const;
-    /// Compares the scene's road splines with the last look: true (and the
-    /// area to re-shape) if any was added, edited, moved or removed.
+    /// Compares the scene's road splines and sub-biome masks with the last
+    /// look: true (and the area to update) if any was added, edited, moved or removed.
     bool roadsChanged(glm::vec4& area);
     Json editState() const; ///< own fields + position + stamps: rebuild when it changes
     void rebuild();         ///< new data snapshot; meshes and colliders follow
@@ -470,7 +542,7 @@ private:
     uint64_t m_editsVersion = 0;
     bool m_editsReplaced = false; ///< loaded / cleared / undone: rebuild everything
     glm::vec4 m_editArea{1e30f, 1e30f, -1e30f, -1e30f}; ///< brushed since the last rebuild
-    /// Road splines as last seen: object id -> (terrainState(), bounds).
+    /// Road splines and masks as last seen: object / component id -> (state, bounds).
     std::unordered_map<uint64_t, std::pair<std::string, glm::vec4>> m_roads;
     struct Change {
         uint64_t version;

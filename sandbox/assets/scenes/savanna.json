@@ -224,7 +224,16 @@
             1.15
           ],
           "normalStrength": 1.0
-        }
+        },
+        "subBiomes": [
+          {
+            "name": "Powerline corridor",
+            "foliage": 0.0,
+            "layers": "Rocks:1, Boulders:1, Bushes:0.3",
+            "grass": 1.0,
+            "grassHeight": 0.45
+          }
+        ]
       },
       "children": [
         {
@@ -3314,14 +3323,13 @@
           }
         },
         {
-          "type": "FoliageExclusion",
+          "type": "TerrainMask",
           "enabled": true,
           "fields": {
-            "spline": true,
-            "width": 14.0,
-            "falloff": 2.0,
-            "foliage": true,
-            "grass": false
+            "subBiome": "Powerline corridor",
+            "strength": 1.0,
+            "width": 16.0,
+            "falloff": 4.0
           }
         }
       ]

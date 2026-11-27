@@ -19,6 +19,7 @@
 #include "ve/world/TerrainLod.hpp"
 
 #include <algorithm>
+#include <sstream>
 #include <atomic>
 #include <filesystem>
 #include <chrono>
@@ -74,7 +75,7 @@ void TerrainEdits::paint(int gi, int gj, int& biome, float& strength) const
 
 TerrainData::TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vector<TerrainBiome> biomes,
                          std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes, TerrainEdits edits,
-                         std::vector<std::pair<std::shared_ptr<const SplinePath>, TerrainSplineShape>> splines)
+                         TerrainOverlays overlays)
     : m_shape(shape), m_centre(centre), m_biomes(std::move(biomes)), m_edits(std::move(edits)), m_uid(g_terrainUid++)
 {
     cellSize = std::max(shape.cellSize, 0.1f);
@@ -89,7 +90,7 @@ TerrainData::TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vecto
     }
     // Road splines, after the stamps and edits are in place (their height
     // profiles sample the ground without roads).
-    for (auto& [path, s] : splines) {
+    for (auto& [path, s] : overlays.roads) {
         if (!path || path->empty()) continue;
         RoadSpline r;
         r.path = std::move(path);
@@ -127,6 +128,36 @@ TerrainData::TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vecto
         }
         m_roads.push_back(std::move(r));
     }
+    // Sub-biomes and the areas laying them.
+    m_subBiomes = std::move(overlays.subBiomes);
+    for (const TerrainSubBiome& sb : m_subBiomes) {
+        std::vector<std::pair<std::string, float>> layers;
+        std::stringstream ss(sb.layers);
+        for (std::string part; std::getline(ss, part, ',');) {
+            const size_t colon = part.find(':');
+            auto trim = [](std::string s) {
+                const size_t a = s.find_first_not_of(" \t"), b = s.find_last_not_of(" \t");
+                return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+            };
+            const std::string name = trim(part.substr(0, colon));
+            if (name.empty()) continue;
+            float v = 1.0f;
+            try {
+                if (colon != std::string::npos) v = std::stof(part.substr(colon + 1));
+            } catch (const std::exception&) {
+            }
+            layers.push_back({name, v});
+        }
+        m_subBiomeLayers.push_back(std::move(layers));
+    }
+    for (TerrainOverlays::Mask& m : overlays.masks) {
+        const int index = subBiomeIndex(m.shape.subBiome);
+        if (index < 0) continue; // (an unknown name: the Terrain logs it)
+        if (m.path && m.path->empty()) continue;
+        const float reach = (m.path ? 0.5f * std::max(m.shape.width, 0.0f) * m.path->maxWidth() : std::max(m.shape.radius, 0.0f)) +
+                            std::max(m.shape.falloff, 0.01f);
+        m_masks.push_back({std::move(m), index, reach});
+    }
     const size_t tileBytes = size_t(kTileSamples) * kTileSamples * sizeof(float) * (1 + biomeNames.size());
     m_maxTiles = std::max<size_t>(16, cacheBytes / tileBytes);
 }
@@ -146,6 +177,85 @@ float TerrainData::generateHeight(glm::vec2 p) const
         if (w > 0.0f) h = glm::mix(h, roadHeight(r, c), w);
     }
     return h;
+}
+
+int TerrainData::subBiomeIndex(const std::string& name) const
+{
+    for (size_t i = 0; i < m_subBiomes.size(); ++i)
+        if (m_subBiomes[i].name == name) return int(i);
+    return -1;
+}
+
+float TerrainData::maskWeight(const MaskArea& a, glm::vec2 p) const
+{
+    const TerrainMaskShape& s = a.m.shape;
+    const float falloff = std::max(s.falloff, 0.01f);
+    float dist, inner;
+    if (a.m.path) {
+        const glm::vec3 lo = a.m.path->boundsMin(), hi = a.m.path->boundsMax();
+        if (p.x < lo.x - a.reach || p.x > hi.x + a.reach || p.y < lo.z - a.reach || p.y > hi.z + a.reach) return 0.0f;
+        const SplinePath::Closest c = a.m.path->closest({p.x, 0.0f, p.y}, a.reach, true);
+        if (!std::isfinite(c.separation)) return 0.0f;
+        dist = c.separation;
+        inner = 0.5f * std::max(s.width, 0.0f) * c.width;
+    } else {
+        dist = glm::length(p - a.m.centre);
+        inner = std::max(s.radius, 0.0f);
+    }
+    return std::clamp(s.strength, 0.0f, 1.0f) * (1.0f - smooth(inner, inner + falloff, dist));
+}
+
+float TerrainData::subBiomeWeight(int index, float x, float z) const
+{
+    float w = 0.0f;
+    for (const MaskArea& a : m_masks)
+        if (a.subBiome == index) w = std::max(w, maskWeight(a, {x, z}));
+    return w;
+}
+
+float TerrainData::foliageFactor(const std::string& layer, glm::vec2 p) const
+{
+    if (m_masks.empty()) return 1.0f;
+    float f = 1.0f;
+    for (size_t i = 0; i < m_subBiomes.size(); ++i) {
+        const float w = subBiomeWeight(int(i), p.x, p.y);
+        if (w <= 0.0f) continue;
+        float k = m_subBiomes[i].foliage;
+        for (const auto& [name, v] : m_subBiomeLayers[i])
+            if (name == layer) k = v;
+        f *= glm::mix(1.0f, std::max(k, 0.0f), w);
+    }
+    return f;
+}
+
+glm::vec2 TerrainData::grassFactors(glm::vec2 p) const
+{
+    glm::vec2 f(1.0f);
+    if (m_masks.empty()) return f;
+    for (size_t i = 0; i < m_subBiomes.size(); ++i) {
+        const float w = subBiomeWeight(int(i), p.x, p.y);
+        if (w <= 0.0f) continue;
+        f.x *= glm::mix(1.0f, std::max(m_subBiomes[i].grass, 0.0f), w);
+        f.y *= glm::mix(1.0f, std::max(m_subBiomes[i].grassHeight, 0.0f), w);
+    }
+    return f;
+}
+
+Json subBiomeToJson(const TerrainSubBiome& s)
+{
+    return {{"name", s.name}, {"foliage", s.foliage}, {"layers", s.layers}, {"grass", s.grass}, {"grassHeight", s.grassHeight}};
+}
+
+TerrainSubBiome subBiomeFromJson(const Json& j)
+{
+    TerrainSubBiome s;
+    if (!j.is_object()) return s;
+    s.name = j.value("name", s.name);
+    s.foliage = j.value("foliage", s.foliage);
+    s.layers = j.value("layers", s.layers);
+    s.grass = j.value("grass", s.grass);
+    s.grassHeight = j.value("grassHeight", s.grassHeight);
+    return s;
 }
 
 float TerrainData::roadHeight(const RoadSpline& r, const SplinePath::Closest& c) const
@@ -559,14 +669,30 @@ std::shared_ptr<TerrainData> Terrain::generate(bool quiet) const
         if (s.isActive()) stamps.push_back({s.transform().position(), s});
     });
     const size_t stampCount = stamps.size();
-    std::vector<std::pair<std::shared_ptr<const SplinePath>, TerrainSplineShape>> roads;
+    TerrainOverlays overlays;
     for (const auto& o : scene().objects()) {
         auto* road = dynamic_cast<TerrainSpline*>(o.get());
         if (!road || road->isDestroyed() || !road->activeInHierarchy()) continue;
-        if (Spline* s = road->getComponent<Spline>()) roads.push_back({s->path(), *road});
+        if (Spline* s = road->getComponent<Spline>()) overlays.roads.push_back({s->path(), *road});
     }
+    overlays.subBiomes = subBiomes;
+    const std::string self = "Terrain '" + name() + "'";
+    scene().forEach<TerrainMask>([&](TerrainMask& m) {
+        if (!m.isActive()) return;
+        if (std::none_of(subBiomes.begin(), subBiomes.end(), [&](const TerrainSubBiome& s) { return s.name == m.subBiome; })) {
+            log::warnOnce(self + ": a TerrainMask on '" + m.gameObject().name() + "' lays sub-biome '" + m.subBiome +
+                          "', which isn't in its subBiomes");
+            return;
+        }
+        TerrainOverlays::Mask mask;
+        if (Spline* s = m.gameObject().getComponent<Spline>()) mask.path = s->path();
+        const glm::vec3 c = m.transform().position();
+        mask.centre = {c.x, c.z};
+        mask.shape = m;
+        overlays.masks.push_back(std::move(mask));
+    });
     auto d = std::make_shared<TerrainData>(*this, transform().position(), biomes, std::move(stamps),
-                                           size_t(std::max(tileCacheMB, 1.0f) * 1024.0f * 1024.0f), m_edits, std::move(roads));
+                                           size_t(std::max(tileCacheMB, 1.0f) * 1024.0f * 1024.0f), m_edits, std::move(overlays));
     if (!quiet)
         log::info("Terrain: {:.0f} m, {}x{} samples in tiles of {} cells (generated on demand), {} biomes, {} stamps",
               float(d->res - 1) * d->cellSize, d->res, d->res, TerrainData::kTileCells, d->biomeNames.size(), stampCount);
@@ -594,6 +720,36 @@ bool Terrain::roadsChanged(glm::vec4& area)
             grow(entry.second);       // ...and where it is now
         }
     }
+    // Sub-biome masks: only vegetation changes, but the same local refresh does it.
+    const TypeInfo* maskType = TypeRegistry::get().find("TerrainMask");
+    scene().forEach<TerrainMask>([&](TerrainMask& m) {
+        if (!m.isActive()) return;
+        std::string state = maskType ? SceneSerializer::serializeFields(*maskType, &m).dump() : std::string();
+        glm::vec4 b;
+        if (Spline* s = m.gameObject().getComponent<Spline>()) {
+            const auto path = s->path();
+            state += "s" + std::to_string(s->version());
+            const float r = 0.5f * m.width * path->maxWidth() + m.falloff + 4.0f;
+            b = path->empty() ? glm::vec4(1e30f, 1e30f, -1e30f, -1e30f)
+                              : glm::vec4(path->boundsMin().x - r, path->boundsMin().z - r, path->boundsMax().x + r, path->boundsMax().z + r);
+        } else {
+            const glm::vec3 c = m.transform().position();
+            state += std::to_string(c.x) + "," + std::to_string(c.z);
+            const float r = m.radius + m.falloff + 4.0f;
+            b = {c.x - r, c.z - r, c.x + r, c.z + r};
+        }
+        // (Keyed apart from objects: components have no id of their own.)
+        const uint64_t key = (m.gameObject().id() * 31u) ^ (uint64_t(reinterpret_cast<uintptr_t>(&m)) << 1) ^ 0x8000000000000000ull;
+        auto& entry = now[key];
+        entry = {std::move(state), b};
+        auto old = m_roads.find(key);
+        if (old == m_roads.end()) {
+            grow(b);
+        } else if (old->second.first != entry.first) {
+            grow(old->second.second);
+            grow(b);
+        }
+    });
     for (const auto& [id, entry] : m_roads)
         if (!now.count(id)) grow(entry.second); // removed
     m_roads = std::move(now);
@@ -1332,6 +1488,28 @@ void registerTerrainTypes(TypeRegistry& r)
             .tooltip("[{asset: 'biomes/x.biome'} or an inline biome {name, color, ...}]; edit them in the Biomes "
                      "section below. Biome 0 fills the rest, later biomes paint over earlier ones")
             .hidden(); // the editor draws its own biome list (drawTerrainTools)
+        t.property(
+             "subBiomes", FieldKind::Json,
+             [](const Terrain& x) {
+                 Json a = Json::array();
+                 for (const TerrainSubBiome& s : x.subBiomes) a.push_back(subBiomeToJson(s));
+                 return a;
+             },
+             [](Terrain& x, const Json& j) {
+                 x.subBiomes.clear();
+                 if (j.is_array())
+                     for (const Json& e : j) x.subBiomes.push_back(subBiomeFromJson(e));
+             })
+            .tooltip("[{name, foliage, layers: \"Acacias:0, Bushes:0.4\", grass, grassHeight}]: variations laid by TerrainMask "
+                     "areas (powerline corridors, clearings)");
+    });
+    r.add<TerrainMask>("TerrainMask", [](TypeBuilder<TerrainMask>& t) {
+        t.category("World");
+        t.field("subBiome", &TerrainMask::subBiome).tooltip("the Terrain sub-biome laid here (its subBiomes)");
+        t.field("strength", &TerrainMask::strength).range(0.0f, 1.0f).speed(0.01f);
+        t.field("width", &TerrainMask::width).range(0.0f, 10000.0f).speed(0.05f).tooltip("on a spline: corridor width (m)");
+        t.field("radius", &TerrainMask::radius).range(0.0f, 10000.0f).speed(0.05f).tooltip("without a spline: circle radius (m)");
+        t.field("falloff", &TerrainMask::falloff).range(0.0f, 1000.0f).speed(0.05f);
     });
     r.add<TerrainStamp>("TerrainStamp", [](TypeBuilder<TerrainStamp>& t) {
         t.category("World");

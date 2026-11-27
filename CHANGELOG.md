@@ -62,6 +62,13 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `TerrainData`'s constructor takes the road splines (new trailing
   parameter). Editor: Create > Spline > Road / Path; the selected spline shows
   its road width and vegetation corridors.
+- **Sub-biomes** (`TerrainSubBiome`, Terrain `subBiomes`; laid by the
+  `TerrainMask` component along a spline or in a circle): variations inside
+  whatever biome is there: foliage density (all layers or per layer), grass
+  density and height. Foliage / grass biome rules accept sub-biome names.
+  `TerrainData` gains `subBiomeWeight`, `foliageFactor`, `grassFactors`;
+  `TerrainData`'s constructor takes `TerrainOverlays` (roads + sub-biome
+  masks) as its last parameter. `Foliage::layerNames()`.
 - **Blender: VE Painted materials export with the model.** Installed as an
   add-on, `tools/blender/ve_painted_node_group.py` writes the `.material` file
   of every VE Painted material a glTF export includes (into the `assets`

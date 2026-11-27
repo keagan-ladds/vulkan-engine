@@ -122,14 +122,50 @@ the same GameObject:
   the Powerline preset clears a 14 m corridor of trees. Like every exclusion,
   moving it re-places only the vegetation around it.
 
+### Sub-biomes: variations inside a biome
+
+A biome decides the ground and what grows there. A **sub-biome**
+(`TerrainSubBiome`, the Terrain's `subBiomes`) varies that inside an area
+without replacing the biome: under powerlines it is still savanna, but no
+trees grow and the grass is kept short. Define it once on the Terrain:
+
+```json
+"subBiomes": [{"name": "Powerline corridor", "foliage": 0, "layers": "Rocks:1, Boulders:1, Bushes:0.3",
+               "grass": 1, "grassHeight": 0.45}]
+```
+
+- `foliage` multiplies every foliage layer's density inside; `layers` gives
+  per-layer factors that win over it (FoliageType object names).
+- `grass` / `grassHeight` multiply grass density and height.
+- **Laying it:** a `TerrainMask` component names the sub-biome. On an object
+  with a Spline it is a corridor `width` wide (the powerline's); without, a
+  circle of `radius` (a clearing). Both fade out over `falloff`, scaled by
+  `strength`. Several masks can lay the same sub-biome; overlapping
+  sub-biomes multiply.
+- Foliage and grass `biomes` rules can also name a sub-biome:
+  `"Savannah:1, Powerline corridor:-1"` (its weight, 0..1).
+- Moving or editing a mask refreshes only the vegetation around it.
+- The editor draws a mask's corridor or circle in purple. The Terrain logs a
+  mask naming a sub-biome it doesn't define.
+
+![Powerline corridor sub-biome](screenshots/spline_powerline_subbiome.png)
+
+This is the overlay half of a terrain workflow: biomes come from rules
+(height, slope, noise) and painting; sub-biomes come from areas laid on top.
+Rule-driven sub-biomes (by slope, height or distance to water: scree under
+cliffs, reeds at shores) would fit the same definitions as another source of
+weights.
+
 Savanna: a paddock fence east of the camp (a closed spline, posts and two
 rails), a powerline from the south-east to the camp, a dirt road west from
 the camp (5 m, painted "Camp" earth, a `materials/dirt_road.material` surface,
 trees cleared 14 m wide and grass 7 m) and a footpath north towards the swamp.
 ![Dirt road](screenshots/spline_road.png)
 
-The autotest checks the posts, rails and cables, that the powerline's corridor
-holds no trees while the land beside it does, that the road is flat across
+The powerline lays the "Powerline corridor" sub-biome (16 m wide): no trees,
+a few bushes, rocks kept, grass at 45 % height. The autotest checks the posts,
+rails and cables, that the corridor holds no trees (while the land beside it
+does), keeps its rocks and halves the grass, that the road is flat across
 and painted with no trees, and that moving a footpath point re-shapes only
 the land around it.
 
