@@ -2,6 +2,7 @@
 #include "ve/audio/Music.hpp"
 
 #include "ve/core/Engine.hpp"
+#include "ve/core/FileSystem.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/physics/Physics.hpp"
 
@@ -135,10 +136,80 @@ AudioSystem::~AudioSystem()
     shutdown();
 }
 
+namespace {
+
+// miniaudio opens sound files itself (also on its streaming threads): give it
+// the engine's virtual file system, so sounds play from a packaged game's
+// archive like from disk (FileSystem.hpp). Read-only.
+struct VfsFile {
+    std::unique_ptr<std::istream> in;
+};
+
+ma_result vfsOpen(ma_vfs*, const char* path, ma_uint32 mode, ma_vfs_file* file)
+{
+    if (mode & MA_OPEN_MODE_WRITE) return MA_NOT_IMPLEMENTED;
+    std::unique_ptr<std::istream> in = vfs::open(std::filesystem::path(path));
+    if (!in) return MA_DOES_NOT_EXIST;
+    *file = new VfsFile{std::move(in)};
+    return MA_SUCCESS;
+}
+
+ma_result vfsOpenW(ma_vfs* v, const wchar_t* path, ma_uint32 mode, ma_vfs_file* file)
+{
+    return vfsOpen(v, std::filesystem::path(path).string().c_str(), mode, file);
+}
+
+ma_result vfsClose(ma_vfs*, ma_vfs_file file)
+{
+    delete static_cast<VfsFile*>(file);
+    return MA_SUCCESS;
+}
+
+ma_result vfsRead(ma_vfs*, ma_vfs_file file, void* dst, size_t size, size_t* read)
+{
+    std::istream& in = *static_cast<VfsFile*>(file)->in;
+    in.read(static_cast<char*>(dst), std::streamsize(size));
+    const size_t got = size_t(in.gcount());
+    if (read) *read = got;
+    in.clear(); // (a short read at the end isn't an error)
+    return got == 0 && size > 0 ? MA_AT_END : MA_SUCCESS;
+}
+
+ma_result vfsWrite(ma_vfs*, ma_vfs_file, const void*, size_t, size_t*) { return MA_NOT_IMPLEMENTED; }
+
+ma_result vfsSeek(ma_vfs*, ma_vfs_file file, ma_int64 offset, ma_seek_origin origin)
+{
+    std::istream& in = *static_cast<VfsFile*>(file)->in;
+    in.clear();
+    in.seekg(std::streamoff(offset), origin == ma_seek_origin_start ? std::ios::beg : origin == ma_seek_origin_current ? std::ios::cur : std::ios::end);
+    return in.fail() ? MA_BAD_SEEK : MA_SUCCESS;
+}
+
+ma_result vfsTell(ma_vfs*, ma_vfs_file file, ma_int64* cursor)
+{
+    *cursor = ma_int64(static_cast<VfsFile*>(file)->in->tellg());
+    return MA_SUCCESS;
+}
+
+ma_result vfsInfo(ma_vfs*, ma_vfs_file file, ma_file_info* info)
+{
+    std::istream& in = *static_cast<VfsFile*>(file)->in;
+    const auto at = in.tellg();
+    in.seekg(0, std::ios::end);
+    info->sizeInBytes = ma_uint64(in.tellg());
+    in.seekg(at);
+    return MA_SUCCESS;
+}
+
+ma_vfs_callbacks g_vfs{vfsOpen, vfsOpenW, vfsClose, vfsRead, vfsWrite, vfsSeek, vfsTell, vfsInfo};
+
+} // namespace
+
 void AudioSystem::init()
 {
     auto e = std::make_unique<ma_engine>();
     ma_engine_config config = ma_engine_config_init();
+    config.pResourceManagerVFS = &g_vfs; // (sound files through the virtual file system)
     if (ma_engine_init(&config, e.get()) != MA_SUCCESS) {
         log::warn("Audio: no output device available; sound disabled");
         return;

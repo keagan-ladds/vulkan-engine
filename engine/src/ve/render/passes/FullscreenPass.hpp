@@ -35,22 +35,25 @@
 
 namespace ve {
 
+/// Base class for full-screen fragment-shader passes (see the top of this file).
 class FullscreenPass : public RenderPass {
 public:
+    /// What the pass reads and writes, and its pipeline state.
     struct Desc {
-        std::string fragment;                 // SPIR-V name, e.g. "composite.frag"
-        std::string output = "SceneColor";   // graph texture to render into ("Backbuffer" for the swapchain)
-        std::vector<std::string> inputs;      // graph textures sampled by the shader
-        BlendMode blend = BlendMode::Opaque;
-        bool clear = false;
-        glm::vec4 clearColor{0.0f};
-        // Optional read-only depth test, e.g. {"SceneDepth", VK_COMPARE_OP_GREATER_OR_EQUAL}
-        // with fullscreen.vert at depth 0 => only pixels where nothing was drawn (sky).
+        std::string fragment;                 ///< SPIR-V name, e.g. "composite.frag"
+        std::string output = "SceneColor";   ///< graph texture to render into ("Backbuffer" for the swapchain)
+        std::vector<std::string> inputs;      ///< graph textures sampled by the shader
+        BlendMode blend = BlendMode::Opaque;  ///< How the output is blended over the target.
+        bool clear = false;                   ///< Clear the output first.
+        glm::vec4 clearColor{0.0f};           ///< Clear value.
+        /// Optional read-only depth test, e.g. {"SceneDepth", VK_COMPARE_OP_GREATER_OR_EQUAL}
+        /// with fullscreen.vert at depth 0 => only pixels where nothing was drawn (sky).
         std::string depth;
-        VkCompareOp depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
-        bool samplesShadows = false;          // declare reads of the shadow maps
+        VkCompareOp depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL; ///< Depth test against `depth` (reversed Z).
+        bool samplesShadows = false;          ///< declare reads of the shadow maps
     };
 
+    /// A pass called `name` at `stage` / `order` (see RenderPass) drawing `desc`.
     FullscreenPass(std::string name, RenderStage stage, int order, Desc desc);
     ~FullscreenPass() override;
 
@@ -58,10 +61,11 @@ public:
     void declare(PassBuilder& builder) override;
     void execute(RenderContext& ctx) override;
 
-    // Bindless index of input `i` (as listed in Desc::inputs).
+    /// Bindless index of input `i` (as listed in Desc::inputs).
     uint32_t inputIndex(size_t i) const;
-    TextureId inputTexture(size_t i) const { return m_inputs[i]; }
+    TextureId inputTexture(size_t i) const { return m_inputs[i]; } ///< Graph texture of input `i`.
 
+    /// Sets the push constants the shader gets (call in prepare(); at most kPushConstantBytes).
     template <class T>
     void setPush(const T& data)
     {
@@ -71,13 +75,13 @@ public:
     }
 
 protected:
-    Desc m_desc;
-    std::vector<TextureId> m_inputs;
-    TextureId m_output = kNoTexture;
-    TextureId m_depth = kNoTexture;
-    PipelineHandle m_pipeline;
-    std::array<uint8_t, kPushConstantBytes> m_push{};
-    uint32_t m_pushSize = 0;
+    Desc m_desc;                                       ///< As given.
+    std::vector<TextureId> m_inputs;                   ///< Resolved inputs.
+    TextureId m_output = kNoTexture;                   ///< Resolved output.
+    TextureId m_depth = kNoTexture;                    ///< Resolved depth (kNoTexture = none).
+    PipelineHandle m_pipeline;                         ///< The pass's pipeline.
+    std::array<uint8_t, kPushConstantBytes> m_push{};  ///< Push constants set by setPush.
+    uint32_t m_pushSize = 0;                           ///< Bytes used in m_push.
 };
 
 } // namespace ve

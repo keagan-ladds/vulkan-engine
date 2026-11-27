@@ -385,5 +385,71 @@ reader/writer is ~200 lines. bc7enc/rgbcx because they're small, CPU-only and
 permissively licensed. **Cost:** the first run after a change loads source
 images (cooked ones from the next run); images used in two roles need a
 `.texture` decision; normal-map shaders must rebuild Z (`veUnpackNormal`);
-cooked files aren't compressed on disk yet (phase 5's archive will be).
+cooked files are compressed on disk only in a packaged `.vepak` (D33).
+Audio (phase 3) follows the same scheme: WAV / FLAC -> Ogg Vorbis, the stamp in
+the Vorbis comment, settings in `<sound>.audio`. Vorbis rather than Opus:
+miniaudio plays it with no extra library, encoding is libvorbis (BSD), and
+Opus's 48 kHz-only output would resample everything.
 
+### D33. Releases read from a zstd archive through a VFS overlay; cookers are a registry (2026-11)
+**Decision:** every engine file read goes through `ve::vfs` (`core/FileSystem`):
+a real file first, then the mounted `.vepak` archives (later ones win), which
+overlay the exe folder, so code keeps using ordinary paths (`<exe>/assets/...`,
+`<exe>/cooked/...`, `<exe>/shaders/...`). The Engine mounts `<exe>/*.vepak` at
+start. `.vepak`: entries zstd-compressed one by one (stored raw when that
+doesn't save 3%), the index at the end. `vecook --package` builds a release
+from the cooker registry (`assets/Cookers`): cookable sources ship only as
+their cooked copies; settings files, hidden files, `.blend`, `.vepackignore`
+matches stay out. `AssetManager::exists` / `loadPixels` / `loadAudio` accept
+an asset whose source is gone when its cooked copy is there.
+**Alternatives:** zip / PhysFS (more code, Deflate is slower to decode and
+compresses worse than zstd); one compressed blob (no random access);
+rewriting asset paths to archive names at the call sites (every loader
+changes, and loose files and archives would behave differently); a
+per-kind switch in vecook (every new kind touches the tool).
+**Why:** loose files during development and an archive in a release take the
+same code path; a patch can be a second archive or a loose file next to the
+exe; a new asset kind is one `registerCooker()`. **Cost:** third-party code
+that opens files itself must be given a bridge (done: cgltf, miniaudio,
+vorbisfile, stb, ImGui fonts); archive reads hold one lock; entries are read
+whole (no streaming from inside an archive: miniaudio streams decode from
+memory).
+
+### D34. Doc comments on every public declaration; Doxygen for the reference (2026-11)
+**Decision:** headers document every public declaration with `///` / `///<`
+comments (the first sentence is the summary; units, ranges, special values,
+`@param` where a name isn't enough). `tools/check_docs.py` runs Doxygen in
+"warn if undocumented" mode; `--changed` fails for the headers a branch
+touches (CI: `.github/workflows/docs.yml`). `cmake --build build --target
+docs` builds an HTML reference (Doxygen + doxygen-awesome-css) from the
+headers and the `docs/*.md` guides.
+**Alternatives:** plain `//` comments (IntelliSense shows some, but nothing
+can check them and tools don't attach trailing ones); clang-doc (young,
+little styling); hosted generators (hdoc: a service); Sphinx + Breathe (a
+Python stack on top of Doxygen anyway).
+**Why:** `///` is what Visual Studio, VS Code (cpptools) and clangd show on
+hover, and Doxygen is a single widely packaged binary; the check keeps
+documentation from rotting as the code changes. **Cost:** a Doxygen install
+for the check and the reference (the build itself doesn't need it); comment
+discipline on every change.
+
+### D35. Models cook to .vemodel; LODs and impostors are cooked offline by vecook on a headless renderer (2026-11)
+**Decision:** glTF files cook like images and sounds: `ModelData` (the parsed
+model, CPU only) written as `<asset path>.vemodel`, used when current. A
+`<model>.model` file next to the model asks cooking for generated LODs, an
+impostor and material remaps. Impostors are rendered, so those cooks run on
+the main thread with an `Engine`: `vecook` starts a headless one (after the
+CPU cooks, only if needed), and a game run cooks a stale model on its first
+load. Impostor atlases are stored BC7 with all mips. The cooked file holds
+material file *references* (remaps resolved), so material edits stay live.
+**Alternatives:** (B) bake on the first game run and keep it in a derived-data
+cache (the game would ship without them or the first player would pay for
+them; nothing for CI to check); (C) a separate offscreen-rendering cooker
+without the engine (a second renderer to maintain, materials and custom
+shaders would render differently); settings in the scene's `FoliageType` only
+(cooking can't see scenes, and one model is used by many scenes).
+**Why:** hand-made models are the common case, so their derived data should
+be made once, before shipping, with the same renderer that draws them.
+**Cost:** vecook needs a Vulkan device and a display for those models
+(`xvfb-run` on servers); a material change recooks the models whose impostors
+use it; code-built meshes still bake at load.

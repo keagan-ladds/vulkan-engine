@@ -28,18 +28,20 @@
 
 namespace ve {
 
+/// A decal (see Decal: textures projected into a box) placed in a scene, its
+/// textures named by asset path. The box is the object's transform: scale = size in metres.
 class DecalProjector : public Component, public Decal {
 public:
-    std::string albedo; // asset paths; empty = keep whatever texture code set
-    std::string normal;
-    std::string mask;
+    std::string albedo; ///< asset paths; empty = keep whatever texture code set
+    std::string normal;  ///< Normal-map asset path (empty = keep what code set).
+    std::string mask;  ///< Mask asset path: G = roughness, B = metallic multipliers, A = opacity (empty = keep what code set).
 
     void start() override { reload(); }
-    // Loads the textures named by the paths that changed since the last load.
+    /// Loads the textures named by the paths that changed since the last load.
     void reload();
 
 private:
-    std::string m_loaded[3]; // paths the current textures came from
+    std::string m_loaded[3]; ///< paths the current textures came from
 };
 
 } // namespace ve

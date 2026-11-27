@@ -5,7 +5,9 @@
 
 #include <ve/assets/AssetManager.hpp>
 #include <ve/core/Log.hpp>
+#include <ve/render/Material.hpp>
 #include <ve/render/Mesh.hpp>
+#include <ve/render/Primitives.hpp>
 #include <ve/scene/Components.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/scene/Scene.hpp>
@@ -122,6 +124,29 @@ void spawnPaintTest(ve::Scene& scene, const ve::Terrain& terrain)
     auto mesh = ve::Mesh::create(ve::GameObject::renderer(), md, {}, "paint test");
     go.addComponent<ve::MeshRenderer>(mesh, ve::GameObject::assets().loadMaterial("materials/painted_test.material"));
     ve::log::info("Paint test wall spawned (shader {})", go.getComponent<ve::MeshRenderer>()->material(0)->shader().desc().fragment);
+}
+
+void spawnBounceTest(ve::Scene& scene, const ve::Terrain& terrain)
+{
+    // A plain wall along X with a 1 m cube 2.6 m from each face, offset along
+    // the wall so they don't hide each other: whatever the time of day one
+    // face is turned away from the sun with a cube in front of it. Before the
+    // fix the ground-bounce visibility test (ve_lighting.glsl) put a blue,
+    // cube-shaped "shadow" on that face.
+    auto mat = ve::GameObject::renderer().createStandardMaterial();
+    mat->setBaseColor(glm::vec4(0.8f, 0.8f, 0.8f, 1.0f)).setRoughness(0.85f);
+    auto wallMesh = ve::Mesh::create(ve::GameObject::renderer(), ve::primitives::cube({4.0f, 2.0f, 0.3f}), {}, "bounce test wall");
+    auto cubeMesh = ve::Mesh::create(ve::GameObject::renderer(), ve::primitives::cube(), {}, "bounce test cube");
+    const glm::vec2 c(36.0f, 4.0f);
+    auto place = [&](const char* name, std::shared_ptr<ve::Mesh> mesh, glm::vec3 local, float halfHeight) {
+        auto& go = scene.spawn(name);
+        const glm::vec2 p(c.x + local.x, c.y + local.z);
+        go.transform().setPosition({p.x, terrain.height(p.x, p.y) + halfHeight - 0.05f, p.y});
+        go.addComponent<ve::MeshRenderer>(std::move(mesh), mat);
+    };
+    place("Bounce test wall", wallMesh, {0.0f, 0.0f, 0.0f}, 1.0f);
+    place("Bounce test cube N", cubeMesh, {-1.0f, 0.0f, -2.6f}, 0.5f);
+    place("Bounce test cube S", cubeMesh, {1.0f, 0.0f, 2.6f}, 0.5f);
 }
 
 } // namespace savanna

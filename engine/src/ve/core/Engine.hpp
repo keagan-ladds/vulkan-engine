@@ -21,6 +21,7 @@
 // wires every module, is the composition root in ve/app/Engine.cpp.
 // =============================================================================
 
+#include "ve/core/Event.hpp"
 #include "ve/core/Jobs.hpp" // the worker pool the Engine shuts down (also sizes physics threads)
 #include "ve/core/Input.hpp"
 #include "ve/core/Time.hpp"
@@ -37,6 +38,7 @@ namespace ve {
 class Window;
 class Renderer;
 class Scene;
+class GameObject;
 class AssetManager;
 class AudioSystem;
 class UiLayer;
@@ -46,113 +48,182 @@ namespace net {
 class Network;
 }
 
+/// Loading progress, for UI or logs (Engine::loadEvents()).
+struct LoadEvent {
+    /// What happened.
+    enum class Type {
+        Began,        ///< beginLoading()
+        StepStarted,  ///< a load step is about to run (this frame)
+        StepFinished, ///< ... and ran (seconds: how long)
+        TaskFinished, ///< a load task reached 1 (seconds: since loading began)
+        Ended,        ///< loading is over (seconds: how long it took)
+    };
+    Type type = Type::Began;  ///< What happened (see Type).
+    std::string name;      ///< step / task name
+    float seconds = 0.0f;  ///< StepFinished: the step's duration; TaskFinished: time since loading began; Ended: the whole load.
+    float progress = 0.0f; ///< loadProgress() after the event
+};
+
+/// How the Engine starts: window, renderer settings, timing, which systems run, where files are.
+/// Fill one in and pass it to the Engine's constructor.
 struct EngineConfig {
-    std::string title = "vulkan-engine";
-    int width = 1600;
-    int height = 900;
+    std::string title = "vulkan-engine";  ///< Window title.
+    int width = 1600;  ///< Initial window width in screen pixels.
+    int height = 900;  ///< Initial window height in screen pixels.
 #ifdef NDEBUG
     bool validation = false;
 #else
-    bool validation = true; // Vulkan validation layers in Debug builds
+    bool validation = true; ///< Vulkan validation layers in Debug builds
 #endif
-    RendererSettings renderer;
-    float fixedTimestep = 1.0f / 50.0f;
-    int maxFixedStepsPerFrame = 5; // avoids the "spiral of death" after a hitch
-    bool enableAudio = true;
-    bool enableEditor = true; // F2 opens the in-engine scene editor (docs/05-editor.md)
-    // Extra asset / shader folders (relative to the executable or absolute).
-    // <exe>/assets and <exe>/shaders are always searched.
+    RendererSettings renderer;  ///< Renderer options (shadows, vsync, async pipelines...); editable later via renderer().settings().
+    float fixedTimestep = 1.0f / 50.0f;  ///< Seconds per fixedUpdate / physics step (1/50 = 50 Hz).
+    int maxFixedStepsPerFrame = 5; ///< avoids the "spiral of death" after a hitch
+    bool enableAudio = true;  ///< Start the audio device (off: sounds are silent no-ops, e.g. for servers or tests).
+    bool enableEditor = true; ///< F2 opens the in-engine scene editor (docs/05-editor.md)
+    /// Extra asset / shader folders (relative to the executable or absolute).
+    /// `<exe>`/assets and `<exe>`/shaders are always searched.
     std::vector<std::filesystem::path> assetPaths;
-    std::vector<std::filesystem::path> shaderPaths;
-    // Save games (ve::save): empty = the platform's per-user data folder ("<title>/saves").
+    std::vector<std::filesystem::path> shaderPaths;  ///< Extra shader folders (searched before `<exe>`/shaders).
+    /// Save games (ve::save): empty = the platform's per-user data folder ("`<title>`/saves").
     std::filesystem::path saveFolder;
-    // Cooked textures (assets/TextureCook.hpp): GPU-ready copies of the images,
-    // used when current. Empty = <exe>/cooked. Relative = to the executable.
+    /// Cooked textures (assets/TextureCook.hpp): GPU-ready copies of the images,
+    /// used when current. Empty = `<exe>`/cooked. Relative = to the executable.
     std::filesystem::path cookCache;
-    // Cook missing / stale textures in the background while the game runs
-    // (development). Off: only use what `vecook` made. Env VE_COOK overrides:
-    // 0 = load source images only, read = never cook, sync = cook before loading.
+    /// Cook missing / stale textures in the background while the game runs
+    /// (development). Off: only use what `vecook` made. Env VE_COOK overrides:
+    /// 0 = load source images only, read = never cook, sync = cook before loading.
     bool cookOnDemand = true;
+    /// Mount `<exe dir>`/*.vepak (vecook --package) over the executable's folder
+    /// at startup: a packaged game reads its assets, cooked files and shaders
+    /// from them (core/FileSystem.hpp). Loose files on disk win over archives.
+    bool mountArchives = true;
 };
 
+/// The engine: owns the window, renderer, scene, assets, audio, physics, network,
+/// UI and editor, and runs the frame loop. Exactly one exists at a time;
+/// reach it anywhere with Engine::get() (or EngineAccess in game objects).
+///     ve::Engine engine(config);
+///     engine.scene().spawn<MyGame>();
+///     engine.run();
 class Engine {
 public:
+    /// Starts every system (throws std::runtime_error if Vulkan or the window can't start).
     explicit Engine(const EngineConfig& config = {});
     ~Engine();
 
     Engine(const Engine&) = delete;
     Engine& operator=(const Engine&) = delete;
 
+    /// The running Engine (undefined if none exists: check exists() in code that may run without one).
     static Engine& get();
+    /// Whether an Engine currently exists.
     static bool exists();
 
-    void run();  // returns when quit() is called or the window closes
+    /// Runs the frame loop: returns when quit() is called or the window closes.
+    void run();
+    /// Asks the frame loop to stop; run() returns after the current frame.
     void quit();
-    // Runs at shutdown after the scene is gone, before the renderer: release
-    // GPU resources the game keeps outside the scene (e.g. baked icons in a
-    // static table).
+    /// Runs at shutdown after the scene is gone, before the renderer: release
+    /// GPU resources the game keeps outside the scene (e.g. baked icons in a
+    /// static table).
     void atShutdown(std::function<void()> fn) { m_atShutdown.push_back(std::move(fn)); }
 
+    /// The OS window (size, title, events).
     Window& window() { return *m_window; }
+    /// Keyboard, mouse, gamepads and named actions.
     Input& input() { return m_input; }
+    /// Frame timing; set time().timeScale for slow motion or pausing time.
     Time& time() { return m_time; }
+    /// The renderer: settings, materials, render passes, compile status.
     Renderer& renderer() { return *m_renderer; }
+    /// The game scene (the world's objects).
     Scene& scene() { return *m_scene; }
+    /// Asset loading and caching (textures, models, sounds, materials).
     AssetManager& assets() { return *m_assets; }
+    /// Sounds, buses and music.
     AudioSystem& audio() { return *m_audio; }
-    net::Network& net() { return *m_net; } // multiplayer (offline until host / join)
+    net::Network& net() { return *m_net; } ///< multiplayer (offline until host / join)
+    /// The physics world: raycasts, overlaps, layers.
     PhysicsWorld& physics() { return *m_physics; }
+    /// The ImGui layer (fonts, input capture) used by onGui hooks and the editor.
     UiLayer& ui() { return *m_ui; }
-    Editor* editor() { return m_editor.get(); } // null if EngineConfig::enableEditor is false
-    // The editor is in Edit mode (game paused); false without an editor. For
-    // modules that may not include the editor (ui, gameplay, ...).
+    Editor* editor() { return m_editor.get(); } ///< null if EngineConfig::enableEditor is false
+    /// The editor is in Edit mode (game paused); false without an editor. For
+    /// modules that may not include the editor (ui, gameplay, ...).
     bool editorPaused() const;
+    /// The configuration the Engine was started with.
     const EngineConfig& config() const { return m_config; }
 
-    // Pauses gameplay like the editor's Edit mode: no fixed steps or physics,
-    // and only runInEditor objects update (photo mode, pause menus). Rendering,
-    // UI and audio keep running.
+    /// Pauses gameplay like the editor's Edit mode: no fixed steps or physics,
+    /// and only runInEditor objects update (photo mode, pause menus). Rendering,
+    /// UI and audio keep running.
     bool gamePaused = false;
 
     // ---- Loading screens -------------------------------------------------------
-    // Shows `loadingScene` (a small scene the game makes, usually one object
-    // drawing UI in onGui) until the world is ready:
-    //   - load steps run on the main thread, one per frame, in order (e.g.
-    //     "load the scene file"); the screen is redrawn between them;
-    //   - load tasks report the progress of work that happens over many frames
-    //     (foliage registers one while it fills its cells on worker threads).
-    // Meanwhile the world updates like in the editor's Edit mode (only
-    // runInEditor objects: terrain, foliage and grass stream, gameplay waits,
-    // no physics) and isn't drawn: frames draw only the UI over clearColor.
-    // Loading ends when every step ran, every task reports 1, and at least
-    // minSeconds passed; the loading scene is then destroyed.
-    //   engine.beginLoading(makeLoadingScene());
-    //   engine.addLoadStep("Loading the savanna", [&] { scene.load(...); });
+    /// Shows `loadingScene` (a small scene the game makes, usually one object
+    /// drawing UI in onGui) until the world is ready:
+    ///   - load steps run on the main thread, one per frame, in order (e.g.
+    ///     "load the scene file"); the screen is redrawn between them;
+    ///   - load tasks report the progress of work that happens over many frames
+    ///     (foliage registers one while it fills its cells on worker threads).
+    /// Meanwhile the world updates like in the editor's Edit mode (only
+    /// runInEditor objects: terrain, foliage and grass stream, gameplay waits,
+    /// no physics) and isn't drawn: frames draw only the UI over clearColor.
+    /// Loading ends when every step ran, every task reports 1, and at least
+    /// minSeconds passed; the loading scene is then destroyed.
+    ///   engine.beginLoading(makeLoadingScene());
+    ///   engine.addLoadStep("Loading the savanna", [&] { scene.load(...); });
     void beginLoading(std::unique_ptr<Scene> loadingScene, float minSeconds = 0.0f,
                       const glm::vec4& clearColor = glm::vec4(0.02f, 0.02f, 0.025f, 1.0f));
+    /// Queues a main-thread step: run once, in order, one per frame, with the
+    /// loading screen redrawn in between. Keep each one short (the screen
+    /// freezes while it runs). Outside loading it runs right away.
     void addLoadStep(std::string name, std::function<void()> step);
-    void addLoadTask(std::string name, std::function<float()> progress); // 0..1, 1 = done
+    /// Registers work that happens over many frames (often on worker threads):
+    /// `progress` is polled every frame (0..1; 1 = done) and loading waits for 1.
+    void addLoadTask(std::string name, std::function<float()> progress);
+    /// A step that takes several frames: `step` is called once per frame (do a
+    /// slice of the work) until it returns >= 1 (its progress, 0..1); later
+    /// steps wait for it. Outside loading it's called until done, right away.
+    void addLoadStepOverFrames(std::string name, std::function<float()> step);
+    /// Loads a scene file as a step over frames (SceneSerializer::loadAsync:
+    /// parsed on the job pool, objects created a time slice per frame), then
+    /// calls `then` with its root objects before any of them start (find
+    /// things, adjust fields, spawn what goes with them). Outside loading it
+    /// loads at once.
+    ///   engine.addSceneLoad("Loading the level", "scenes/level1.json",
+    ///                       [&](const std::vector<GameObject*>& roots) { setUpLevel(roots); });
+    void addSceneLoad(std::string name, std::filesystem::path scenePath,
+                      std::function<void(const std::vector<GameObject*>& roots)> then = {});
+    /// Whether a loading screen (or the editor's loading progress) is up.
     bool loading() const { return m_loadingScene != nullptr; }
-    float loadProgress() const;                        // 0..1 over steps and tasks
-    const std::string& loadStatus() const { return m_loadStatus; } // what's happening now
+    float loadProgress() const;                        ///< 0..1 over steps and tasks
+    const std::string& loadStatus() const { return m_loadStatus; } ///< what's happening now
+    /// The loading screen's scene while loading, else null.
     Scene* loadingScene() { return m_loadingScene.get(); }
+    /// Whether load steps are still queued (tasks may still be running after them).
     bool loadStepsPending() const { return !m_loadSteps.empty(); }
-    // Loading while the editor is in Edit mode: no loading scene is shown, the
-    // editor keeps running (world paused, drawn as it streams in) and shows
-    // the progress itself; loading ends as soon as steps and tasks are done.
+    /// Loading while the editor is in Edit mode: no loading scene is shown, the
+    /// editor keeps running (world paused, drawn as it streams in) and shows
+    /// the progress itself; loading ends as soon as steps and tasks are done.
     bool loadingInEditor() const;
+    /// Hooks for UI: loading steps / tasks as they happen. (Shader and pipeline
+    /// compiles: renderer().compileEvents() / compileStatus(); loading also
+    /// waits for the pipelines compiling then, with the status
+    /// "Compiling shaders".)
+    Event<const LoadEvent&>& loadEvents() { return m_loadEvents; }
 
 private:
     std::vector<std::function<void()>> m_atShutdown;
     void pollEvents();
     void tickFrame();
-    void tickLoading(); // a loading-screen frame
+    void tickLoading(); ///< a loading-screen frame
     void runLoadStep();
-    bool pollLoadTasks(); // true when every step ran and every task is done
+    bool pollLoadTasks(); ///< true when every step ran and every task is done
     void endLoading();
     void benchFrame(float cpuMs);
 
-    // VE_BENCH=<frames>[,<warmup>]: average CPU/GPU timings over a run, log them, quit.
+    /// VE_BENCH=`<frames>`[,`<warmup>`]: average CPU/GPU timings over a run, log them, quit.
     struct Benchmark;
     std::unique_ptr<Benchmark> m_bench;
 
@@ -172,6 +243,10 @@ private:
     struct LoadStep {
         std::string name;
         std::function<void()> run;
+        std::function<float()> overFrames; ///< (addLoadStepOverFrames: called until it returns >= 1)
+        bool started = false;
+        float progress = 0.0f; ///< overFrames: its last answer
+        float seconds = 0.0f;  ///< time spent in it so far
     };
     struct LoadTask {
         std::string name;
@@ -181,12 +256,18 @@ private:
     std::vector<LoadStep> m_loadSteps;
     std::vector<LoadTask> m_loadTasks;
     size_t m_loadStepsTotal = 0, m_loadStepsDone = 0;
+    uint32_t m_loadFrames = 0;
+    bool m_windowShown = false;
+    /// Per loading frame, for starting new objects (the rest wait a frame).
+    static constexpr float kLoadingStartBudgetMs = 50.0f;
     float m_loadMinSeconds = 0.0f, m_loadElapsed = 0.0f;
     std::string m_loadStatus;
+    Event<const LoadEvent&> m_loadEvents;
+    bool compilesBlockLoading(); ///< pipelines still compiling (sets the status)
     glm::vec4 m_loadClearColor{0.0f, 0.0f, 0.0f, 1.0f};
     bool m_running = false;
     double m_accumulator = 0.0;
-    float m_fixedFrameDt = 0.0f; // VE_FIXED_DT (tests): fixed time per frame
+    float m_fixedFrameDt = 0.0f; ///< VE_FIXED_DT (tests): fixed time per frame
 };
 
 } // namespace ve

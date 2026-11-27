@@ -22,18 +22,22 @@
 
 namespace vfx {
 
+/// Accumulates a noisy screen-space result over frames, reprojected with the camera (SSR, SSGI).
 class TemporalAccumulator {
 public:
     ~TemporalAccumulator();
+    /// Creates its history textures (`name` prefix, at `scale` of the screen).
     void setup(ve::Renderer& renderer, ve::RenderGraph& graph, const std::string& name, float scale);
+    /// Declares its texture uses for this frame.
     void declare(ve::PassBuilder& builder);
-    // Returns the accumulated texture (in Access::Sampled), or `current` if disabled.
+    /// Returns the accumulated texture (in Access::Sampled), or `current` if disabled.
     ve::TextureId resolve(ve::RenderContext& ctx, ve::TextureId current);
+    /// Drops the history (after a cut or resize).
     void invalidate() { m_valid = false; }
 
-    bool enabled = true;
-    float blend = 0.1f;     // weight of the new frame (~1/blend frames of history)
-    float clipGamma = 1.5f; // neighbourhood clip width in sigmas (smaller = less ghosting, more noise)
+    bool enabled = true;  ///< Off: no accumulation (the raw result is used).
+    float blend = 0.1f;     ///< weight of the new frame (~1/blend frames of history)
+    float clipGamma = 1.5f; ///< neighbourhood clip width in sigmas (smaller = less ghosting, more noise)
 
 private:
     ve::Renderer* m_renderer = nullptr;

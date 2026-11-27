@@ -3,6 +3,9 @@
 #include "vfx/Noise.hpp"
 #include "vfx/Vfx.hpp"
 
+#include <ve/assets/AssetManager.hpp>
+#include <ve/core/Engine.hpp>
+#include <ve/core/FileSystem.hpp>
 #include <ve/core/Log.hpp>
 #include <ve/render/Renderer.hpp>
 #include <ve/render/Texture.hpp>
@@ -14,6 +17,8 @@
 #include <algorithm>
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <cmath>
 
 namespace vfx {
@@ -158,13 +163,32 @@ void AtmospherePass::setup(ve::RenderGraph& g)
                                                 .depthFormat = ve::Renderer::kDepthFormat,
                                                 .depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL});
 
+    // The noise never changes: generated once (~0.5 s in Debug builds) and kept
+    // in the cook cache, so later runs and packaged games just read it.
     const auto t0 = std::chrono::steady_clock::now();
     const uint32_t n = 64;
-    const auto noise = generateCloudNoise(n);
+    const size_t bytes = size_t(n) * n * n * 4;
+    std::filesystem::path cached;
+    if (ve::Engine::exists() && !ve::Engine::get().assets().cooking().cacheDir.empty())
+        cached = ve::Engine::get().assets().cooking().cacheDir / "generated" / ("cloud_noise_v1_" + std::to_string(n) + ".bin");
+    std::vector<uint8_t> noise;
+    if (!cached.empty()) {
+        if (auto data = ve::vfs::read(cached); data && data->size() == bytes) noise = std::move(*data);
+    }
+    const bool generated = noise.empty();
+    if (generated) {
+        noise = generateCloudNoise(n);
+        if (!cached.empty()) {
+            std::error_code ec;
+            std::filesystem::create_directories(cached.parent_path(), ec);
+            std::ofstream(cached, std::ios::binary).write(reinterpret_cast<const char*>(noise.data()), std::streamsize(noise.size()));
+        }
+    }
     m_noise = ve::Texture::create3D(r, n, n, n, VK_FORMAT_R8G8B8A8_UNORM, noise.data(), noise.size(),
                                     ve::SamplerType::LinearRepeat, "cloud noise");
-    ve::log::info("Atmosphere: cloud noise generated in {:.0f} ms",
-                  std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
+    if (generated)
+        ve::log::info("Atmosphere: cloud noise generated in {:.0f} ms",
+                      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count());
 }
 
 void AtmospherePass::setSun(const ve::DirectionalLight* light) { sunObject = light ? &light->gameObject() : nullptr; }

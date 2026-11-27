@@ -78,6 +78,19 @@ void registerBuiltinTypes()
         t.field("intensity", &DirectionalLight::intensity).range(0.0f, 20.0f);
         t.field("castShadows", &DirectionalLight::castShadows);
     });
+    r.add<SpotLight>("SpotLight", [](TypeBuilder<SpotLight>& t) {
+        t.category("Rendering");
+        t.field("color", &SpotLight::color).color();
+        t.field("intensity", &SpotLight::intensity).range(0.0f, 500.0f).speed(0.2f);
+        t.field("range", &SpotLight::range).range(0.1f, 200.0f);
+        t.field("innerAngle", &SpotLight::innerAngle).range(0.0f, 89.0f).tooltip("degrees from the axis: full brightness inside");
+        t.field("outerAngle", &SpotLight::outerAngle).range(1.0f, 89.0f).tooltip("degrees from the axis: the cone's edge");
+        t.field("cookie", &SpotLight::cookie).assets(".png .jpg .jpeg .tga").tooltip("mask projected across the beam (rgb multiplies the light; circle = outer angle)");
+        t.field("chromaticAberration", &SpotLight::chromaticAberration).range(0.0f, 0.3f).speed(0.002f).tooltip("lens fringing: red edge outside, blue inside (0 = off)");
+        t.field("castShadows", &SpotLight::castShadows);
+        t.field("shadowBias", &SpotLight::shadowBias).range(0.0f, 0.2f).speed(0.001f);
+        t.onChanged([](SpotLight& s) { s.reload(); });
+    });
     r.add<PointLight>("PointLight", [](TypeBuilder<PointLight>& t) {
         t.category("Rendering");
         t.field("color", &PointLight::color).color();

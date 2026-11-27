@@ -28,25 +28,27 @@ namespace ve {
 
 class Scene;
 
+/// Marks an object as an instance of a prefab file (prefab::instantiate adds it):
+/// the editor and save games use it to know where the object came from.
 class PrefabInstance : public Component {
 public:
-    std::string prefab;      // asset path of the source
-    bool saveInGame = true;  // runtime-spawned instances are recreated by save games
+    std::string prefab;      ///< asset path of the source
+    bool saveInGame = true;  ///< runtime-spawned instances are recreated by save games
 };
 
 namespace prefab {
 
-// The object (+ persistent children/components) at the origin, as prefab JSON.
+/// The object (+ persistent children/components) at the origin, as prefab JSON.
 Json toJson(const GameObject& object);
 bool save(const GameObject& object, const std::string& path);
-// The prefab's JSON (cached after the first load); null if it can't be read.
+/// The prefab's JSON (cached after the first load); null if it can't be read.
 const Json* load(const std::string& path);
 void clearCache();
 
-// A new instance. id: the root's id (0 = a fresh one); children get ids derived from it.
+/// A new instance. id: the root's id (0 = a fresh one); children get ids derived from it.
 GameObject* instantiate(Scene& scene, const std::string& path, const glm::vec3& position = glm::vec3(0.0f),
                         const glm::quat& rotation = glm::quat(1, 0, 0, 0), GameObject* parent = nullptr, uint64_t id = 0);
-// Same, from prefab JSON already in hand (e.g. the editor's undo snapshots).
+/// Same, from prefab JSON already in hand (e.g. the editor's undo snapshots).
 GameObject* instantiateJson(Scene& scene, const Json& prefabJson, const std::string& path, const glm::vec3& position,
                             const glm::quat& rotation, GameObject* parent = nullptr, uint64_t id = 0);
 

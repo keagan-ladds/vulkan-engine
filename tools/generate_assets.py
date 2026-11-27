@@ -15,10 +15,13 @@ downloads (and so the engine's importers get exercised on real files):
                                               Idle and Walk animations (F2 animation test)
   sandbox/assets/models/rondavel.gltf (+.bin) round African hut: walls + thatched
                                               roof (one mesh, two materials) + door node
+  sandbox/assets/models/test_tree.gltf (+.bin, .model) small vertex-coloured tree cooked with an
+                                              automatic LOD and an impostor (model cooking test)
   sandbox/assets/audio/*.wav                  wind / fire / rain loops, pickup chime
 
 Requires Pillow (python3-pil) and numpy (terrain materials). Run from anywhere:
-    python3 tools/generate_assets.py
+    python3 tools/generate_assets.py               (everything)
+    python3 tools/generate_assets.py test_tree     (only the named generators)
 """
 import base64
 import json
@@ -159,10 +162,11 @@ class GltfBuilder:
         self.accessors.append(acc)
         return len(self.accessors) - 1
 
-    def primitive(self, pos, nrm, uv, idx, material):
-        return {"attributes": {"POSITION": self.accessor(pos, 3), "NORMAL": self.accessor(nrm, 3),
-                               "TEXCOORD_0": self.accessor(uv, 2)},
-                "indices": self.accessor(idx, 1, True), "material": material}
+    def primitive(self, pos, nrm, uv, idx, material, colors=None):
+        attributes = {"POSITION": self.accessor(pos, 3), "NORMAL": self.accessor(nrm, 3), "TEXCOORD_0": self.accessor(uv, 2)}
+        if colors:
+            attributes["COLOR_0"] = self.accessor(colors, 4)
+        return {"attributes": attributes, "indices": self.accessor(idx, 1, True), "material": material}
 
 
 def cylinder(r0, r1, y0, y1, seg, uv_repeat, gap=None):
@@ -251,6 +255,67 @@ def rondavel():
         f.write(g.bin)
     with open(out("models", "rondavel.gltf"), "w") as f:
         json.dump(gltf, f, indent=1)
+
+
+def test_tree():
+    """A small vertex-coloured tree in one mesh (one material), cooked with an
+    automatic LOD level and an impostor (test_tree.gltf.model): exercises
+    model cooking (the sandbox's own trees are generated in code)."""
+    g = GltfBuilder()
+    pos, nrm, uv, idx, col = [], [], [], [], []
+
+    def add(part, color):
+        p, n, u, i = part
+        base = len(pos)
+        pos.extend(p)
+        nrm.extend(n)
+        uv.extend(u)
+        col.extend([color] * len(p))
+        idx.extend(base + k for k in i)
+
+    def cap(y, r, seg, color, up):
+        """Closed disc at height y (the canopy's underside)."""
+        base = len(pos)
+        pos.append((0.0, y, 0.0))
+        nrm.append((0.0, 1.0 if up else -1.0, 0.0))
+        uv.append((0.5, 0.5))
+        col.append(color)
+        for k in range(seg + 1):
+            a = k / seg * 2 * math.pi
+            pos.append((math.cos(a) * r, y, -math.sin(a) * r))
+            nrm.append((0.0, 1.0 if up else -1.0, 0.0))
+            uv.append((0.5 + math.cos(a) * 0.5, 0.5 - math.sin(a) * 0.5))
+            col.append(color)
+        for k in range(seg):
+            a, b = base + 1 + k, base + 2 + k
+            idx.extend((base, a, b) if up else (base, b, a))
+
+    bark, leaf, leaf2 = (0.36, 0.25, 0.16, 1.0), (0.30, 0.45, 0.16, 1.0), (0.38, 0.52, 0.20, 1.0)
+    add(cylinder(0.22, 0.14, 0.0, 2.2, 10, 1.0), bark)
+    add(cylinder(2.0, 0.0, 1.9, 4.3, 16, 1.0), leaf)      # canopy cone...
+    cap(1.9, 2.0, 16, leaf, False)
+    add(cylinder(1.4, 0.0, 3.4, 5.2, 14, 1.0), leaf2)     # ...and a smaller one on top
+    cap(3.4, 1.4, 14, leaf2, False)
+    g.meshes.append({"name": "TestTree", "primitives": [g.primitive(pos, nrm, uv, idx, 0, col)]})
+    gltf = {
+        "asset": {"version": "2.0", "generator": "vulkan-engine tools/generate_assets.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"name": "TestTree", "mesh": 0}],
+        "meshes": g.meshes,
+        "materials": [{"name": "TestTreeColours", "pbrMetallicRoughness": {"metallicFactor": 0.0, "roughnessFactor": 0.9}}],
+        "buffers": [{"uri": "test_tree.bin", "byteLength": len(g.bin)}],
+        "bufferViews": g.buffer_views,
+        "accessors": g.accessors,
+    }
+    with open(out("models", "test_tree.bin"), "wb") as f:
+        f.write(g.bin)
+    with open(out("models", "test_tree.gltf"), "w") as f:
+        json.dump(gltf, f, indent=1)
+    with open(out("models", "test_tree.gltf.model"), "w") as f:
+        json.dump({"autoLods": 1, "impostor": True, "impostorFrames": 8, "impostorResolution": 64,
+                   "impostorBackground": [0.32, 0.45, 0.18]}, f, indent=2)
+        f.write("\n")
 
 
 # --------------------------------------------------------------------------- audio
@@ -517,6 +582,95 @@ def terrain_textures(size=512):
     albedo = albedo * (0.55 + 0.45 * cracks[..., None])
     rough = 0.72 + 0.15 * mid + 0.1 * (1 - cracks)
     save("rock", albedo, height, rough, 14.0)
+
+
+
+# --------------------------------------------------------------------------- grime masks
+def grime_masks(size=1024):
+    """Greyscale grime masks (white = grime) in textures/grime/.
+
+    *_gradient_*: wall dirt that fades with height. They tile left-right; the
+    top and bottom are the ends of the gradient (map V over the wall's height).
+    *_patches_*: blotches that tile both ways, to blend one material into
+    another (rust patches over painted metal, moss over stone...).
+    The `_mask` suffix makes the engine load them as data (BC4 when cooked)."""
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    k = np.fft.fftfreq(size) * size  # integer frequencies: the result wraps around exactly
+    kx, ky = np.meshgrid(k, k)
+
+    def noise(beta=2.0, lo=1.0, hi=None, stretch=1.0):
+        """Periodic noise with a 1/f^beta spectrum, normalised to 0..1.
+        stretch > 1 elongates features vertically (streaks)."""
+        r = np.sqrt(kx ** 2 + (ky * stretch) ** 2)
+        amp = np.where(r >= lo, np.maximum(r, 1e-6) ** (-beta / 2.0 - 0.5), 0.0)
+        if hi:
+            amp *= np.exp(-(r / hi) ** 2)
+        spectrum = amp * np.exp(2j * np.pi * rng.random((size, size)))
+        v = np.real(np.fft.ifft2(spectrum))
+        return (v - v.min()) / (v.max() - v.min())
+
+    def warp(img, strength, beta=2.2):
+        """Domain warp (periodic): organic, smeared shapes instead of plain blobs."""
+        dx = (noise(beta) - 0.5) * strength * size
+        dy = (noise(beta) - 0.5) * strength * size
+        ys, xs = np.mgrid[0:size, 0:size].astype(np.float64)
+        sx = (xs + dx) % size
+        sy = (ys + dy) % size
+        x0, y0 = np.floor(sx).astype(int), np.floor(sy).astype(int)
+        tx, ty = sx - x0, sy - y0
+        x1, y1 = (x0 + 1) % size, (y0 + 1) % size
+        a = img[y0, x0] * (1 - tx) + img[y0, x1] * tx
+        b = img[y1, x0] * (1 - tx) + img[y1, x1] * tx
+        return a * (1 - ty) + b * ty
+
+    def smoothstep(e0, e1, v):
+        t = np.clip((v - e0) / (e1 - e0), 0.0, 1.0)
+        return t * t * (3 - 2 * t)
+
+    def patches(base_beta, lo, coverage, softness, edge_detail, seed_shift=0, interior=0.25):
+        """Blotches covering about `coverage` of the image, with ragged edges."""
+        field = warp(noise(base_beta, lo=lo), 0.08) * (1 - edge_detail) + noise(1.2, lo=8) * edge_detail
+        t = np.quantile(field, 1.0 - coverage)
+        m = smoothstep(t - softness, t + softness, field)
+        # Some variation inside the patches (still near white), none outside.
+        return m * (1.0 - interior + interior * noise(1.6, lo=4))
+
+    def save(name, v):
+        v = np.clip(v, 0.0, 1.0)
+        Image.fromarray((v * 255.0 + 0.5).astype(np.uint8), "L").save(out("textures", "grime", name + "_mask.png"), optimize=True)
+
+    y = np.linspace(0.0, 1.0, size)[:, None]  # 0 = top of the image, 1 = bottom
+
+    # 1. Rising damp / splash-back: dirt from the ground up, ragged top edge.
+    height = 1.0 - y  # 0 at the bottom
+    edge = 0.35 + (noise(1.8, lo=2) - 0.5) * 0.35 + (noise(1.2, lo=16) - 0.5) * 0.12
+    m = 1.0 - smoothstep(edge - 0.18, edge + 0.04, height)
+    m *= 0.55 + 0.45 * warp(noise(2.0, lo=3), 0.05)
+    m = np.maximum(m, (1.0 - smoothstep(0.0, 0.06 + 0.1 * noise(1.6, lo=4), height)) * (0.7 + 0.3 * noise(1.4, lo=8)))
+    save("grime_gradient_ground", m)
+
+    # 2. Rain streaks: dirt washed down from the top, in vertical runs.
+    streaks = noise(1.6, lo=2, stretch=10.0)
+    streaks = smoothstep(0.35, 0.85, streaks)
+    fade = (1.0 - smoothstep(0.0, 0.35 + 0.55 * noise(2.0, lo=2, stretch=6.0), y)) ** 1.2
+    top = (1.0 - smoothstep(0.0, 0.03 + 0.07 * noise(1.6, lo=4), y)) * (0.5 + 0.5 * noise(1.4, lo=8))
+    m = np.maximum(streaks * fade, top * 0.8) * (0.7 + 0.3 * noise(1.4, lo=6))
+    save("grime_gradient_streaks", m)
+
+    # 3. Soft overall gradient (dark at the bottom), broken up by blotches: general wear.
+    m = smoothstep(0.1, 1.0, y) ** 1.5
+    m = np.clip(m * 0.75 + (warp(noise(2.0, lo=2), 0.1) - 0.5) * 0.6 * (0.3 + 0.7 * y), 0.0, 1.0)
+    save("grime_gradient_soft", m)
+
+    # 4. Patches: medium blotches with ragged edges (rust on a roof sheet).
+    save("grime_patches", patches(2.4, 2, coverage=0.35, softness=0.04, edge_detail=0.25))
+    # 5. Large soft blotches (broad weathering, moss, water stains).
+    save("grime_patches_large", patches(2.6, 2, coverage=0.45, softness=0.1, edge_detail=0.1))
+    # 6. Small spots and pitting, harder edges (rust spots, flaking paint).
+    spots = patches(1.6, 6, coverage=0.22, softness=0.02, edge_detail=0.35, interior=0.15)
+    save("grime_patches_spots", spots)
 
 
 # --------------------------------------------------------------------------- skinned villager
@@ -841,14 +995,49 @@ def villager():
         json.dump(gltf, f, indent=1)
 
 
+def torch_cookie(size=256):
+    """Spot light cookie (ve::SpotLight::cookie) for the player's torch: an
+    old, badly focused torch. Centre = the beam's axis, the inscribed circle =
+    the outer cone angle. A dim hole where the bulb blocks the reflector, a
+    hot ring around it, ripples from a dented reflector, uneven blotches
+    around the ring, then a wide dim spill fading to black at the edge.
+    Grey (the light's colour tints it); *_mask = linear data. Pure Python."""
+    rnd = random.Random(4711)
+    lobes = [(rnd.uniform(0.04, 0.10), rnd.randint(2, 7), rnd.uniform(0.0, 6.283)) for _ in range(5)]
+    blots = [(rnd.uniform(-0.6, 0.6), rnd.uniform(-0.6, 0.6), rnd.uniform(0.08, 0.2), rnd.uniform(-0.25, 0.2)) for _ in range(7)]
+    smooth = lambda e0, e1, x: (lambda t: t * t * (3.0 - 2.0 * t))(min(max((x - e0) / (e1 - e0), 0.0), 1.0))
+    data = []
+    for y in range(size):
+        for x in range(size):
+            u, v = (x + 0.5) / size * 2.0 - 1.0, (y + 0.5) / size * 2.0 - 1.0
+            r, a = math.hypot(u, v), math.atan2(v, u)
+            # The reflector's shape, wobbling with the angle (dents).
+            rr = r * (1.0 + sum(amp * math.sin(k * a + ph) for amp, k, ph in lobes) * 0.2)
+            hot = math.exp(-((rr - 0.24) / 0.08) ** 2)                  # bright ring
+            core = 0.4 + 0.6 * smooth(0.03, 0.17, rr)                 # bulb shadow in the middle
+            spill = 0.3 * (1.0 - smooth(0.3, 1.0, rr))                # unfocused halo
+            ripple = 1.0 + 0.14 * math.sin(rr * 52.0) * (1.0 - smooth(0.3, 0.9, rr))
+            val = (0.5 * core * (1.0 - smooth(0.22, 0.5, rr)) + 0.42 * hot + spill) * ripple
+            for bx, by, br, bs in blots:                                 # smudges on the lens
+                val *= 1.0 + bs * math.exp(-((u - bx) ** 2 + (v - by) ** 2) / (br * br))
+            val *= 1.0 - smooth(0.88, 1.0, r)                            # black outside the circle
+            data.append(int(min(max(val, 0.0), 1.0) * 255.0 + 0.5))
+    img = Image.new("L", (size, size))
+    img.putdata(data)
+    img.save(out("textures", "torch_cookie_mask.png"))
+
+
+GENERATORS = [villager, terrain_textures, decal_textures, lut_neutral, textures, reed_screen, rondavel, test_tree, audio,
+              footsteps, torch_cookie, grime_masks]
+
 if __name__ == "__main__":
-    villager()
-    terrain_textures()
-    decal_textures()
-    lut_neutral()
-    textures()
-    reed_screen()
-    rondavel()
-    audio()
-    footsteps()
+    # Every generator, or only the ones named: python3 tools/generate_assets.py test_tree rondavel
+    import sys
+    wanted = sys.argv[1:]
+    unknown = [w for w in wanted if w not in {g.__name__ for g in GENERATORS}]
+    if unknown:
+        sys.exit("unknown generator(s): %s (have: %s)" % (", ".join(unknown), ", ".join(g.__name__ for g in GENERATORS)))
+    for generate in GENERATORS:
+        if not wanted or generate.__name__ in wanted:
+            generate()
     print("Assets written to", os.path.normpath(ROOT))

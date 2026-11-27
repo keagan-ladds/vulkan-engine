@@ -50,6 +50,8 @@ Player::Player() : GameObject("Player")
     in.bindAction("ToggleFly", Key::F);
     in.bindAction("Shoot", Key::V);
     in.bindAction("Shoot", ve::GamepadButton::LeftShoulder);
+    in.bindAction("Torch", Key::T);
+    in.bindAction("Torch", ve::GamepadButton::DPadDown);
     // Gamepad (Xbox layout): left stick moves, right stick looks.
     in.bindAction("Jump", ve::GamepadButton::A);
     in.bindAction("Use", ve::GamepadButton::X);
@@ -86,7 +88,42 @@ void Player::start()
     cam.fovDegrees = 65.0f;
     cam.nearPlane = 0.1f;
     cam.farPlane = 4000.0f;
+    // A torch held a little right of and below the eyes (a ve::SpotLight
+    // shines along its object's forward, like the camera): T / pad d-pad down.
+    ve::GameObject& torch = scene().spawn("Flashlight"); // (not "Torch": the camp torches are found by that name)
+    torch.setParent(&head, false);
+    torch.transform().setLocalPosition({0.25f, -0.2f, 0.0f});
+    auto& beam = torch.addComponent<ve::SpotLight>();
+    beam.color = {1.0f, 0.9f, 0.75f};
+    beam.intensity = 40.0f;
+    beam.range = 30.0f;
+    beam.castShadows = true;
+    // An old torch: the cookie shapes the beam (dim bulb hole, hot ring,
+    // dented-reflector ripples, a wide dim spill) and the cheap lens fringes
+    // it red outside / blue inside. The cone itself is only the outer edge
+    // now. SAVANNA_TORCH_COOKIE=0: the plain cone, for comparison.
+    if (ve::env::flag("SAVANNA_TORCH_COOKIE", true)) {
+        beam.innerAngle = 26.0f;
+        beam.outerAngle = 32.0f;
+        beam.cookie = "textures/torch_cookie_mask.png";
+        beam.chromaticAberration = 0.03f;
+    } else {
+        beam.innerAngle = 12.0f;
+        beam.outerAngle = 24.0f;
+    }
+    beam.enabled = ve::env::flag("SAVANNA_TORCH"); // SAVANNA_TORCH=1: start with it on (screenshots)
+    m_torch = &beam;
     input().setMouseCaptured(true);
+}
+
+ve::SpotLight* Player::torch() const
+{
+    return m_torch.get(scene());
+}
+
+void Player::setTorch(bool on)
+{
+    if (ve::SpotLight* t = torch()) t->enabled = on;
 }
 
 void Player::setThrowable(std::shared_ptr<ve::Mesh> mesh, std::shared_ptr<ve::Material> material, ve::Collider collider)
@@ -215,6 +252,9 @@ void Player::update(float)
 {
     ve::Input& in = input();
     // (Escape opens the pause menu and Tab the inventory: MainMenu.hpp, Inventory.hpp.)
+    if (in.actionPressed("Torch")) {
+        if (ve::SpotLight* t = torch()) t->enabled = !t->enabled;
+    }
 
     // Look (always in real time, unaffected by Time::timeScale).
     if (in.mouseCaptured()) {

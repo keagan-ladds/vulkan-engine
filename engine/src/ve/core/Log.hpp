@@ -19,9 +19,11 @@ namespace ve::log {
 enum class Level { Trace, Info, Warn, Error };
 
 void write(Level level, std::string_view message);
-// Logs a warning the first time this exact message is seen (data errors that
-// would otherwise repeat every frame or on every rebuild).
+/// Logs a warning the first time this exact message is seen (data errors that
+/// would otherwise repeat every frame or on every rebuild).
 void warnOnce(std::string_view message);
+/// Logs an info line the first time this exact message is seen (hints).
+void infoOnce(std::string_view message);
 
 template <class... Args>
 void trace(std::format_string<Args...> fmt, Args&&... args)

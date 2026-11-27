@@ -23,7 +23,103 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `texel.xyz * 2 - 1`. Cooked normal maps are BC5 (X and Y only); the helper
   rebuilds Z and gives the same result for uncooked maps.
 
+### Changed
+- **Mesh pipelines compile in the background.** A shader's pipelines are
+  built on the job pool from when it's created (`RendererSettings::
+  asyncPipelines`, env `VE_ASYNC_PIPELINES=0` to turn off): no frame hitch on
+  a shader's first draw, but `Shader::pipeline()` can return null and objects
+  using it are skipped until it's ready. Custom passes binding
+  `shader->pipeline(kind)` themselves must skip a null pipeline. Loading
+  screens wait for pending compiles ("Compiling shaders").
+- **Start-up and loading stay responsive.** The window appears with the first
+  frame instead of sitting black while the engine starts. The loading screen
+  (or the editor's progress panel) is drawn before any load step runs. Objects
+  spawned while loading start within a ~50 ms budget per frame
+  (`Scene::startPending(budgetMs)`), Foliage builds one layer's meshes per
+  frame, and the clouds' noise is cached in `cooked/generated/`. Savanna
+  (Debug, software GPU): the longest loading frame went from 4 s to under 1 s.
+  Loading itself can take a little longer: the navmesh is now built with the
+  vegetation already placed, rather than rebuilt after loading.
+
 ### Added
+- **Blender: VE Painted materials export with the model.** Installed as an
+  add-on, `tools/blender/ve_painted_node_group.py` writes the `.material` file
+  of every VE Painted material a glTF export includes (into the `assets`
+  folder the .gltf is saved under), and the VE Engine panel gains **Export all
+  VE materials**.
+- **Blender: exact preview of the painted overlays.** The VE Painted example
+  material samples grunge / dirt / wear world-space triplanar, as the engine
+  does (Box projection was wrong on rotated or joined objects); **Convert
+  overlays to triplanar** rewires existing materials. Exporting from a .blend
+  whose VE Painted group is older than the add-on no longer fails (missing
+  inputs export their defaults, with a warning).
+- **Blender: normal map fixes.** A normal-map input at strength 0 no longer
+  bends the preview whatever colour its socket holds; Create / update resets
+  unconnected normal inputs to flat. The export warns when a normal map's
+  name (or `.texture` file) won't make the engine load it as a normal map, and
+  leaves out a baked normal at strength 0.
+- **Spot light cookies and chromatic aberration** (`SpotLight::cookie`,
+  `cookieTexture`, `chromaticAberration`): a mask projected across the beam
+  (an old, badly focused torch: rings, a bulb hole, smudges) and red / blue
+  lens fringes at the cone's and the cookie's edges. They also show in
+  volumetric fog. New shader helper `veSpotColor(L, l)` (vec3); `veSpotFactor`
+  stays a float (now including the cookie's pattern). Editor fields on the
+  SpotLight inspector. Savanna: the player's torch uses
+  `textures/torch_cookie_mask.png` (`SAVANNA_TORCH_COOKIE=0`: plain cone).
+- **Cooked models, LODs and impostors.** glTF models cook to `.vemodel` in
+  the cook cache (no glTF parsing at load; the sandbox villager loads in
+  0.7 ms). An optional `<model>.model` file asks for generated LOD levels
+  (`autoLods`), a baked octahedral impostor and material remaps
+  (`"materials": {"Bark": "materials/bark.material"}`); `vecook` cooks those
+  on a headless renderer (a game run cooks them on first load otherwise), and
+  `FoliageType` uses the cooked levels and impostor instead of baking at load.
+  Packaging ships the cooked model without its `.bin` / `.model` files, and
+  now includes `cooked/generated/`. New API: `ve::ModelData`, `parseGltf`,
+  `buildModel`, `ModelSettings` (`assets/ModelData.hpp`), `assets/ModelCook.hpp`,
+  `Model::cookedLods`, `impostorFromCooked`, `log::infoOnce`, `core/BinaryIO.hpp`.
+- **Spot lights** (`ve::SpotLight`): torches, headlights, street lamps. A cone
+  (`innerAngle` / `outerAngle`, degrees) along the object's forward, with
+  range, intensity and optional shadows (only the cube faces the cone
+  reaches); beams show in volumetric fog. Editor: Create > Light > Spot light,
+  with a cone gizmo. Custom shaders with their own point-light loop should
+  multiply by `veSpotFactor(L, l)` (the game template's toon shader does).
+  The sandbox player has a torch (T / pad d-pad down).
+- **Scene files load in the background.** `Engine::addSceneLoad(name, path,
+  then)` reads and parses the file on the job pool, then creates its objects
+  a time slice per frame; `then(roots)` runs before any of them start (adjust
+  them, spawn what goes with them). Built on `SceneSerializer::loadAsync`
+  (`SceneLoad`), `Engine::addLoadStepOverFrames` (a load step spanning frames;
+  later steps wait) and `Scene::holdStarts()`. The sandbox loads its level
+  this way.
+- **API reference and documented headers.** Every public header declaration
+  now has a doc comment (`///`, shown by IntelliSense / clangd);
+  `cmake --build build --target docs` builds an HTML reference with Doxygen
+  (when installed). `python3 tools/check_docs.py --changed` lists
+  undocumented declarations in the headers a branch touches.
+- **Hooks for loading and compile UI.** `Engine::loadEvents()` (Began, step
+  started / finished, task finished, Ended) and `Renderer::compileEvents()` /
+  `compileStatus()` (pipelines and hot-reloaded shaders: started / finished /
+  failed, pending counts), built on a new `ve::Event` / `ve::Subscription`
+  (`core/Event.hpp`). The sandbox HUD shows a "Compiling shaders" note with
+  them. `Renderer::waitForPipelines()` for screenshots and tests.
+- **Release packaging and archives.** `vecook --package <dir>` writes a
+  shippable folder: the game, its runtime libraries and `data.vepak` (zstd;
+  assets with images / sounds as their cooked copies only, cooked files,
+  shaders; no `.texture` / `.audio` / `.blend` / hidden files or
+  `assets/.vepackignore` matches). `--loose` writes folders instead. The
+  engine mounts `<exe>/*.vepak` at start (`EngineConfig::mountArchives`); all
+  engine file reads go through the new `ve::vfs` (disk first, then archives),
+  so game code reading its own files should use `vfs::read` / `vfs::open` /
+  `vfs::exists` too. New: `AssetManager::loadPixels` (CPU pixels, also from a
+  cooked copy), `ve::Cooker` / `registerCooker` (cooker registry used by
+  vecook). `AssetManager::exists` now also counts an asset whose cooked copy
+  is all that exists.
+- **Audio cooking.** WAV and FLAC sounds are cooked into Ogg Vorbis like
+  textures (on demand and by `vecook`; ~10-15x smaller, lengths sample-exact
+  so loops stay seamless), tuned per sound with an optional `<sound>.audio`
+  file (quality, mono, sampleRate, compress). Ogg Vorbis files now play
+  (miniaudio's stb_vorbis is compiled in). `AssetManager::textureStats()` is
+  now `cookStats()` (textures and sounds).
 - **Asset cooking (textures).** Images are cooked into GPU-ready KTX2 files
   (BC7 colour, BC5 normal maps, BC4 greyscale data, prebuilt mips) in
   `<exe>/cooked`: automatically on a worker thread the first time they load,
@@ -35,7 +131,14 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 - **Blender node group for the painted shader**
   (`tools/blender/ve_painted_node_group.py`): "VE Painted" reproduces
   `standard_painted.frag` in Blender so painted assets look the same while you
-  paint; `tools/blender/test_ve_painted.py` checks the two agree.
+  paint; `tools/blender/test_ve_painted.py` checks the two agree. Its
+  "Export VE material" button (Material tab > VE Engine; also installable as
+  an add-on) writes the engine's `.material` file from the node.
+- **Baked normal for `standard_painted.frag`**: texture slot 8 (params slot
+  9: strength, UV scale) takes a per-asset normal map on the mesh's own UVs,
+  whiteout-blended over the material's tiled normal map: a generic tiled
+  surface plus damage baked per asset. The Blender node group has matching
+  "Baked Normal" inputs and the material export writes them.
 - **`standard_painted.frag`**: the standard shader plus vertex-painted dirt
   (R), wear (G) and wetness (B), with optional triplanar dirt / grunge / wear
   textures; use it from a material file (`"fragmentShader"`). A placeholder
@@ -75,6 +178,15 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `TerrainBiome`, `TerrainMaterial`.
 
 ### Fixed
+- **Blue, prop-shaped "shadows" on walls next to props** (and a blue rim along
+  the bottom edge of objects). The ambient ground-bounce check (`veAmbient`)
+  read the sun shadow at one point 2 m out along the normal, so a crate's sun
+  shadow in that spot removed the warm bounce and printed the crate's outline
+  in sky blue on the wall, and downward faces sampled underground. It now
+  averages four lookups 1.5 m above the surface, around a point 2.5 m out
+  horizontally: props under ~1.5 m can't affect it, and the shade of terrain,
+  huts and trees still removes the bounce, as a soft gradient. Savanna:
+  `SAVANNA_BOUNCETEST=1` (wall + cubes).
 - Vulkan validation error "SPIR-V Capability DemoteToHelperInvocation":
   the device now enables `shaderDemoteToHelperInvocation` (a Vulkan 1.3 core
   feature the shaders already used).

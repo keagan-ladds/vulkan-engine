@@ -5,13 +5,66 @@
   "roughness": 0.9,
   "vertexColorWeight": 0.0,
   "textures": [
-    {"slot": 5, "path": "textures/ground/soil_albedo.png"},
-    {"slot": 6, "path": "textures/ground_detail.png"}
+    {
+      "slot": 5,
+      "path": "textures/ground/soil_albedo.png"
+    },
+    {
+      "slot": 6,
+      "path": "textures/ground_detail.png"
+    },
+    {
+      "slot": 8,
+      "path": "textures/decals/crack_normal.png"
+    }
   ],
   "params": [
-    {"slot": 4, "value": [1.0, 1.0, 1.0, 0.8]},
-    {"slot": 5, "value": [0.7, 0.62, 0.55, 0.95]},
-    {"slot": 6, "value": [0.3, 0.2, 0.13, 0.85]},
-    {"slot": 7, "value": [0.6, 3.0, 0.65, 0.2]}
-  ]
+    {
+      "slot": 4,
+      "value": [
+        1.0,
+        1.0,
+        1.0,
+        0.8
+      ]
+    },
+    {
+      "slot": 5,
+      "value": [
+        0.7,
+        0.62,
+        0.55,
+        0.95
+      ]
+    },
+    {
+      "slot": 6,
+      "value": [
+        0.3,
+        0.2,
+        0.13,
+        0.85
+      ]
+    },
+    {
+      "slot": 7,
+      "value": [
+        0.6,
+        3.0,
+        0.65,
+        0.2
+      ]
+    },
+    {
+      "slot": 9,
+      "value": [
+        1.0,
+        0.5,
+        0.8,
+        0.0
+      ]
+    }
+  ],
+  "normal": "textures/ground/rock_normal.png",
+  "normalStrength": 1.0
 }

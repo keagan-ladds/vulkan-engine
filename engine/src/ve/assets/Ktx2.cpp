@@ -1,5 +1,8 @@
 #include "ve/assets/Ktx2.hpp"
 
+#include "ve/assets/Cook.hpp"
+#include "ve/core/FileSystem.hpp"
+
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -159,29 +162,15 @@ bool writeKtx2(const std::filesystem::path& file, const Ktx2Texture& t, std::str
     w.put64(index + 16, 0); // no supercompression global data
     w.put64(index + 24, 0);
 
-    // Write next to the target and rename: a reader (or a crash) never sees half a file.
-    std::filesystem::path tmp = file;
-    tmp += ".tmp";
-    std::error_code ec;
-    std::filesystem::create_directories(file.parent_path(), ec);
-    {
-        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-        if (!out) return fail(error, "can't write " + tmp.string());
-        out.write(reinterpret_cast<const char*>(w.bytes.data()), std::streamsize(w.bytes.size()));
-        if (!out) return fail(error, "can't write " + tmp.string());
-    }
-    std::filesystem::rename(tmp, file, ec);
-    if (ec) {
-        std::filesystem::remove(tmp, ec);
-        return fail(error, "can't replace " + file.string());
-    }
-    return true;
+    // (Via a temporary file + rename: a reader, or a crash, never sees half a file.)
+    return writeFileReplacing(file, w.bytes.data(), w.bytes.size(), error);
 }
 
 bool readKtx2(const std::filesystem::path& file, Ktx2Texture& t, bool headerOnly, std::string* error)
 {
-    std::ifstream in(file, std::ios::binary);
-    if (!in) return fail(error, "can't open " + file.string());
+    const std::unique_ptr<std::istream> stream = vfs::open(file); // (disk, or a packaged game's archive)
+    if (!stream) return fail(error, "can't open " + file.string());
+    std::istream& in = *stream;
     uint8_t head[kHeaderSize];
     if (!in.read(reinterpret_cast<char*>(head), kHeaderSize) || std::memcmp(head, kIdentifier, 12) != 0)
         return fail(error, file.string() + " is not a KTX2 file");

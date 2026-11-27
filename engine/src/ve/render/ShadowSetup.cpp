@@ -141,7 +141,15 @@ void ShadowSetup::buildPointFaces(FrameData& frame, uint32_t lightIndex, uint32_
     static const glm::vec3 dirs6[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
     static const glm::vec3 ups6[6] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
     const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, 0.05f, range);
+    // Spot lights: only the faces the cone reaches (a face spans 45 degrees
+    // from its axis to an edge, ~55 to a corner).
+    const bool spot = gpu.spot.w > -1.5f;
+    const float coneAngle = spot ? std::acos(std::clamp(gpu.spot.w, -1.0f, 1.0f)) : 0.0f;
     for (uint32_t f = 0; f < 6; ++f) {
+        if (spot) {
+            const float axisAngle = std::acos(std::clamp(glm::dot(glm::vec3(gpu.spot), dirs6[f]), -1.0f, 1.0f));
+            if (axisAngle > coneAngle + glm::radians(55.0f)) continue; // the cone can't reach this face
+        }
         const glm::mat4 vp = proj * glm::lookAt(pos, pos + dirs6[f], ups6[f]);
         frame.lights->shadowViews[firstView + f] = vp;
         ShadowView sv;

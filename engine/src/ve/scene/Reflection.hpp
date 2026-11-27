@@ -44,38 +44,42 @@ class Scene;
 
 using Json = nlohmann::json;
 
-// Asset: a path string (assetFilter lists extensions). Json: anything else, edited as JSON text.
+/// Asset: a path string (assetFilter lists extensions). Json: anything else, edited as JSON text.
 enum class FieldKind { Bool, Int, Float, Vec2, Vec3, Vec4, Color3, Color4, String, Enum, Asset, Json };
 
+/// One reflected field of a type: how to read, write and edit it (scene files, the inspector).
 struct FieldInfo {
-    std::string name;
-    FieldKind kind = FieldKind::Float;
-    std::function<Json(const void*)> get;        // object -> JSON value
-    std::function<void(void*, const Json&)> set; // JSON value -> object
-    std::function<void*(void*)> address;         // direct pointer for POD kinds (inspector), may be null
-    float min = 0.0f, max = 0.0f;                // range; min == max: unbounded
-    float speed = 0.05f;                         // drag speed in the inspector
-    std::vector<std::string> enumNames;
-    std::string assetFilter;                     // Asset: extensions, e.g. ".wav .ogg"
-    std::string tooltip;
-    bool readOnly = false;
-    bool hidden = false; // saved and loaded, not shown in the inspector (e.g. bulk data)
+    std::string name;  ///< The field's name in scene files and the inspector.
+    FieldKind kind = FieldKind::Float;  ///< How it's stored and edited.
+    std::function<Json(const void*)> get;        ///< object -> JSON value
+    std::function<void(void*, const Json&)> set; ///< JSON value -> object
+    std::function<void*(void*)> address;         ///< direct pointer for POD kinds (inspector), may be null
+    float min = 0.0f;                            ///< Inspector range minimum (min == max: unbounded).
+    float max = 0.0f;                            ///< Inspector range maximum (min == max: unbounded).
+    float speed = 0.05f;                         ///< drag speed in the inspector
+    std::vector<std::string> enumNames;  ///< Enum: the display name of each value (index = the enum's integer value).
+    std::string assetFilter;                     ///< Asset: extensions, e.g. ".wav .ogg"
+    std::string tooltip;  ///< Shown when hovering the field in the inspector.
+    bool readOnly = false;  ///< Shown in the inspector but not editable.
+    bool hidden = false; ///< saved and loaded, not shown in the inspector (e.g. bulk data)
 };
 
+/// A reflected type: its name, how to create it, and its fields (TypeRegistry).
 struct TypeInfo {
-    std::string name;
-    std::string category = "General";
-    std::type_index type = typeid(void);
-    bool isComponent = false;
-    // A plain settings struct (neither GameObject nor Component), e.g. a
-    // TerrainBiome: described for asset files and the editor, never spawned.
+    std::string name;  ///< The registered name (the "type" in scene files).
+    std::string category = "General";  ///< Where the editor lists it in its Create / Add Component menus.
+    std::type_index type = typeid(void);  ///< The C++ type.
+    bool isComponent = false;  ///< A Component (else a GameObject class or a data struct).
+    /// A plain settings struct (neither GameObject nor Component), e.g. a
+    /// TerrainBiome: described for asset files and the editor, never spawned.
     bool isData = false;
-    bool creatable = false; // default constructible
-    std::vector<FieldInfo> fields;
-    std::function<Component*(GameObject&)> addTo;    // components
-    std::function<GameObject*(Scene&)> spawn;         // GameObject classes
-    std::function<void(void*)> onChanged;             // after an edit / load (may be null)
+    bool creatable = false; ///< default constructible
+    std::vector<FieldInfo> fields;  ///< The reflected fields, in registration order.
+    std::function<Component*(GameObject&)> addTo;    ///< components
+    std::function<GameObject*(Scene&)> spawn;         ///< GameObject classes
+    std::function<void(void*)> onChanged;             ///< after an edit / load (may be null)
 
+    /// The field called `n`, or null.
     const FieldInfo* field(const std::string& n) const
     {
         for (const auto& f : fields) {
@@ -87,21 +91,29 @@ struct TypeInfo {
 
 class TypeRegistry;
 
-// Fluent field options returned by TypeBuilder::field().
+/// Fluent field options returned by TypeBuilder::field().
 class FieldRef {
 public:
+    /// Made by TypeBuilder::field() and friends.
     FieldRef(TypeInfo& info, size_t index) : m_info(&info), m_index(index) {}
+    /// Clamps edits in the inspector to [min, max].
     FieldRef& range(float min, float max) { f().min = min; f().max = max; return *this; }
+    /// Inspector drag speed (value change per pixel dragged).
     FieldRef& speed(float s) { f().speed = s; return *this; }
-    FieldRef& color() // vec3 / vec4 shown as a colour picker
+    /// Shows a vec3 / vec4 field as a colour picker (values are linear RGB(A)).
+    FieldRef& color()
     {
         if (f().kind == FieldKind::Vec3) f().kind = FieldKind::Color3;
         if (f().kind == FieldKind::Vec4) f().kind = FieldKind::Color4;
         return *this;
     }
+    /// Hover text for the field in the inspector.
     FieldRef& tooltip(std::string t) { f().tooltip = std::move(t); return *this; }
+    /// Marks a string field as an asset path; `extensions` filters the picker, e.g. ".png .jpg".
     FieldRef& assets(std::string extensions) { f().assetFilter = std::move(extensions); return *this; }
+    /// Shown but not editable in the inspector.
     FieldRef& readOnly() { f().readOnly = true; return *this; }
+    /// Saved and loaded, not shown in the inspector.
     FieldRef& hidden() { f().hidden = true; return *this; }
 
 private:
@@ -121,7 +133,7 @@ Json vecToJson(const V& v)
     for (int i = 0; i < V::length(); ++i) a.push_back(v[i]);
     return a;
 }
-// Whether a JSON value can be read as a scalar field of type M.
+/// Whether a JSON value can be read as a scalar field of type M.
 template <class M>
 bool jsonHolds(const Json& j)
 {
@@ -140,17 +152,24 @@ V vecFromJson(const Json& j, const V& fallback)
 } // namespace detail
 
 template <class T>
+/// Describes type T's fields for TypeRegistry::add's build function:
+///     registry.add<Torch>("Torch", [](ve::TypeBuilder<Torch>& t) {
+///         t.category("Lights");
+///         t.field("intensity", &Torch::intensity).range(0, 20);
+///     });
 class TypeBuilder {
 public:
+    /// Made by the TypeRegistry.
     explicit TypeBuilder(TypeInfo& info) : m_info(info) {}
 
+    /// Menu category in the editor ("Lights", "Gameplay"...).
     TypeBuilder& category(std::string c)
     {
         m_info.category = std::move(c);
         return *this;
     }
 
-    // `member` may belong to T or to a base of T (shared settings structs).
+    /// `member` may belong to T or to a base of T (shared settings structs).
     template <class M, class C>
     FieldRef field(const char* name, M C::*member)
     {
@@ -197,6 +216,8 @@ public:
     }
 
     template <class E, class C>
+    /// Registers an enum member, shown as a drop-down.
+    /// @param names display name of each enum value, in value order (0, 1, 2...).
     FieldRef enumField(const char* name, E C::*member, std::vector<std::string> names)
     {
         static_assert(std::is_enum_v<E>, "enumField needs an enum member");
@@ -212,7 +233,7 @@ public:
         return push(std::move(fi));
     }
 
-    // Custom property with JSON accessors (Asset kind: a path string).
+    /// Custom property with JSON accessors (Asset kind: a path string).
     FieldRef property(const char* name, FieldKind kind, std::function<Json(const T&)> getter,
                       std::function<void(T&, const Json&)> setter)
     {
@@ -224,6 +245,7 @@ public:
         return push(std::move(fi));
     }
 
+    /// Called after the inspector edits a field or a scene file applies fields (rebuild what depends on them).
     TypeBuilder& onChanged(std::function<void(T&)> fn)
     {
         m_info.onChanged = [fn](void* o) { fn(*static_cast<T*>(o)); };
@@ -239,17 +261,28 @@ private:
     TypeInfo& m_info;
 };
 
+/// The reflection registry: every type scene files and the editor can create,
+/// with its fields. Types register once at startup (registerAllTypes and the
+/// game's own registration).
 class TypeRegistry {
 public:
+    /// The registry (one per process).
     static TypeRegistry& get();
 
     template <class T>
+    /// Registers T under `name`; `build` describes its fields (run lazily, on first use).
+    /// T must be default constructible to be created from scene files.
     void add(const std::string& name, void (*build)(TypeBuilder<T>&));
 
+    /// The type registered as `name`, or null.
     const TypeInfo* find(const std::string& name);
+    /// The registration of a C++ type, or null.
     const TypeInfo* find(std::type_index type);
+    /// The most derived registered type of a component, or null.
     const TypeInfo* of(const Component& c);
+    /// The most derived registered type of an object, or null.
     const TypeInfo* of(const GameObject& o);
+    /// Every registered Component type (components = true) or GameObject / data type (false).
     std::vector<const TypeInfo*> all(bool components);
 
 private:
@@ -264,9 +297,9 @@ private:
     std::unordered_map<std::type_index, Entry*> m_byType;
 };
 
-// The scene module's own types (GameObject, Camera, lights, ModelInstance,
-// PrimitiveRenderer, PrefabInstance). Other modules register theirs with their
-// own registerXTypes(TypeRegistry&) (e.g. registerPhysicsTypes in Physics.hpp).
+/// The scene module's own types (GameObject, Camera, lights, ModelInstance,
+/// PrimitiveRenderer, PrefabInstance). Other modules register theirs with their
+/// own registerXTypes(TypeRegistry&) (e.g. registerPhysicsTypes in Physics.hpp).
 void registerBuiltinTypes();
 
 } // namespace ve

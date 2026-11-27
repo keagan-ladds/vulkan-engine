@@ -1166,6 +1166,59 @@
               }
             }
           ]
+        },
+        {
+          "id": "5a1e00000d000008",
+          "type": "GameObject",
+          "name": "Test trees (glTF)",
+          "active": true,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "fields": {},
+          "components": [
+            {
+              "type": "FoliageType",
+              "enabled": true,
+              "fields": {
+                "mesh": "models/test_tree.gltf",
+                "tint": 0.12,
+                "sink": 0.1,
+                "spacing": 55,
+                "probability": 0.25,
+                "minScale": 0.8,
+                "maxScale": 1.25,
+                "minHeight": 0.6,
+                "maxSlope": 0.3,
+                "biomes": "Savannah:1",
+                "biomeThreshold": 0.6,
+                "viewDistance": 2500,
+                "maxInstances": 2000,
+                "shadowDistance": 250,
+                "collision": 3,
+                "colliderSize": [
+                  0.25,
+                  2.2,
+                  0.25
+                ],
+                "colliderSurface": "Wood",
+                "seed": 1106
+              }
+            }
+          ]
         }
       ]
     },

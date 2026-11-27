@@ -1,5 +1,6 @@
 #include "ve/assets/TextureCook.hpp"
 
+#include <bc7decomp.h>
 #include <bc7enc.h>
 #include <rgbcx.h>
 #include <stb_image.h>
@@ -119,20 +120,6 @@ bool encodeLevel(const Level& l, VkFormat format, const bc7enc_compress_block_pa
     return true;
 }
 
-std::string hex(uint64_t v)
-{
-    char b[17];
-    std::snprintf(b, sizeof(b), "%016llx", static_cast<unsigned long long>(v));
-    return b;
-}
-
-uint64_t fileTime(const std::filesystem::path& file)
-{
-    std::error_code ec;
-    const auto t = std::filesystem::last_write_time(file, ec);
-    return ec ? 0 : uint64_t(t.time_since_epoch().count());
-}
-
 } // namespace
 
 bool isCookableImage(const std::filesystem::path& file)
@@ -147,23 +134,6 @@ std::filesystem::path cookedTexturePath(const std::filesystem::path& cacheDir, c
     return cacheDir / std::filesystem::path(assetPath + ".ktx2");
 }
 
-uint64_t hashFileContent(const std::filesystem::path& file)
-{
-    std::ifstream in(file, std::ios::binary);
-    if (!in) return 0;
-    uint64_t h = 1469598103934665603ull;
-    std::vector<char> buf(1 << 16);
-    while (in) {
-        in.read(buf.data(), std::streamsize(buf.size()));
-        const std::streamsize n = in.gcount();
-        for (std::streamsize i = 0; i < n; ++i) {
-            h ^= uint8_t(buf[size_t(i)]);
-            h *= 1099511628211ull;
-        }
-    }
-    return h;
-}
-
 TextureCookResult cookTexture(const std::filesystem::path& source, const TextureSettings& settings,
                               const std::filesystem::path& output, const std::atomic<bool>* cancelled)
 {
@@ -175,10 +145,7 @@ TextureCookResult cookTexture(const std::filesystem::path& source, const Texture
     }
     // Stamp the source before reading it: if it changes meanwhile, the
     // cooked file looks stale next time rather than wrongly current.
-    std::error_code ec;
-    const uint64_t sourceSize = std::filesystem::file_size(source, ec);
-    const uint64_t sourceTime = fileTime(source);
-    const uint64_t sourceHash = hashFileContent(source);
+    const nlohmann::json stamp = makeCookStamp(source, kTextureCookerVersion, settings.cookHash(), settings.toJson());
 
     int w = 0, h = 0, channels = 0;
     stbi_uc* pixels = stbi_load(source.string().c_str(), &w, &h, &channels, 4);
@@ -231,14 +198,8 @@ TextureCookResult cookTexture(const std::filesystem::path& source, const Texture
         out.levelOffsets.push_back(before);
         out.levelSizes.push_back(out.data.size() - before);
     }
-    const nlohmann::json meta = {{"version", kTextureCookerVersion},
-                                 {"settingsHash", hex(settings.cookHash())},
-                                 {"sourceSize", sourceSize},
-                                 {"sourceTime", sourceTime},
-                                 {"sourceHash", hex(sourceHash)},
-                                 {"settings", settings.toJson()}};
     out.keyValues.emplace_back("KTXwriter", "vulkan-engine texture cooker " + std::to_string(kTextureCookerVersion));
-    out.keyValues.emplace_back("ve.cook", meta.dump());
+    out.keyValues.emplace_back("ve.cook", stamp.dump());
     if (!writeKtx2(output, out, &r.error)) return r;
 
     r.ok = true;
@@ -251,23 +212,73 @@ TextureCookResult cookTexture(const std::filesystem::path& source, const Texture
     return r;
 }
 
+bool encodeRgbaLevel(const uint8_t* rgba, uint32_t width, uint32_t height, VkFormat format, std::vector<uint8_t>& out,
+                     const std::atomic<bool>* cancelled)
+{
+    initEncoders();
+    Level level;
+    level.w = width;
+    level.h = height;
+    level.px.assign(rgba, rgba + size_t(width) * height * 4);
+    bc7enc_compress_block_params bc7;
+    bc7enc_compress_block_params_init(&bc7);
+    if (format != VK_FORMAT_BC7_SRGB_BLOCK) bc7enc_compress_block_params_init_linear_weights(&bc7);
+    return encodeLevel(level, format, bc7, out, cancelled);
+}
+
+bool decodeCookedTexture(const Ktx2Texture& t, uint32_t level, uint32_t& width, uint32_t& height, std::vector<uint8_t>& rgba)
+{
+    if (level >= t.levelOffsets.size()) return false;
+    width = std::max(1u, t.width >> level);
+    height = std::max(1u, t.height >> level);
+    rgba.assign(size_t(width) * height * 4, 255);
+    const uint8_t* data = t.data.data() + t.levelOffsets[level];
+    if (!ktx2IsBlockCompressed(t.format)) {
+        if (t.levelSizes[level] < rgba.size()) return false;
+        std::memcpy(rgba.data(), data, rgba.size());
+        return true;
+    }
+    initEncoders(); // (rgbcx's tables)
+    const uint32_t bx = (width + 3) / 4, by = (height + 3) / 4, blockBytes = ktx2BlockBytes(t.format);
+    if (t.levelSizes[level] < size_t(bx) * by * blockBytes) return false;
+    uint8_t block[16 * 4];
+    for (uint32_t y = 0; y < by; ++y) {
+        for (uint32_t x = 0; x < bx; ++x) {
+            const uint8_t* src = data + (size_t(y) * bx + x) * blockBytes;
+            std::memset(block, 255, sizeof(block));
+            switch (t.format) {
+            case VK_FORMAT_BC4_UNORM_BLOCK:
+                rgbcx::unpack_bc4(src, block, 4);
+                for (int i = 0; i < 16; ++i) block[i * 4 + 1] = block[i * 4 + 2] = block[i * 4];
+                break;
+            case VK_FORMAT_BC5_UNORM_BLOCK:
+                rgbcx::unpack_bc5(src, block, 0, 1, 4);
+                for (int i = 0; i < 16; ++i) { // Z from X / Y (unit normals)
+                    const float nx = block[i * 4] / 127.5f - 1.0f, ny = block[i * 4 + 1] / 127.5f - 1.0f;
+                    block[i * 4 + 2] = unorm8(std::sqrt(std::max(0.0f, 1.0f - nx * nx - ny * ny)) * 0.5f + 0.5f);
+                }
+                break;
+            default:
+                bc7decomp::unpack_bc7(src, reinterpret_cast<bc7decomp::color_rgba*>(block));
+                break;
+            }
+            for (uint32_t j = 0; j < 4 && y * 4 + j < height; ++j)
+                for (uint32_t i = 0; i < 4 && x * 4 + i < width; ++i)
+                    std::memcpy(&rgba[((size_t(y) * 4 + j) * width + x * 4 + i) * 4], &block[(j * 4 + i) * 4], 4);
+        }
+    }
+    return true;
+}
+
 CookedState checkCookedTexture(const Ktx2Texture& cooked, const std::filesystem::path& source, const TextureSettings* settings,
                                TextureSettings* settingsOut)
 {
     const std::string* metaText = cooked.value("ve.cook");
     if (!metaText) return CookedState::Unusable;
-    const nlohmann::json meta = nlohmann::json::parse(*metaText, nullptr, false);
-    if (!meta.is_object() || meta.value("version", 0u) != kTextureCookerVersion) return CookedState::Stale;
-    if (settingsOut) settingsOut->applyJson(meta.value("settings", nlohmann::json::object()));
-
-    std::error_code ec;
-    if (!std::filesystem::exists(source, ec)) return CookedState::Current; // shipped build: the cooked file is all there is
-    if (settings && meta.value("settingsHash", std::string()) != hex(settings->cookHash())) return CookedState::Stale;
-    const uint64_t size = std::filesystem::file_size(source, ec);
-    if (meta.value("sourceSize", uint64_t(0)) != size) return CookedState::Stale;
-    if (meta.value("sourceTime", uint64_t(0)) == fileTime(source)) return CookedState::Current;
-    // Same size, another time (a checkout, a copy): compare the content.
-    return meta.value("sourceHash", std::string()) == hex(hashFileContent(source)) ? CookedState::Current : CookedState::Stale;
+    const nlohmann::json stamp = nlohmann::json::parse(*metaText, nullptr, false);
+    if (settingsOut && stamp.is_object()) settingsOut->applyJson(stamp.value("settings", nlohmann::json::object()));
+    const uint64_t hash = settings ? settings->cookHash() : 0;
+    return checkCookStamp(stamp, source, kTextureCookerVersion, settings ? &hash : nullptr);
 }
 
 } // namespace ve

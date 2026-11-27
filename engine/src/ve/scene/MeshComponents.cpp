@@ -10,6 +10,7 @@
 #include "ve/render/Mesh.hpp"
 #include "ve/render/Primitives.hpp"
 #include "ve/render/Renderer.hpp"
+#include "ve/render/Texture.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
 
@@ -31,6 +32,23 @@ void MeshRenderer::refresh()
     // Not spawned yet: start() queues it. Otherwise the renderer re-checks it
     // (batch it, move it to another batch, or draw it the normal way again).
     Scene::refreshStatic(*this);
+}
+
+// -----------------------------------------------------------------------------
+// SpotLight (Components.hpp): the cookie mask
+// -----------------------------------------------------------------------------
+
+void SpotLight::reload()
+{
+    if (cookie == m_loadedCookie) return;
+    m_loadedCookie = cookie;
+    cookieTexture.reset(); // (a path that was cleared drops its texture)
+    if (cookie.empty()) return;
+    try {
+        cookieTexture = assets().loadTexture(cookie);
+    } catch (const std::exception& e) {
+        log::warn("SpotLight on '{}': {}", gameObject().name(), e.what());
+    }
 }
 
 // -----------------------------------------------------------------------------

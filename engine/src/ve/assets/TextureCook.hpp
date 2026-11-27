@@ -21,6 +21,7 @@
 // command-line tool.
 // =============================================================================
 
+#include "ve/assets/Cook.hpp"
 #include "ve/assets/Ktx2.hpp"
 #include "ve/assets/TextureSettings.hpp"
 
@@ -28,41 +29,50 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace ve {
 
-// Bump when the cooker's output changes: every cooked texture is redone.
+/// Bump when the cooker's output changes: every cooked texture is redone.
 constexpr uint32_t kTextureCookerVersion = 1;
 
-// Images the cooker handles (by extension).
+/// Images the cooker handles (by extension).
 bool isCookableImage(const std::filesystem::path& file);
-// Where the cooked copy of an asset lives: <cacheDir>/<asset path>.ktx2.
+/// Where the cooked copy of an asset lives: `<cacheDir>`/`<asset path>`.ktx2.
 std::filesystem::path cookedTexturePath(const std::filesystem::path& cacheDir, const std::string& assetPath);
 
-// 64-bit FNV-1a of a file's bytes (0 if unreadable).
-uint64_t hashFileContent(const std::filesystem::path& file);
-
+/// What cookTexture did.
 struct TextureCookResult {
-    bool ok = false;
-    std::string error;
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    uint32_t width = 0, height = 0, levels = 0;
-    uint64_t bytes = 0;     // of the cooked file's pixel data
-    double milliseconds = 0;
+    bool ok = false;                       ///< The cooked file was written.
+    std::string error;                     ///< Why not (when !ok).
+    VkFormat format = VK_FORMAT_UNDEFINED; ///< The cooked pixel format.
+    uint32_t width = 0;                    ///< Level 0 width in pixels (after maxSize).
+    uint32_t height = 0;                   ///< Level 0 height in pixels.
+    uint32_t levels = 0;                   ///< Mip levels written.
+    uint64_t bytes = 0;     ///< of the cooked file's pixel data
+    double milliseconds = 0;               ///< How long cooking took.
 };
-// Cooks `source` into `output` (written via a temporary file, then renamed).
-// `cancelled` (optional) is polled between block rows.
+/// Cooks `source` into `output` (written via a temporary file, then renamed).
+/// `cancelled` (optional) is polled between block rows.
 TextureCookResult cookTexture(const std::filesystem::path& source, const TextureSettings& settings,
                               const std::filesystem::path& output, const std::atomic<bool>* cancelled = nullptr);
 
-enum class CookedState {
-    Current,  // made by this cooker from these settings and the source as it is now (or no source to compare)
-    Stale,    // the source, settings or cooker changed: cook again
-    Unusable, // missing or unreadable
-};
-// Checks a cooked file (read with headerOnly is enough). `source` may not
-// exist (shipped builds): then only the cooker version is checked, and
-// `settingsOut` gets the settings stored in the file.
+//// Block-compresses one RGBA8 image level into `format` (BC4 / BC5 / BC7,
+/// sRGB or not; an uncompressed format is copied), appending to `out`. For
+/// textures made at runtime that get cached (impostor atlases). Pure CPU.
+/// @return false if `cancelled` was set meanwhile.
+bool encodeRgbaLevel(const uint8_t* rgba, uint32_t width, uint32_t height, VkFormat format, std::vector<uint8_t>& out,
+                     const std::atomic<bool>* cancelled = nullptr);
+
+// Decodes one level of a cooked texture to 8-bit RGBA on the CPU (BC4 -> R,R,R,255;
+/// BC5 -> X, Y, rebuilt Z, 255, like veUnpackNormal; BC7 / RGBA8 as stored). For
+/// code that wants pixels while only the cooked copy exists (a packaged game).
+bool decodeCookedTexture(const Ktx2Texture& texture, uint32_t level, uint32_t& width, uint32_t& height,
+                         std::vector<uint8_t>& rgba);
+
+/// Checks a cooked file (read with headerOnly is enough). `source` may not
+/// exist (shipped builds): then only the cooker version is checked, and
+/// `settingsOut` gets the settings stored in the file.
 CookedState checkCookedTexture(const Ktx2Texture& cooked, const std::filesystem::path& source, const TextureSettings* settings,
                                TextureSettings* settingsOut = nullptr);
 

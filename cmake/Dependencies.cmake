@@ -177,13 +177,73 @@ FetchContent_Declare(bc7enc_rdo
     GIT_TAG b9438627eef73a1157e84201b6fa6eb2ffd6d9f0
     SOURCE_SUBDIR _none)
 FetchContent_MakeAvailable(bc7enc_rdo)
-add_library(ve_bcenc STATIC ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp)
+add_library(ve_bcenc STATIC ${bc7enc_rdo_SOURCE_DIR}/bc7enc.cpp ${bc7enc_rdo_SOURCE_DIR}/rgbcx.cpp
+    ${bc7enc_rdo_SOURCE_DIR}/bc7decomp.cpp) # (+ the BC7 decoder: CPU pixels from cooked textures)
 target_include_directories(ve_bcenc SYSTEM PUBLIC ${bc7enc_rdo_SOURCE_DIR})
 set_target_properties(ve_bcenc PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
     target_compile_options(ve_bcenc PRIVATE /w)
 else()
     target_compile_options(ve_bcenc PRIVATE -w)
+endif()
+
+# libogg + libvorbis (BSD): the audio cooker's Ogg Vorbis encoder and the
+# cooked-file reader (vorbisfile) for ve/assets/AudioCook. Playback decodes
+# Vorbis with miniaudio's stb_vorbis. Fetched with git like ENet; the C
+# sources are compiled into one private static library (no upstream CMake).
+FetchContent_Declare(ogg
+    GIT_REPOSITORY https://github.com/xiph/ogg.git
+    GIT_TAG v1.3.5
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR _none)
+FetchContent_Declare(vorbis
+    GIT_REPOSITORY https://github.com/xiph/vorbis.git
+    GIT_TAG v1.3.7
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR _none)
+FetchContent_MakeAvailable(ogg vorbis)
+set(_ve_ogg_types_dir ${CMAKE_BINARY_DIR}/ve_ogg_include)
+file(WRITE ${_ve_ogg_types_dir}/ogg/config_types.h
+"#ifndef __CONFIG_TYPES_H__\n#define __CONFIG_TYPES_H__\n#include <stdint.h>\n"
+"typedef int16_t ogg_int16_t;\ntypedef uint16_t ogg_uint16_t;\ntypedef int32_t ogg_int32_t;\n"
+"typedef uint32_t ogg_uint32_t;\ntypedef int64_t ogg_int64_t;\ntypedef uint64_t ogg_uint64_t;\n#endif\n")
+set(_ve_vorbis_sources mdct.c smallft.c block.c envelope.c window.c lsp.c lpc.c analysis.c synthesis.c psy.c
+    info.c floor1.c floor0.c res0.c mapping0.c registry.c codebook.c sharedbook.c lookup.c bitrate.c
+    vorbisenc.c vorbisfile.c)
+list(TRANSFORM _ve_vorbis_sources PREPEND ${vorbis_SOURCE_DIR}/lib/)
+add_library(ve_vorbis STATIC ${ogg_SOURCE_DIR}/src/bitwise.c ${ogg_SOURCE_DIR}/src/framing.c ${_ve_vorbis_sources})
+target_include_directories(ve_vorbis SYSTEM PUBLIC ${_ve_ogg_types_dir} ${ogg_SOURCE_DIR}/include ${vorbis_SOURCE_DIR}/include)
+target_include_directories(ve_vorbis PRIVATE ${vorbis_SOURCE_DIR}/lib)
+set_target_properties(ve_vorbis PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(ve_vorbis PRIVATE /w)
+    target_compile_definitions(ve_vorbis PRIVATE _CRT_SECURE_NO_WARNINGS)
+else()
+    target_compile_options(ve_vorbis PRIVATE -w)
+endif()
+if(NOT WIN32)
+    target_link_libraries(ve_vorbis PRIVATE m)
+endif()
+
+# zstd (BSD): compression for .vepak archives (ve/core/Pack): written by
+# vecook --package, read by the engine's virtual file system. Fetched with git;
+# the library's C sources are compiled directly (no assembly, single-threaded).
+FetchContent_Declare(zstd
+    GIT_REPOSITORY https://github.com/facebook/zstd.git
+    GIT_TAG v1.5.6
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR _none)
+FetchContent_MakeAvailable(zstd)
+file(GLOB _ve_zstd_sources ${zstd_SOURCE_DIR}/lib/common/*.c ${zstd_SOURCE_DIR}/lib/compress/*.c
+    ${zstd_SOURCE_DIR}/lib/decompress/*.c)
+add_library(ve_zstd STATIC ${_ve_zstd_sources})
+target_include_directories(ve_zstd SYSTEM PUBLIC ${zstd_SOURCE_DIR}/lib)
+target_compile_definitions(ve_zstd PRIVATE ZSTD_DISABLE_ASM XXH_NAMESPACE=ZSTD_)
+set_target_properties(ve_zstd PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(ve_zstd PRIVATE /w)
+else()
+    target_compile_options(ve_zstd PRIVATE -w)
 endif()
 
 add_library(ve_thirdparty STATIC

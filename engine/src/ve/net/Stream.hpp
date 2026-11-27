@@ -28,13 +28,15 @@
 
 namespace ve::net {
 
-// Values are memcpy'd as they are in memory, so "little-endian on the wire"
-// holds only on little-endian machines (every platform the engine targets).
-// A big-endian port would need byte swaps in write / read.
+/// Values are memcpy'd as they are in memory, so "little-endian on the wire"
+/// holds only on little-endian machines (every platform the engine targets).
+/// A big-endian port would need byte swaps in write / read.
 static_assert(std::endian::native == std::endian::little, "ve::net streams assume a little-endian CPU");
 
+/// Builds a binary message payload (Network::toServer / toClients): values appended in order, read back in the same order with a Reader.
 class Writer {
 public:
+    /// Appends a plain value (int, float, glm vector, POD struct) as its raw bytes.
     template <class T>
     void write(const T& v)
     {
@@ -42,7 +44,7 @@ public:
         const auto* p = reinterpret_cast<const uint8_t*>(&v);
         m_data.insert(m_data.end(), p, p + sizeof(T));
     }
-    // 1..10 bytes: small numbers stay small (ids, counts, lengths).
+    /// 1..10 bytes: small numbers stay small (ids, counts, lengths).
     void writeVarint(uint64_t v)
     {
         while (v >= 0x80) {
@@ -51,36 +53,46 @@ public:
         }
         m_data.push_back(uint8_t(v));
     }
+    /// Appends a string (length + UTF-8 bytes).
     void writeString(const std::string& s)
     {
         writeVarint(s.size());
         m_data.insert(m_data.end(), s.begin(), s.end());
     }
+    /// Appends a byte block (length + bytes).
     void writeBytes(std::span<const uint8_t> bytes)
     {
         writeVarint(bytes.size());
         m_data.insert(m_data.end(), bytes.begin(), bytes.end());
     }
-    // CBOR: compact binary JSON (world snapshots, free-form payloads).
+    /// CBOR: compact binary JSON (world snapshots, free-form payloads).
     void writeJson(const nlohmann::json& j) { writeBytes(nlohmann::json::to_cbor(j)); }
-    // Rotation in 7 bytes: the largest component is dropped and rebuilt,
-    // the other three as 16-bit fixed point (error ~0.0001).
+    /// Rotation in 7 bytes: the largest component is dropped and rebuilt,
+    /// the other three as 16-bit fixed point (error ~0.0001).
     void writeRotation(const glm::quat& q);
 
+    /// Appends another writer's bytes.
     void append(const Writer& other) { m_data.insert(m_data.end(), other.m_data.begin(), other.m_data.end()); }
 
+    /// The bytes written so far.
     const std::vector<uint8_t>& data() const { return m_data; }
+    /// Number of bytes written.
     size_t size() const { return m_data.size(); }
+    /// Empties it (to reuse the buffer).
     void clear() { m_data.clear(); }
 
 private:
     std::vector<uint8_t> m_data;
 };
 
+/// Reads a payload written by a Writer, in the same order. Reading past the
+/// end (or malformed data) sets failed() and returns default values from then on.
 class Reader {
 public:
+    /// Reads from `bytes` (not copied: they must outlive the reader).
     explicit Reader(std::span<const uint8_t> bytes) : m_data(bytes) {}
 
+    /// Reads a plain value written with Writer::write<T>.
     template <class T>
     T read()
     {
@@ -90,6 +102,7 @@ public:
         std::memcpy(&v, m_data.data() + m_pos - sizeof(T), sizeof(T));
         return v;
     }
+    /// Reads a number written with Writer::writeVarint.
     uint64_t readVarint()
     {
         uint64_t v = 0;
@@ -102,18 +115,21 @@ public:
         m_failed = true;
         return 0;
     }
+    /// Reads a string written with Writer::writeString.
     std::string readString()
     {
         const uint64_t n = readVarint();
         if (!take(n)) return {};
         return std::string(reinterpret_cast<const char*>(m_data.data() + m_pos - n), size_t(n));
     }
+    /// Reads a byte block written with Writer::writeBytes (a view into the payload).
     std::span<const uint8_t> readBytes()
     {
         const uint64_t n = readVarint();
         if (!take(n)) return {};
         return m_data.subspan(m_pos - n, size_t(n));
     }
+    /// Reads JSON written with Writer::writeJson (null JSON on failure).
     nlohmann::json readJson()
     {
         auto b = readBytes();
@@ -122,10 +138,14 @@ public:
         if (j.is_discarded()) m_failed = true;
         return j;
     }
+    /// Reads a rotation written with Writer::writeRotation.
     glm::quat readRotation();
 
+    /// Whether a read ran past the end or hit malformed data.
     bool failed() const { return m_failed; }
+    /// Whether everything has been read.
     bool atEnd() const { return m_pos >= m_data.size(); }
+    /// Bytes left to read (0 after a failure).
     size_t remaining() const { return m_failed ? 0 : m_data.size() - m_pos; }
 
 private:

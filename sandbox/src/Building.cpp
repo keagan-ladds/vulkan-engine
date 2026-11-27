@@ -7,6 +7,8 @@
 #include "Props.hpp"
 #include "SceneLookup.hpp"
 
+#include <ve/core/FileSystem.hpp>
+
 #include <ve/assets/AssetManager.hpp>
 #include <ve/core/Engine.hpp>
 #include <ve/core/Input.hpp>
@@ -541,9 +543,9 @@ void Builder::loadCatalogue()
     // The kit is data: building/catalogue.json lists the pieces in menu order.
     m_catalogue.clear();
     try {
-        std::ifstream in(assets().resolve("building/catalogue.json"));
-        ve::Json j;
-        in >> j;
+        const auto text = ve::vfs::readText(assets().resolve("building/catalogue.json")); // (also packaged)
+        if (!text) throw std::runtime_error("can't read building/catalogue.json");
+        ve::Json j = ve::Json::parse(*text);
         for (const ve::Json& e : j.value("pieces", ve::Json::array()))
             m_catalogue.push_back({e.value("name", std::string("?")), e.value("prefab", std::string()), e.value("category", std::string("Pieces")),
                                    e.value("description", std::string()), nullptr});

@@ -3,6 +3,7 @@
 #include "ve/scene/Components.hpp"
 
 #include <algorithm>
+#include <chrono>
 
 namespace ve {
 
@@ -183,6 +184,8 @@ void Scene::forActive(uint8_t hook, bool editorOnly, Fn&& fn)
         // model nodes, static props): skip without walking the hierarchy.
         if (o->m_started && (o->m_noHook & hook) && (o->m_componentsNoHook & hook)) continue;
         if (!o->activeInHierarchy()) continue;
+        // Waiting for a later startPending() (loading's time budget): not yet.
+        if (!o->m_started && o->m_queuedStart) continue;
         if (!o->m_started) {
             o->m_started = true;
             o->start();
@@ -236,8 +239,10 @@ void Scene::callComponents(GameObject& o, uint8_t bit, Hook&& hook)
     o.m_componentsNoHook |= none;
 }
 
-void Scene::startPending()
+void Scene::startPending(float budgetMs)
 {
+    const auto t0 = std::chrono::steady_clock::now();
+    m_startsDeferred = false;
     // Move newly spawned objects into the main list (start() may spawn more,
     // which then wait for the next frame).
     std::vector<std::unique_ptr<GameObject>> fresh = std::move(m_pending);
@@ -248,11 +253,24 @@ void Scene::startPending()
     // earlier frames: inactive, or with a disabled component) are visited.
     // Anything queued during this loop (start() adding components) lands in
     // the fresh m_unstarted and is handled next frame.
+    // Held (a scene loading over frames): they wait, still queued.
+    if (m_startHolds > 0) {
+        m_startsDeferred = !m_unstarted.empty();
+        return;
+    }
     std::vector<GameObject*>& work = m_startScratch;
     work.clear();
     work.swap(m_unstarted);
     for (size_t w = 0; w < work.size(); ++w) {
         GameObject* o = work[w];
+        // Out of time (loading): the rest wait, in order, ahead of anything
+        // queued meanwhile. (Still queued: m_queuedStart stays set.)
+        if (budgetMs > 0.0f && w > 0 &&
+            std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - t0).count() >= budgetMs) {
+            m_unstarted.insert(m_unstarted.begin(), work.begin() + ptrdiff_t(w), work.end());
+            m_startsDeferred = true;
+            break;
+        }
         o->m_queuedStart = false;
         if (o->m_destroyed) continue;
         if (!o->activeInHierarchy()) {

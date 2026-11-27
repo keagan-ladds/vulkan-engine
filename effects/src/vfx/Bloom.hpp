@@ -14,8 +14,10 @@
 
 namespace vfx {
 
+/// Bloom: bright parts of the HDR image bleed light around them (a mip-chain blur added back).
 class BloomPass : public ve::RenderPass {
 public:
+    /// @param levels blur mip levels (more = wider glow).
     explicit BloomPass(int levels = 6);
     ~BloomPass() override;
 
@@ -24,10 +26,10 @@ public:
     void execute(ve::RenderContext& ctx) override;
     void onGui() override;
 
-    float intensity = 0.06f;
-    float threshold = 1.0f; // luminance where bloom starts (soft knee below)
-    float knee = 0.6f;
-    float radius = 1.0f;
+    float intensity = 0.06f;  ///< How much bloom is added.
+    float threshold = 1.0f; ///< luminance where bloom starts (soft knee below)
+    float knee = 0.6f;  ///< Softness of the threshold (0 = hard cut).
+    float radius = 1.0f;  ///< Blur radius multiplier.
 
 private:
     int m_levels;

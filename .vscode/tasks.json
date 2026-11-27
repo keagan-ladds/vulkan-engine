@@ -89,6 +89,26 @@
             "problemMatcher": "$msCompile"
         },
         {
+            "label": "Check header docs (changed headers)",
+            "type": "process",
+            "command": "python3",
+            "args": ["tools/check_docs.py", "--changed"],
+            "windows": { "command": "python" },
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": {
+                "owner": "check_docs",
+                "fileLocation": ["relative", "${workspaceFolder}"],
+                "pattern": { "regexp": "^(.+\\.hpp):(\\d+): (.*)$", "file": 1, "line": 2, "message": 3 }
+            }
+        },
+        {
+            "label": "Build API reference (Doxygen)",
+            "type": "shell",
+            "command": "cmake --build build --target docs",
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": []
+        },
+        {
             "label": "Regenerate sandbox assets",
             "type": "process",
             "command": "python3",

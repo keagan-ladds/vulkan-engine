@@ -41,36 +41,39 @@ namespace ve {
 
 class AudioClip;
 
+/// One ambience layer: a looping bed and / or random one-shots, faded by time
+/// of day, biome and audio parameters (see the top of this file).
 class AmbientLayer : public Component {
 public:
     // ---- Sounds ----
-    std::shared_ptr<AudioClip> loop; // looping bed (2D), streamed
-    std::string oneShots;            // "audio/bird1.wav; audio/bird2.wav"
-    glm::vec2 interval{3.0f, 10.0f}; // s between one-shots at full level
-    glm::vec2 distance{10.0f, 35.0f};// m from the listener (y = 0: 2D)
-    float heightRange = 4.0f;        // one-shots: 0..this above the listener
-    float pitchVariation = 0.08f;
-    float volumeVariation = 0.3f;
-    float volume = 1.0f;
-    std::string bus = "Ambient";
+    std::shared_ptr<AudioClip> loop; ///< looping bed (2D), streamed
+    std::string oneShots;            ///< "audio/bird1.wav; audio/bird2.wav"
+    glm::vec2 interval{3.0f, 10.0f}; ///< s between one-shots at full level
+    glm::vec2 distance{10.0f, 35.0f};///< m from the listener (y = 0: 2D)
+    float heightRange = 4.0f;        ///< one-shots: 0..this above the listener
+    float pitchVariation = 0.08f;    ///< One-shots: random pitch change, +- this fraction (0.08 = +-8 %).
+    float volumeVariation = 0.3f;    ///< One-shots: random volume reduction, up to this fraction.
+    float volume = 1.0f;             ///< Linear volume of the layer at full level.
+    std::string bus = "Ambient";      ///< Mixer bus (AudioZones muffle "Ambient" indoors).
 
     // ---- When / where ----
-    float fromHour = 0.0f, toHour = 24.0f; // 0..24 = always
-    float hourFade = 0.75f;
-    std::string biomes;
-    float biomeRadius = 12.0f;
-    std::string parameters;
-    float fadeTime = 3.0f; // s to follow changes
+    float fromHour = 0.0f;           ///< Hour (0..24) the layer starts; may be > toHour (wraps past midnight).
+    float toHour = 24.0f;            ///< Hour (0..24) it ends; 0..24 = always.
+    float hourFade = 0.75f;          ///< Hours to fade in / out at each end.
+    std::string biomes;              ///< Biome weights, "Savannah:1, Swamp:-1"; empty = everywhere.
+    float biomeRadius = 12.0f;       ///< Metres around the listener the biome weights are averaged over.
+    std::string parameters;          ///< Parameter weights, "rain:-1, wind:-0.5" (see the top of this file).
+    float fadeTime = 3.0f; ///< s to follow changes
 
-    float level() const { return m_level; }       // current 0..1
-    float targetLevel() const { return m_target; }
+    float level() const { return m_level; }       ///< current 0..1
+    float targetLevel() const { return m_target; } ///< The level it is fading towards (0..1).
 
     void start() override;
     void update(float dt) override;
     void onDestroy() override;
     ~AmbientLayer() override;
 
-    // The time-of-day factor alone (exposed for tests and tools).
+    /// The time-of-day factor alone (exposed for tests and tools).
     static float hourWeight(float hour, float from, float to, float fade);
 
 private:
@@ -79,13 +82,13 @@ private:
 
     SoundPtr m_loop;
     std::string m_loopPath;
-    std::string m_failedLoop; // a loop file that wouldn't open: not retried every frame
+    std::string m_failedLoop; ///< a loop file that wouldn't open: not retried every frame
     std::vector<std::shared_ptr<AudioClip>> m_shots;
     std::string m_shotsSpec;
     std::vector<std::pair<int, float>> m_biomeWeights;
-    std::string m_biomeSpec;    // `biomes` that m_biomeWeights was parsed from...
-    uint64_t m_biomeVersion = 0; // ...for this terrain version
-    std::vector<std::pair<std::string, float>> m_params; // parsed `parameters`
+    std::string m_biomeSpec;    ///< `biomes` that m_biomeWeights was parsed from...
+    uint64_t m_biomeVersion = 0; ///< ...for this terrain version
+    std::vector<std::pair<std::string, float>> m_params; ///< parsed `parameters`
     std::string m_paramsSpec;
     float m_level = 0.0f, m_target = 0.0f;
     float m_shotTimer = -1.0f;

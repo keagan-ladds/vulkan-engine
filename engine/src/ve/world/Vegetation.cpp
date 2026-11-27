@@ -1,5 +1,7 @@
 #include "ve/world/Vegetation.hpp"
 
+#include "ve/assets/ModelData.hpp"
+
 #include "ve/gameplay/Placement.hpp"
 
 #include "ve/core/Engine.hpp"
@@ -214,14 +216,20 @@ FoliageType::FoliageType()
     shadowDistance = 1e6f;
 }
 
-std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
+std::string FoliageType::meshKey() const
 {
     std::ostringstream key;
     key << mesh << '|' << library << '|' << int(lodMode) << '|' << lodThresholds.x << ',' << lodThresholds.y << ','
         << lodThresholds.z << '|' << autoLods << '|' << impostor << '|' << int(collision) << '|' << colliderSize.x << ','
         << colliderSize.y << ',' << colliderSize.z << '|' << colliderUserValue << '|' << states;
-    if (key.str() == m_meshKey) return m_meshes;
-    m_meshKey = key.str();
+    return key.str();
+}
+
+std::shared_ptr<const FoliageMeshes> FoliageType::meshes(Renderer& r)
+{
+    std::string key = meshKey();
+    if (key == m_meshKey) return m_meshes;
+    m_meshKey = std::move(key);
     const std::string owner = "FoliageType '" + gameObject().name() + "'";
     m_meshes = buildMeshes(r, mesh, library, owner);
     // Extra states: "Name = library name or glTF path(s)"; a spec with a '.' is a file.
@@ -278,13 +286,24 @@ std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const
             hulls.push_back(v.levels.front().data);
             LodChainDesc c;
             c.name = v.name;
-            if (v.levels.size() == 1 && autoLods > 0 && v.levels[0].submeshes.size() == 1) {
+            // Levels and impostors the model's cooking generated (its .model
+            // settings) come first; this component's autoLods / impostor only
+            // fill in for models cooked without them (generated at load).
+            const bool cookedLevels = v.cooked && !v.cooked->generated.empty();
+            if (cookedLevels) {
+                for (const ModelLodLevelData& g : v.cooked->generated)
+                    v.levels.push_back({g.data, g.submeshes, v.levels.front().materials});
+            } else if (v.levels.size() == 1 && autoLods > 0 && v.levels[0].submeshes.size() == 1) {
                 for (int k = 1; k <= std::min(autoLods, 2); ++k)
                     c.simplify.push_back({.ratio = std::pow(0.35f, float(k)), .maxError = 0.08f * float(k)});
             }
+            c.cookedImpostor = v.cooked && v.cooked->impostor.valid() ? &v.cooked->impostor : nullptr;
+            if (impostor && !c.cookedImpostor)
+                log::infoOnce(owner + ": the impostor of " + meshPath + " is baked at load: add {\"impostor\": true} to " + meshPath +
+                              ".model to cook it");
             if (levelCount == 0) levelCount = v.levels.size() + c.simplify.size();
             c.levels = std::move(v.levels);
-            c.maxLevels = impostor ? 3 : 4;
+            c.maxLevels = impostor || c.cookedImpostor ? 3 : 4;
             c.impostor = impostor;
             for (size_t i = 0; i < 4; ++i) c.switches.push_back(threshold(i));
             std::vector<InstanceLod> chain = buildLodChain(r, std::move(c));
@@ -299,7 +318,7 @@ std::shared_ptr<const FoliageMeshes> FoliageType::buildMeshes(Renderer& r, const
                 log::warnOnce(owner + ": some variants have *_COL shapes and some don't: colliders ignored");
         }
         log::info("{}: {} variant(s) from {}, {} level(s){}, {} authored collider(s)", owner, model.variants.size(), meshPath,
-                  levelCount, impostor ? " + impostor" : "", authoredColliders.size());
+                  levelCount, model.cooked ? " (cooked LODs)" : impostor ? " + impostor" : "", authoredColliders.size());
     } else {
         return nullptr;
     }
@@ -346,6 +365,11 @@ Foliage::Foliage() : GameObject("Foliage")
     runInEditor = true;
 }
 
+Foliage::~Foliage()
+{
+    if (m_meshesDone) m_meshesDone->store(true); // (gone mid-load: don't hold the loading screen)
+}
+
 void Foliage::start()
 {
     rebuild();
@@ -372,6 +396,10 @@ void Foliage::update(float dt)
     VE_PROFILE("Foliage rules");
     m_sinceBuild += dt;
     m_sinceCheck += dt;
+    if (m_buildingMeshes) { // (loading: the next layer's meshes, every frame)
+        rebuild();
+        return;
+    }
     if (m_sinceBuild < 0.25f) return;
     const Terrain* terrain = Terrain::find(scene());
     const Terrain* builtOn = m_terrain.get(scene());
@@ -407,8 +435,35 @@ void Foliage::update(float dt)
     if (system && check) system->setColliderFocus(colliderFocus.empty() ? nullptr : scene().find(colliderFocus));
 }
 
+bool Foliage::buildNextMeshes()
+{
+    std::vector<FoliageType*> types;
+    collect(*this, types);
+    for (FoliageType* t : types) {
+        if (t->meshesBuilt()) continue;
+        t->meshes(renderer()); // LOD chains, impostor bakes: up to a few hundred ms each
+        return true;
+    }
+    return false;
+}
+
 void Foliage::rebuild()
 {
+    // Behind a loading screen: build the layers' meshes one per frame (each
+    // frame redraws the screen), then place everything.
+    if (engine().loading() && buildNextMeshes()) {
+        m_dirty = true;
+        if (!m_buildingMeshes) {
+            m_buildingMeshes = true;
+            m_meshesDone = std::make_shared<std::atomic<bool>>(false);
+            engine().addLoadTask("Building vegetation", [done = m_meshesDone] { return done->load() ? 1.0f : 0.0f; });
+        }
+        return;
+    }
+    if (m_buildingMeshes) {
+        m_buildingMeshes = false;
+        m_meshesDone->store(true);
+    }
     m_dirty = false;
     m_sinceBuild = 0.0f;
     m_state = state();

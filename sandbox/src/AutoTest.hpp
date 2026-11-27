@@ -6,6 +6,7 @@
 // logging what happened ("[autotest] ..."). Exercises gameplay code paths
 // (deferred destroy, one-shot audio, weather transitions...) without input.
 
+#include <ve/core/Event.hpp>
 #include <ve/scene/GameObject.hpp>
 #include <ve/scene/ObjectRef.hpp>
 #include <ve/world/Foliage.hpp>
@@ -19,6 +20,7 @@
 
 namespace ve {
 class Terrain;
+class Shader;
 }
 
 namespace savanna {
@@ -40,7 +42,14 @@ class AutoTest : public ve::GameObject {
 public:
     static void startAt(int step) { if (s_resume == 0) s_resume = step; } // (a reload resumes where it was)
     explicit AutoTest(const ve::Terrain& terrain) : GameObject("AutoTest"), m_terrainRef(&terrain), m_step(s_resume) { s_resume = 0; }
+    void start() override;
     void update(float dt) override;
+
+    // Engine hooks: load events seen, and a shader created mid-game compiling in the background.
+    ve::Subscription m_loadSub, m_compileSub;
+    int m_loadSteps = 0, m_loadEnded = 0, m_compileStarted = 0, m_compileFinished = 0;
+    bool m_newShaderFinished = false;
+    std::shared_ptr<ve::Shader> m_newShader;
 
     // Loading a save rebuilds the level (and this test object): the new one resumes here.
     static inline int s_resume = 0;

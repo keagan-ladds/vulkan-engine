@@ -1,4 +1,5 @@
 #include "ve/core/Engine.hpp"
+#include "ve/core/FileSystem.hpp"
 #include "ve/assets/DataAsset.hpp"
 #include "ve/assets/MaterialAsset.hpp"
 #include "ve/render/Renderer.hpp"
@@ -21,8 +22,10 @@
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Reflection.hpp"
 #include "ve/scene/Scene.hpp"
+#include "ve/scene/SceneSerializer.hpp"
 #include "ve/ui/UiLayer.hpp"
 #include "ve/world/Terrain.hpp"
+#include "ve/world/LodModel.hpp"
 #include "ve/world/Vegetation.hpp"
 
 #include <SDL.h>
@@ -65,6 +68,7 @@ void registerAllTypes()
     registerAudioTypes(r);
     registerTerrainTypes(r);
     registerVegetationTypes(r);
+    registerModelLodGenerator(); // the model cooker's LOD / impostor step (world/LodModel.hpp)
     registerAssetTypes(r); // MaterialAsset (.material files)
 }
 } // namespace
@@ -131,6 +135,10 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     m_time.fixedDeltaTime = config.fixedTimestep;
 
     const auto exeDir = executableDirectory();
+    // A packaged game (vecook --package): its .vepak archives overlay the
+    // executable's folder, so assets/, cooked/ and shaders/ read from them
+    // (core/FileSystem.hpp). Before anything loads.
+    if (config.mountArchives) vfs::mountAll(exeDir);
     auto resolve = [&](const std::filesystem::path& p) { return p.is_absolute() ? p : exeDir / p; };
     std::vector<std::filesystem::path> shaderDirs;
     for (const auto& p : config.shaderPaths) shaderDirs.push_back(resolve(p));
@@ -148,10 +156,12 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
 
     RendererSettings rs = config.renderer;
     if (const char* h = std::getenv("VE_HEADLESS"); h && h[0] == '1') rs.headless = true;
+    if (const char* a = std::getenv("VE_ASYNC_PIPELINES"); a && *a) rs.asyncPipelines = a[0] != '0';
     // VE_FIXED_DT=0.016667: every frame advances time by this much, however long it
     // took (headless tests on slow software rendering see real-time motion per frame).
     if (const char* f = std::getenv("VE_FIXED_DT"); f && *f) m_fixedFrameDt = std::strtof(f, nullptr);
-    m_window = std::make_unique<Window>(config.title, config.width, config.height, rs.headless);
+    // Hidden until the first frame is drawn (run()).
+    m_window = std::make_unique<Window>(config.title, config.width, config.height, true);
     m_renderer = std::make_unique<Renderer>();
     m_renderer->init(*m_window, rs, config.validation, shaderDirs);
     registerSkinnedMeshes(m_renderer->skinning()); // the renderer's skinning pass finds anim's SkinnedMeshRenderers
@@ -301,6 +311,12 @@ void Engine::run()
         Profiler::get().beginFrame();
         tickFrame();
         Profiler::get().endFrame();
+        // The window appears with its first frame (a black, unresponsive
+        // window while the engine starts up looks hung).
+        if (!m_windowShown) {
+            m_windowShown = true;
+            if (!m_renderer->settings().headless) m_window->show();
+        }
         if (m_bench && !loadingFrame) benchFrame(std::chrono::duration<float, std::milli>(Clock::now() - now).count());
         ++m_time.frameCount;
     }
@@ -317,9 +333,11 @@ void Engine::beginLoading(std::unique_ptr<Scene> loadingScene, float minSeconds,
     m_loadSteps.clear();
     m_loadTasks.clear();
     m_loadStepsTotal = m_loadStepsDone = 0;
+    m_loadFrames = 0;
     m_loadStatus = "Loading";
     m_loadClearColor = clearColor;
     m_renderer->setLoadingFrames(!loadingInEditor(), clearColor);
+    m_loadEvents.emit({LoadEvent::Type::Began, {}, 0.0f, 0.0f});
 }
 
 void Engine::addLoadStep(std::string name, std::function<void()> step)
@@ -330,6 +348,35 @@ void Engine::addLoadStep(std::string name, std::function<void()> step)
     }
     m_loadSteps.push_back({std::move(name), std::move(step)});
     ++m_loadStepsTotal;
+}
+
+void Engine::addLoadStepOverFrames(std::string name, std::function<float()> step)
+{
+    if (!loading()) {
+        while (step() < 1.0f) {
+        }
+        return;
+    }
+    LoadStep s;
+    s.name = std::move(name);
+    s.overFrames = std::move(step);
+    m_loadSteps.push_back(std::move(s));
+    ++m_loadStepsTotal;
+}
+
+void Engine::addSceneLoad(std::string name, std::filesystem::path scenePath, std::function<void(const std::vector<GameObject*>&)> then)
+{
+    // Parsing starts when the step does (the file may not exist yet when it's queued, e.g. written by an earlier step).
+    std::shared_ptr<SceneLoad> load;
+    addLoadStepOverFrames(std::move(name), [this, load, scenePath = std::move(scenePath), then = std::move(then)]() mutable -> float {
+        if (!load) load = SceneSerializer::loadAsync(*m_scene, scenePath);
+        // Outside loading: no frames to spread it over.
+        const float p = load->step(loading() ? kLoadingStartBudgetMs : 0.0f);
+        if (!load->done()) return std::min(p, 0.999f);
+        if (then) then(load->roots());
+        load.reset();
+        return 1.0f;
+    });
 }
 
 void Engine::addLoadTask(std::string name, std::function<float()> progress)
@@ -343,6 +390,7 @@ float Engine::loadProgress() const
     const size_t parts = m_loadStepsTotal + m_loadTasks.size();
     if (parts == 0) return loading() ? 0.0f : 1.0f;
     float done = float(m_loadStepsDone);
+    if (!m_loadSteps.empty() && m_loadSteps.front().overFrames) done += m_loadSteps.front().progress; // (one in progress)
     for (const LoadTask& t : m_loadTasks) done += t.last;
     return std::clamp(done / float(parts), 0.0f, 1.0f);
 }
@@ -356,19 +404,34 @@ void Engine::endLoading()
     m_accumulator = 0.0; // no burst of fixed steps for the time spent loading
     Profiler::get().reset(); // loading frames have different zones and timings
     log::info("Loading done in {:.1f} s", m_loadElapsed);
+    m_loadEvents.emit({LoadEvent::Type::Ended, {}, m_loadElapsed, 1.0f});
 }
 
 void Engine::runLoadStep()
 {
     // One main-thread step per frame (the screen is redrawn in between).
     if (m_loadSteps.empty()) return;
+    LoadStep& front = m_loadSteps.front();
+    m_loadStatus = front.name;
+    if (!front.started) {
+        front.started = true;
+        m_loadEvents.emit({LoadEvent::Type::StepStarted, front.name, 0.0f, loadProgress()});
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    if (front.overFrames) {
+        front.progress = std::clamp(front.overFrames(), 0.0f, 1.0f);
+        front.seconds += std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+        if (front.progress < 1.0f) return; // (again next frame)
+    } else {
+        front.run();
+        front.seconds += std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count();
+    }
     LoadStep step = std::move(m_loadSteps.front());
     m_loadSteps.erase(m_loadSteps.begin());
-    m_loadStatus = step.name;
-    const auto t0 = std::chrono::steady_clock::now();
-    step.run();
-    log::info("Loading: '{}' took {:.2f} s", step.name, std::chrono::duration<float>(std::chrono::steady_clock::now() - t0).count());
+    const float took = step.seconds; // (over frames: the time spent in it, not the frames in between)
+    log::info("Loading: '{}' took {:.2f} s", step.name, took);
     ++m_loadStepsDone;
+    m_loadEvents.emit({LoadEvent::Type::StepFinished, step.name, took, loadProgress()});
 }
 
 bool Engine::pollLoadTasks()
@@ -377,7 +440,10 @@ bool Engine::pollLoadTasks()
     for (LoadTask& t : m_loadTasks) {
         const float before = t.last;
         t.last = std::clamp(t.progress ? t.progress() : 1.0f, 0.0f, 1.0f);
-        if (t.last >= 1.0f && before < 1.0f) log::info("Loading: '{}' done at {:.1f} s", t.name, m_loadElapsed);
+        if (t.last >= 1.0f && before < 1.0f) {
+            log::info("Loading: '{}' done at {:.1f} s", t.name, m_loadElapsed);
+            m_loadEvents.emit({LoadEvent::Type::TaskFinished, t.name, m_loadElapsed, loadProgress()});
+        }
         if (t.last < 1.0f) {
             if (tasksDone && m_loadSteps.empty()) m_loadStatus = t.name;
             tasksDone = false;
@@ -385,6 +451,16 @@ bool Engine::pollLoadTasks()
     }
     if (!m_loadSteps.empty()) m_loadStatus = m_loadSteps.front().name;
     return tasksDone && m_loadSteps.empty();
+}
+
+bool Engine::compilesBlockLoading()
+{
+    // Shaders created while loading compiled their pipelines in the
+    // background: wait for them, so the world doesn't pop in after loading.
+    const CompileStatus c = m_renderer->compileStatus();
+    if (c.pipelinesPending == 0) return false;
+    m_loadStatus = "Compiling shaders";
+    return true;
 }
 
 bool Engine::editorPaused() const
@@ -405,12 +481,20 @@ void Engine::tickLoading()
     m_input.setUiCapture(m_ui->wantsKeyboard(), m_ui->wantsMouse());
     m_loadElapsed += m_time.unscaledDeltaTime;
 
-    runLoadStep();
+    // The first frame only draws the loading screen (nothing on screen yet).
+    // Then one step per frame, and starting the new objects (their start():
+    // meshes, grass, ...) gets a time budget so the screen keeps moving.
+    const bool firstFrame = m_loadFrames++ == 0;
+    if (!firstFrame) {
+        runLoadStep();
+        // (What the step left of the frame's budget; at least one object starts.)
+        const float spent = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - frameStart).count();
+        m_scene->startPending(std::max(kLoadingStartBudgetMs - spent, 0.01f));
+    }
     // The world streams (runInEditor objects only), gameplay waits.
-    m_scene->startPending();
     m_scene->update(m_time.deltaTime, true);
     m_scene->lateUpdate(m_time.deltaTime, true);
-    const bool done = pollLoadTasks();
+    const bool done = !firstFrame && pollLoadTasks() && !m_scene->startsDeferred() && !compilesBlockLoading();
 
     m_loadingScene->startPending();
     m_loadingScene->update(m_time.unscaledDeltaTime);
@@ -441,10 +525,14 @@ void Engine::tickFrame()
         tickLoading();
         return;
     }
+    // (Like the loading screen: the first frame only draws, then a step per
+    // frame and new objects started within a time budget.)
+    const auto frameStart = std::chrono::steady_clock::now();
+    const bool editorLoadWork = editorLoading && m_loadFrames++ > 0;
     if (editorLoading) {
         m_renderer->setLoadingFrames(false);
         m_loadElapsed += m_time.unscaledDeltaTime;
-        runLoadStep();
+        if (editorLoadWork) runLoadStep();
     }
     m_ui->beginFrame();
     ui::System::get().route(*this); // game UI first: what it takes, gameplay doesn't see (+ ImGui's capture)
@@ -453,7 +541,12 @@ void Engine::tickFrame()
     // Editor "Edit" mode: the game is paused; only runInEditor objects update.
     const bool paused = editorPaused() || gamePaused || editorLoading;
 
-    m_scene->startPending();
+    if (!editorLoading) {
+        m_scene->startPending();
+    } else if (editorLoadWork) {
+        const float spent = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - frameStart).count();
+        m_scene->startPending(std::max(kLoadingStartBudgetMs - spent, 0.01f));
+    }
 
     // Fixed timestep: run as many fixed steps as the elapsed time requires.
     if (!paused) m_accumulator += m_time.deltaTime;
@@ -491,7 +584,7 @@ void Engine::tickFrame()
         m_net->flush(); // what we own moved / changed this frame
     }
     debug::drawEngineChannels(); // colliders, navmesh, agents (when their F1 channels are on)
-    if (editorLoading && pollLoadTasks()) endLoading(); // (no minimum time: there's no screen to read)
+    if (editorLoadWork && pollLoadTasks() && !m_scene->startsDeferred() && !compilesBlockLoading()) endLoading(); // (no minimum time: there's no screen to read)
     {
         VE_PROFILE("GUI");
         m_scene->onGui();

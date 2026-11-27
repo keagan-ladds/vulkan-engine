@@ -503,9 +503,9 @@ and ask the host for everything else (decision D19).
 ### Asset cooking (2026-11)
 - [x] Phase 1: cook cache (`<exe>/cooked`), validity by cooker version + settings hash + source size / time / content hash, background on-demand cooking on the job pool, `vecook` tool (`--check`, `--force`, `--clean`)
 - [x] Phase 2: textures -> KTX2 with prebuilt mips, BC7 (colour), BC5 (normal maps), BC4 (greyscale data); per-image `TextureSettings` (`.texture` files / name convention) instead of caller flags
-- [ ] Phase 3: audio -> Ogg Vorbis (92 MB of WAV in the sandbox)
-- [ ] Phase 4: meshes -> binary vertex/index data with tangents and LODs precomputed
-- [ ] Phase 5: compressed archive (zstd) + `vecook --package`; the engine reads from it when present
+- [x] Phase 3: audio -> Ogg Vorbis (libogg + libvorbis encoder, miniaudio/stb_vorbis playback; `<sound>.audio` settings; sandbox 92 MB of WAV -> 7 MB, lengths sample-exact)
+- [x] Phase 4: glTF -> `.vemodel` (meshes with normals / tangents, materials, nodes, skins, animations, embedded images; stamp covers `.bin` buffers and material files). `<model>.model` settings: generated LODs (`autoLods`), a baked octahedral impostor (BC7) and material remaps, cooked offline by `vecook` on a headless renderer (or on first load in the game); foliage uses the cooked levels and impostor instead of baking at load. Savanna: `models/test_tree.gltf`; the autotest checks the cooked LODs and that its impostor needs no bake
+- [x] Phase 5: `ve::vfs` (every engine file read: disk first, then mounted `.vepak` archives overlaid on the exe folder), `.vepak` archives (per-entry zstd, index at the end), cooker registry (`ve::Cooker`: vecook and packaging treat every kind alike), `vecook --package <dir>` (cooked copies instead of sources, no settings files / .blend / `.vepackignore` matches; shaders, the game and its runtime libraries; `--loose`, `--level`). Packaged savanna: 13.8 MB -> 11.2 MB archive, autotest passes without any source asset
 - [ ] Later: alpha-coverage-preserving mips for cutouts, editor panel for .texture files, swapping a freshly cooked texture in while running
 
 ### F5 — Tooling

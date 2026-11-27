@@ -28,29 +28,30 @@ class BloomPass;
 class ParticlePass;
 class FirePass;
 
-// Slots in ve::FrameGlobals::globalParams used by the effects (see vfx.glsl).
+/// Slots in ve::FrameGlobals::globalParams used by the effects (see vfx.glsl).
 enum GlobalSlot : uint32_t {
-    SlotWind = 0,     // xy dir, z strength, w gustiness
-    SlotWeather = 1,  // x wetness, y rain, z cloud coverage, w fog multiplier
-    SlotSun = 2,      // xyz towards sun, w illuminance
-    SlotSunColor = 3, // rgb sun radiance after the atmosphere
+    SlotWind = 0,     ///< xy dir, z strength, w gustiness
+    SlotWeather = 1,  ///< x wetness, y rain, z cloud coverage, w fog multiplier
+    SlotSun = 2,      ///< xyz towards sun, w illuminance
+    SlotSunColor = 3, ///< rgb sun radiance after the atmosphere
 };
 
+/// The effect passes vfx::addDefaultEffects added (null for ones left out).
 struct Effects {
-    AtmospherePass* atmosphere = nullptr;
-    VolumetricFogPass* fog = nullptr;
-    ParticlePass* particles = nullptr;
-    FirePass* fire = nullptr;
-    BloomPass* bloom = nullptr;
+    AtmospherePass* atmosphere = nullptr;  ///< Sky and clouds.
+    VolumetricFogPass* fog = nullptr;  ///< Volumetric fog.
+    ParticlePass* particles = nullptr;  ///< Particles.
+    FirePass* fire = nullptr;  ///< Fire.
+    BloomPass* bloom = nullptr;  ///< Bloom.
 };
 
-// Adds sky + clouds, volumetric fog, fire, particles and bloom with sensible defaults.
-// Also registers the effects' scene types (registerTypes()).
+/// Adds sky + clouds, volumetric fog, fire, particles and bloom with sensible defaults.
+/// Also registers the effects' scene types (registerTypes()).
 Effects addDefaultEffects(ve::Renderer& renderer);
 
-// Registers Fire, Weather, DayNightCycle and Water for scene files and the
-// editor (called by addDefaultEffects; safe to call more than once).
-// ParticleEmitter isn't a scene type yet: add it from code.
+/// Registers Fire, Weather, DayNightCycle and Water for scene files and the
+/// editor (called by addDefaultEffects; safe to call more than once).
+/// ParticleEmitter isn't a scene type yet: add it from code.
 void registerTypes();
 
 } // namespace vfx

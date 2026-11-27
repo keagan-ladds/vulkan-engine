@@ -20,37 +20,50 @@ class Material;
 class Texture;
 class AnimationClip;
 struct SkinnedMeshSource;
+struct ModelVariantLods;
 
+/// One node of a model's hierarchy (a glTF node).
 struct ModelNode {
-    std::string name;
-    glm::mat4 local{1.0f};
-    int mesh = -1; // index into Model::meshes, or -1
-    int skin = -1; // index into Model::skins: the mesh is deformed by those joints
-    std::vector<int> children;
-    std::string extras; // the node's glTF "extras" as JSON text (Blender: custom properties), or empty
+    std::string name;          ///< The node's name (from the modelling tool).
+    glm::mat4 local{1.0f};     ///< Transform relative to its parent node.
+    int mesh = -1; ///< index into Model::meshes, or -1
+    int skin = -1; ///< index into Model::skins: the mesh is deformed by those joints
+    std::vector<int> children; ///< Indices of its child nodes in Model::nodes.
+    std::string extras; ///< the node's glTF "extras" as JSON text (Blender: custom properties), or empty
 };
 
+/// A skeleton: the nodes that deform a skinned mesh.
 struct ModelSkin {
-    std::string name;
-    std::vector<int> joints;            // node indices
-    std::vector<glm::mat4> inverseBind; // per joint
+    std::string name;                   ///< The skin's name.
+    std::vector<int> joints;            ///< node indices
+    std::vector<glm::mat4> inverseBind; ///< per joint
 };
 
+/// An imported model (glTF): meshes, materials, textures, the node hierarchy,
+/// skins and animations. AssetManager::loadModel caches one per file; spawn it
+/// with Scene::instantiate or a ModelInstance component.
 class Model {
 public:
-    std::string name;
-    std::vector<std::shared_ptr<Mesh>> meshes;
-    // meshMaterials[m][slot] = material for submeshes of mesh m with materialSlot == slot
+    std::string name;                           ///< The file's name.
+    std::vector<std::shared_ptr<Mesh>> meshes;  ///< GPU meshes; ModelNode::mesh indexes them.
+    /// meshMaterials[m][slot] = material for submeshes of mesh m with materialSlot == slot
     std::vector<std::vector<std::shared_ptr<Material>>> meshMaterials;
-    std::vector<std::shared_ptr<Texture>> textures;
-    // CPU copy of each mesh's geometry (for colliders, picking, ...).
+    std::vector<std::shared_ptr<Texture>> textures; ///< Textures its materials use (kept alive with the model).
+    /// CPU copy of each mesh's geometry (for colliders, picking, ...).
     std::vector<MeshData> meshData;
-    std::vector<ModelNode> nodes;
-    std::vector<int> roots;
-    std::vector<ModelSkin> skins;
-    // Per mesh: its skinned version (rest pose + joint weights), null if it has no joints.
+    std::vector<ModelNode> nodes;  ///< Every node; children refer to each other by index.
+    std::vector<int> roots;        ///< Indices of the top-level nodes.
+    std::vector<ModelSkin> skins;  ///< Skeletons (ModelNode::skin indexes them).
+    /// Per mesh: its skinned version (rest pose + joint weights), null if it has no joints.
     std::vector<std::shared_ptr<const SkinnedMeshSource>> skinnedMeshes;
-    std::vector<std::shared_ptr<const AnimationClip>> animations;
+    std::vector<std::shared_ptr<const AnimationClip>> animations; ///< The file's animation clips.
+    /// The file's materials, in file order (null where a mesh slot uses the default).
+    std::vector<std::shared_ptr<Material>> materials;
+    /// Per mesh, per material slot: index into `materials` (-1 = a default material).
+    std::vector<std::vector<int>> meshMaterialIds;
+    /// LOD levels and impostors generated when the model was cooked (ModelSettings), per
+    /// variant; null when nothing was generated. Read by loadLodModel (world/LodModel.hpp).
+    std::shared_ptr<const std::vector<ModelVariantLods>> cookedLods;
 };
 
 } // namespace ve

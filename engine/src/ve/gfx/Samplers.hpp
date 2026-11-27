@@ -14,18 +14,22 @@ namespace ve {
 class Device;
 
 enum class SamplerType : uint32_t {
-    LinearRepeat,   // default for material textures (with anisotropy + mips)
-    LinearClamp,    // render targets / post-processing
-    NearestRepeat,  // pixel-art / Valheim-style crunchy textures
-    NearestClamp,   // exact texel fetches
-    ShadowCompare,  // depth comparison (hardware PCF) for shadow maps
+    LinearRepeat,   ///< default for material textures (with anisotropy + mips)
+    LinearClamp,    ///< render targets / post-processing
+    NearestRepeat,  ///< pixel-art / Valheim-style crunchy textures
+    NearestClamp,   ///< exact texel fetches
+    ShadowCompare,  ///< depth comparison (hardware PCF) for shadow maps
     Count
 };
 
+/// The shared samplers, one per SamplerType (Renderer::samplers()).
 class Samplers {
 public:
+    /// Creates them.
     void init(const Device& device);
+    /// Destroys them.
     void shutdown(const Device& device);
+    /// The sampler for `type`.
     VkSampler get(SamplerType type) const { return m_samplers[static_cast<size_t>(type)]; }
 
 private:

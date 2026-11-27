@@ -1,0 +1,11 @@
+{
+  "autoLods": 1,
+  "impostor": true,
+  "impostorFrames": 8,
+  "impostorResolution": 64,
+  "impostorBackground": [
+    0.32,
+    0.45,
+    0.18
+  ]
+}

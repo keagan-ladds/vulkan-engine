@@ -15,16 +15,20 @@
 
 namespace ve {
 
+/// Frame timing (Engine::time(), EngineAccess::time()). Updated by the Engine
+/// at the start of every frame; read-only for games except timeScale.
 struct Time {
-    float deltaTime = 0.0f;         // scaled seconds since last frame (use for gameplay)
-    float unscaledDeltaTime = 0.0f; // real seconds since last frame (use for UI, debug cameras)
-    float time = 0.0f;              // scaled seconds since start
-    float realTime = 0.0f;          // real seconds since start
-    float timeScale = 1.0f;         // 0 = paused, 0.5 = slow motion
+    float deltaTime = 0.0f;         ///< scaled seconds since last frame (use for gameplay)
+    float unscaledDeltaTime = 0.0f; ///< real seconds since last frame (use for UI, debug cameras)
+    float time = 0.0f;              ///< scaled seconds since start
+    float realTime = 0.0f;          ///< real seconds since start
+    float timeScale = 1.0f;         ///< 0 = paused, 0.5 = slow motion
+    /// The fixed step's length in seconds (EngineConfig::fixedTimestep): fixedUpdate's dt.
     float fixedDeltaTime = 1.0f / 50.0f;
-    // How far we are between the last fixed step and the next one (0..1).
-    // Useful to interpolate fixed-step positions for smooth rendering.
+    /// How far we are between the last fixed step and the next one (0..1).
+    /// Useful to interpolate fixed-step positions for smooth rendering.
     float fixedAlpha = 0.0f;
+    /// Frames run since start (counts loading frames too).
     uint64_t frameCount = 0;
 };
 

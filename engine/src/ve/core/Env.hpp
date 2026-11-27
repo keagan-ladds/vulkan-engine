@@ -16,7 +16,7 @@
 
 namespace ve::env {
 
-// The variable's value, or nullopt if it isn't set.
+/// The variable's value, or nullopt if it isn't set.
 inline std::optional<std::string_view> get(const char* name)
 {
     const char* v = std::getenv(name);
@@ -24,7 +24,7 @@ inline std::optional<std::string_view> get(const char* name)
     return std::string_view(v);
 }
 
-// True when set to anything but "", "0", "false", "off" or "no".
+/// True when set to anything but "", "0", "false", "off" or "no".
 inline bool flag(const char* name, bool fallback = false)
 {
     const auto v = get(name);
@@ -32,7 +32,7 @@ inline bool flag(const char* name, bool fallback = false)
     return !(v->empty() || *v == "0" || *v == "false" || *v == "off" || *v == "no");
 }
 
-// The value parsed as a number, or `fallback` if unset or not a number.
+/// The value parsed as a number, or `fallback` if unset or not a number.
 inline float number(const char* name, float fallback)
 {
     const char* v = std::getenv(name);

@@ -28,4 +28,12 @@ void warnOnce(std::string_view message)
     write(Level::Warn, message);
 }
 
+void infoOnce(std::string_view message)
+{
+    static std::set<std::string, std::less<>> said;
+    if (said.find(message) != said.end()) return;
+    said.emplace(message);
+    write(Level::Info, message);
+}
+
 } // namespace ve::log

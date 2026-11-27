@@ -9,6 +9,7 @@
 // =============================================================================
 
 #include "ve/gfx/Resources.hpp"
+#include "ve/core/BinaryIO.hpp"
 #include "ve/render/Geometry.hpp"
 
 #include <memory>
@@ -19,62 +20,72 @@ namespace ve {
 
 class Renderer;
 
+/// A part of a mesh drawn with one material: an index range.
 struct Submesh {
-    uint32_t firstIndex = 0;
-    uint32_t indexCount = 0;
-    uint32_t materialSlot = 0; // which entry of MeshRenderer::materials to use
-    AABB bounds;               // local-space bounds of just this submesh
+    uint32_t firstIndex = 0;   ///< First index in the mesh's index buffer.
+    uint32_t indexCount = 0;   ///< Number of indices (3 per triangle).
+    uint32_t materialSlot = 0; ///< which entry of MeshRenderer::materials to use
+    AABB bounds;               ///< local-space bounds of just this submesh
 };
 
-// Options for MeshData::simplified() (LOD generation, via meshoptimizer).
+/// Options for MeshData::simplified() (LOD generation, via meshoptimizer).
 struct SimplifyOptions {
-    float ratio = 0.5f;     // target fraction of triangles to keep
-    float maxError = 0.05f; // max geometric deviation, relative to the mesh size (0.01 = 1%)
-    // "Sloppy" mode ignores topology: much more aggressive, good for far LODs
-    // of organic shapes (foliage blobs), bad for anything that must stay closed.
+    float ratio = 0.5f;     ///< target fraction of triangles to keep
+    float maxError = 0.05f; ///< max geometric deviation, relative to the mesh size (0.01 = 1%)
+    /// "Sloppy" mode ignores topology: much more aggressive, good for far LODs
+    /// of organic shapes (foliage blobs), bad for anything that must stay closed.
     bool sloppy = false;
-    // Faceted/low-poly meshes (unshared vertices per triangle): weld by
-    // position + colour only, then re-flatten normals so the LOD stays faceted.
-    // For smooth meshes leave false: normals and UVs are kept.
+    /// Faceted/low-poly meshes (unshared vertices per triangle): weld by
+    /// position + colour only, then re-flatten normals so the LOD stays faceted.
+    /// For smooth meshes leave false: normals and UVs are kept.
     bool faceted = false;
 };
 
-// CPU-side mesh data with a few useful operations for procedural geometry.
+/// CPU-side mesh data with a few useful operations for procedural geometry.
 struct MeshData {
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
+    std::vector<Vertex> vertices;   ///< The vertices.
+    std::vector<uint32_t> indices;  ///< Triangles: three indices into vertices each (counter-clockwise = front).
 
-    // Appends another mesh, transforming positions/normals and optionally tinting it.
+    /// Appends another mesh, transforming positions/normals and optionally tinting it.
     void append(const MeshData& other, const glm::mat4& transform = glm::mat4(1.0f),
                 const glm::vec4& tint = glm::vec4(1.0f));
-    // Smooth normals from triangle data (area weighted).
+    /// Smooth normals from triangle data (area weighted).
     void computeNormals();
-    // Unshares vertices so every triangle has its own (faceted, low-poly look),
-    // then recomputes flat normals.
+    /// Unshares vertices so every triangle has its own (faceted, low-poly look),
+    /// then recomputes flat normals.
     void makeFlatShaded();
-    // Tangents for normal mapping (needs normals + uvs).
+    /// Tangents for normal mapping (needs normals + uvs).
     void computeTangents();
-    void setColor(const glm::vec4& color);
-    AABB bounds() const;
+    void setColor(const glm::vec4& color);  ///< Sets every vertex's colour.
+    AABB bounds() const;                    ///< Bounds of the vertices.
+    /// Number of triangles.
     uint32_t triangleCount() const { return static_cast<uint32_t>(indices.size() / 3); }
 
-    // A simplified copy (one LOD level). All triangles are treated as one
-    // submesh, so use it per material part if your mesh has several.
+    /// A simplified copy (one LOD level). All triangles are treated as one
+    /// submesh, so use it per material part if your mesh has several.
     MeshData simplified(const SimplifyOptions& options) const;
-    // Reorders triangles/vertices for the GPU's vertex cache and memory
-    // fetches (same mesh, renders faster). Cheap; do it for static meshes.
+    /// Reorders triangles/vertices for the GPU's vertex cache and memory
+    /// fetches (same mesh, renders faster). Cheap; do it for static meshes.
     void optimize();
+
+    /// Appends the mesh to a binary stream (cooked models, the derived-data cache).
+    void write(BinaryWriter& out) const;
+    /// Reads a mesh written by write(). False if the data is truncated.
+    bool read(BinaryReader& in);
 };
 
+/// Geometry on the GPU: a vertex and an index buffer with submeshes. Shared
+/// (shared_ptr) by renderers and instance groups; freed safely when the last
+/// user lets go.
 class Mesh {
 public:
-    // Uploads `data` to the GPU. If `submeshes` is empty a single submesh
-    // covering all indices is created.
+    /// Uploads `data` to the GPU. If `submeshes` is empty a single submesh
+    /// covering all indices is created.
     static std::shared_ptr<Mesh> create(Renderer& renderer, const MeshData& data,
                                         std::vector<Submesh> submeshes = {}, std::string name = {});
-    // A mesh whose vertices live in someone else's buffer (`vertexCount`
-    // vertices from byte `vertexOffset`; e.g. GPU-skinned output). Owns its
-    // indices only. Bounds come from `data` and can be updated (setBounds).
+    /// A mesh whose vertices live in someone else's buffer (`vertexCount`
+    /// vertices from byte `vertexOffset`; e.g. GPU-skinned output). Owns its
+    /// indices only. Bounds come from `data` and can be updated (setBounds).
     static std::shared_ptr<Mesh> createShared(Renderer& renderer, VkBuffer vertices, VkDeviceSize vertexOffset,
                                               const MeshData& data, std::vector<Submesh> submeshes = {}, std::string name = {});
     ~Mesh();
@@ -82,27 +93,28 @@ public:
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
 
+    /// The vertex buffer (another object's, for shared meshes).
     VkBuffer vertexBuffer() const { return m_sharedVertices ? m_sharedVertices : m_vertices.handle; }
-    VkDeviceSize vertexOffset() const { return m_vertexOffset; } // bind the vertex buffer at this byte offset
-    // Binds the vertex buffer (at vertexOffset()) to binding 0 and the 32-bit index buffer.
+    VkDeviceSize vertexOffset() const { return m_vertexOffset; } ///< bind the vertex buffer at this byte offset
+    /// Binds the vertex buffer (at vertexOffset()) to binding 0 and the 32-bit index buffer.
     void bind(VkCommandBuffer cmd) const;
-    // Moving geometry (skinning): every submesh gets these bounds.
+    /// Moving geometry (skinning): every submesh gets these bounds.
     void setBounds(const AABB& bounds);
-    VkBuffer indexBuffer() const { return m_indices.handle; }
-    const std::vector<Submesh>& submeshes() const { return m_submeshes; }
-    const AABB& bounds() const { return m_bounds; }
-    uint32_t vertexCount() const { return m_vertexCount; }
-    uint32_t indexCount() const { return m_indexCount; }
-    const std::string& name() const { return m_name; }
+    VkBuffer indexBuffer() const { return m_indices.handle; }             ///< The index buffer (32-bit indices).
+    const std::vector<Submesh>& submeshes() const { return m_submeshes; } ///< Its submeshes.
+    const AABB& bounds() const { return m_bounds; }                       ///< Local-space bounds.
+    uint32_t vertexCount() const { return m_vertexCount; }                ///< Number of vertices.
+    uint32_t indexCount() const { return m_indexCount; }                  ///< Number of indices.
+    const std::string& name() const { return m_name; }                    ///< Debug name.
 
 private:
     Mesh() = default;
-    // Stores the submeshes (one covering everything if empty) with bounds from `data`.
+    /// Stores the submeshes (one covering everything if empty) with bounds from `data`.
     void setSubmeshes(const MeshData& data, std::vector<Submesh> submeshes);
 
     Renderer* m_renderer = nullptr;
     Buffer m_vertices;
-    VkBuffer m_sharedVertices = VK_NULL_HANDLE; // createShared: not owned
+    VkBuffer m_sharedVertices = VK_NULL_HANDLE; ///< createShared: not owned
     VkDeviceSize m_vertexOffset = 0;
     Buffer m_indices;
     std::vector<Submesh> m_submeshes;

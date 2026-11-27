@@ -66,7 +66,11 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
   `lodDistances` (m), dithered over `lodBlend`.
 - **Foliage** (`FoliageType::mesh`): real size. `lodMode` is screen size or
   distance, with `lodThresholds`. `impostor` adds a baked octahedral impostor as
-  the last level, and `autoLods` simplifies one-level meshes. `collision`:
+  the last level, and `autoLods` simplifies one-level meshes. Both are better
+  cooked: put `{"autoLods": 2, "impostor": true}` in `<mesh>.model` and the
+  levels and impostor are made by `vecook` (or the first run) and read from
+  the cooked model, with no impostor baking at load (docs/03-conventions.md,
+  "Models cook too"). `collision`:
   Auto (the `_COL` nodes), a primitive sized by `colliderSize`, or the convex
   hull of LOD0.
 - The log says what was found, e.g. `FoliageType 'Plants': 1 variant(s) from

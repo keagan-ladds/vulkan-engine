@@ -177,7 +177,26 @@ void Editor::drawViewport()
             dd.circle(c, {0, 1, 0}, st->radius + st->falloff, IM_COL32(255, 160, 60, 110), 64);
             if (!st->biome.empty()) dd.circle(c, {0, 1, 0}, st->biomeRadius + st->biomeFalloff * 0.5f, IM_COL32(120, 255, 140, 160), 64);
         }
-        if (auto* l = sel->getComponent<PointLight>()) dd.sphere(glm::vec3(m[3]), l->range, IM_COL32(255, 210, 80, 120));
+        if (auto* spot = sel->getComponent<SpotLight>()) {
+            // The cone: its axis, and the outer / inner edges at the range.
+            const glm::vec3 apex(m[3]);
+            const glm::vec3 axis = glm::normalize(glm::vec3(m * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+            const uint32_t col = IM_COL32(255, 210, 80, 170);
+            for (const float angle : {spot->outerAngle, spot->innerAngle}) {
+                const float a = glm::radians(std::clamp(angle, 0.0f, 89.0f));
+                const glm::vec3 centre = apex + axis * (spot->range * std::cos(a));
+                const float radius = spot->range * std::sin(a);
+                dd.circle(centre, axis, radius, angle == spot->outerAngle ? col : IM_COL32(255, 210, 80, 90));
+                if (angle == spot->outerAngle) {
+                    const glm::vec3 side = glm::normalize(glm::abs(axis.y) < 0.99f ? glm::cross(axis, glm::vec3(0, 1, 0)) : glm::cross(axis, glm::vec3(1, 0, 0)));
+                    const glm::vec3 up = glm::cross(side, axis);
+                    for (const glm::vec3& d : {side, -side, up, -up}) dd.line(apex, centre + d * radius, col);
+                }
+            }
+            dd.line(apex, apex + axis * spot->range, IM_COL32(255, 210, 80, 120));
+        } else if (auto* l = sel->getComponent<PointLight>()) {
+            dd.sphere(glm::vec3(m[3]), l->range, IM_COL32(255, 210, 80, 120));
+        }
         if (sel->getComponent<DecalProjector>()) {
             // The projection box (unit cube scaled by the transform) and its direction (-Z).
             const uint32_t col = IM_COL32(120, 255, 200, 220);

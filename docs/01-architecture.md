@@ -124,12 +124,31 @@ when every step ran and every task reports 1 (and `minSeconds` passed); the
 loading scene is destroyed and the next frame is the world's.
 `VE_CAPTURE_FRAME` / benchmarks count world frames only.
 
+No long frames while loading: the window is created hidden and shown with
+the first frame (no black, unresponsive window during start-up); the first
+loading frame only draws the loading screen; after that, newly spawned
+objects are started (`start()`) within a ~50 ms budget per frame
+(`Scene::startPending(budgetMs)`; the rest start on following frames, before
+their first update, and loading waits for them). Big start-up work splits
+itself up: `Foliage` builds one layer's meshes (LOD chains, impostor bakes)
+per frame behind a load task, and generated data that never changes is
+cached in the cook cache (the clouds' 3D noise: `cooked/generated/`, shipped
+by `vecook --package`). A single step or start that is slow still holds one
+frame: split it into several steps or a load task.
+
 What a loading screen waits for is "ready to play here", not the whole
 world: foliage counts only the cells within `FoliageSettings::readyDistance`
 (300 m) of the viewer (big trees drawn kilometres away keep streaming in,
 nearest first, after play starts), and the terrain's first LOD view is
 built on the job pool with no per-frame upload budget while loading
 (Savanna: about 0.9 s to play in Release, was 2.4 s).
+
+Scene files load the same way (`Engine::addSceneLoad`, `SceneSerializer::
+loadAsync` -> `SceneLoad`): the file is read and parsed on the job pool, then
+objects are created a time slice per frame as a step spanning frames
+(`addLoadStepOverFrames`). Meanwhile `Scene::holdStarts()` keeps them from
+starting, so they start together once the file is in (after the caller's
+`then`), as a synchronous load would.
 
 **In the editor** (Edit mode, or a game started in it): `beginLoading`
 shows no loading scene. Frames stay normal editor frames (the world paused,
@@ -200,6 +219,16 @@ Every pipeline uses **one global pipeline layout**:
 | set 1, b0 | `image2D storageImages[]` | bindless storage images (compute) |
 | set 1, b1 | `sampler2D textures[]` (+ `sampler3D`/`samplerCube` aliases) | **bindless textures**, 4096 slots |
 | push constants | 128 bytes, all stages | default draw layout: `mat4 model; uint material; uint viewIndex; uint lightIndex; uint flags; vec4 custom;` Passes may use their own struct |
+
+**Spot lights** are point lights with a cone (`SpotLight : PointLight`):
+`GpuPointLight::spot` holds the direction and cos(outer angle) (w = -2 for a
+plain point light), `params.y` the cone's falloff scale, `params.z` the
+cookie's bindless texture index (-1 = none), `params.w` the chromatic
+aberration and `spotBasis` the light's right axis (cookie orientation) and
+1 / tan(outer angle). Shaders multiply each point light by `veSpotColor`
+(vec3: cone × cookie, per-channel cone widths for the fringes; lighting,
+volumetric fog) or `veSpotFactor` (its average, for grey custom loops). A shadowed spot uses a cube slot but renders only the faces
+its cone can reach (ShadowSetup::buildPointFaces).
 
 **Clustered point lights.** The camera frustum is split into 16 × 9 screen
 tiles × 24 logarithmic depth slices. Every frame the renderer bins the point
@@ -287,8 +316,21 @@ material slot) and a local AABB.
   blend mode (opaque / alpha / additive / premultiplied), cull mode, depth
   test/write, render queue (Opaque 2000, AlphaTest 2450, Transparent 3000), shadow
   casting, and optional custom shadow vertex/fragment shaders (e.g. for wind sway).
-- `Shader` lazily builds and caches pipelines for each *pass kind* (Forward,
-  ShadowDirectional, ShadowPoint).
+- `Shader` builds and caches pipelines for each *pass kind* (Forward,
+  ShadowDirectional, ShadowPoint). With `RendererSettings::asyncPipelines`
+  (default) they're built on the job pool, starting when the shader is created
+  (`Renderer::createShader` calls `prewarm()`: forward, plus shadows if it
+  casts them); `pipeline(kind)` is null until then and the draw is skipped
+  (no frame hitch on a shader's first use; the object appears a few frames
+  later). Finished jobs are handed over at the start of a frame
+  (`finishPipelineJobs`); a job whose shader changed or died meanwhile is
+  destroyed. Loading screens wait for pending compiles ("Compiling shaders").
+  Hooks for UI: `Renderer::compileStatus()` (pending pipelines, hot-reload
+  GLSL compiles) and `compileEvents()` (Started / Finished / Failed, with name
+  and milliseconds); `Engine::loadEvents()` does the same for loading (Began,
+  StepStarted / StepFinished, TaskFinished, Ended). Both are `ve::Event`s
+  (`core/Event.hpp`: `subscribe()` returns an RAII `Subscription`).
+  `VE_ASYNC_PIPELINES=0` builds pipelines inside the frame, as before.
 - `Material` = `shared_ptr<Shader>` + a `MaterialData` block (`setVector(slot)`,
   `setTexture(slot)`). The renderer assigns each material a slot in the
   MaterialBuffer and uploads all live materials each frame.
@@ -914,7 +956,27 @@ never see Jolt types. The module is split by concern: `PhysicsWorld.cpp`
   `loadTexture` uses a cooked copy only while it is current; otherwise it
   loads the source and queues a cook on the job pool (Background lane), used
   from the next run. `vecook` (engine/tools) cooks everything with the same
-  code for releases / CI. Without BC support the source images are used. `Texture::fromPixels()` and
+  code for releases / CI. Without BC support the source images are used.
+- Audio cooking (`assets/AudioCook`): WAV / FLAC become Ogg Vorbis (VBR,
+  libvorbis) in the same cache (`<asset path>.ogg`), stamped in the Vorbis
+  comment (tag `VE_COOK`); settings in an optional `<sound>.audio` (quality,
+  mono, sampleRate, compress). `loadAudio` plays the cooked file when current
+  (miniaudio decodes Vorbis with its stb_vorbis); MP3 / Ogg sources are used
+  as they are. The stamp logic is shared (`assets/Cook`). `assets/Cookers` is
+  the registry of cookers (name, settings extensions, handles, cookedPath,
+  check, cook) that `vecook` and packaging use, so a new kind is one
+  `registerCooker()`.
+- Files (`core/FileSystem`, `core/Pack`): every engine file read goes through
+  `ve::vfs` (`exists`, `read`, `readText`, `open`, `list`): a real file first,
+  then mounted `.vepak` archives (later ones win) overlaid on a root folder.
+  The Engine mounts `<exe>/*.vepak` at start (`EngineConfig::mountArchives`).
+  Third-party readers are bridged (cgltf callbacks, miniaudio's VFS,
+  vorbisfile callbacks, stb from memory). `vecook --package <dir>` writes a
+  release: the game, its runtime libraries and `data.vepak` (assets with
+  cookable sources replaced by their cooked copies, cooked files, shaders), or
+  loose folders with `--loose`. With only cooked copies present,
+  `AssetManager::exists` still finds the asset and `loadPixels` decodes the
+  cooked texture on the CPU (terrain maps). `Texture::fromPixels()` and
   `Texture::create3D()` cover procedural data (e.g. cloud noise).
 - Models: glTF 2.0 (`.gltf`/`.glb`) via cgltf. Meshes and primitives become
   `Mesh` + submeshes. Materials become `StandardMaterial` (base colour /
@@ -925,6 +987,22 @@ never see Jolt types. The module is split by concern: `PhysicsWorld.cpp`
   (canonical path + colour/data + sampler), so models exported side by side
   ("glTF Separate") share one GPU texture per file; `.glb`-embedded images
   stay per model.
+- Model cooking (`assets/ModelData`, `ModelCook`): loading is split into
+  `parseGltf` (CPU only: `ModelData` with normals / tangents computed) and
+  `buildModel` (GPU upload, materials). A glTF cooks to
+  `<cache>/<asset path>.vemodel`: `ModelData` written with `core/BinaryIO`,
+  after a JSON stamp that also covers its `.bin` buffers and the material files
+  it uses. Loading a current cooked copy is array reads and uploads. An
+  optional `<model>.model` (`ModelSettings`) asks cooking for generated LOD
+  levels (`autoLods`, meshoptimizer) and an octahedral impostor of LOD0 per
+  variant, and remaps material slots to material files (resolved into the
+  cooked file: `.model` doesn't ship). LODs / impostors need the renderer, so
+  the world module registers the step (`setModelLodGenerator`,
+  `world/LodModel`): it runs on the main thread in the game (first load of a
+  stale model; atlases then compress to BC7 on a job and the file is written),
+  or in `vecook` on a headless `Engine` after the CPU cooks. `Model::cookedLods`
+  carries the result; `FoliageType` appends the cooked levels and makes its
+  impostor from the cooked atlases (`impostorFromCooked`) instead of baking.
 - Material files (`*.material`, `assets/MaterialAsset.hpp`): a
   `StandardMaterial` (optionally with a custom vertex / fragment shader in its
   layout, plus extra texture and parameter slots) described as JSON. A glTF
@@ -1035,9 +1113,11 @@ Optional add-ons built only on public engine APIs:
   using a CPU-generated 3D Perlin-Worley noise texture. It also sets the
   hemispherical ambient light in frame globals from the sun elevation. The ground
   term reports its sunlit-bounce share (`Environment::groundSunFraction`, i.e.
-  `ambientGround.w`), and `veAmbient` scales that share by the sun shadow 2 m
-  out from the surface. Objects therefore stop glowing orange once the sun is
-  behind terrain.
+  `ambientGround.w`), and `veAmbient` scales that share by the sun shadow
+  averaged over four points 1.5 m above the surface, around a point 2.5 m out
+  along the normal's horizontal part. Objects therefore stop glowing orange
+  once the sun is behind terrain, huts or trees, while props shorter than
+  ~1.5 m don't print their outline onto nearby walls (`SAVANNA_BOUNCETEST=1`).
 - `VolumetricFogPass`: a half-resolution raymarch from the camera to scene depth
   into `FogBuffer`. It uses exponential height fog, 3D noise, a Henyey-Greenstein
   phase function, shadow-cascade sampling for god rays, and only the point lights
@@ -1150,7 +1230,8 @@ Test hooks (environment variables): `SAVANNA_TIME=21.5`, `SAVANNA_WEATHER=0..4`,
 `SAVANNA_NET=host[:port]` / `SAVANNA_NET=join:<address>[:port]` + `SAVANNA_NAME=<name>` (multiplayer),
 `SAVANNA_DRAW=colliders,terrain,characters,navmesh,agents,villagers,shapes` (debug-draw channels), `SAVANNA_POSE=x,y,z,yawDeg,pitchDeg` (fly
 camera), `SAVANNA_AUTOTEST=1` / `SAVANNA_EDITORTEST=1` (scripted smoke tests
-that exit), `SAVANNA_SCENE=file.json` (another scene), and
+that exit), `SAVANNA_SCENE=file.json` (another scene), `SAVANNA_BOUNCETEST=1` (a wall
+with a cube by each face: ambient ground bounce, see `sandbox/src/Stress.hpp`), and
 `VE_VALIDATION=0/1`. Any engine game: `VE_HEADLESS=1` (no window shown,
 offscreen rendering) and `VE_CAPTURE=out.png` + `VE_CAPTURE_FRAME=N` (save
 a frame; headless only), e.g.

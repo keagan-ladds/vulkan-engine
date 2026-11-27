@@ -127,9 +127,10 @@ void main()
         vec3 light = ambient + sunLight * vis;
         for (uint k = 0u; k < nearCount; ++k) {
             VePointLight L = lights.point[nearLights[k]];
-            float d = length(L.positionRange.xyz - p);
+            vec3 toLight = L.positionRange.xyz - p;
+            float d = length(toLight);
             float r = d / L.positionRange.w;
-            if (r < 1.0) light += L.color.rgb * ((1.0 - r * r) * (1.0 - r * r) / (d * d + 1.0)) * pc.tint.w / (4.0 * VE_PI);
+            if (r < 1.0) light += L.color.rgb * ((1.0 - r * r) * (1.0 - r * r) / (d * d + 1.0)) * veSpotColor(L, toLight / max(d, 1e-4)) * pc.tint.w / (4.0 * VE_PI);
         }
         light *= pc.tint.rgb;
         float stepT = exp(-sigma * ds);

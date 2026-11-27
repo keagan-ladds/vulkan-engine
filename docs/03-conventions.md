@@ -19,6 +19,34 @@
 - Comments explain intent and Vulkan "why". This codebase doubles as a
   learning resource.
 
+### Code documentation
+
+Every public declaration in a header (`engine/src`, `effects/src`) has a doc
+comment: what IntelliSense / clangd shows on hover, and what the API reference
+(`cmake --build build --target docs` -> `build/docs/html/index.html`) is made of.
+
+- `///` above a declaration, `///<` after a member or enum value on the same
+  line. Plain `//` is for implementation notes and section separators; tools
+  don't attach it to anything.
+- The first sentence is the summary (shown first in tooltips): say what it
+  does or is, in the caller's terms. Then units (s, m, degrees, 0..1), ranges,
+  defaults' meaning, ownership / lifetime, threading ("main thread only"),
+  and what null / empty / negative means.
+- Name every parameter whose meaning isn't obvious from its name and type with
+  `@param` (e.g. `@param duck music volume (0..1) while the stinger plays`),
+  and `@return` when the result isn't obvious. Don't restate the obvious
+  (`@param name the name`).
+- Keep the file's top comment block (what the file is for, why, short usage
+  example); write it as `//` - it is the file's overview, not a declaration's.
+- Private members and internals: document them when the code relies on an
+  invariant; they don't count towards the check.
+
+**Check before you commit:** `python3 tools/check_docs.py --changed` lists the
+undocumented declarations in headers your branch touched and fails if there
+are any (CI runs it too). `python3 tools/check_docs.py` shows the whole
+codebase's state; `--list <header>` every gap in one header. Needs Doxygen
+(`apt install doxygen`, `winget install DimitriVanHeesch.Doxygen`, `brew install doxygen`).
+
 ## Coordinate & rendering conventions
 
 | Thing | Convention |
@@ -137,7 +165,10 @@ go.addComponent<Spin>().speed = 3.0f;
    Shaders with their own lighting loop should only visit the point lights of
    the pixel's cluster: `VeLightList list = veLightList(P);` then
    `lights.point[veLightAt(list, k)]` for `k < list.count` (see the template's
-   `mygame_toon.frag`).
+   `mygame_toon.frag`), multiplying each light by `veSpotFactor(L, l)` (`l`:
+   unit direction towards the light) so spot lights keep their cone and
+   cookie, or by `veSpotColor(L, l)` (a `vec3`) to also keep the cookie's
+   colour and the chromatic aberration fringes.
 2. Document the parameter layout at the top of the shader.
 3. In C++:
    ```cpp
@@ -165,6 +196,23 @@ and the old version keeps running. This covers `ShaderDesc` shaders and pipeline
 made with `createFullscreenPipeline` / `createComputePipeline`. Keep those as
 `ve::PipelineHandle` members, which always give the current `VkPipeline`. New
 shader files still need a rebuild. `VE_SHADER_HOT_RELOAD=0` turns it off.
+
+**"Compiling shaders" in your UI.** A shader's pipelines compile in the
+background (from when it's created); until they're done, objects using it
+aren't drawn. To show that:
+
+```cpp
+const ve::CompileStatus c = renderer().compileStatus(); // each frame: pipelinesPending, shadersPending, busy()
+m_sub = renderer().compileEvents().subscribe([this](const ve::CompileEvent& e) {
+    if (e.type == ve::CompileEvent::Type::Started) m_compiling = e.name; // also Finished / Failed (+ ms)
+});
+m_loadSub = engine().loadEvents().subscribe([](const ve::LoadEvent& e) { /* Began, StepStarted, ... Ended */ });
+```
+
+Keep the `ve::Subscription` as a member: it unsubscribes when destroyed. The
+sandbox HUD's corner note (`Hud::drawCompiling`) is an example; loading
+screens already show "Compiling shaders" through `loadStatus()`. Create
+shaders early (while loading) so they're ready by the time they're drawn.
 
 ### Share textures and materials between models
 
@@ -205,7 +253,11 @@ Custom shaders keep StandardMaterial's layout and add inputs:
 masks (R dirt, G wear, B wet; fill the colour attribute with black first)
 with optional dirt / grunge / wear textures in slots 5-7 and settings in
 params 4-8 (documented at the top of the shader). It's a starting point:
-copy it into your game as `mygame_painted.frag` to change it. Savanna's
+copy it into your game as `mygame_painted.frag` to change it. A **baked
+normal** (texture slot 8, settings params slot 9: strength, UV scale) adds a
+per-asset normal map on the mesh's own UVs (damage baked in Blender) on top of
+the material's tiled normal map; export the glTF with tangents
+(Data > Mesh > Tangents) so the engine uses the tangent space it was baked in. Savanna's
 `SAVANNA_PAINTTEST=1` shows a test wall (`materials/painted_test.material`).
 **In Blender:** run `tools/blender/ve_painted_node_group.py` once (Scripting
 workspace, Run Script). It makes a "VE Painted" node group with the same maths
@@ -213,7 +265,26 @@ and inputs named like the material file's values, plus an example material
 showing the wiring, so vertex / texture painting looks like the engine while
 you paint. Mark it as an asset (the script does) to reuse it in every
 project. `tools/blender/test_ve_painted.py` checks the group against the
-shader (needs `pip install bpy`).
+shader (needs `pip install bpy`). **Getting it into the engine:** the glTF
+exporter can't describe the group, so the engine uses a material file named
+after the Blender material instead (`assets/materials/<name>.material`, from
+the node's values and images). With the script installed as an add-on
+(Preferences > Add-ons > Install from Disk), **File > Export > glTF 2.0 writes
+them by itself**: one file per VE Painted material in the export, into the
+`assets` folder the .gltf is saved under ("Write with glTF export" in the
+panel turns it off; the panel shows what the last export wrote, the console
+lists warnings). By hand: Material tab > VE Engine > **Export VE material**
+(this one) or **Export all VE materials** (every one in the .blend). Export the
+model as glTF Separate with Data > Mesh > Vertex Color = **Active** (the paint
+lives in the vertex colours). The example material samples the grunge / dirt /
+wear images **world-space triplanar** like the shader (helper groups "VE
+Triplanar Coords" / "VE Triplanar Blend"; pick the image in the first of the
+three image nodes), so the preview matches the game on rotated and joined
+objects; materials wired with a Box-projected image node get a **Convert
+overlays to triplanar** button in the panel. Damage brush alphas for painting wear
+and concrete damage (edge chips, flakes, scratches, spalls, pitting, cracks,
+crumble) are in `tools/blender/brushes/` (made by
+`tools/blender/make_damage_brushes.py`; its header says how to set them up).
 
 ### Decals: bullet holes, puddles, cracks
 
@@ -349,6 +420,58 @@ on the source images, `VE_COOK=sync` cooks before loading.
 Normal-map shaders must rebuild Z: use `veUnpackNormal(texel)` (cooked
 normal maps only store X and Y).
 
+**Sounds cook too:** WAV and FLAC files become Ogg Vorbis in the same cache
+(the sandbox's 92 MB of WAV: 7 MB), sample-exact in length so loops stay
+seamless. Author in WAV / FLAC; to tune one, put `<sound>.audio` next to it:
+
+```json
+{ "quality": 0.2, "mono": true, "sampleRate": 22050 }
+```
+
+(`quality` -0.1..1, default 0.4 ~ 128 kbit/s stereo; `mono` for positional
+sounds; `"compress": false` keeps the source file). MP3 / Ogg files are used
+as they are.
+
+**Models cook too:** a `.gltf` / `.glb` becomes `<model>.vemodel` in the cache
+(parsed, normals and tangents computed: loading is reading arrays). Put
+`<model>.model` next to a model to make cooking do more:
+
+```json
+{
+  "autoLods": 2,              // simplified levels for variants with one level (0..3); authored _LOD1.. levels are kept as they are
+  "lodRatio": 0.35,           // triangles kept per level
+  "lodMaxError": 0.08,        // allowed deviation (relative to the size), doubles per level
+  "lodFaceted": false,        // low-poly flat-shaded art: keep it faceted
+  "impostor": true,           // an octahedral impostor of LOD0 as the last level (foliage)
+  "impostorFrames": 12, "impostorResolution": 128, "impostorAlphaCutoff": 0.45,
+  "impostorBackground": [0.3, 0.3, 0.3],   // colour of empty atlas texels: near the model's average
+  "materials": { "Bark": "materials/acacia_bark.material" }   // slot (Blender material name) -> material file
+}
+```
+
+(No comments in the real file.) A material slot's file is, in order: the
+`.model` remap, the material's `material` custom property,
+`materials/<name>.material`, else the glTF's own values. Material files stay
+live (the cooked model references them); impostors are rendered with them,
+so a material change recooks the model. LODs and impostors are rendered by the
+engine, so `vecook` starts a headless renderer for those models (on a Linux
+server without a display: `xvfb-run -a build/bin/vecook`); a game run cooks
+them on the first load of a stale model instead. Code-built meshes
+(`Mesh::fromData`) aren't cooked: their impostors still bake at load.
+
+**Packaging a release:** `build/bin/vecook --package <dir>` (cooks what's
+stale first) writes the game executable, its runtime libraries and one
+`data.vepak` archive: assets (images, sounds and glTF models only as their
+cooked copies; a glTF's `.bin` buffers stay out), cooked files (with
+`cooked/generated/`, engine data the game made on its first run) and shaders.
+`.texture` / `.audio` / `.model` files, hidden files and
+`*.blend` stay out; list more in `assets/.vepackignore` (globs: `*`, `?`,
+`**`, `folder/`). `--loose` writes folders instead of the archive (to look
+inside), `--level N` sets the zstd level. Read files through `ve::vfs`
+(`vfs::read`, `vfs::open`, `vfs::exists`), not `std::ifstream` /
+`std::filesystem::exists`, or a packaged game won't find them; for an image's
+pixels use `assets().loadPixels(path)`.
+
 ### Interaction ("press E to ...")
 
 ```cpp
@@ -399,9 +522,15 @@ Saveable. Slots: `ve::save::folder()` (per-user data folder, or
 ```cpp
 ve::Engine engine(config);
 engine.beginLoading(makeLoadingScene(), 0.5f);            // your own small scene (UI in onGui)
-engine.addLoadStep("Loading the world", [&] { loadWorld(engine); }); // main thread, one step per frame
+engine.addSceneLoad("Loading the level", "scenes/level1.json",   // parsed on the job pool, objects
+    [&](const std::vector<ve::GameObject*>& roots) { setUpLevel(engine); }); // created over frames
+engine.addLoadStep("Spawning the player", [&] { spawnPlayer(engine); }); // main thread, one step per frame
 engine.run();
 ```
+
+`addSceneLoad`'s objects don't start until the whole file is in; `then` runs
+first, so it can look them up and adjust them. Steps after it wait for it
+(`addLoadStepOverFrames` makes your own multi-frame steps).
 
 The loading scene's objects read `engine().loadProgress()` (0..1) and
 `engine().loadStatus()` (the current step / task name). Systems that fill
@@ -418,6 +547,11 @@ streaming the rest afterwards (foliage: `FoliageSettings::readyDistance`).
 When the editor is open the same calls show no loading scene: the editor
 draws a progress panel over the world as it fills in. So a game that can
 start in the editor should ask for Edit mode before `beginLoading`.
+
+Keep each step short (a frame is held until it returns; the screen freezes
+meanwhile): split big work into several steps, or do it on the job pool and
+report it with a load task. Objects spawned while loading start a few per
+frame (a time budget), so a heavy `start()` delays only itself.
 
 ### Fire (campfires, torches)
 
@@ -1016,4 +1150,49 @@ config.renderer.maxShadowedPointLights = 4;
 config.renderer.maxShadowDistance = 180.0f;
 // at runtime: renderer.settings().cascadeCount = 3; renderer.applySettings();
 ```
-Set `castShadows = true` on the `DirectionalLight` / `PointLight` components.
+Set `castShadows = true` on the `DirectionalLight` / `PointLight` / `SpotLight` components.
+
+### Spot lights (torches, headlights, street lamps)
+
+A `ve::SpotLight` shines a cone along its object's forward (-Z) from its
+position: put it on a child placed and turned where the lamp is.
+
+```cpp
+auto& lamp = scene().spawn("Headlight L");
+lamp.setParent(&car, false);
+lamp.transform().setLocalPosition({-0.7f, 0.6f, -2.1f}); // at the lamp, facing the car's forward
+auto& beam = lamp.addComponent<ve::SpotLight>();
+beam.range = 40.0f;       // m
+beam.outerAngle = 28.0f;  // degrees from the axis to the edge of the cone
+beam.innerAngle = 18.0f;  // fully bright inside this
+beam.intensity = 60.0f;
+beam.castShadows = true;  // a cube shadow map, only the faces the cone reaches
+```
+
+It is a `PointLight` underneath (colour, intensity, range, shadows, the point
+light limits and clusters), so `forEach<PointLight>` sees spots too. Beams
+show in volumetric fog. Editor: Create > Light > Spot light (the gizmo draws
+the cone). The sandbox's player has a torch on T / pad d-pad down.
+
+**An imperfect beam** (an old torch, a cheap lens): a *cookie* is a mask
+projected across the cone. Its RGB multiplies the light, the image's centre
+is the beam's axis, its inscribed circle reaches `outerAngle`, and image up is
+the light's up (+Y). `chromaticAberration` (0..0.3) scales each channel's
+pattern about the axis, red wider and blue narrower, so the cone's edge and
+the cookie's rings get a red outer and a blue inner fringe.
+
+```cpp
+beam.cookie = "textures/torch_cookie_mask.png"; // *_mask: loaded as linear data
+beam.innerAngle = 26.0f; beam.outerAngle = 32.0f; // the cookie shapes the beam; the cone is only its edge
+beam.chromaticAberration = 0.03f;
+```
+
+Keep cookies small (256 px, black at the border): they are sampled at mip 0
+inside the lighting loop. Set `cookieTexture` from code instead of a path if
+you build one at runtime; after changing `cookie` from code call `reload()`
+(the editor does). The sandbox's torch uses `tools/generate_assets.py
+torch_cookie` (dim bulb hole, hot ring, dented-reflector ripples, a wide
+dim spill); `SAVANNA_TORCH_COOKIE=0` gives the plain cone for comparison.
+
+`DirectionalLight` is for infinitely distant light (sun, moon): it lights
+everything from one direction and has no position or range.

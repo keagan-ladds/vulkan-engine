@@ -1,0 +1,37 @@
+# Header documentation check: every public declaration in a header this
+# change touches must have a doc comment (docs/03-conventions.md, "Code
+# documentation"), and the API reference must build.
+name: Docs
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Doxygen
+        run: sudo apt-get update && sudo apt-get install -y doxygen
+      - name: Undocumented declarations in changed headers
+        run: |
+          base=origin/main
+          if [ "${{ github.event_name }}" = "pull_request" ]; then base="origin/${{ github.base_ref }}"; fi
+          git rev-parse --verify "$base" >/dev/null 2>&1 || base=HEAD~1
+          python3 tools/check_docs.py --changed --base "$base" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Whole codebase (report only)
+        if: always()
+        run: python3 tools/check_docs.py | tail -1 | tee -a "$GITHUB_STEP_SUMMARY"

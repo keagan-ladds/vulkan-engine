@@ -6,6 +6,7 @@
 #include "ve/render/ShadowSetup.hpp"
 #include "ve/render/Skinning.hpp"
 #include "ve/render/StaticBatcher.hpp"
+#include "ve/render/Texture.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Decal.hpp"
@@ -303,7 +304,19 @@ uint32_t SceneGatherer::gatherLights(Scene& scene, const Inputs& in, FrameData& 
         g.positionRange = glm::vec4(pos, l.range);
         g.color = glm::vec4(l.color * l.intensity, 0.0f);
         g.shadow = glm::ivec4(-1, 0, 0, 0);
-        g.params = glm::vec4(l.shadowBias, 0, 0, 0);
+        g.params = glm::vec4(l.shadowBias, 0, -1, 0);
+        g.spot = glm::vec4(0.0f, 0.0f, 0.0f, -2.0f); // (not a spot)
+        g.spotBasis = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+        if (const auto* spot = dynamic_cast<const SpotLight*>(&l)) {
+            const float outer = glm::radians(std::clamp(spot->outerAngle, 1.0f, 89.0f));
+            const float inner = glm::radians(std::clamp(spot->innerAngle, 0.0f, glm::degrees(outer)));
+            const float cosOuter = std::cos(outer), cosInner = std::cos(inner);
+            g.spot = glm::vec4(glm::normalize(l.transform().forward()), cosOuter);
+            g.params.y = 1.0f / std::max(cosInner - cosOuter, 1e-4f);
+            if (spot->cookieTexture) g.params.z = static_cast<float>(spot->cookieTexture->index());
+            g.params.w = std::clamp(spot->chromaticAberration, 0.0f, 0.3f);
+            g.spotBasis = glm::vec4(glm::normalize(l.transform().right()), 1.0f / std::tan(outer));
+        }
 
         const bool wantsShadow = l.castShadows && cubeSlots < settings.maxShadowedPointLights &&
                                  points[i].distance - l.range < settings.maxShadowDistance;

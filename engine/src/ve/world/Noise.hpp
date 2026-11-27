@@ -18,7 +18,7 @@ inline float hash2(int x, int y, uint32_t seed = 0)
     return static_cast<float>(h & 0xFFFFFFu) / 16777216.0f;
 }
 
-// Smooth value noise in [0, 1].
+/// Smooth value noise in [0, 1].
 inline float valueNoise(glm::vec2 p, uint32_t seed = 0)
 {
     const glm::vec2 i = glm::floor(p);
@@ -30,7 +30,7 @@ inline float valueNoise(glm::vec2 p, uint32_t seed = 0)
     return glm::mix(glm::mix(a, b, f.x), glm::mix(c, d, f.x), f.y);
 }
 
-// Fractal Brownian motion: several octaves of noise, in roughly [0, 1].
+/// Fractal Brownian motion: several octaves of noise, in roughly [0, 1].
 inline float fbm(glm::vec2 p, int octaves, uint32_t seed = 0)
 {
     float v = 0.0f, amp = 0.5f, norm = 0.0f;
@@ -43,7 +43,7 @@ inline float fbm(glm::vec2 p, int octaves, uint32_t seed = 0)
     return v / norm;
 }
 
-// PCG hash (one LCG step + output permutation): a well mixed 32-bit hash.
+/// PCG hash (one LCG step + output permutation): a well mixed 32-bit hash.
 inline uint32_t pcg(uint32_t v)
 {
     const uint32_t state = v * 747796405u + 2891336453u;
@@ -51,20 +51,22 @@ inline uint32_t pcg(uint32_t v)
     return (word >> 22u) ^ word;
 }
 
-// Hash of four values (seed, grid x, grid z, purpose): independent random
-// streams per grid square without storing anything.
+/// Hash of four values (seed, grid x, grid z, purpose): independent random
+/// streams per grid square without storing anything.
 inline uint32_t hash4(uint32_t a, uint32_t b, uint32_t c, uint32_t d)
 {
     return pcg(a ^ pcg(b ^ pcg(c ^ pcg(d))));
 }
 
-// The top 24 bits of a hash as a float in [0, 1).
+/// The top 24 bits of a hash as a float in [0, 1).
 inline float unitFloat(uint32_t h) { return static_cast<float>(h >> 8) * (1.0f / 16777216.0f); }
 
-// Simple deterministic random number generator for scattering.
+/// Simple deterministic random number generator for scattering.
 class Rng {
 public:
+    /// A generator seeded with `seed` (the same seed gives the same sequence).
     explicit Rng(uint32_t seed) : m_state(seed * 747796405u + 2891336453u) {}
+    /// The next number in [0, 1).
     float next()
     {
         // pcg(state) permutes the *next* LCG state, which is what we advance to.
@@ -72,6 +74,7 @@ public:
         m_state = m_state * 747796405u + 2891336453u;
         return static_cast<float>(w & 0xFFFFFFu) / 16777216.0f;
     }
+    /// A number in [lo, hi).
     float range(float lo, float hi) { return lo + (hi - lo) * next(); }
 
 private:

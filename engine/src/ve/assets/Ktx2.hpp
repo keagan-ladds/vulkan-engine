@@ -18,26 +18,29 @@
 
 namespace ve {
 
+/// A KTX2 texture in memory: format, size, every mip level, key/value metadata.
 struct Ktx2Texture {
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    uint32_t width = 0, height = 0;
-    // All levels in one block (level 0 = full size), level i at levelOffsets[i].
+    VkFormat format = VK_FORMAT_UNDEFINED; ///< Pixel format (BC7, BC5, BC4, RGBA8...).
+    uint32_t width = 0;                    ///< Level 0 width in pixels.
+    uint32_t height = 0;                   ///< Level 0 height in pixels.
+    /// All levels in one block (level 0 = full size), level i at levelOffsets[i].
     std::vector<uint8_t> data;
-    std::vector<VkDeviceSize> levelOffsets;
-    std::vector<VkDeviceSize> levelSizes;
-    std::vector<std::pair<std::string, std::string>> keyValues; // written sorted by key
+    std::vector<VkDeviceSize> levelOffsets; ///< Byte offset of each level in `data`.
+    std::vector<VkDeviceSize> levelSizes;   ///< Byte size of each level.
+    std::vector<std::pair<std::string, std::string>> keyValues; ///< written sorted by key
 
+    /// The metadata value stored under `key`, or null.
     const std::string* value(const std::string& key) const;
 };
 
-// Bytes per 4x4 block for block-compressed formats, per texel otherwise (0 = unsupported).
+/// Bytes per 4x4 block for block-compressed formats, per texel otherwise (0 = unsupported).
 uint32_t ktx2BlockBytes(VkFormat format);
 bool ktx2IsBlockCompressed(VkFormat format);
-// Byte size of one level of a width x height image.
+/// Byte size of one level of a width x height image.
 VkDeviceSize ktx2LevelSize(VkFormat format, uint32_t width, uint32_t height);
 
 bool writeKtx2(const std::filesystem::path& file, const Ktx2Texture& texture, std::string* error = nullptr);
-// headerOnly: size, format and key/values, no pixel data (cheap validity checks).
+/// headerOnly: size, format and key/values, no pixel data (cheap validity checks).
 bool readKtx2(const std::filesystem::path& file, Ktx2Texture& texture, bool headerOnly = false, std::string* error = nullptr);
 
 } // namespace ve

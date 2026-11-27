@@ -2,6 +2,7 @@
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/core/Engine.hpp"
+#include "ve/core/FileSystem.hpp"
 #include "ve/core/Log.hpp"
 #include "ve/scene/Ids.hpp"
 #include "ve/scene/Scene.hpp"
@@ -85,9 +86,10 @@ const Json* load(const std::string& path)
 {
     if (auto it = cache().find(path); it != cache().end()) return &it->second;
     try {
-        std::ifstream in(Engine::get().assets().resolve(path));
+        const std::unique_ptr<std::istream> in = vfs::open(Engine::get().assets().resolve(path));
+        if (!in) throw std::runtime_error("can't read");
         Json j;
-        in >> j;
+        *in >> j;
         if (!j.contains("object")) throw std::runtime_error("no \"object\"");
         return &(cache()[path] = std::move(j));
     } catch (const std::exception& e) {

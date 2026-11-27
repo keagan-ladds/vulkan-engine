@@ -38,7 +38,10 @@
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SaveGame.hpp>
 #include <ve/scene/Scene.hpp>
+#include <ve/assets/ModelData.hpp>
+#include <ve/render/Impostor.hpp>
 #include <ve/world/Foliage.hpp>
+#include <ve/world/LodModel.hpp>
 #include <ve/world/Terrain.hpp>
 #include <ve/world/Vegetation.hpp>
 #include <vfx/DayNight.hpp>
@@ -160,6 +163,19 @@ void AutoTest::buildStep(int piece, const glm::vec3& aim, float yawDegrees)
     ++m_step;
 }
 
+void AutoTest::start()
+{
+    m_loadSub = engine().loadEvents().subscribe([this](const ve::LoadEvent& e) {
+        if (e.type == ve::LoadEvent::Type::StepFinished) ++m_loadSteps;
+        if (e.type == ve::LoadEvent::Type::Ended) ++m_loadEnded;
+    });
+    m_compileSub = renderer().compileEvents().subscribe([this](const ve::CompileEvent& e) {
+        if (e.type == ve::CompileEvent::Type::Started) ++m_compileStarted;
+        else ++m_compileFinished;
+        if (e.type == ve::CompileEvent::Type::Finished && e.name.rfind("autotest_new", 0) == 0) m_newShaderFinished = true;
+    });
+}
+
 void AutoTest::update(float dt)
 {
     m_t += dt;
@@ -278,6 +294,20 @@ void AutoTest::update(float dt)
                 }
             const bool texShared = wall && wall->texture(0) == assets().loadTexture("textures/mud_wall.png");
             const bool matShared = thatch && thatch == assets().loadMaterial("materials/thatch.material").get();
+            // Spot lights: the player's torch on (checked at the live-edit step below).
+            if (auto* p = localPlayer(scene())) p->setTorch(true);
+            // Compile hooks: a shader made now compiles its pipelines in the
+            // background (null until done), with Started / Finished events.
+            {
+                ve::ShaderDesc desc = renderer().builtinShader(ve::BuiltinShader::Standard)->desc();
+                desc.name = "autotest_new";
+                desc.cull = ve::CullMode::None; // (a different pipeline from the built-in one)
+                m_newShader = renderer().createShader(desc);
+                const bool async = renderer().settings().asyncPipelines;
+                log(std::string("compile hooks: load events: ") + std::to_string(m_loadSteps) + " steps finished; new shader compiling: " +
+                    (m_newShader->compiling() ? "yes" : async ? "NO" : "no (sync)") + ", pending " +
+                    std::to_string(renderer().compileStatus().pipelinesPending));
+            }
             log(std::string("shared assets: glTF texture = direct load: ") + (texShared ? "yes" : "NO") +
                 ", thatch from material file: " + (matShared ? "yes" : "NO"));
             // Texture settings come from the files (name / .texture), and where
@@ -286,11 +316,26 @@ void AutoTest::update(float dt)
                                  assets().textureSettings("textures/decals/puddle_mask.png").type == ve::TextureType::Data &&
                                  assets().textureSettings("textures/mud_wall.png").type == ve::TextureType::Color;
             const ve::TextureSettings lut = assets().textureSettings("textures/lut_neutral_32.png");
-            const auto& ts = assets().textureStats();
+            const auto& ts = assets().cookStats();
             log(std::string("texture settings by name: ") + (namesOk ? "yes" : "NO") + ", by .texture file: " +
                 (lut.type == ve::TextureType::Data && !lut.mipmaps && !lut.compress ? "yes" : "NO") + "; textures loaded: " +
-                std::to_string(ts.cooked) + " cooked, " + std::to_string(ts.source) + " from source images, " +
+                std::to_string(ts.texturesCooked) + " cooked, " + std::to_string(ts.texturesSource) + " from source images; sounds: " +
+                std::to_string(ts.soundsCooked) + " cooked, " + std::to_string(ts.soundsSource) + " source files; " +
                 std::to_string(ts.cooking) + " cooking");
+            // Cooked models (.vemodel): the test tree's .model file asks for a
+            // generated LOD and an impostor, so its cooked copy carries them and
+            // foliage makes its impostor from the cooked atlases without baking.
+            {
+                const auto tree = assets().loadModel("models/test_tree.gltf");
+                const ve::ModelVariantLods* lods = tree && tree->cookedLods && !tree->cookedLods->empty() ? &tree->cookedLods->front() : nullptr;
+                const uint32_t bakesBefore = ve::Impostor::bakeCount();
+                const auto impostor = lods && lods->impostor.valid() ? ve::impostorFromCooked(renderer(), lods->impostor) : nullptr;
+                const bool noBake = ve::Impostor::bakeCount() == bakesBefore;
+                log(std::string("cooked model: test tree has cooked LODs: ") + (lods ? "yes" : "NO") + ", generated levels: " +
+                    std::to_string(lods ? lods->generated.size() : 0) + (lods && !lods->generated.empty() ? " (yes)" : " NO") +
+                    ", impostor from the cooked atlases: " + (impostor ? "yes" : "NO") + ", without baking: " + (noBake ? "yes" : "NO") +
+                    "; models loaded: " + std::to_string(ts.modelsCooked) + " cooked, " + std::to_string(ts.modelsSource) + " parsed");
+            }
             // A live edit (like the editor's, unsaved): checked and reverted in step 1.
             ve::Json edited = *ve::DataAssets::get("materials/thatch.material");
             edited["roughness"] = 0.25f;
@@ -314,6 +359,34 @@ void AutoTest::update(float dt)
         if (auto* probe = scene().find("TestTrigger") ? scene().find("TestTrigger")->getComponent<EventProbe>() : nullptr)
             log("trigger after standing in it: " + std::to_string(probe->triggerEnters) + " enter(s): " + probe->lastTrigger);
         {
+            {
+                // The torch reached the GPU as a spot (cone in `spot`), and its
+                // shadow renders only the cube faces the cone touches.
+                const ve::FrameData& f = renderer().frameData();
+                int spots = -1;
+                uint32_t faces = 0;
+                for (uint32_t i = 0; i < f.stats.pointLights && f.lights; ++i) {
+                    if (f.lights->point[i].spot.w < -1.5f) continue;
+                    spots = int(i);
+                    for (const ve::ShadowView& v : f.shadowViews) faces += v.point && v.lightIndex == i ? 1u : 0u;
+                }
+                const auto* p = localPlayer(scene());
+                log(std::string("spot light: torch on: ") + (p && p->torch() && p->torch()->enabled ? "yes" : "NO") + ", on the GPU as a spot: " +
+                    (spots >= 0 ? "yes" : "NO") + ", shadow faces rendered: " + std::to_string(faces) + (faces > 0 && faces < 6 ? " (fewer than 6: yes)" : " NO"));
+                // Its cookie (beam mask) loaded and reached the GPU with the chromatic aberration amount.
+                if (const ve::SpotLight* t = p ? p->torch() : nullptr; t && !t->cookie.empty()) {
+                    const ve::GpuPointLight* g = spots >= 0 ? &f.lights->point[spots] : nullptr;
+                    const bool onGpu = g && t->cookieTexture && g->params.z == float(t->cookieTexture->index());
+                    log(std::string("spot light cookie: '") + t->cookie + "' loaded: " + (t->cookieTexture ? "yes" : "NO") +
+                        ", on the GPU: " + (onGpu ? "yes" : "NO") + ", chromatic aberration " + std::to_string(g ? g->params.w : -1.0f));
+                }
+                if (auto* pl = localPlayer(scene())) pl->setTorch(false);
+            }
+            log(std::string("compile hooks: new shader ready: ") + (m_newShader && m_newShader->pipeline(ve::PassKind::Forward) ? "yes" : "NO") +
+                ", its Finished event: " + (m_newShaderFinished ? "yes" : "NO") + "; loading ended events: " + std::to_string(m_loadEnded) +
+                ", compiles " + std::to_string(m_compileStarted) + " started / " + std::to_string(m_compileFinished) + " finished, " +
+                std::to_string(renderer().compileStatus().pipelinesCompiled) + " pipelines in total");
+            m_newShader.reset();
             const float r = assets().loadMaterial("materials/thatch.material")->vector(1).x;
             log(std::string("material file live edit applied: ") + (std::abs(r - 0.25f) < 1e-4f ? "yes" : "NO"));
             ve::DataAssets::revert("materials/thatch.material");

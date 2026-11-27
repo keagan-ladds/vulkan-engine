@@ -35,6 +35,12 @@ Window::~Window()
     SDL_Quit();
 }
 
+void Window::show()
+{
+    SDL_ShowWindow(m_window);
+    SDL_RaiseWindow(m_window);
+}
+
 void Window::processEvent(const SDL_Event& event)
 {
     if (event.type == SDL_QUIT) {
