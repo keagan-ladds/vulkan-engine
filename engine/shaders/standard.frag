@@ -55,6 +55,11 @@ void main()
     // Decals (bullet holes, puddles, cracks): params[3].w = the layers not received.
     veApplyDecals(s, Ng, dPdx, dPdy, ~floatBitsToUint(m.params[3].w));
 
-    outColor = vec4(veEvaluateLighting(s), base.a);
+    // Translucency (params[11], textures[15]): after the decals, which change the albedo.
+    vec3 transmittance = veStandardTranslucency(m, uv, s);
+    vec3 color = veEvaluateLighting(s);
+    if (transmittance != vec3(0.0)) color += veTranslucentLighting(s, transmittance);
+
+    outColor = vec4(color, base.a);
     outGBuffer = veGBuffer(s.normal, s.roughness);
 }

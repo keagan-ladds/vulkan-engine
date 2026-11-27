@@ -41,6 +41,7 @@
 #include <ve/scene/SceneSerializer.hpp>
 #include <ve/scene/Spline.hpp>
 #include <ve/scene/Scene.hpp>
+#include <ve/assets/MaterialAsset.hpp>
 #include <ve/assets/ModelData.hpp>
 #include <ve/render/Impostor.hpp>
 #include <ve/world/Foliage.hpp>
@@ -487,6 +488,25 @@ void AutoTest::update(float dt)
                 std::to_string(ts.texturesCooked) + " cooked, " + std::to_string(ts.texturesSource) + " from source images; sounds: " +
                 std::to_string(ts.soundsCooked) + " cooked, " + std::to_string(ts.soundsSource) + " source files; " +
                 std::to_string(ts.cooking) + " cooking");
+            {
+                // Translucency from a material file (params[11], textures[15]):
+                // kept when the file also has extra params / textures (those
+                // slots are cleared up to 10 / 14 only), and enum fields read by
+                // name ("mode": "Cutout").
+                auto leaf = assets().loadMaterial("materials/leaf_test.material");
+                const glm::vec4 tr = leaf->vector(ve::StandardMaterial::kTranslucencyParam);
+                ve::MaterialAsset withExtras = ve::MaterialAsset::fromJson(ve::Json::parse(
+                    R"({"mode": "cutout", "translucency": 0.3, "translucencyTexture": "textures/decals/puddle_mask.png",
+                        "params": [{"slot": 4, "value": [1, 0, 0, 0]}], "textures": [{"slot": 5, "path": "textures/mud_wall.png"}]})"));
+                auto probe = renderer().createStandardMaterial();
+                withExtras.apply(*probe, assets());
+                const bool fileOk = std::abs(tr.w - 0.5f) < 1e-4f && std::abs(tr.z - 0.7f) < 1e-4f &&
+                                    &leaf->shader() == renderer().builtinShader(ve::BuiltinShader::StandardCutout).get();
+                const bool extrasOk = withExtras.mode == ve::StandardMaterial::Mode::Cutout && std::abs(probe->translucency() - 0.3f) < 1e-4f &&
+                                      probe->texture(ve::StandardMaterial::kTranslucencyTexture) != nullptr && probe->texture(5) != nullptr;
+                log(std::string("material translucency: from leaf_test.material: ") + (fileOk ? "yes" : "NO") +
+                    ", kept next to extra slots, mode by name: " + (extrasOk ? "yes" : "NO"));
+            }
             // Cooked models (.vemodel): the test tree's .model file asks for a
             // generated LOD and an impostor, so its cooked copy carries them and
             // foliage makes its impostor from the cooked atlases without baking.

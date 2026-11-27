@@ -34,8 +34,8 @@
 // a mesh without vertex colours reads as white (fully painted). Or flip a
 // channel with params[8].xyz = 1 (paints with "white = clean").
 //
-// Parameter layout (params 0-3 and textures 0-4 = StandardMaterial's, see
-// ve::StandardMaterial; params[3].z (vertex colour tint) is ignored here):
+// Parameter layout (params 0-3 and 11, textures 0-4 and 15 = StandardMaterial's:
+// see ve::StandardMaterial, translucency included; params[3].z (vertex colour tint) is ignored here):
 //   params[4]   = strengths: x dirt, y wear, z wet, w grunge breakup (0..1)
 //   params[5]   = dirt colour rgb (when textures[5] is unset; else tints it), w = dirt roughness
 //                 (all zero: dark brown, 0.95)
@@ -189,6 +189,11 @@ void main()
     // Decals (bullet holes, puddles) on top of the paint.
     veApplyDecals(s, Ng, dPdx, dPdy, ~floatBitsToUint(m.params[3].w));
 
-    outColor = vec4(veEvaluateLighting(s), base.a);
+    // Translucency (params[11], textures[15]): after the decals, which change the albedo.
+    vec3 transmittance = veStandardTranslucency(m, uv, s);
+    vec3 color = veEvaluateLighting(s);
+    if (transmittance != vec3(0.0)) color += veTranslucentLighting(s, transmittance);
+
+    outColor = vec4(color, base.a);
     outGBuffer = veGBuffer(s.normal, s.roughness);
 }

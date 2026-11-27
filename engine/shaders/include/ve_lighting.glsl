@@ -344,6 +344,64 @@ vec3 veEvaluateLighting(VeSurface s)
     return veEvaluateLighting(s, sun0Shadow);
 }
 
+// ---- Translucency (thin surfaces: leaves, paper, cloth, lampshades) -----------
+//
+// Light reaching the BACK of the surface passes through and leaves the front
+// evenly in every direction: Blender's Translucent BSDF (Lambert around -N).
+// `transmittance` is the colour that gets through (StandardMaterial: albedo x
+// translucency colour x amount). The lights a surface's front doesn't face
+// are exactly the ones this sums, so with veEvaluateLighting each light is
+// still shadow-tested once. Ambient: the hemisphere behind the surface.
+vec3 veTranslucentLighting(VeSurface s, vec3 transmittance)
+{
+    vec3 back = -s.normal;
+    float viewDepth = dot(s.position - frame.cameraPosition.xyz, frame.cameraForward.xyz);
+    vec3 light = vec3(0.0);
+    for (uint i = 0; i < frame.lightCounts.x; ++i) {
+        VeDirectionalLight L = lights.directional[i];
+        vec3 l = -L.direction.xyz;
+        float ndl = dot(back, l);
+        if (ndl <= 0.0) continue;
+        // (Normal offset towards the light: the surface's own back side.)
+        light += L.color.rgb * (ndl * veDirectionalShadow(i, s.position, back, viewDepth));
+    }
+    VeLightList list = veLightList(s.position, viewDepth);
+    for (uint k = 0; k < list.count; ++k) {
+        uint i = veLightAt(list, k);
+        VePointLight L = lights.point[i];
+        vec3 toLight = L.positionRange.xyz - s.position;
+        float dist = length(toLight);
+        if (dist >= L.positionRange.w) continue;
+        vec3 l = toLight / dist;
+        float ndl = dot(back, l);
+        if (ndl <= 0.0) continue;
+        vec3 cone = veSpotColor(L, l);
+        if (all(lessThanEqual(cone, vec3(0.0)))) continue;
+        light += L.color.rgb * cone * (ndl * vePointAttenuation(dist, L.positionRange.w) * vePointShadow(i, s.position, back));
+    }
+    vec3 ambient = mix(veAmbientGround(s), frame.ambientSky.rgb, back.y * 0.5 + 0.5) * s.ao;
+    return transmittance * (light / VE_PI + ambient);
+}
+
+// StandardMaterial's translucency (params[11]: rgb colour, w amount;
+// textures[15]: R map) for shaders with its layout. Moves the share that
+// passes through out of s.albedo (the front reflects less) and returns the
+// transmittance for veTranslucentLighting (zero when the material has none).
+//   vec3 t = veStandardTranslucency(m, uv, s);
+//   vec3 color = veEvaluateLighting(s);
+//   if (t != vec3(0.0)) color += veTranslucentLighting(s, t);
+vec3 veStandardTranslucency(VeMaterial m, vec2 uv, inout VeSurface s)
+{
+    vec4 tr = m.params[11];
+    if (tr.w <= 0.0) return vec3(0.0);
+    float t = tr.w * (1.0 - s.metallic);
+    if (m.textures[15] != VE_INVALID) t *= veSample(m.textures[15], uv).r;
+    t = clamp(t, 0.0, 1.0);
+    vec3 transmittance = s.albedo * tr.rgb * t;
+    s.albedo *= 1.0 - t;
+    return transmittance;
+}
+
 // Decals (veApplyDecals) need VeSurface, so they come last.
 #ifdef VE_FRAGMENT_STAGE
 #include "ve_decals.glsl"

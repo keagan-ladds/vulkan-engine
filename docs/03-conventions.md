@@ -268,8 +268,23 @@ editor (Assets > Materials) or in a text editor; Save writes the file.
 
 Custom shaders keep StandardMaterial's layout and add inputs:
 `"fragmentShader": "mygame_painted.frag"`,
-`"textures": [{"slot": 5, "path": "textures/grunge.png"}]`,
-`"params": [{"slot": 4, "value": [0.5, 1, 0, 0]}]` (see `MaterialAsset.hpp`).
+`"textures": [{"slot": 5, "path": "textures/grunge.png"}]` (slots 5-14),
+`"params": [{"slot": 4, "value": [0.5, 1, 0, 0]}]` (slots 4-10; see `MaterialAsset.hpp`).
+Enum fields take their names or numbers: `"mode": "Cutout"` or `"mode": 1`.
+
+**Translucency (leaves, paper, cloth, lampshades):** light reaching the back
+of a thin surface comes through it, spread evenly (Blender's Translucent
+BSDF). `"translucency": 0.4` (0..1) splits the diffuse light: the front
+reflects albedo x (1 - t), the back lets albedo x `"translucencyColor"` x t
+through; `"translucencyTexture"` (R, linear: name it `*_mask`) says where
+(thin leaf 1, veins 0). Use it with `"mode": "Cutout"` (double sided) for
+leaf cards. From code: `StandardMaterial::setTranslucency(amount, color)`.
+It lives in the standard layout (params[11], textures[15]), so
+`standard_painted.frag` has it too; a custom shader copies standard.frag's
+three lines (`veStandardTranslucency`, `veTranslucentLighting`). It costs
+nothing on materials without it; on those with it, the lights behind the
+surface (which the front skips) are shadow-tested once each. Savanna:
+`SAVANNA_LEAFTEST=1` (a plain and a translucent card with a lamp behind them).
 
 **Vertex-painted dirt, wear and wetness:** `"fragmentShader":
 "standard_painted.frag"` (engine shader) reads the vertex colour as paint
@@ -283,17 +298,28 @@ the material's tiled normal map; export the glTF with tangents
 (Data > Mesh > Tangents) so the engine uses the tangent space it was baked in. Savanna's
 `SAVANNA_PAINTTEST=1` shows a test wall (`materials/painted_test.material`).
 **In Blender:** run `tools/blender/ve_painted_node_group.py` once (Scripting
-workspace, Run Script). It makes a "VE Painted" node group with the same maths
+workspace, Run Script). It makes a **"VE Standard"** node group (standard.frag:
+the material file's fields as inputs, translucency included; the preview
+uses the engine's maths) and a "VE Painted" node group with the same maths
 and inputs named like the material file's values, plus an example material
 showing the wiring, so vertex / texture painting looks like the engine while
 you paint. Mark it as an asset (the script does) to reuse it in every
-project. `tools/blender/test_ve_painted.py` checks the group against the
-shader (needs `pip install bpy`). **Getting it into the engine:** the glTF
+project. `tools/blender/test_ve_painted.py` / `test_ve_standard.py` check the
+groups against the shaders and the export (`blender -b --factory-startup
+--python <test>`). **Imported models** (glTF, FBX, Poly Haven): Material tab >
+VE Engine > **Convert to VE Standard** (or "Convert selected objects") rewires
+their Principled BSDF (+ Translucent BSDF) into a VE Standard node with the
+same images and values, and says what didn't carry over (a roughness map that
+isn't an ORM's G channel, subsurface...). The panel's **Mode** (Auto / Opaque /
+Cutout / Transparent) and **Cutoff** go into the file; Auto = Cutout when the
+Alpha input is used. Alpha must be in the albedo image for the engine: an
+alpha wired from another image (Poly Haven's `*_alpha` maps) is merged into
+`<albedo>_rgba.png` on export. **Getting it into the engine:** the glTF
 exporter can't describe the group, so the engine uses a material file named
 after the Blender material instead (`assets/materials/<name>.material`, from
 the node's values and images). With the script installed as an add-on
 (Preferences > Add-ons > Install from Disk), **File > Export > glTF 2.0 writes
-them by itself**: one file per VE Painted material in the export, into the
+them by itself**: one file per VE Standard / VE Painted material in the export, into the
 `assets` folder the .gltf is saved under ("Write with glTF export" in the
 panel turns it off; the panel shows what the last export wrote, the console
 lists warnings). By hand: Material tab > VE Engine > **Export VE material**

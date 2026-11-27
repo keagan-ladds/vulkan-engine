@@ -149,5 +149,34 @@ void spawnBounceTest(ve::Scene& scene, const ve::Terrain& terrain)
     place("Bounce test cube S", cubeMesh, {1.0f, 0.0f, 2.6f}, 0.5f);
 }
 
+void spawnLeafTest(ve::Scene& scene, const ve::Terrain& terrain)
+{
+    // Two 1.2 x 1.6 m leaf-green cards facing +Z, 0.4 m apart: the left one
+    // plain, the right one materials/leaf_test.material (same colour, Cutout,
+    // translucency 0.5). With the sun behind them the right one glows.
+    auto& r = ve::GameObject::renderer();
+    auto quad = ve::Mesh::create(r, ve::primitives::quad(1.2f, 1.6f), {}, "leaf test card");
+    auto plain = r.createStandardMaterial(ve::StandardMaterial::Mode::Cutout);
+    plain->setBaseColor(glm::vec4(0.18f, 0.32f, 0.06f, 1.0f)).setRoughness(0.6f);
+    std::shared_ptr<ve::Material> translucent = ve::GameObject::assets().loadMaterial("materials/leaf_test.material");
+    const glm::vec2 c(40.0f, 4.0f);
+    auto place = [&](const char* name, float dx, std::shared_ptr<ve::Material> mat) {
+        auto& go = scene.spawn(name);
+        const glm::vec2 p(c.x + dx, c.y);
+        go.transform().setPosition({p.x, terrain.height(p.x, p.y) + 0.9f, p.y}); // (quad centred on its origin)
+        go.addComponent<ve::MeshRenderer>(quad, std::move(mat));
+    };
+    place("Leaf test plain", -0.8f, plain);
+    place("Leaf test translucent", 0.8f, translucent);
+    // A warm lamp 1 m in front of them (south): at night, seen from behind
+    // (north), only the translucent card lets its light through.
+    auto& lamp = scene.spawn("Leaf test lamp");
+    lamp.transform().setPosition({c.x, terrain.height(c.x, c.y + 1.0f) + 1.0f, c.y + 1.0f});
+    auto& light = lamp.addComponent<ve::PointLight>();
+    light.color = {1.0f, 0.75f, 0.45f};
+    light.intensity = 12.0f;
+    light.range = 6.0f;
+}
+
 } // namespace savanna
 

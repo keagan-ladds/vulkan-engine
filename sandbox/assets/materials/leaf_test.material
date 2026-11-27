@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "mode": "Cutout",
+  "baseColor": [0.18, 0.32, 0.06, 1.0],
+  "roughness": 0.6,
+  "translucency": 0.5,
+  "translucencyColor": [1.0, 1.0, 0.7]
+}

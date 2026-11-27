@@ -163,6 +163,7 @@ StandardMaterial::StandardMaterial(Renderer& renderer, Mode mode)
     setVector(1, glm::vec4(0.8f, 0.0f, 1.0f, mode == Mode::Cutout ? 0.5f : 0.0f));
     setVector(2, glm::vec4(0.0f));
     setVector(3, glm::vec4(1.0f, 1.0f, 1.0f, 0.0f));
+    setVector(kTranslucencyParam, glm::vec4(1.0f, 1.0f, 1.0f, 0.0f));
 }
 
 // Stored inverted (the layers *not* received), so the all-zero parameters of a
@@ -232,6 +233,12 @@ StandardMaterial& StandardMaterial::setVertexColorWeight(float w)
     glm::vec4 v = vector(3);
     v.z = w;
     setVector(3, v);
+    return *this;
+}
+
+StandardMaterial& StandardMaterial::setTranslucency(float amount, const glm::vec3& color)
+{
+    setVector(kTranslucencyParam, glm::vec4(color, std::clamp(amount, 0.0f, 1.0f)));
     return *this;
 }
 

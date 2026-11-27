@@ -34,4 +34,12 @@ void spawnPaintTest(ve::Scene& scene, const ve::Terrain& terrain);
 // SAVANNA_POSE=36,2.2,-2,180,-12 (north face).
 void spawnBounceTest(ve::Scene& scene, const ve::Terrain& terrain);
 
+// SAVANNA_LEAFTEST=1: two leaf-green cards at (40, 4) facing +Z (south): the
+// left (west) plain, the right materials/leaf_test.material (translucency
+// 0.5), and a warm point light 1 m south of them. At night from behind
+// (SAVANNA_TIME=22 SAVANNA_POSE=40,1.5,0.3,180,-5) only the translucent card
+// glows; from the front (SAVANNA_POSE=40,1.5,7.5,0,-5) its front is a little
+// darker (the light it lets through isn't also reflected).
+void spawnLeafTest(ve::Scene& scene, const ve::Terrain& terrain);
+
 } // namespace savanna
