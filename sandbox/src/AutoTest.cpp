@@ -510,7 +510,7 @@ void AutoTest::update(float dt)
         if (m_roadMoved) {
             // The footpath point moved in step 0: a local re-shape, not a full rebuild.
             m_roadMoved = false;
-            glm::vec4 area;
+            glm::vec4 area(0.0f); // (no terrain: stays empty)
             auto* terrain = ve::Terrain::find(scene());
             const bool local = terrain && terrain->changedOnlyIn(m_roadTerrainVersion, area);
             log(std::string("roads: moving a path point re-shaped only the land around it: ") + (local ? "yes" : "NO") + " (" +
