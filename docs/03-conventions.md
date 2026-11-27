@@ -813,8 +813,17 @@ b.onClick = [this] { resume(); };
   with `root().find(name)` and `click()` them like a player would.
 - Live values: `Label::bind` / `ProgressBar::bind` instead of updating
   every frame by hand.
-- Item / piece pictures: bake them once at load (`ui::bakeIcon` from the
-  mesh data; a load step) and keep the `shared_ptr<Texture>`.
+- Item / piece pictures of prefabs: `ui::prefabIcon("prefabs/x.prefab")`
+  (ui/PrefabIcon.hpp). It uses a hand-made `x.prefab.png` if there is one,
+  else the cooked icon, else renders the prefab now (its meshes with their
+  materials and textures, in a private scene) and caches it in the cook cache
+  for the next run. `vecook` renders them ahead of time for prefabs with an
+  `"icon"` section, which also sets the view:
+  `"icon": {"size": 192, "yaw": 35, "pitch": 22, "padding": 0.06, "key": "v2"}`.
+  Change `key` when code that builds the prefab's meshes changes; edits to the
+  prefab, its model, textures or material files re-render it by themselves.
+  Pictures of plain mesh data (no prefab): `ui::bakeIcon(renderer, meshData)`
+  (vertex colours only).
 - A title screen over the real world: spawn a high-priority camera, hold
   the time of day, hide the HUD, and drop the camera when play starts
   (Savanna's `MainMenu`).

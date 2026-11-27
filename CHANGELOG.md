@@ -42,6 +42,15 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Prefab icons** (`ui::prefabIcon`, `ui/PrefabIcon.hpp`): menu pictures of
+  any prefab, rendered from its meshes with their materials and textures in a
+  private scene. A hand-made `<prefab>.png` wins, else the cooked icon
+  (`<cache>/<prefab>.veicon`, assets/IconCook.hpp: `vecook` renders them for
+  prefabs with an `"icon"` section, which also sets the view), else rendered at
+  load and cached. `ui::renderIconPixels` / `iconParts` draw meshes with
+  materials. Packaging ships icon prefabs and their cooked icons
+  (`Cooker::shipSource`). The sandbox build menu uses them (and gains a hut
+  made from the textured rondavel model).
 - **Finding things near a point**: `Scene::findNearest<T>(p, maxDistance,
   filter, horizontal)`, `Scene::forEachWithin<T>(p, radius, fn)`,
   `Scene::findNearestWithTag`, `Scene::forEachActive<T>` (T: a component type

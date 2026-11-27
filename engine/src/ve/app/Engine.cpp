@@ -25,6 +25,7 @@
 #include "ve/scene/SceneSerializer.hpp"
 #include "ve/ui/UiLayer.hpp"
 #include "ve/world/Terrain.hpp"
+#include "ve/ui/PrefabIcon.hpp"
 #include "ve/world/LodModel.hpp"
 #include "ve/world/SplineInstancer.hpp"
 #include "ve/world/TerrainSpline.hpp"
@@ -73,6 +74,7 @@ void registerAllTypes()
     registerSplineInstancerTypes(r);
     registerTerrainSplineTypes(r);
     registerModelLodGenerator(); // the model cooker's LOD / impostor step (world/LodModel.hpp)
+    ui::registerPrefabIconBaker(); // the icon cooker's renderer (ui/PrefabIcon.hpp)
     registerAssetTypes(r); // MaterialAsset (.material files)
 }
 } // namespace

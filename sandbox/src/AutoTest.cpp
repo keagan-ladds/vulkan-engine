@@ -47,6 +47,8 @@
 #include <ve/world/LodModel.hpp>
 #include <ve/world/SplineInstancer.hpp>
 #include <ve/world/TerrainSpline.hpp>
+#include <ve/assets/IconCook.hpp>
+#include <ve/ui/PrefabIcon.hpp>
 #include <ve/world/Terrain.hpp>
 #include <ve/world/Vegetation.hpp>
 #include <vfx/DayNight.hpp>
@@ -297,6 +299,41 @@ void AutoTest::update(float dt)
                 "; trees in its corridor " + std::to_string(inside) + (inside == 0 ? " (yes)" : " NO") + ", beside it " + std::to_string(beside) +
                 "; sub-biome there: " + (corridorWeight > 0.99f ? "yes" : "NO") + ", grass height x" + std::to_string(grassHeight) +
                 (std::abs(grassHeight - 0.45f) < 0.01f ? " (yes)" : " NO") + ", rocks kept " + std::to_string(rocksInside));
+        }
+        // Prefab icons (ui::prefabIcon): every build piece has one, rendered from
+        // its prefab or loaded cooked; the hut's (a textured glTF model) is in the
+        // cook cache with its model as a dependency, covered and in colour.
+        {
+            size_t withIcon = 0, total = 0;
+            if (auto* builder = scene().findFirst<Builder>())
+                for (const auto& e : builder->catalogue()) {
+                    ++total;
+                    withIcon += e.icon ? 1 : 0;
+                }
+            const auto& st = ve::ui::prefabIconStats();
+            const std::string hut = "prefabs/building/rondavel_hut.prefab";
+            nlohmann::json stamp;
+            uint32_t size = 0;
+            std::vector<uint8_t> px;
+            const bool cached = ve::readCookedIcon(ve::cookedIconPath(assets().cooking().cacheDir, hut), &stamp, &size, &px);
+            size_t covered = 0;
+            float lo = 1.0f, hi = 0.0f;
+            for (size_t i = 0; i + 3 < px.size(); i += 4) {
+                if (px[i + 3] < 128) continue;
+                ++covered;
+                const float lum = (px[i] * 0.3f + px[i + 1] * 0.59f + px[i + 2] * 0.11f) / 255.0f;
+                lo = std::min(lo, lum);
+                hi = std::max(hi, lum);
+            }
+            bool modelDep = false;
+            for (const auto& d : stamp.value("dependencies", nlohmann::json::array()))
+                modelDep = modelDep || d.value("path", std::string()).find("rondavel.gltf") != std::string::npos;
+            const float coverage = px.empty() ? 0.0f : float(covered) / float(px.size() / 4);
+            log("icons: " + std::to_string(withIcon) + " of " + std::to_string(total) + " build pieces have one" +
+                (withIcon == total && total > 0 ? " (yes)" : " NO") + " (" + std::to_string(st.rendered) + " rendered, " +
+                std::to_string(st.cooked) + " cooked, " + std::to_string(st.handMade) + " hand-made); hut icon cached: " + (cached ? "yes" : "NO") +
+                ", covers " + std::to_string(int(coverage * 100.0f)) + " %" + (coverage > 0.2f ? " (yes)" : " NO") + ", shaded / textured: " +
+                (hi - lo > 0.25f ? "yes" : "NO") + ", depends on its model: " + (modelDep ? "yes" : "NO"));
         }
         // Roads (TerrainSpline "Dirt road"): flat across its width, painted with
         // its biome, no trees on it. Then a footpath point moves: the terrain

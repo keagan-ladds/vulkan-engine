@@ -1,5 +1,7 @@
 #include "ve/assets/Cookers.hpp"
 
+#include "ve/assets/IconCook.hpp"
+
 #include "ve/assets/AudioCook.hpp"
 #include "ve/assets/ModelCook.hpp"
 #include "ve/assets/TextureCook.hpp"
@@ -91,9 +93,29 @@ Cooker modelCooker()
     return c;
 }
 
+Cooker iconCooker()
+{
+    Cooker c;
+    c.name = "icon";
+    c.handles = [](const std::filesystem::path& source) { return isIconPrefab(source); };
+    c.cookedPath = cookedIconPath;
+    c.check = [](const std::filesystem::path& cooked, const std::filesystem::path& source) {
+        return checkCookedIcon(cooked, source, prefabIconSettings(source));
+    };
+    c.cook = [](const std::filesystem::path& source, const std::filesystem::path& cooked, const std::atomic<bool>*) {
+        const IconCookResult r = cookIcon(source, cooked);
+        char summary[160];
+        std::snprintf(summary, sizeof(summary), "%-6s %-10s %ux%u", "Icon", "veicon", r.size, r.size);
+        return Cooker::Result{r.ok, r.error, summary, r.bytes};
+    };
+    c.needsRenderer = [](const std::filesystem::path&) { return true; };
+    c.shipSource = true;
+    return c;
+}
+
 std::vector<Cooker>& registry()
 {
-    static std::vector<Cooker> list{textureCooker(), audioCooker(), modelCooker()};
+    static std::vector<Cooker> list{textureCooker(), audioCooker(), modelCooker(), iconCooker()};
     return list;
 }
 

@@ -25,6 +25,7 @@
 #include <ve/scene/Prefab.hpp>
 #include <ve/scene/Scene.hpp>
 #include <ve/ui/IconBaker.hpp>
+#include <ve/ui/PrefabIcon.hpp>
 #include <ve/world/Terrain.hpp>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -369,21 +370,6 @@ std::shared_ptr<ve::Mesh> pieceMesh(Kind kind, Mat mat, Builder3& b)
     return mesh;
 }
 
-// What a piece looks like as one mesh (icons): its body, plus a door's leaf (closed).
-ve::MeshData pieceMeshData(Kind kind, Mat mat)
-{
-    Builder3 b;
-    build(b, kind, mat);
-    ve::MeshData md = b.md;
-    if (kind == Kind::Door) {
-        Builder3 leaf;
-        doorLeafMesh(leaf);
-        md.append(leaf.md, glm::translate(glm::mat4(1.0f), {-kDoorX + 0.07f, 0.0f, 0.0f}));
-    }
-    md.makeFlatShaded();
-    return md;
-}
-
 } // namespace
 
 // -----------------------------------------------------------------------------
@@ -566,18 +552,12 @@ void Builder::start()
 
 void Builder::bakeIcons()
 {
-    for (Entry& e : m_catalogue) {
-        if (e.icon) continue;
-        const ve::Json* pj = ve::prefab::load(e.prefab);
-        if (!pj) continue;
-        const ve::Json f = pj->value("object", ve::Json::object()).value("fields", ve::Json::object());
-        const auto kind = Kind(f.value("kind", 0));
-        const auto mat = Mat(f.value("material", 0));
-        ve::ui::IconView view;
-        view.yawDegrees = kind == Kind::Stairs ? 215.0f : 35.0f; // stairs: from the side you climb
-        view.pitchDegrees = (kind == Kind::Foundation || kind == Kind::Floor) ? 38.0f : 22.0f;
-        e.icon = ve::ui::bakeIcon(renderer(), pieceMeshData(kind, mat), 192, view);
-    }
+    // The engine's prefab icons: a hand-made <prefab>.png, else the cooked icon
+    // (vecook), else rendered from the prefab now and cached. Each prefab's
+    // "icon" section sets the view (stairs from the side you climb, floors
+    // from higher up); bump its "key" when the piece meshes' code changes.
+    for (Entry& e : m_catalogue)
+        if (!e.icon) e.icon = ve::ui::prefabIcon(e.prefab);
     buildMenu();
 }
 

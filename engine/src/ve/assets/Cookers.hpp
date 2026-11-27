@@ -8,7 +8,8 @@
 //
 // Built in: "texture" (TextureCook.hpp: images -> KTX2), "audio"
 // (AudioCook.hpp: WAV / FLAC -> Ogg Vorbis) and "model" (ModelCook.hpp:
-// glTF -> .vemodel, with generated LODs / impostors from `<model>.model`). A game can register its own
+// glTF -> .vemodel, with generated LODs / impostors from `<model>.model`) and
+// "icon" (IconCook.hpp: prefabs with an "icon" section -> rendered menu icons). A game can register its own
 // before calling into the tools (e.g. from a custom cooking tool's main()).
 //
 // The AssetManager has its own load paths per kind (it needs the cooked
@@ -58,6 +59,9 @@ struct Cooker {
     /// Files `source` is made from besides itself (a glTF's .bin buffers): they
     /// don't ship when the cooked copy does. Null = none.
     std::function<std::vector<std::filesystem::path>(const std::filesystem::path& source)> dependencies;
+    /// The source ships too, next to its cooked copy (a prefab is loaded as a
+    /// prefab and its icon is cooked): packaging keeps both.
+    bool shipSource = false;
 };
 
 /// Every registered cooker (the built-in ones first).

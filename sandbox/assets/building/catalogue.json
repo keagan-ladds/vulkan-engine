@@ -107,6 +107,12 @@
       "prefab": "prefabs/building/fuel_barrel.prefab",
       "category": "Power",
       "description": "20 litres of diesel. Set it down within 4 m of a generator to fill its tank."
+    },
+    {
+      "name": "Rondavel hut",
+      "prefab": "prefabs/building/rondavel_hut.prefab",
+      "category": "Huts",
+      "description": "A whole round hut (a glTF model with textures and a material file): its icon is rendered from the model."
     }
   ]
 }

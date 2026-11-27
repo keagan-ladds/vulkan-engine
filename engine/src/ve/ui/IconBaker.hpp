@@ -19,9 +19,13 @@
 #include <glm/glm.hpp>
 
 #include <memory>
+#include <vector>
 
 namespace ve {
 
+class GameObject;
+class Material;
+class Mesh;
 class Renderer;
 class Texture;
 
@@ -39,7 +43,24 @@ struct IconView {
     float padding = 0.06f;      ///< fraction of the icon left around the object
 };
 
+/// A picture of `mesh` (its vertex colours times view.tint), `size` x `size`
+/// pixels, transparent around it.
 std::shared_ptr<Texture> bakeIcon(Renderer& renderer, const MeshData& mesh, uint32_t size = 256, const IconView& view = {});
+
+/// One mesh of a multi-part icon, drawn with its materials.
+struct IconPart {
+    std::shared_ptr<Mesh> mesh;                         ///< Uploaded mesh.
+    std::vector<std::shared_ptr<Material>> materials;   ///< Per submesh slot (StandardMaterial layout: base colour, texture).
+    glm::mat4 transform{1.0f};                          ///< Where it sits in the icon's space (e.g. relative to a prefab's root).
+};
+/// The parts under `root` (its MeshRenderers, visible ones, with their
+/// transforms relative to root): what prefab icons draw.
+std::vector<IconPart> iconParts(GameObject& root);
+/// Renders parts with their materials (base colour, albedo texture, vertex
+/// colours, alpha cutoff; lit by view's sun and ambient) and reads the picture
+/// back: `size` x `size` RGBA8 (sRGB), rows top first. view.tint is ignored.
+/// Main thread; waits for the GPU (load / cook time).
+std::vector<uint8_t> renderIconPixels(Renderer& renderer, const std::vector<IconPart>& parts, uint32_t size, const IconView& view = {});
 
 } // namespace ui
 } // namespace ve

@@ -26,7 +26,8 @@
 //
 // Packaging: every file under the asset folders ships, except
 //   - files a cooker takes (images, WAV / FLAC sounds, glTF models): their
-//     cooked copies ship instead (cooked/<asset path>.<ext>);
+//     cooked copies ship instead (cooked/<asset path>.<ext>); prefabs with an
+//     "icon" section ship as they are, plus their cooked icon;
 //   - files those are made from (a glTF's .bin buffers: in the .vemodel);
 //   - cooker settings files (.texture, .audio, .model);
 //   - hidden files / folders, Blender files and temporaries (*.blend, *.blend1,
@@ -364,8 +365,10 @@ int main(int argc, char** argv)
         if (a.cooker && a.cooker->dependencies)
             for (const fs::path& d : a.cooker->dependencies(a.source)) madeInto.insert(d.lexically_normal());
     for (const Asset& a : assets) {
-        if (a.cooker) ship.push_back({"cooked/" + fs::relative(a.cooked, out).generic_string(), a.cooked});
-        else if (!madeInto.count(a.source.lexically_normal())) ship.push_back({"assets/" + a.name, a.source});
+        if (a.cooker) {
+            ship.push_back({"cooked/" + fs::relative(a.cooked, out).generic_string(), a.cooked});
+            if (a.cooker->shipSource) ship.push_back({"assets/" + a.name, a.source}); // (a prefab: loaded as one too)
+        } else if (!madeInto.count(a.source.lexically_normal())) ship.push_back({"assets/" + a.name, a.source});
     }
     std::error_code ec;
     for (auto it = fs::recursive_directory_iterator(out / "generated", ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))

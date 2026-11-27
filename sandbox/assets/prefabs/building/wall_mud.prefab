@@ -24,5 +24,11 @@
       "kind": 2,
       "material": 0
     }
+  },
+  "icon": {
+    "size": 192,
+    "yaw": 35.0,
+    "pitch": 22.0,
+    "key": "kit-1"
   }
 }
