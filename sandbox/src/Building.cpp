@@ -1,5 +1,7 @@
 #include "Building.hpp"
 
+#include "Power.hpp"
+
 #include <ve/net/Network.hpp>
 
 #include "GameUi.hpp"
@@ -47,7 +49,7 @@ VE_REGISTER_TYPE(BuildPiece, "BuildPiece")
     t.category("Savanna");
     t.enumField("kind", &BuildPiece::kind,
                 {"Foundation", "Floor", "Wall", "WallDoor", "WallWindow", "Railing", "Post", "Beam", "RoofMetal", "RoofThatch", "Stairs", "Fence",
-                 "Door", "Window"});
+                 "Door", "Window", "Generator", "LampPost", "FuelBarrel"});
     t.enumField("material", &BuildPiece::material, {"Mud", "Plaster", "Timber", "Stone"});
 }
 
@@ -239,6 +241,27 @@ void build(Builder3& b, Kind kind, Mat mat)
             b.box({float(s) * kHalf - 0.1f * float(s > 0), 0.0f, -0.5f}, {float(s) * kHalf + 0.1f * float(s < 0), BuildPiece::kFoundation, 0.5f}, kTimberDark);
         break;
     }
+    case Kind::Generator: {
+        // A diesel set on skids: engine block, radiator, exhaust, fuel tank.
+        const glm::vec3 body{0.80f, 0.55f, 0.12f}, dark{0.18f, 0.17f, 0.16f};
+        b.box({-0.75f, 0.0f, -0.45f}, {0.75f, 0.12f, 0.45f}, dark, glm::mat4(1.0f), true);
+        b.box({-0.6f, 0.12f, -0.38f}, {0.45f, 0.85f, 0.38f}, body, glm::mat4(1.0f), true);
+        b.box({0.45f, 0.12f, -0.35f}, {0.7f, 0.95f, 0.35f}, dark * 1.4f);
+        b.box({-0.55f, 0.85f, -0.3f}, {0.2f, 1.0f, 0.3f}, body * 0.85f);
+        b.box({-0.45f, 1.0f, 0.15f}, {-0.35f, 1.45f, 0.25f}, dark);
+        break;
+    }
+    case Kind::LampPost:
+        // A pole with a lamp head reaching out over the ground (the light hangs at 2.9 m).
+        b.box({-0.07f, 0.0f, -0.07f}, {0.07f, 3.1f, 0.07f}, glm::vec3(0.22f), glm::mat4(1.0f), true);
+        b.box({-0.15f, 0.0f, -0.15f}, {0.15f, 0.2f, 0.15f}, kMudDark);
+        b.box({-0.05f, 3.0f, -0.05f}, {0.65f, 3.08f, 0.05f}, glm::vec3(0.22f));
+        b.box({0.4f, 2.92f, -0.16f}, {0.8f, 3.02f, 0.16f}, glm::vec3(0.15f, 0.25f, 0.2f));
+        break;
+    case Kind::FuelBarrel:
+        b.box({-0.3f, 0.0f, -0.3f}, {0.3f, 0.88f, 0.3f}, glm::vec3(0.55f, 0.12f, 0.08f), glm::mat4(1.0f), true);
+        for (int r = 0; r < 2; ++r) b.box({-0.31f, 0.28f + 0.3f * float(r), -0.31f}, {0.31f, 0.32f + 0.3f * float(r), 0.31f}, glm::vec3(0.3f, 0.07f, 0.05f));
+        break;
     case Kind::Fence: {
         for (int s = -1; s <= 1; s += 2) b.box({float(s) * kHalf - 0.07f, 0.0f, -0.07f}, {float(s) * kHalf + 0.07f, 1.35f, 0.07f}, kTimberDark);
         for (int r = 0; r < 3; ++r) {
@@ -306,6 +329,9 @@ std::vector<PieceSnap> snapPoints(Kind kind)
     case Kind::Stairs:
         for (int x = -1; x <= 1; ++x) p.push_back({{float(x) * kHalf, BuildPiece::kFoundation, -0.5f}});
         break;
+    case Kind::Generator:
+    case Kind::LampPost:
+    case Kind::FuelBarrel: break; // free standing
     }
     return p;
 }
@@ -404,6 +430,23 @@ void BuildPiece::start()
         use.focusOffset = {0.0f, 1.2f, 0.0f};
         use.promptFn = [&hinge] { return hinge.open() ? std::string("Close door") : std::string("Open door"); };
         use.onUse = [&hinge](ve::GameObject&) { hinge.setOpen(!hinge.open()); };
+    }
+    // Power pieces: their behaviour (the Saveable generator comes from the prefab, like the hinge).
+    if (kind == Kind::Generator && !getComponent<Generator>()) addComponent<Generator>();
+    if (kind == Kind::FuelBarrel && !getComponent<FuelBarrel>()) addComponent<FuelBarrel>();
+    if (kind == Kind::LampPost) {
+        addComponent<PoweredLight>();
+        auto& head = scene().spawn("Lamp");
+        head.setParent(this, false);
+        head.transform().setLocalPosition({0.6f, 2.9f, 0.0f});
+        head.transform().setLocalRotation(glm::angleAxis(glm::radians(-90.0f), glm::vec3(1, 0, 0))); // spot points down
+        auto& spot = head.addComponent<ve::SpotLight>();
+        spot.color = {1.0f, 0.86f, 0.62f};
+        spot.intensity = 40.0f;
+        spot.range = 14.0f;
+        spot.innerAngle = 35.0f;
+        spot.outerAngle = 55.0f;
+        spot.enabled = !ghost; // (a preview stays dark; PoweredLight decides once placed)
     }
     // The solid volume, for the placement fit test (the leaf closed).
     auto addBoxes = [&](const Builder3& from, const glm::vec3& at) {
@@ -652,8 +695,10 @@ void Builder::updatePreview()
         if (h.gameObject && dynamic_cast<ve::Terrain*>(h.gameObject)) return true;
         return fitting && host && h.gameObject && BuildPiece::of(h.gameObject) == host;
     });
+    // Lamps need a generator that reaches them (Power.hpp; the engine finds the generators).
+    m_noPower = self && self->kind == Kind::LampPost && !Generator::covering(scene(), m_pos, false);
     m_preview.setPose(m_pos, m_rot);
-    m_preview.setValid(fits && (fitting ? m_snapped : (m_snapped || m_aimHit)) && m_preview.ready());
+    m_preview.setValid(fits && !m_noPower && (fitting ? m_snapped : (m_snapped || m_aimHit)) && m_preview.ready());
 }
 
 ve::GameObject* Builder::place()
@@ -686,6 +731,10 @@ void Builder::registerRequests()
         }
         // (A real game re-checks the fit and the player's materials / reach here.)
         ve::GameObject* placed = net().spawn(prefab, pos, rot);
+        // A fuel barrel set down by a generator pours into it (and is gone).
+        if (auto* barrel = placed ? placed->getComponent<FuelBarrel>() : nullptr) {
+            if (Generator* g = barrel->pour()) ve::log::info("Build: {} litres of fuel poured into a generator ({} now)", barrel->litres, g->fuel);
+        }
         m_placed = placed;
         if (placed) {
             rebuildNavigation(pos);
@@ -890,7 +939,8 @@ void Builder::buildStatus()
     title.anchors({0.0f, 0.0f}, {1.0f, 0.0f}).at({86.0f, 6.0f}).size({16.0f, 36.0f});
     title.bind = [this]() -> std::string {
         if (m_catalogue.empty()) return {};
-        return m_catalogue[size_t(m_index)].name + (m_preview.valid() ? (m_snapped ? "   ·   snapped" : "") : "   ·   blocked");
+        return m_catalogue[size_t(m_index)].name +
+               (m_preview.valid() ? (m_snapped ? "   ·   snapped" : "") : m_noPower ? "   ·   needs a generator nearby" : "   ·   blocked");
     };
     auto& keys = gui::label(panel, "LMB place    RMB remove    R rotate    Wheel next    B build menu    Esc stop building", gui::font::body, 18.0f,
                             gui::color::dim);

@@ -89,6 +89,24 @@
       "prefab": "prefabs/building/window_shuttered.prefab",
       "category": "Doors & windows",
       "description": "A framed window with bars and painted shutters. Snaps into a window opening."
+    },
+    {
+      "name": "Generator",
+      "prefab": "prefabs/building/generator.prefab",
+      "category": "Power",
+      "description": "A diesel generator. Powers lamps within 16 m while it has fuel; it starts empty."
+    },
+    {
+      "name": "Lamp post",
+      "prefab": "prefabs/building/lamp_post.prefab",
+      "category": "Power",
+      "description": "A street lamp. Needs a generator within 16 m to be built; lit while that generator runs."
+    },
+    {
+      "name": "Fuel barrel",
+      "prefab": "prefabs/building/fuel_barrel.prefab",
+      "category": "Power",
+      "description": "20 litres of diesel. Set it down within 4 m of a generator to fill its tank."
     }
   ]
 }

@@ -147,6 +147,27 @@ public:
 go.addComponent<Spin>().speed = 3.0f;
 ```
 
+### Find things near a point
+
+`ve::Scene` finds objects of a type (a component type or a GameObject class)
+by distance from their world positions. Inactive and destroyed objects are
+skipped:
+
+```cpp
+auto* gen = scene().findNearest<Generator>(pos, 30.0f);              // nearest within 30 m, or null
+auto* fueled = scene().findNearest<Generator>(pos, 30.0f, [](Generator& g) { return g.fuel > 0; },
+                                              /*horizontal*/ true);  // + a filter, ignoring height
+scene().forEachWithin<Lamp>(pos, 20.0f, [](Lamp& l, float distance) { l.flicker(distance); });
+GameObject* well = scene().findNearestWithTag("water", pos, 50.0f);
+```
+
+They scan that type's objects, which is fine for hundreds or a few thousand.
+Many thousands of simple things belong in a `ProxySet` (its `query` /
+`nearest` use a grid). Rules about what may be near what stay in the game:
+the sandbox's `Generator::covering` asks for the nearest generator whose own
+`powerRadius` reaches a point (a filter on findNearest), and the build tool
+blocks a lamp post without one.
+
 ### Custom material with its own shader
 
 1. Write `mything.vert` and `mything.frag` in your game's `shaders/` folder.
@@ -663,6 +684,12 @@ if (placePressed && preview.valid()) ve::prefab::instantiate(scene(), piecePath,
 - Rebuild the navmesh around placed / removed pieces (`NavMeshSurface::rebuild`).
 - Roofs: eaves (low edge) on wall tops; a roof whose slope cuts through a
   side wall is (correctly) blocked.
+- Game rules on top of the fit (Savanna's power pieces, sandbox/src/Power.hpp):
+  a lamp post is only valid where a generator's `powerRadius` reaches
+  (`Builder::updatePreview` asks `Generator::covering`, which uses
+  `Scene::findNearest`; the panel says "needs a generator nearby"); a fuel
+  barrel placed within 4 m of a generator pours its 20 litres in and is gone
+  (done when placed, not in `start()`, so loading a save doesn't pour twice).
 
 ### Seeing what's going on: debug drawing
 

@@ -7,6 +7,7 @@
 #include "MainMenu.hpp"
 #include "Pickups.hpp"
 #include "Player.hpp"
+#include "Power.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
 #include "Villager.hpp"
@@ -1094,10 +1095,66 @@ void AutoTest::update(float dt)
             break;
         }
         case 42: {
-            log("build: ... and " + std::to_string(foliageAt(m_exclusionAt, 0.3f)) + " after removing it");
-            m_t = 0.0f;
-            m_stepFrame = m_frames;
-            ++m_step;
+            // Power (Power.hpp, on ve::Scene::findNearest): a generator, a lamp out of
+            // its reach (blocked) and in it (placed, dark: no fuel), a fuel barrel set
+            // down by the generator (poured in, gone), then the lamp lights up.
+            auto pieceIndex = [&](const std::string& name) {
+                for (size_t i = 0; i < b->catalogue().size(); ++i)
+                    if (b->catalogue()[i].name == name) return int(i);
+                return 0;
+            };
+            auto aimAt = [&](const std::string& piece, const glm::vec3& at) {
+                b->setActive(true);
+                b->select(pieceIndex(piece));
+                b->setYawDegrees(0.0f);
+                b->setAimOverride(at);
+                m_t = 0.0f;
+                m_stepFrame = m_frames;
+            };
+            auto ground = [&](float dx, float dz) { return groundAt(glm::vec2(m_powerSite.x + dx, m_powerSite.z + dz)); };
+            auto* gen = m_generator.get(scene()) ? m_generator.get(scene())->getComponent<Generator>() : nullptr;
+            auto* lamp = m_lamp.get(scene()) ? m_lamp.get(scene())->getComponent<PoweredLight>() : nullptr;
+            switch (m_power++) {
+            case 0:
+                log("build: ... and " + std::to_string(foliageAt(m_exclusionAt, 0.3f)) + " after removing it");
+                m_powerSite = groundAt(layout::kCamp + glm::vec2(-6.0f, -18.0f));
+                aimAt("Generator", m_powerSite);
+                break;
+            case 1:
+                placeLog("generator", b->previewPosition());
+                if (!m_built.empty() && m_built.back().get(scene()) && m_built.back().get(scene())->getComponent<Generator>()) m_generator = m_built.back();
+                aimAt("Lamp post", ground(26.0f, 0.0f)); // beyond its 16 m
+                break;
+            case 2:
+                m_lampFarBlocked = !b->previewValid() && b->previewNeedsPower();
+                aimAt("Lamp post", ground(9.0f, 0.0f));
+                break;
+            case 3:
+                placeLog("lamp post 9 m from the generator", b->previewPosition());
+                if (!m_built.empty() && m_built.back().get(scene()) && m_built.back().get(scene())->getComponent<PoweredLight>()) m_lamp = m_built.back();
+                aimAt("Fuel barrel", ground(1.8f, 1.6f));
+                break;
+            case 4: {
+                m_lampLitBefore = lamp && lamp->lit();
+                const float before = gen ? gen->fuel : -1.0f;
+                ve::GameObject* barrel = b->place();
+                m_barrelPoured = barrel && barrel->isDestroyed() && gen && gen->fuel > before + 19.0f;
+                m_t = 0.0f;
+                m_stepFrame = m_frames;
+                break;
+            }
+            default:
+                log(std::string("power: generator placed: ") + (gen ? "yes" : "NO") + ", lamp out of its reach blocked: " +
+                    (m_lampFarBlocked ? "yes" : "NO") + ", lamp in reach placed: " + (lamp ? "yes" : "NO") + ", dark without fuel: " +
+                    (lamp && !m_lampLitBefore ? "yes" : "NO") + ", barrel poured in and gone: " + (m_barrelPoured ? "yes" : "NO") +
+                    " (fuel " + std::to_string(gen ? gen->fuel : -1.0f) + " l), lamp lit now: " + (lamp && lamp->lit() ? "yes" : "NO"));
+                b->setAimOverride(std::nullopt);
+                b->setActive(false);
+                m_t = 0.0f;
+                m_stepFrame = m_frames;
+                ++m_step;
+                break;
+            }
             break;
         }
         case 43: {
@@ -1131,6 +1188,9 @@ void AutoTest::update(float dt)
         bool doorOpen = false;
         scene().forEach<DoorHinge>([&](DoorHinge& h) { doorOpen = doorOpen || h.open(); });
         log(std::string("build: the door is still open after loading: ") + (doorOpen ? "yes" : "NO"));
+        float fuel = 0.0f;
+        scene().forEach<Generator>([&](Generator& g) { fuel += g.fuel; });
+        log("power: the generator's fuel after loading: " + std::to_string(fuel) + " l" + (fuel > 15.0f ? " (yes)" : " NO"));
         ve::save::remove("buildtest");
         // Look at the little house for the screenshot.
         if (!s_expect.pieces.empty()) {

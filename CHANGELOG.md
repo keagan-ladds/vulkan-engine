@@ -42,6 +42,11 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Finding things near a point**: `Scene::findNearest<T>(p, maxDistance,
+  filter, horizontal)`, `Scene::forEachWithin<T>(p, radius, fn)`,
+  `Scene::findNearestWithTag`, `Scene::forEachActive<T>` (T: a component type
+  or a GameObject class). The sandbox uses them for power: generators, lamp
+  posts that need one nearby to be built, fuel barrels that fill the nearest.
 - **Splines** (`ve::Spline`, `scene/Spline.hpp`): smooth curves through
   control points (centripetal Catmull-Rom) with a width factor per point;
   `path()` gives a world-space `SplinePath` (length, `at(distance)`,

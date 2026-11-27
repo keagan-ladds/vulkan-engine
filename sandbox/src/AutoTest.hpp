@@ -59,6 +59,11 @@ public:
     int foliageAt(const glm::vec3& p, float radius) const;
     int m_foliageOnSite = 0, m_foliageDuring = 0;
     glm::vec3 m_exclusionAt{0.0f};
+    // Power checks (build step 42).
+    int m_power = 0;
+    glm::vec3 m_powerSite{0.0f};
+    ve::ObjectRef<> m_generator, m_lamp;
+    bool m_lampFarBlocked = false, m_lampLitBefore = true, m_barrelPoured = false;
     uint64_t m_roadTerrainVersion = 0; // terrain version before the footpath point moved
     bool m_roadMoved = false;
     ve::ObjectRef<> m_exclusionObject;
