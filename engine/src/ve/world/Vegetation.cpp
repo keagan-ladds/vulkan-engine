@@ -414,6 +414,8 @@ void Foliage::update(float dt)
         return;
     }
     if (m_sinceBuild < 0.25f) return;
+    // The editor is dragging something: re-place once it's let go (Engine::worldEditsHeld).
+    if (engine().worldEditsHeld()) return;
     const Terrain* terrain = Terrain::find(scene());
     const Terrain* builtOn = m_terrain.get(scene());
     FoliageSystem* system = this->system();
@@ -696,7 +698,7 @@ void GrassLayer::update(float dt)
     VE_PROFILE("Grass layers");
     m_sinceBuild += dt;
     m_sinceCheck += dt;
-    if (m_sinceBuild >= 0.25f) {
+    if (m_sinceBuild >= 0.25f && !engine().worldEditsHeld()) { // (an editor drag: re-bake once it's let go)
         const Terrain* terrain = Terrain::find(scene());
         const Terrain* builtOn = m_terrain.get(scene());
         if (terrain != builtOn || (terrain && terrain->version() != m_terrainVersion)) {

@@ -132,6 +132,17 @@ public:
     /// before (or without) an Engine call it first. Safe to call again.
     static void registerTypes();
 
+    // ---- Interactive edits (the editor's drags) ----
+    /// The editor says whether the user is dragging something right now (the
+    /// move gizmo, a spline point, an inspector field). Expensive world
+    /// rebuilds (terrain, foliage, grass) wait while it is, and for
+    /// `editSettleSeconds` after: grabbing the object again within that time
+    /// keeps them waiting.
+    void setInteractiveEdit(bool dragging);
+    /// Whether world systems should hold their rebuilds now (see setInteractiveEdit).
+    bool worldEditsHeld() const;
+    float editSettleSeconds = 0.35f; ///< Quiet time after a drag ends before world rebuilds run (s).
+
     /// The OS window (size, title, events).
     Window& window() { return *m_window; }
     /// Keyboard, mouse, gamepads and named actions.
@@ -219,6 +230,8 @@ public:
 
 private:
     std::vector<std::function<void()>> m_atShutdown;
+    bool m_interactiveEdit = false;
+    double m_interactiveEditEnded = -1e9; ///< seconds (steady clock) when the last drag ended
     void pollEvents();
     void tickFrame();
     void tickLoading(); ///< a loading-screen frame

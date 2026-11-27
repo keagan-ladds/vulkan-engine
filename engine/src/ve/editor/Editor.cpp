@@ -194,6 +194,7 @@ void Editor::handleShortcuts()
 void Editor::onGui()
 {
     if (m_engine->loadingInEditor()) drawLoading();
+    if (m_mode != Mode::Edit) m_engine->setInteractiveEdit(false);
     if (m_mode == Mode::Off) return;
     if (m_mode == Mode::Play) {
         drawPlayToolbar();
@@ -204,6 +205,10 @@ void Editor::onGui()
     drawHierarchy();
     drawInspector();
     drawViewport();
+    // A drag in progress (the move gizmo, a spline point, an inspector field):
+    // terrain / foliage / grass rebuild once it ends (Engine::worldEditsHeld).
+    // Terrain brushing stays live (each stroke is local and cheap).
+    m_engine->setInteractiveEdit(m_gizmo.active() || m_splineDragging || ImGui::IsAnyItemActive());
     drawAssetEditor();
     drawNewAssetPopup();
 
