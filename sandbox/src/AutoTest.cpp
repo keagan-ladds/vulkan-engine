@@ -1168,14 +1168,17 @@ void AutoTest::update(float dt)
                 break;
             case 3:
                 placeLog("lamp post 9 m from the generator", b->previewPosition());
-                if (!m_built.empty() && m_built.back().get(scene()) && m_built.back().get(scene())->getComponent<PoweredLight>()) m_lamp = m_built.back();
+                // (Its PoweredLight is added when the piece starts, next frame: recognise it by kind.)
+                if (!m_built.empty())
+                    if (auto* piece = BuildPiece::of(m_built.back().get(scene())); piece && piece->kind == BuildPiece::Kind::LampPost)
+                        m_lamp = m_built.back();
                 aimAt("Fuel barrel", ground(1.8f, 1.6f));
                 break;
             case 4: {
                 m_lampLitBefore = lamp && lamp->lit();
                 const float before = gen ? gen->fuel : -1.0f;
-                ve::GameObject* barrel = b->place();
-                m_barrelPoured = barrel && barrel->isDestroyed() && gen && gen->fuel > before + 19.0f;
+                ve::GameObject* barrel = b->place(); // (null: it poured itself in and is gone)
+                m_barrelPoured = (!barrel || barrel->isDestroyed()) && gen && gen->fuel > before + 19.0f;
                 m_t = 0.0f;
                 m_stepFrame = m_frames;
                 break;
