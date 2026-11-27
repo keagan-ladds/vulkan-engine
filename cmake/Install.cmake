@@ -64,13 +64,17 @@ foreach(t IN LISTS _ve_install_targets)
         endif()
         set_target_properties(${t} PROPERTIES ${prop} "${fixed}")
     endforeach()
-    # Interface sources (nlohmann_json adds its .natvis debugger file on MSVC)
-    # are for builds of this tree: the package doesn't carry them.
+    # Interface sources are for builds of this tree only: the package doesn't
+    # carry them. (nlohmann_json adds its .natvis debugger file on MSVC, with an
+    # $<INSTALL_INTERFACE:nlohmann_json.natvis> entry for its own install,
+    # which would point games at <prefix>/nlohmann_json.natvis: dropped.)
     get_target_property(srcs ${t} INTERFACE_SOURCES)
     if(srcs)
         set(fixed "")
         foreach(s IN LISTS srcs)
-            if(s MATCHES "^\\$<")
+            if(s MATCHES "^\\$<INSTALL_INTERFACE:")
+                continue()
+            elseif(s MATCHES "^\\$<")
                 list(APPEND fixed "${s}")
             else()
                 list(APPEND fixed "$<BUILD_INTERFACE:${s}>")
