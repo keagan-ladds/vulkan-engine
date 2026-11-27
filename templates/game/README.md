@@ -1,5 +1,8 @@
 # Game template
 
+New to the engine? [docs/10-getting-started.md](../../docs/10-getting-started.md)
+walks through a game on the prebuilt engine from scratch.
+
 A minimal game built on vulkan-engine **without modifying the engine**: it
 pulls the engine in with `add_subdirectory` and only uses its public API.
 

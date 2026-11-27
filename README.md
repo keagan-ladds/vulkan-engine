@@ -17,7 +17,11 @@ docs/      plans, architecture, roadmap/checklist, conventions, agent handoff
 
 ## Making your own game
 
-Copy `templates/game` anywhere and build it against this checkout. See
+**Getting started:** [docs/10-getting-started.md](docs/10-getting-started.md)
+walks you through a game on a prebuilt (installed) engine: the package, a new
+project, first gameplay code, levels in the editor, shipping and upgrading.
+
+Or copy `templates/game` anywhere and build it against this checkout. See
 [templates/game/README.md](templates/game/README.md):
 
 ```bash
