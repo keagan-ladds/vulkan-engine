@@ -76,7 +76,7 @@ The sandbox's world is generated in code, and its files (textures, glTF, WAV) ar
 produced by `tools/generate_assets.py`. **Why:** no licensing questions, small
 repo, and the importers are still exercised on real files.
 
-### D12. Games consume the engine via `add_subdirectory` (no install/package step)
+### D12. Games consume the engine via `add_subdirectory` (no install/package step; see D37 for packages)
 **Chosen:** a game's CMakeLists adds the engine checkout as a subdirectory and
 calls `ve_setup_game()`. Outputs land in the game's build folder.
 **Alternatives:** installed CMake package (`find_package(vulkan-engine)`), or a git submodule/FetchContent.
@@ -476,3 +476,22 @@ procedural and re-editable; a sub-biome is defined once and affects every
 layer without touching each FoliageType. **Cost:** closest-point queries per
 terrain sample / foliage candidate near roads and masks (a grid keeps them
 cheap); navmeshes are not rebuilt automatically after road edits.
+
+### D37. Engine packages: static libraries + headers, installed with CMake (2026-11)
+**Decision:** `cmake --install <build> --component VulkanEngine --prefix <dir>`
+installs a relocatable package: public headers (not `*Internal.hpp`), the
+third-party headers they use (glm, nlohmann/json, VMA, Dear ImGui; SDL2 when
+built from source), every static library the engine links, `vecook`, the
+compiled shaders and the GLSL includes, and a `find_package(VulkanEngine)`
+config with `ve_setup_game()`. Games keep building from source when no
+package is found (D12 still works). Headers stay next to their sources; the
+install step picks them.
+**Alternatives:** DLLs (export macros on the whole API, one compiler and C
+runtime across the boundary, STL / templates across DLL lines: fragile for a
+C++ engine); moving headers to an `include/` folder first (clearer, but a
+large move that isn't needed to package); CPack zips (can come later on top
+of the same install rules).
+**Why:** games stop compiling the engine and can pin a binary engine
+version; static linking keeps a shipped game a single executable. **Cost:** a
+package per compiler (MSVC vs MinGW) and build type (Debug libraries carry a
+`d` suffix, so both fit in one folder).

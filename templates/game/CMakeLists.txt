@@ -9,23 +9,35 @@
 #   cmake --build build
 #   ./build/bin/mygame
 #
-# The engine is built as part of your game (no install step); you never need
-# to edit anything inside the engine folder.
+# The engine comes one of two ways:
+#  - prebuilt: an installed engine package (headers + libraries, made with
+#    `cmake --install <engine build> --component VulkanEngine --prefix <dir>`):
+#        cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=<dir>
+#    Your game then never compiles the engine. Use the same compiler, and a
+#    package with your build type (Debug / Release; one package can hold both).
+#  - from source (when no package is found): the engine checkout in
+#    VE_ENGINE_DIR is built as part of your game.
+# Either way you never need to edit anything inside the engine.
 # =============================================================================
 cmake_minimum_required(VERSION 3.26)
 project(MyGame LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON) # IntelliSense / clangd
 
-# Where the engine lives. The default works while this template sits inside
-# the engine repo (templates/game); change it after copying the folder out.
-set(VE_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." CACHE PATH "Path to the vulkan-engine checkout")
-if(NOT EXISTS "${VE_ENGINE_DIR}/engine/src/ve/ve.hpp")
-    message(FATAL_ERROR "VE_ENGINE_DIR (${VE_ENGINE_DIR}) is not a vulkan-engine checkout. "
-                        "Pass -DVE_ENGINE_DIR=/path/to/vulkan-engine")
+find_package(VulkanEngine CONFIG QUIET)
+if(VulkanEngine_FOUND)
+    message(STATUS "Prebuilt vulkan-engine ${VulkanEngine_VERSION}: ${VulkanEngine_DIR}")
+else()
+    # Where the engine checkout lives. The default works while this template sits
+    # inside the engine repo (templates/game); change it after copying the folder out.
+    set(VE_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../.." CACHE PATH "Path to the vulkan-engine checkout")
+    if(NOT EXISTS "${VE_ENGINE_DIR}/engine/src/ve/ve.hpp")
+        message(FATAL_ERROR "No engine package found and VE_ENGINE_DIR (${VE_ENGINE_DIR}) is not a vulkan-engine checkout. "
+                            "Pass -DCMAKE_PREFIX_PATH=<installed engine> or -DVE_ENGINE_DIR=/path/to/vulkan-engine")
+    endif()
+    # Second argument = where the engine's build files go inside our build folder.
+    add_subdirectory(${VE_ENGINE_DIR} vulkan-engine)
 endif()
-# Second argument = where the engine's build files go inside our build folder.
-add_subdirectory(${VE_ENGINE_DIR} vulkan-engine)
 
 # --- The game ------------------------------------------------------------------
 # New .cpp / shader files are picked up automatically (re-run CMake configure).

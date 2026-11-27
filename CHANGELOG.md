@@ -42,6 +42,14 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Installable engine package**: `cmake --install <build> --component
+  VulkanEngine --prefix <dir>` makes a relocatable package (headers, static
+  libraries, vecook, compiled shaders + GLSL includes, a
+  `find_package(VulkanEngine)` config with `ve_setup_game()`). The game
+  template uses a package when `CMAKE_PREFIX_PATH` points at one, else builds
+  the engine from `VE_ENGINE_DIR`. Engine and bundled libraries get a `d`
+  suffix in Debug builds. Windows CI builds the template against MSVC and
+  MinGW packages and uploads the MSVC Release package.
 - **Prefab icons** (`ui::prefabIcon`, `ui/PrefabIcon.hpp`): menu pictures of
   any prefab, rendered from its meshes with their materials and textures in a
   private scene. A hand-made `<prefab>.png` wins, else the cooked icon

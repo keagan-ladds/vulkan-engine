@@ -42,9 +42,15 @@ function(ve_setup_game TARGET)
             target_link_libraries(${TARGET} PRIVATE ve::ve_effects)
             list(APPEND _ve_spv ${VE_PREBUILT_EFFECTS_SHADERS})
         endif()
+        # An installed package also brings vecook: next to the game, like a source build.
+        set(_ve_tools "")
+        if(VE_PREBUILT_VECOOK AND EXISTS "${VE_PREBUILT_VECOOK}")
+            set(_ve_tools COMMAND ${CMAKE_COMMAND} -E copy_if_different ${VE_PREBUILT_VECOOK} ${VE_OUTPUT_DIR})
+        endif()
         add_custom_target(${TARGET}_engine_shaders
             COMMAND ${CMAKE_COMMAND} -E make_directory ${VE_SHADER_OUTPUT_DIR}
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_ve_spv} ${VE_SHADER_OUTPUT_DIR}
+            ${_ve_tools}
             COMMENT "Copying prebuilt engine shaders"
             VERBATIM)
         add_dependencies(${TARGET} ${TARGET}_engine_shaders)
