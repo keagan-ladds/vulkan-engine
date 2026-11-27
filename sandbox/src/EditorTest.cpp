@@ -119,16 +119,21 @@ void EditorTest::update(float)
         }
     }
     if (m_frame == 145) {
+        // The reopened scene loads in the background: vegetation may only exist now.
+        if (!m_foliageSystem)
+            if (auto* f = dynamic_cast<ve::Foliage*>(s.find("Foliage"))) m_foliageSystem = f->system();
+        if (m_grassPass.empty())
+            if (auto* g = dynamic_cast<ve::GrassLayer*>(s.find("Grass")); g && g->pass()) m_grassPass = g->pass()->name();
         if (auto* t = ve::Terrain::find(s))
             log("terrain rebuilt: " + std::string(t->version() > m_terrainVersion ? "yes" : "NO") + ", old " +
                 std::to_string(t->height(120, -80)) + ", new spot " + std::to_string(t->height(160, -80)));
     }
     // Vegetation follows (its own throttle): moving a stamp is a local change,
     // so foliage and grass refresh the area around it in place (no new system).
-    if (m_frame == 175 && m_foliageSystem) {
+    if (m_frame == 175) {
         auto* f = dynamic_cast<ve::Foliage*>(s.find("Foliage"));
         auto* g = dynamic_cast<ve::GrassLayer*>(s.find("Grass"));
-        log(std::string("vegetation followed the stamp in place: foliage ") + (f && f->system() == m_foliageSystem ? "yes" : "NO") +
+        log(std::string("vegetation followed the stamp in place: foliage ") + (f && m_foliageSystem && f->system() == m_foliageSystem ? "yes" : "NO") +
             ", grass " + (g && g->pass() && g->pass()->name() == m_grassPass ? "yes" : "NO") + "; boulders near the old spot " +
             std::to_string(boulders({120.0f, -80.0f})) + ", near the new spot " + std::to_string(boulders({160.0f, -80.0f})) +
             " (was " + std::to_string(m_bouldersNew) + ")");
