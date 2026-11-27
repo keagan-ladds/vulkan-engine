@@ -3,8 +3,11 @@
 #include "ve/core/BinaryIO.hpp"
 #include "ve/core/Engine.hpp"
 #include "ve/core/FileSystem.hpp"
+#include "ve/scene/Reflection.hpp"
 
 #include <cstring>
+#include <functional>
+#include <set>
 
 namespace ve {
 
@@ -51,6 +54,27 @@ bool isIconPrefab(const std::filesystem::path& file)
     if (!text || text->find("\"icon\"") == std::string::npos) return false; // (cheap check first)
     const nlohmann::json j = nlohmann::json::parse(*text, nullptr, false);
     return j.is_object() && j.contains("icon") && j["icon"].is_object();
+}
+
+std::string iconUnsupportedHere(const std::filesystem::path& prefab)
+{
+    const auto text = vfs::readText(prefab);
+    if (!text) return {};
+    const nlohmann::json j = nlohmann::json::parse(*text, nullptr, false);
+    std::set<std::string> missing;
+    std::function<void(const nlohmann::json&)> visit = [&](const nlohmann::json& o) {
+        if (!o.is_object()) return;
+        if (auto t = o.find("type"); t != o.end() && t->is_string() && !TypeRegistry::get().find(t->get<std::string>()))
+            missing.insert(t->get<std::string>());
+        for (const char* key : {"components", "children"})
+            if (auto it = o.find(key); it != o.end() && it->is_array())
+                for (const auto& c : *it) visit(c);
+    };
+    if (j.is_object() && j.contains("object")) visit(j["object"]);
+    if (missing.empty()) return {};
+    std::string names;
+    for (const std::string& m : missing) names += (names.empty() ? "" : ", ") + m;
+    return "uses types this program doesn't know (" + names + "): cook it with the game (`<game> --cook`); the game renders it when first shown";
 }
 
 std::filesystem::path cookedIconPath(const std::filesystem::path& cacheDir, const std::string& assetPath)

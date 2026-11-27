@@ -127,6 +127,10 @@ public:
     /// GPU resources the game keeps outside the scene (e.g. baked icons in a
     /// static table).
     void atShutdown(std::function<void()> fn) { m_atShutdown.push_back(std::move(fn)); }
+    /// Registers every engine type with reflection (scene files, prefabs, the
+    /// editor). The constructor does it; tools that read scene / prefab data
+    /// before (or without) an Engine call it first. Safe to call again.
+    static void registerTypes();
 
     /// The OS window (size, title, events).
     Window& window() { return *m_window; }

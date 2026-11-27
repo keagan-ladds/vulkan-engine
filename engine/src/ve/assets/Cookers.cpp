@@ -109,6 +109,7 @@ Cooker iconCooker()
         return Cooker::Result{r.ok, r.error, summary, r.bytes};
     };
     c.needsRenderer = [](const std::filesystem::path&) { return true; };
+    c.unsupportedHere = iconUnsupportedHere;
     c.shipSource = true;
     return c;
 }

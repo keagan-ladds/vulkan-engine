@@ -243,6 +243,11 @@ void Engine::benchFrame(float cpuMs)
     quit();
 }
 
+void Engine::registerTypes()
+{
+    registerAllTypes();
+}
+
 Engine::~Engine()
 {
     // Tear down in reverse dependency order. Scene objects hold meshes,

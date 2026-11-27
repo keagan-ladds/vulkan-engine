@@ -822,6 +822,11 @@ b.onClick = [this] { resume(); };
   `"icon": {"size": 192, "yaw": 35, "pitch": 22, "padding": 0.06, "key": "v2"}`.
   Change `key` when code that builds the prefab's meshes changes; edits to the
   prefab, its model, textures or material files re-render it by themselves.
+  Prefabs made of the game's own types (Savanna's `BuildPiece`) can only be
+  rendered by the game: cook them with `build/bin/<game> --cook` (the same
+  options as vecook: `--check`, `--package`...; the game template's `main`
+  passes it to `ve::cookToolMain`). Plain `vecook` lists them as "left to the
+  game", and the game renders and caches them when they're first shown.
   Pictures of plain mesh data (no prefab): `ui::bakeIcon(renderer, meshData)`
   (vertex colours only).
 - A title screen over the real world: spawn a high-priority camera, hold

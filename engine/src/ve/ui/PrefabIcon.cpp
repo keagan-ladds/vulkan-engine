@@ -106,6 +106,15 @@ std::shared_ptr<Texture> prefabIcon(const std::string& prefabPath)
 {
     if (auto it = cache().find(prefabPath); it != cache().end()) return it->second;
     if (!Engine::exists()) return nullptr;
+    // The cached textures must go before the renderer does (once per Engine).
+    static const Engine* registered = nullptr;
+    if (registered != &Engine::get()) {
+        registered = &Engine::get();
+        Engine::get().atShutdown([] {
+            clearPrefabIcons();
+            registered = nullptr;
+        });
+    }
     AssetManager& assets = Engine::get().assets();
     Renderer& renderer = Engine::get().renderer();
     std::shared_ptr<Texture> tex;

@@ -241,7 +241,7 @@ std::vector<uint8_t> renderIconPixels(Renderer& r, const std::vector<IconPart>& 
     Image depth = dev.createImage(dd);
     ImageDesc fd = cd;
     fd.extent = {size, size, 1};
-    fd.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    fd.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT; // (images get a view)
     fd.debugName = "material icon";
     Image out = dev.createImage(fd);
     Buffer staging = dev.createBuffer(VkDeviceSize(size) * size * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryUsage::GpuToCpu, "icon readback");

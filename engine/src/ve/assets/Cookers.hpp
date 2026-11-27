@@ -59,6 +59,11 @@ struct Cooker {
     /// Files `source` is made from besides itself (a glTF's .bin buffers): they
     /// don't ship when the cooked copy does. Null = none.
     std::function<std::vector<std::filesystem::path>(const std::filesystem::path& source)> dependencies;
+    /// Why this program can't cook `source` ("" = it can): e.g. a prefab icon
+    /// whose objects are types only the game registers. The cook tool reports
+    /// it instead of cooking (cook it with the game's own `--cook`); the game
+    /// makes it on demand meanwhile. Null = always can.
+    std::function<std::string(const std::filesystem::path& source)> unsupportedHere;
     /// The source ships too, next to its cooked copy (a prefab is loaded as a
     /// prefab and its icon is cooked): packaging keeps both.
     bool shipSource = false;

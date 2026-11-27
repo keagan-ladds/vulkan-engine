@@ -41,6 +41,11 @@ bool isIconPrefab(const std::filesystem::path& file);
 /// Where the cooked icon of the prefab asset `assetPath` lives: <cacheDir>/<assetPath>.veicon.
 std::filesystem::path cookedIconPath(const std::filesystem::path& cacheDir, const std::string& assetPath);
 
+/// Why this program can't render `prefab`'s icon ("" = it can): its objects or
+/// components are of types not registered here (game types, when run from
+/// vecook rather than the game's own `--cook`).
+std::string iconUnsupportedHere(const std::filesystem::path& prefab);
+
 /// The stamp of an icon rendered now from `prefab` with `settings`, made from
 /// `dependencies` too (the files the prefab uses).
 nlohmann::json makeIconStamp(const std::filesystem::path& prefab, const nlohmann::json& settings,

@@ -51,6 +51,12 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   materials. Packaging ships icon prefabs and their cooked icons
   (`Cooker::shipSource`). The sandbox build menu uses them (and gains a hut
   made from the textured rondavel model).
+- **`<game> --cook`**: vecook's code is now `ve::cookToolMain(argc, argv)`
+  (`ve/app/CookTool.hpp`); a game's `main` can pass `--cook [options]` to it
+  (the template's does), so cooking and packaging see the game's types.
+  Cookers can report files they can't cook here (`Cooker::unsupportedHere`):
+  vecook lists them as "left to the game". `Engine::registerTypes()` for
+  tools that read scene / prefab data without an Engine.
 - **Finding things near a point**: `Scene::findNearest<T>(p, maxDistance,
   filter, horizontal)`, `Scene::forEachWithin<T>(p, radius, fn)`,
   `Scene::findNearestWithTag`, `Scene::forEachActive<T>` (T: a component type
