@@ -20,6 +20,9 @@
 #        ve_setup_game(mygame ASSETS assets SHADERS ${MY_SHADERS})
 #     The game links the already compiled engine; it never compiles the engine.
 #     (cmake/Package.cmake; the build folder must match the game's build type.)
+#  4. Installed: `cmake --install build --component VulkanEngine --prefix <dir>`
+#     makes a relocatable package (headers + static libraries + vecook +
+#     shaders); games find it with -DCMAKE_PREFIX_PATH=<dir> (cmake/Install.cmake).
 # =============================================================================
 cmake_minimum_required(VERSION 3.26) # 3.25: FetchContent SYSTEM; 3.26: copy_directory_if_different
 project(VulkanEngine VERSION 0.1.0 LANGUAGES C CXX)
@@ -66,4 +69,12 @@ endif()
 option(VE_EXPORT_PACKAGE "Export this build folder as a CMake package for prebuilt-engine games" ${PROJECT_IS_TOP_LEVEL})
 if(VE_EXPORT_PACKAGE)
     include(Package)
+endif()
+
+# `cmake --install <build> --component VulkanEngine --prefix <dir>`: a
+# relocatable package (headers, static libraries, vecook, shaders, CMake
+# files) that games use with find_package(VulkanEngine) (cmake/Install.cmake).
+option(VE_INSTALL "Generate install rules for the engine package" ${PROJECT_IS_TOP_LEVEL})
+if(VE_INSTALL)
+    include(Install)
 endif()

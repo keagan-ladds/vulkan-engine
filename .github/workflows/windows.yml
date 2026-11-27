@@ -94,6 +94,20 @@ jobs:
                 -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DVE_ENGINE_DIR="$(cygpath -m "$GITHUB_WORKSPACE")"
           cmake --build "$RUNNER_TEMP/game/build" 2>&1 | tee -a build.log
           test -f "$RUNNER_TEMP/game/build/bin/mygame.exe"
+      - name: Install the engine package, build the game template against it (MinGW-w64 GCC)
+        if: matrix.toolchain == 'mingw'
+        shell: msys2 {0}
+        run: |
+          set -o pipefail
+          pkg="$(cygpath -m "$RUNNER_TEMP/vulkan-engine-mingw")"
+          cmake --install build --component VulkanEngine --prefix "$pkg"
+          cp -r templates/game "$RUNNER_TEMP/game-pkg"
+          # (No VE_ENGINE_DIR: only the package can satisfy it.)
+          cmake -S "$RUNNER_TEMP/game-pkg" -B "$RUNNER_TEMP/game-pkg/build" -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+                -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_PREFIX_PATH="$pkg" -DVE_ENGINE_DIR=/nonexistent 2>&1 | tee -a build.log
+          cmake --build "$RUNNER_TEMP/game-pkg/build" 2>&1 | tee -a build.log
+          test -f "$RUNNER_TEMP/game-pkg/build/bin/mygame.exe"
+          test -f "$RUNNER_TEMP/game-pkg/build/bin/vecook.exe"
 
       # --- MSVC ----------------------------------------------------------------
       - name: Build (MSVC 2022)
@@ -105,6 +119,27 @@ jobs:
           cmake --build --preset vs2022-release -- /m /nologo /verbosity:minimal 2>&1 | Tee-Object -FilePath build.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path build-vs\bin\savanna.exe)) { throw "savanna.exe wasn't built" }
+      - name: Install the engine package, build the game template against it (MSVC 2022)
+        if: matrix.toolchain == 'msvc'
+        shell: pwsh
+        run: |
+          $pkg = "$env:RUNNER_TEMP\vulkan-engine-msvc"
+          cmake --install build-vs --config Release --component VulkanEngine --prefix $pkg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item -Recurse templates\game "$env:RUNNER_TEMP\game-pkg"
+          cmake -S "$env:RUNNER_TEMP\game-pkg" -B "$env:RUNNER_TEMP\game-pkg\build" -G "Visual Studio 17 2022" -A x64 `
+                "-DCMAKE_PREFIX_PATH=$pkg" -DVE_ENGINE_DIR=C:/nonexistent
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build "$env:RUNNER_TEMP\game-pkg\build" --config Release -- /m /nologo /verbosity:minimal 2>&1 | Tee-Object -Append -FilePath build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path "$env:RUNNER_TEMP\game-pkg\build\bin\mygame.exe")) { throw "mygame.exe wasn't built against the package" }
+      - name: Upload the engine package (MSVC 2022, Release)
+        if: matrix.toolchain == 'msvc'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulkan-engine-msvc-release
+          path: ${{ runner.temp }}/vulkan-engine-msvc
+          if-no-files-found: error
 
       # --- Report --------------------------------------------------------------
       - name: Warnings summary
