@@ -210,6 +210,7 @@ private:
     void rebuildLayout();
     void ensureVisibleCapacity(uint32_t entries);
     uint32_t allocateRange(uint32_t count);
+    void freeRange(Range range); ///< back into the sorted free list, merged with its neighbours
 
     Renderer* m_renderer = nullptr;
     uint32_t m_maxInstances = 0, m_maxVisiblePerView = 0;
@@ -225,7 +226,7 @@ private:
     /// Batches each kind of pass draws (opaque/cutout for the camera, casters
     /// for shadows), sorted by pipeline then mesh to minimise binds.
     std::vector<uint32_t> m_forwardBatches, m_shadowBatches;
-    std::vector<Range> m_freeRanges;
+    std::vector<Range> m_freeRanges; ///< sorted by first, never two adjacent
     uint32_t m_visiblePerView = 0;
     uint32_t m_activeViews = 1;
     uint32_t m_drawsThisFrame = 0;

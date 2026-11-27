@@ -652,12 +652,7 @@ Json Terrain::editState() const
     }
     const glm::vec3 c = transform().position();
     j.push_back({c.x, c.y, c.z});
-    const TypeInfo* t = TypeRegistry::get().find("TerrainStamp");
-    scene().forEach<TerrainStamp>([&](TerrainStamp& s) {
-        if (!s.isActive()) return;
-        const glm::vec3 p = s.transform().position();
-        j.push_back({p.x, p.y, p.z, t ? SceneSerializer::serializeFields(*t, &s) : Json()});
-    });
+    // (Stamps, roads and masks are tracked one by one: roadsChanged().)
     return j;
 }
 
@@ -720,6 +715,26 @@ bool Terrain::roadsChanged(glm::vec4& area)
             grow(entry.second);       // ...and where it is now
         }
     }
+    // Stamps: a moved or edited stamp re-shapes only the land it covered and covers.
+    const TypeInfo* stampType = TypeRegistry::get().find("TerrainStamp");
+    scene().forEach<TerrainStamp>([&](TerrainStamp& s) {
+        if (!s.isActive()) return;
+        const glm::vec3 p = s.transform().position();
+        const std::string state = std::to_string(p.x) + "," + std::to_string(p.y) + "," + std::to_string(p.z) +
+                                  (stampType ? SceneSerializer::serializeFields(*stampType, &s).dump() : std::string());
+        const float r = std::max(s.radius + s.falloff, s.biome.empty() ? 0.0f : s.biomeRadius + s.biomeFalloff) + 4.0f;
+        const glm::vec4 b(p.x - r, p.z - r, p.x + r, p.z + r);
+        const uint64_t key = (s.gameObject().id() * 31u) ^ (uint64_t(reinterpret_cast<uintptr_t>(&s)) << 1) ^ 0x4000000000000000ull;
+        auto& entry = now[key];
+        entry = {state, b};
+        auto old = m_roads.find(key);
+        if (old == m_roads.end()) {
+            grow(b);
+        } else if (old->second.first != entry.first) {
+            grow(old->second.second);
+            grow(b);
+        }
+    });
     // Sub-biome masks: only vegetation changes, but the same local refresh does it.
     const TypeInfo* maskType = TypeRegistry::get().find("TerrainMask");
     scene().forEach<TerrainMask>([&](TerrainMask& m) {
@@ -774,7 +789,10 @@ void Terrain::update(float dt)
     m_sinceColliders += dt;
     // Serializing every field (stamps, biomes) is too costly for every frame;
     // edits are picked up within a quarter second (code can call markDirty()).
-    if (m_sinceCheck >= 0.25f) {
+    // While the editor drags something (and briefly after), changes wait: one
+    // rebuild when it's let go, not one every quarter second of the drag.
+    const bool held = engine().worldEditsHeld();
+    if (m_sinceCheck >= 0.25f && !held) {
         m_sinceCheck = 0.0f;
         refreshBiomeAssets(); // a .biome file was edited (editor or on disk)
         if (editState().dump() != m_editState) m_dirty = true;
@@ -786,7 +804,7 @@ void Terrain::update(float dt)
             m_dirty = true;
         }
     }
-    if (m_dirty && m_sinceRebuild > 0.25f) rebuild();
+    if (m_dirty && m_sinceRebuild > 0.25f && !held) rebuild();
     updateNodes(false);
     if (m_sinceColliders >= 0.1f) updateColliders(false);
 }
@@ -1190,17 +1208,43 @@ void Terrain::updateColliders(bool force, const glm::vec4* area)
         for (auto& [key, rb] : m_colliderTiles) removeComponent(rb);
         m_colliderTiles.clear();
     }
+    if (force) {
+        for (auto& [key, p] : m_pendingColliders) p.job.cancel();
+        m_pendingColliders.clear();
+    }
     if (area) {
-        // Brush edits: replace just the tiles under the brushed area.
+        // Local edits (brush, a moved stamp / road / mask): the tiles under the
+        // area are re-sampled on the job pool; their old bodies stay until the
+        // new ones are ready (nothing falls through meanwhile).
         const float ts = float(TerrainData::kTileCells) * d->cellSize;
-        for (auto it = m_colliderTiles.begin(); it != m_colliderTiles.end();) {
-            const glm::vec2 lo = d->origin + glm::vec2(terrainTileCoords(it->first)) * ts;
-            if (lo.x <= area->z && lo.x + ts >= area->x && lo.y <= area->w && lo.y + ts >= area->y) {
-                removeComponent(it->second);
-                it = m_colliderTiles.erase(it);
-            } else {
+        for (const auto& [key, body] : m_colliderTiles) {
+            const glm::vec2 lo = d->origin + glm::vec2(terrainTileCoords(key)) * ts;
+            if (lo.x <= area->z && lo.x + ts >= area->x && lo.y <= area->w && lo.y + ts >= area->y) requestCollider(key, d, centre.y);
+        }
+    }
+    // Finished jobs: their bodies replace the old ones (a few per call: making
+    // a heightfield body isn't free). Results of an older terrain are redone.
+    {
+        int made = 0;
+        for (auto it = m_pendingColliders.begin(); it != m_pendingColliders.end() && made < 4;) {
+            PendingCollider& p = it->second;
+            if (!p.job.done()) {
                 ++it;
+                continue;
             }
+            const int64_t key = it->first;
+            if (p.data != d || p.job.cancelled() || p.heights->empty()) {
+                requestCollider(key, d, centre.y); // (replaces this entry)
+                ++it;
+                continue;
+            }
+            if (auto old = m_colliderTiles.find(key); old != m_colliderTiles.end()) {
+                removeComponent(old->second);
+                m_colliderTiles.erase(old);
+            }
+            addColliderTile(key, *d, *p.heights, centre);
+            it = m_pendingColliders.erase(it);
+            ++made;
         }
     }
     const int cells = TerrainData::kTileCells;
@@ -1238,7 +1282,7 @@ void Terrain::updateColliders(bool force, const glm::vec4* area)
         return glm::length(q);
     };
     const float keep = colliderDistance * 1.25f; // hysteresis
-    // Drop tiles nothing is near any more.
+    // Drop tiles nothing is near any more (and their pending replacements).
     for (auto it = m_colliderTiles.begin(); it != m_colliderTiles.end();) {
         const glm::ivec2 t = terrainTileCoords(it->first);
         bool needed = false;
@@ -1246,6 +1290,10 @@ void Terrain::updateColliders(bool force, const glm::vec4* area)
         if (needed) {
             ++it;
         } else {
+            if (auto p = m_pendingColliders.find(it->first); p != m_pendingColliders.end()) {
+                p->second.job.cancel();
+                m_pendingColliders.erase(p);
+            }
             removeComponent(it->second);
             it = m_colliderTiles.erase(it);
         }
@@ -1259,32 +1307,71 @@ void Terrain::updateColliders(bool force, const glm::vec4* area)
             for (int tx = std::max(0, c0.x - reach); tx <= std::min(tiles - 1, c1.x + reach); ++tx) {
                 const int64_t key = terrainTileKey(tx, tz);
                 const float dist = distToTile(f, tx, tz);
-                if (m_colliderTiles.count(key) || dist >= colliderDistance) continue;
+                if (m_colliderTiles.count(key) || m_pendingColliders.count(key) || dist >= colliderDistance) continue;
                 wanted.push_back({dist, key});
             }
         }
     }
     std::sort(wanted.begin(), wanted.end());
-    // Building a heightfield body is costly: a few per call (this runs every
-    // 0.1 s), except tiles something stands on, which can't wait.
-    constexpr int kMaxNewTiles = 4;
-    int created = 0;
+    // Tiles something stands on can't wait: sampled here. The rest are
+    // sampled on the job pool and become bodies on a later call.
     for (const auto& [dist, key] : wanted) {
-        if (m_colliderTiles.count(key)) continue; // wanted by two focus boxes
-        if (dist > 0.0f && created >= kMaxNewTiles) break;
+        if (m_colliderTiles.count(key)) continue; // (wanted by two focus boxes)
+        if (auto p = m_pendingColliders.find(key); p != m_pendingColliders.end()) {
+            // Something stands on a tile whose heights are still being sampled
+            // and has no body yet: finish that job now.
+            if (dist > 0.0f) continue;
+            p->second.job.wait();
+            if (p->second.data == d && !p->second.heights->empty()) {
+                addColliderTile(key, *d, *p->second.heights, centre);
+                m_pendingColliders.erase(p);
+                continue;
+            }
+            m_pendingColliders.erase(p); // (stale: sampled again below)
+        }
+        if (dist > 0.0f) {
+            requestCollider(key, d, centre.y);
+            continue;
+        }
         const glm::ivec2 t = terrainTileCoords(key);
-        // 65 x 65 samples (heights relative to this object, which the body follows).
         const int n = cells + 1;
         std::vector<float> rel(size_t(n) * n);
         for (int j = 0; j < n; ++j)
             for (int i = 0; i < n; ++i) rel[size_t(j) * n + i] = d->sampleHeight(t.x * cells + i, t.y * cells + j) - centre.y;
-        const glm::vec2 lo = d->samplePosition(t.x * cells, t.y * cells);
-        auto& rb = addComponent<Rigidbody>(Collider::heightfield(rel, uint32_t(n), d->cellSize, {lo.x - centre.x, 0.0f, lo.y - centre.z}),
-                                           BodyType::Static);
-        rb.surface = "Terrain"; // (games look up the biome at the point for grass / sand / mud)
-        m_colliderTiles[key] = &rb;
-        ++created;
+        addColliderTile(key, *d, rel, centre);
     }
+}
+
+void Terrain::requestCollider(int64_t key, const std::shared_ptr<const TerrainData>& d, float centreY)
+{
+    if (auto old = m_pendingColliders.find(key); old != m_pendingColliders.end()) old->second.job.cancel();
+    PendingCollider p;
+    p.heights = std::make_shared<std::vector<float>>();
+    p.data = d;
+    p.centreY = centreY;
+    // (The job holds only shared data: the terrain may be gone when it runs.)
+    p.job = jobs::submit([heights = p.heights, d, centreY, t = terrainTileCoords(key)](const std::atomic<bool>& cancelled) {
+        const int cells = TerrainData::kTileCells, n = cells + 1;
+        std::vector<float> rel(size_t(n) * n);
+        for (int j = 0; j < n; ++j) {
+            if (cancelled) return; // (no longer wanted: heights stay empty)
+            for (int i = 0; i < n; ++i) rel[size_t(j) * n + i] = d->sampleHeight(t.x * cells + i, t.y * cells + j) - centreY;
+        }
+        *heights = std::move(rel);
+    });
+    m_pendingColliders[key] = std::move(p);
+}
+
+void Terrain::addColliderTile(int64_t key, const TerrainData& d, const std::vector<float>& rel, const glm::vec3& centre)
+{
+    // 65 x 65 samples, heights relative to this object (the body follows it).
+    const int cells = TerrainData::kTileCells, n = cells + 1;
+    const glm::ivec2 t = terrainTileCoords(key);
+    const glm::vec2 lo = d.samplePosition(t.x * cells, t.y * cells);
+    auto& rb = addComponent<Rigidbody>(Collider::heightfield(rel, uint32_t(n), d.cellSize, {lo.x - centre.x, 0.0f, lo.y - centre.z}),
+                                       BodyType::Static);
+    rb.surface = "Terrain"; // (games look up the biome at the point for grass / sand / mud)
+    m_colliderTiles[key] = &rb;
 }
 
 Json Terrain::biomesJson() const

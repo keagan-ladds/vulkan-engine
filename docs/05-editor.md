@@ -150,6 +150,9 @@ height). Each stroke is one undo step; "Clear all edits" removes them.
   move it). They are saved in the scene file (Terrain's hidden `edits` field:
   heights in cm, biome and strength bytes, base64 per tile).
 - Code can brush too: `terrain.applyBrush(brush, {x, z}, dt)`.
+- While you drag anything (gizmo, spline point, inspector field), the
+  terrain, foliage and grass don't rebuild; they do once it's released for
+  0.35 s (`Engine::worldEditsHeld()`, docs/06-world.md). Brushing is live.
 - Brushing rebuilds only the brushed area: sample tiles, LOD meshes and
   physics tiles elsewhere are kept, foliage re-places just the nearby cells
   (`FoliageSystem::refresh`; chopped / picked instances keep their state) and

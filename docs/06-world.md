@@ -182,8 +182,21 @@ the land around it.
 - Stamps are `TerrainStamp` components on any GameObject, usually children of
   the terrain, so you place them with the gizmo.
 - The terrain watches its parameters and its stamps' transforms, and rebuilds
-  (throttled) when they change. Dependent systems (foliage, grass) see the
-  terrain's `version()` change and regenerate.
+  when they change: a changed field rebuilds everything, a moved or edited
+  stamp, road or mask only the land around it (old and new place). Dependent
+  systems (foliage, grass) see the terrain's `version()` change and regenerate
+  (just that area for a local change).
+- **Nothing rebuilds while you drag.** While the editor drags something (gizmo,
+  spline point, an inspector field), terrain, foliage and grass wait, and
+  rebuild once it's released and stayed released for
+  `Engine::editSettleSeconds` (0.35 s): grabbing it again in that time doesn't
+  start clearing foliage. Code asks `Engine::worldEditsHeld()`; tools other
+  than the editor call `Engine::setInteractiveEdit(bool)`. Terrain brushing
+  stays live.
+- **Collider tiles rebuild in the background.** A changed tile's heights are
+  sampled on the job pool and its old body stays until the new one is ready;
+  only a missing tile under the camera, a character or a dynamic body is made
+  on the spot.
 - **Any size.** Samples are generated per 64-cell tile when something needs
   them; the visible ground is a quadtree LOD and colliders exist only near the
   camera, characters and dynamic bodies (see 01-architecture §5.9). Savanna is

@@ -24,6 +24,14 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   rebuilds Z and gives the same result for uncooked maps.
 
 ### Changed
+- **World edits rebuild after the drag, not during it.** Dragging a stamp,
+  mask, road, exclusion or a field in the editor no longer rebuilds terrain,
+  foliage and grass every few frames: they rebuild once it's released (plus
+  `Engine::editSettleSeconds`, 0.35 s). New `Engine::setInteractiveEdit()` /
+  `worldEditsHeld()`. Moving a `TerrainStamp` now rebuilds only the land
+  around it (it used to rebuild the whole terrain and all foliage), and
+  terrain collider tiles are re-sampled on the job pool instead of the main
+  thread (a 100-250 ms hitch per edit before).
 - **Mesh pipelines compile in the background.** A shader's pipelines are
   built on the job pool from when it's created (`RendererSettings::
   asyncPipelines`, env `VE_ASYNC_PIPELINES=0` to turn off): no frame hitch on
@@ -233,6 +241,10 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   `TerrainBiome`, `TerrainMaterial`.
 
 ### Fixed
+- **"Instance buffer full" after many rebuilds.** Freed instance ranges were
+  never merged with their neighbours, so repeated foliage / grass rebuilds
+  fragmented the buffer until no run was big enough. They're merged now, and
+  the error says how much is free and the largest free run.
 - **Blue, prop-shaped "shadows" on walls next to props** (and a blue rim along
   the bottom edge of objects). The ambient ground-bounce check (`veAmbient`)
   read the sun shadow at one point 2 m out along the normal, so a crate's sun

@@ -243,6 +243,24 @@ void Engine::benchFrame(float cpuMs)
     quit();
 }
 
+namespace {
+double steadySeconds()
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+} // namespace
+
+void Engine::setInteractiveEdit(bool dragging)
+{
+    if (m_interactiveEdit && !dragging) m_interactiveEditEnded = steadySeconds();
+    m_interactiveEdit = dragging;
+}
+
+bool Engine::worldEditsHeld() const
+{
+    return m_interactiveEdit || steadySeconds() - m_interactiveEditEnded < double(editSettleSeconds);
+}
+
 void Engine::registerTypes()
 {
     registerAllTypes();

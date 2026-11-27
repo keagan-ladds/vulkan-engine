@@ -219,7 +219,35 @@ uint32_t InstanceSystem::allocateRange(uint32_t count)
         if (it->count == 0) m_freeRanges.erase(it);
         return first;
     }
-    throw std::runtime_error("Instance buffer full: raise RendererSettings::maxInstances");
+    uint32_t free = 0, largest = 0;
+    for (const Range& r : m_freeRanges) {
+        free += r.count;
+        largest = std::max(largest, r.count);
+    }
+    throw std::runtime_error("Instance buffer full: a group of " + std::to_string(count) + " doesn't fit (" + std::to_string(free) +
+                             " of " + std::to_string(m_maxInstances) + " free, largest free run " + std::to_string(largest) +
+                             "): raise RendererSettings::maxInstances");
+}
+
+void InstanceSystem::freeRange(Range range)
+{
+    // Sorted by first, neighbours merged: groups are made and dropped over and
+    // over (foliage rebuilds), and unmerged pieces would soon be too small for
+    // a big group even with plenty of room in total.
+    auto it = std::lower_bound(m_freeRanges.begin(), m_freeRanges.end(), range.first,
+                               [](const Range& r, uint32_t first) { return r.first < first; });
+    it = m_freeRanges.insert(it, range);
+    if (auto next = it + 1; next != m_freeRanges.end() && it->first + it->count == next->first) {
+        it->count += next->count;
+        m_freeRanges.erase(next);
+    }
+    if (it != m_freeRanges.begin()) {
+        auto prev = it - 1;
+        if (prev->first + prev->count == it->first) {
+            prev->count += it->count;
+            m_freeRanges.erase(it);
+        }
+    }
 }
 
 std::shared_ptr<InstanceGroup> InstanceSystem::createGroup(InstanceGroupDesc desc, uint32_t capacity)
@@ -248,7 +276,7 @@ void InstanceSystem::release(InstanceGroup* group)
     if (!m_renderer) return;
     // The GPU may still be culling/drawing this range for in-flight frames.
     const Range range{group->m_firstInstance, std::max(1u, group->m_capacity)};
-    m_renderer->device().deferDestroy([this, range] { m_freeRanges.push_back(range); });
+    m_renderer->device().deferDestroy([this, range] { freeRange(range); });
 }
 
 void InstanceSystem::rebuildLayout()

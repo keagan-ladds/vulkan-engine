@@ -12,8 +12,11 @@
 // ground and tell vegetation what grows where; their weights are blended at
 // the borders and can be queried anywhere (biomeWeight()).
 //
-// The terrain rebuilds itself when its fields or any stamp change (throttled
-// while dragging in the editor); systems that sample it (foliage, grass) watch
+// The terrain rebuilds itself when its fields change (everything) or a stamp,
+// road or mask changes (only the land around it). While the editor drags
+// something, rebuilds wait until it's released (Engine::worldEditsHeld()).
+// Collider tiles are re-sampled on the job pool; the old tile stays until its
+// replacement is ready. Systems that sample the terrain (foliage, grass) watch
 // version(). Queries are thread-safe (they read an immutable snapshot).
 //
 //   ve::Terrain* t = ve::Terrain::find(scene);
@@ -21,6 +24,7 @@
 //   float swamp = t->biomeWeight("Swamp", x, z);
 // =============================================================================
 
+#include "ve/core/Jobs.hpp"
 #include "ve/scene/Spline.hpp"
 #include "ve/scene/GameObject.hpp"
 #include "ve/scene/ObjectRef.hpp"
@@ -514,8 +518,9 @@ public:
 
 private:
     std::shared_ptr<TerrainData> generate(bool quiet = false) const;
-    /// Compares the scene's road splines and sub-biome masks with the last
-    /// look: true (and the area to update) if any was added, edited, moved or removed.
+    /// Compares the scene's stamps, road splines and sub-biome masks with the
+    /// last look: true (and the area to update) if any was added, edited, moved
+    /// or removed. (Each is local: only that area is rebuilt, like a brush stroke.)
     bool roadsChanged(glm::vec4& area);
     Json editState() const; ///< own fields + position + stamps: rebuild when it changes
     void rebuild();         ///< new data snapshot; meshes and colliders follow
@@ -535,6 +540,18 @@ private:
     ObjectRef<> m_nodeObject;                     ///< child holding one MeshRenderer per drawn node
     std::vector<MeshRenderer*> m_nodeRenderers;   ///< its components (valid while the child is: they die together)
     std::unordered_map<int64_t, Component*> m_colliderTiles; ///< tile key -> Rigidbody (heightfield)
+    /// Tiles whose heights are being sampled on the job pool (replacing an
+    /// edited tile, or one far enough that it can wait): the body is made
+    /// when the job is done; an old body for the tile stays until then.
+    struct PendingCollider {
+        jobs::Handle job;
+        std::shared_ptr<std::vector<float>> heights; ///< filled by the job (relative to `centreY`)
+        std::shared_ptr<const TerrainData> data;     ///< the snapshot sampled (stale if the terrain changed since)
+        float centreY = 0.0f;
+    };
+    std::unordered_map<int64_t, PendingCollider> m_pendingColliders;
+    void requestCollider(int64_t key, const std::shared_ptr<const TerrainData>& d, float centreY);
+    void addColliderTile(int64_t key, const TerrainData& d, const std::vector<float>& rel, const glm::vec3& centre);
     float m_sinceColliders = 1e9f;
     std::string m_editState;
     uint64_t m_version = 0;
