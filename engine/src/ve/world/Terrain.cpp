@@ -1,4 +1,5 @@
 #include "ve/world/Terrain.hpp"
+#include "ve/world/TerrainSpline.hpp"
 
 #include "ve/assets/AssetManager.hpp"
 #include "ve/assets/DataAsset.hpp"
@@ -72,7 +73,8 @@ void TerrainEdits::paint(int gi, int gj, int& biome, float& strength) const
 }
 
 TerrainData::TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vector<TerrainBiome> biomes,
-                         std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes, TerrainEdits edits)
+                         std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes, TerrainEdits edits,
+                         std::vector<std::pair<std::shared_ptr<const SplinePath>, TerrainSplineShape>> splines)
     : m_shape(shape), m_centre(centre), m_biomes(std::move(biomes)), m_edits(std::move(edits)), m_uid(g_terrainUid++)
 {
     cellSize = std::max(shape.cellSize, 0.1f);
@@ -85,13 +87,73 @@ TerrainData::TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vecto
         const int biome = st.biome.empty() ? -1 : biomeIndex(st.biome);
         m_stamps.push_back({pos, std::move(st), biome});
     }
+    // Road splines, after the stamps and edits are in place (their height
+    // profiles sample the ground without roads).
+    for (auto& [path, s] : splines) {
+        if (!path || path->empty()) continue;
+        RoadSpline r;
+        r.path = std::move(path);
+        r.s = std::move(s);
+        r.biome = r.s.biome.empty() ? -1 : biomeIndex(r.s.biome);
+        const float half = 0.5f * std::max(r.s.width, 0.0f) * r.path->maxWidth();
+        r.reach = half + std::max({r.s.falloff, r.s.biome.empty() ? 0.0f : r.s.biomeFalloff, 0.01f}) + cellSize;
+        if (r.s.flatten && r.s.followGround) {
+            // The ground along the road, smoothed: two passes of a box filter
+            // (about a triangle filter `smoothing` metres wide).
+            const size_t n = size_t(std::ceil(r.path->length() / kProfileStep)) + 1;
+            std::vector<float> g(n);
+            for (size_t i = 0; i < n; ++i) {
+                const glm::vec3 q = r.path->at(float(i) * kProfileStep).position;
+                g[i] = baseHeight({q.x, q.z}) + editHeight({q.x, q.z});
+            }
+            const int radius = std::max(0, int(r.s.smoothing * 0.25f / kProfileStep));
+            for (int pass = 0; pass < 2 && radius > 0; ++pass) {
+                std::vector<float> out(n);
+                for (size_t i = 0; i < n; ++i) {
+                    float sum = 0.0f;
+                    int count = 0;
+                    for (int k = -radius; k <= radius; ++k) {
+                        long j = long(i) + k;
+                        if (r.path->closed()) j = ((j % long(n - 1)) + long(n - 1)) % long(n - 1);
+                        else j = std::clamp(j, 0L, long(n) - 1);
+                        sum += g[size_t(j)];
+                        ++count;
+                    }
+                    out[i] = sum / float(count);
+                }
+                g = std::move(out);
+            }
+            r.profile = std::move(g);
+        }
+        m_roads.push_back(std::move(r));
+    }
     const size_t tileBytes = size_t(kTileSamples) * kTileSamples * sizeof(float) * (1 + biomeNames.size());
     m_maxTiles = std::max<size_t>(16, cacheBytes / tileBytes);
 }
 
 float TerrainData::generateHeight(glm::vec2 p) const
 {
-    return baseHeight(p) + editHeight(p);
+    float h = baseHeight(p) + editHeight(p);
+    // Roads over everything (inside their width they win over brush edits too).
+    for (const RoadSpline& r : m_roads) {
+        if (!r.s.flatten) continue;
+        const glm::vec3 lo = r.path->boundsMin(), hi = r.path->boundsMax();
+        if (p.x < lo.x - r.reach || p.x > hi.x + r.reach || p.y < lo.z - r.reach || p.y > hi.z + r.reach) continue;
+        const SplinePath::Closest c = r.path->closest({p.x, 0.0f, p.y}, r.reach, true);
+        if (!std::isfinite(c.separation)) continue;
+        const float half = 0.5f * std::max(r.s.width, 0.0f) * c.width;
+        const float w = 1.0f - smooth(half, half + std::max(r.s.falloff, 0.01f), c.separation);
+        if (w > 0.0f) h = glm::mix(h, roadHeight(r, c), w);
+    }
+    return h;
+}
+
+float TerrainData::roadHeight(const RoadSpline& r, const SplinePath::Closest& c) const
+{
+    if (r.profile.empty()) return c.position.y + r.s.heightOffset;
+    const float u = std::max(c.distance, 0.0f) / kProfileStep;
+    const size_t i = std::min(size_t(u), r.profile.size() - 1), j = std::min(i + 1, r.profile.size() - 1);
+    return glm::mix(r.profile[i], r.profile[j], u - float(size_t(u))) + r.s.heightOffset;
 }
 
 float TerrainData::editHeight(glm::vec2 p) const
@@ -179,6 +241,16 @@ void TerrainData::generateBiomes(glm::vec2 p, float h, float slope, float* w) co
         const float dist = glm::length(p - glm::vec2(st.pos.x, st.pos.z));
         const float k = st.s.biomeStrength * (1.0f - smooth(st.s.biomeRadius, st.s.biomeRadius + std::max(st.s.biomeFalloff, 0.01f), dist));
         w[size_t(st.biome)] = std::max(w[size_t(st.biome)], k);
+    }
+    for (const RoadSpline& r : m_roads) {
+        if (r.biome <= 0) continue;
+        const glm::vec3 lo = r.path->boundsMin(), hi = r.path->boundsMax();
+        if (p.x < lo.x - r.reach || p.x > hi.x + r.reach || p.y < lo.z - r.reach || p.y > hi.z + r.reach) continue;
+        const SplinePath::Closest c = r.path->closest({p.x, 0.0f, p.y}, r.reach, true);
+        if (!std::isfinite(c.separation)) continue;
+        const float half = 0.5f * std::max(r.s.width, 0.0f) * c.width;
+        const float k = r.s.biomeStrength * (1.0f - smooth(half, half + std::max(r.s.biomeFalloff, 0.01f), c.separation));
+        w[size_t(r.biome)] = std::max(w[size_t(r.biome)], k);
     }
     // Later biomes paint over earlier ones; biome 0 gets what's left.
     float remaining = 1.0f;
@@ -487,16 +559,51 @@ std::shared_ptr<TerrainData> Terrain::generate(bool quiet) const
         if (s.isActive()) stamps.push_back({s.transform().position(), s});
     });
     const size_t stampCount = stamps.size();
+    std::vector<std::pair<std::shared_ptr<const SplinePath>, TerrainSplineShape>> roads;
+    for (const auto& o : scene().objects()) {
+        auto* road = dynamic_cast<TerrainSpline*>(o.get());
+        if (!road || road->isDestroyed() || !road->activeInHierarchy()) continue;
+        if (Spline* s = road->getComponent<Spline>()) roads.push_back({s->path(), *road});
+    }
     auto d = std::make_shared<TerrainData>(*this, transform().position(), biomes, std::move(stamps),
-                                           size_t(std::max(tileCacheMB, 1.0f) * 1024.0f * 1024.0f), m_edits);
+                                           size_t(std::max(tileCacheMB, 1.0f) * 1024.0f * 1024.0f), m_edits, std::move(roads));
     if (!quiet)
         log::info("Terrain: {:.0f} m, {}x{} samples in tiles of {} cells (generated on demand), {} biomes, {} stamps",
               float(d->res - 1) * d->cellSize, d->res, d->res, TerrainData::kTileCells, d->biomeNames.size(), stampCount);
     return d;
 }
 
+bool Terrain::roadsChanged(glm::vec4& area)
+{
+    area = glm::vec4(1e30f, 1e30f, -1e30f, -1e30f);
+    auto grow = [&](const glm::vec4& b) {
+        if (b.x > b.z) return;
+        area = glm::vec4(glm::min(glm::vec2(area), glm::vec2(b)), glm::max(glm::vec2(area.z, area.w), glm::vec2(b.z, b.w)));
+    };
+    std::unordered_map<uint64_t, std::pair<std::string, glm::vec4>> now;
+    for (const auto& o : scene().objects()) {
+        auto* road = dynamic_cast<TerrainSpline*>(o.get());
+        if (!road || road->isDestroyed() || !road->activeInHierarchy()) continue;
+        auto& entry = now[road->id()];
+        entry = {road->terrainState(), road->bounds()};
+        auto old = m_roads.find(road->id());
+        if (old == m_roads.end()) {
+            grow(entry.second);
+        } else if (old->second.first != entry.first) {
+            grow(old->second.second); // where it was...
+            grow(entry.second);       // ...and where it is now
+        }
+    }
+    for (const auto& [id, entry] : m_roads)
+        if (!now.count(id)) grow(entry.second); // removed
+    m_roads = std::move(now);
+    return area.x <= area.z;
+}
+
 void Terrain::start()
 {
+    roadsChanged(m_editArea); // (the roads the first build includes: no change yet)
+    m_editArea = glm::vec4(1e30f, 1e30f, -1e30f, -1e30f);
     m_started = true;
     data();
     m_lod = std::make_unique<TerrainLod>(renderer());
@@ -515,6 +622,13 @@ void Terrain::update(float dt)
         m_sinceCheck = 0.0f;
         refreshBiomeAssets(); // a .biome file was edited (editor or on disk)
         if (editState().dump() != m_editState) m_dirty = true;
+        // Road splines: like a brush stroke, only the land around them changes.
+        glm::vec4 roads;
+        if (roadsChanged(roads)) {
+            m_editArea = glm::vec4(glm::min(glm::vec2(m_editArea), glm::vec2(roads)),
+                                   glm::max(glm::vec2(m_editArea.z, m_editArea.w), glm::vec2(roads.z, roads.w)));
+            m_dirty = true;
+        }
     }
     if (m_dirty && m_sinceRebuild > 0.25f) rebuild();
     updateNodes(false);

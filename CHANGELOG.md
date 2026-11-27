@@ -55,6 +55,13 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   straight rails between items. `FoliageExclusion::spline` clears a corridor of
   trees and / or grass along a spline. Editor: Create > Spline > Fence /
   Powerline.
+- **Roads and paths** (`ve::TerrainSpline`, `world/TerrainSpline.hpp`): flatten
+  the terrain across their width with embankments (following the smoothed
+  ground or the spline's height), paint a biome, and optionally lay a surface
+  mesh with a material. Editing one re-shapes only the land around it.
+  `TerrainData`'s constructor takes the road splines (new trailing
+  parameter). Editor: Create > Spline > Road / Path; the selected spline shows
+  its road width and vegetation corridors.
 - **Blender: VE Painted materials export with the model.** Installed as an
   add-on, `tools/blender/ve_painted_node_group.py` writes the `.material` file
   of every VE Painted material a glTF export includes (into the `assets`

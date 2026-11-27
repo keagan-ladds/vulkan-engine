@@ -96,6 +96,25 @@ the same GameObject:
   - `collision` gives each item a static box collider (from LOD0's bounds).
   - Everything rebuilds when the spline, the fields or the terrain change,
     live while you drag points in the editor.
+- **`TerrainSpline`** (world/TerrainSpline.hpp; Create > Spline > Road /
+  Path): a road, track, path or riverbed. The terrain applies every road after
+  its generator, stamps and brush edits, in scene order (later roads win where
+  they cross):
+  - The ground is made flat across `width` (times each point's width
+    factor) and blends back into the land over `falloff`: the embankments.
+  - Height: with `followGround` (default) the ground under the road, smoothed
+    along it over `smoothing` m, so point heights don't matter; off, the
+    spline's own height (ramps, causeways, cuttings). `heightOffset` sinks or
+    raises it (a riverbed: negative, with a wide falloff).
+  - `biome` paints a terrain biome under it (blending out over `biomeFalloff`).
+  - `material` lays a surface mesh over it (UV u across, v along every
+    `uvLength` m) for edges sharper than the terrain's 2 m samples.
+  - Editing a road re-shapes only the land around it, like a brush stroke:
+    sample tiles, LOD meshes, colliders and nearby foliage / grass. Things
+    standing on the ground (spline instancers) follow. Navmeshes don't:
+    call `NavMeshSurface::rebuild(area)`.
+  - The editor draws the road's width and falloff (orange) and any vegetation
+    corridor (green) around the selected spline.
 - **Keeping vegetation off the line:** `FoliageExclusion` with `spline` on is
   a corridor `width` metres wide (times each point's width factor) along the
   object's spline. `foliage` / `grass` choose what it clears (grass thins out
@@ -104,9 +123,15 @@ the same GameObject:
   moving it re-places only the vegetation around it.
 
 Savanna: a paddock fence east of the camp (a closed spline, posts and two
-rails) and a powerline from the south-east to the camp. The autotest checks
-their posts, rails and cables, and that the powerline's corridor holds no
-trees while the land beside it does.
+rails), a powerline from the south-east to the camp, a dirt road west from
+the camp (5 m, painted "Camp" earth, a `materials/dirt_road.material` surface,
+trees cleared 14 m wide and grass 7 m) and a footpath north towards the swamp.
+![Dirt road](screenshots/spline_road.png)
+
+The autotest checks the posts, rails and cables, that the powerline's corridor
+holds no trees while the land beside it does, that the road is flat across
+and painted with no trees, and that moving a footpath point re-shapes only
+the land around it.
 
 ## Design notes
 

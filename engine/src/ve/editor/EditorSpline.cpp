@@ -18,6 +18,8 @@
 #include "ve/scene/Scene.hpp"
 #include "ve/scene/Spline.hpp"
 #include "ve/world/Terrain.hpp"
+#include "ve/world/TerrainSpline.hpp"
+#include "ve/world/Vegetation.hpp"
 
 #include <imgui.h>
 
@@ -74,6 +76,30 @@ bool Editor::splineViewport(Spline& spline, const ViewProjector& view, DebugDraw
     const auto path = spline.path();
     const auto& samples = path->samples();
     for (size_t i = 1; i < samples.size(); ++i) dd.line(samples[i - 1].position, samples[i].position, kCurveColor, 2.0f);
+    // What follows the spline: a road's width and falloff, vegetation corridors.
+    auto edges = [&](float halfWidth, uint32_t color) {
+        if (halfWidth <= 0.0f || samples.size() < 2) return;
+        const size_t stride = std::max<size_t>(1, samples.size() / 600); // (long roads: fewer lines)
+        glm::vec3 prevL(0.0f), prevR(0.0f);
+        for (size_t i = 0; i < samples.size(); i += stride) {
+            const auto& s = samples[std::min(i, samples.size() - 1)];
+            const glm::vec3 right = glm::normalize(glm::vec3(-s.tangent.z, 0.0f, s.tangent.x) + glm::vec3(1e-6f, 0, 0));
+            const glm::vec3 l = s.position - right * halfWidth * s.width, r = s.position + right * halfWidth * s.width;
+            if (i > 0) {
+                dd.line(prevL, l, color);
+                dd.line(prevR, r, color);
+            }
+            prevL = l;
+            prevR = r;
+        }
+    };
+    if (auto* road = dynamic_cast<TerrainSpline*>(&spline.gameObject())) {
+        edges(road->width * 0.5f, IM_COL32(255, 170, 60, 220));
+        edges(road->width * 0.5f + road->falloff, IM_COL32(255, 170, 60, 90));
+    }
+    for (const auto& c : spline.gameObject().components())
+        if (auto* fe = dynamic_cast<FoliageExclusion*>(c.get()); fe && fe->spline && !fe->isRemoved())
+            edges(fe->width * 0.5f, fe->foliage ? IM_COL32(90, 230, 120, 120) : IM_COL32(170, 230, 90, 100));
     if (samples.size() >= 2) {
         // Direction of travel at the start.
         const glm::vec3 a = samples[0].position;

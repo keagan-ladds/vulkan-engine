@@ -254,6 +254,23 @@ void Editor::drawCreateMenu()
                                    {"fields", {{"spline", true}, {"width", 14.0f}, {"falloff", 2.0f}, {"foliage", true}, {"grass", false}}}}}),
                      45.0f);
             }
+            if (ImGui::MenuItem("Road")) {
+                // A 6 m road: flattened land with 6 m embankments; trees cleared 16 m wide,
+                // grass 8 m (pick a biome to paint, and / or a surface material, in the inspector).
+                make("TerrainSpline", "Road", {{"width", 6.0f}, {"falloff", 6.0f}},
+                     Json::array({{{"type", "FoliageExclusion"},
+                                   {"fields", {{"spline", true}, {"width", 16.0f}, {"falloff", 1.0f}, {"foliage", true}, {"grass", false}}}},
+                                  {{"type", "FoliageExclusion"},
+                                   {"fields", {{"spline", true}, {"width", 8.0f}, {"falloff", 1.5f}, {"foliage", false}, {"grass", true}}}}}),
+                     20.0f);
+            }
+            if (ImGui::MenuItem("Path")) {
+                // A 2 m footpath following the ground: gentle shaping, grass worn away.
+                make("TerrainSpline", "Path", {{"width", 2.0f}, {"falloff", 2.0f}, {"smoothing", 8.0f}},
+                     Json::array({{{"type", "FoliageExclusion"},
+                                   {"fields", {{"spline", true}, {"width", 3.0f}, {"falloff", 1.0f}, {"foliage", true}, {"grass", true}}}}}),
+                     10.0f);
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Audio")) {

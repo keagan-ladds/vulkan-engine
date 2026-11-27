@@ -27,6 +27,7 @@
 #include "ve/world/Terrain.hpp"
 #include "ve/world/LodModel.hpp"
 #include "ve/world/SplineInstancer.hpp"
+#include "ve/world/TerrainSpline.hpp"
 #include "ve/world/Vegetation.hpp"
 
 #include <SDL.h>
@@ -70,6 +71,7 @@ void registerAllTypes()
     registerTerrainTypes(r);
     registerVegetationTypes(r);
     registerSplineInstancerTypes(r);
+    registerTerrainSplineTypes(r);
     registerModelLodGenerator(); // the model cooker's LOD / impostor step (world/LodModel.hpp)
     registerAssetTypes(r); // MaterialAsset (.material files)
 }

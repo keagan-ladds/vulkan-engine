@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "albedo": "textures/ground/sand_albedo.png",
+  "normal": "textures/ground/sand_normal.png",
+  "baseColor": [0.78, 0.6, 0.45, 1.0],
+  "roughness": 0.95,
+  "metallic": 0.0,
+  "normalStrength": 0.8,
+  "uvScale": [1.25, 1.0],
+  "receiveDecals": true
+}

@@ -3,7 +3,9 @@
 // =============================================================================
 // Terrain - a procedural heightfield with biomes, as a scene object.
 //
-// Height = base noise + waves + stamps (in hierarchy order) + border mountains.
+// Height = base noise + waves + stamps (in hierarchy order) + border mountains
+// + brush edits, then road splines (TerrainSpline: flat across their width,
+// painting a biome; moving one re-shapes only the land around it).
 // TerrainStamp components (usually on child objects you place with the gizmo)
 // flatten areas to their height (camps, roads, lakes with noisy pools) or raise
 // hills and ridges, and can paint a biome. Biomes (see TerrainBiome) colour the
@@ -19,6 +21,7 @@
 //   float swamp = t->biomeWeight("Swamp", x, z);
 // =============================================================================
 
+#include "ve/scene/Spline.hpp"
 #include "ve/scene/GameObject.hpp"
 #include "ve/scene/ObjectRef.hpp"
 #include "ve/scene/Reflection.hpp"
@@ -145,6 +148,24 @@ struct TerrainStampShape {
 /// position is the centre; Flatten uses its height). See TerrainStampShape.
 class TerrainStamp : public Component, public TerrainStampShape {};
 
+/// What a road / path spline does to the terrain (plain data, copied into
+/// every TerrainData). Used by TerrainSpline (world/TerrainSpline.hpp).
+struct TerrainSplineShape {
+    float width = 6.0f;          ///< Full width of the flat surface (m), times each point's width factor.
+    float falloff = 6.0f;        ///< Blends back into the land over this distance each side (m): the embankments.
+    bool flatten = true;         ///< Shape the ground to the road's height across its width.
+    /// The road's height follows the ground under it, smoothed along its length
+    /// (dirt roads, paths: no need to place point heights). Off: the spline's
+    /// own height (embankments, cuttings, ramps).
+    bool followGround = true;
+    float smoothing = 24.0f;     ///< followGround: length (m) over which bumps along the road are smoothed out.
+    float heightOffset = 0.0f;   ///< Road height relative to its spline / smoothed ground (m; < 0 sinks it).
+    /// Paint a biome (by name) under the road (and blending out over biomeFalloff).
+    std::string biome;
+    float biomeStrength = 1.0f;  ///< 0..1: how much of the biome is painted.
+    float biomeFalloff = 2.0f;   ///< The painted biome blends out over this distance beyond the width (m).
+};
+
 /// The terrain's shape parameters (plain data, copied into every TerrainData).
 struct TerrainShape {
     int seed = 1;               ///< Seed of every noise (another seed = another landscape).
@@ -223,8 +244,10 @@ public:
     /// A snapshot of a terrain centred at `centre` (Terrain::data() makes them).
     /// @param stamps each stamp's position and shape.
     /// @param cacheBytes memory budget of the sample-tile cache.
+    /// @param splines road / path splines (world-space path and shape), applied in order over everything else.
     TerrainData(const TerrainShape& shape, glm::vec3 centre, std::vector<TerrainBiome> biomes,
-                std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes, TerrainEdits edits = {});
+                std::vector<std::pair<glm::vec3, TerrainStampShape>> stamps, size_t cacheBytes, TerrainEdits edits = {},
+                std::vector<std::pair<std::shared_ptr<const SplinePath>, TerrainSplineShape>> splines = {});
     /// After brush edits only: reuse `old`'s cached sample tiles outside the
     /// world-space rectangle `changed` (x0, z0, x1, z1).
     void adoptTiles(const TerrainData& old, glm::vec4 changed);
@@ -257,7 +280,7 @@ public:
 
     /// The generator itself: height at any world point (exact at sample points),
     /// and the biome weights for a point of that height and slope (1 - normal.y).
-    float generateHeight(glm::vec2 p) const;  ///< including edits
+    float generateHeight(glm::vec2 p) const;  ///< including edits and road splines
     float baseHeight(glm::vec2 p) const;      ///< the generator alone (no edits)
     float editHeight(glm::vec2 p) const;      ///< the edits' offset (bilinear between samples)
     const TerrainEdits& edits() const { return m_edits; } ///< The brush edits in this snapshot.
@@ -286,6 +309,15 @@ private:
         TerrainStampShape s;
         int biome; ///< -1 = none
     };
+    struct RoadSpline {
+        std::shared_ptr<const SplinePath> path;
+        TerrainSplineShape s;
+        int biome;                  ///< -1 = none
+        std::vector<float> profile; ///< followGround: smoothed ground height every kProfileStep m along the path
+        float reach = 0.0f;         ///< widest influence from the path (m)
+    };
+    static constexpr float kProfileStep = 2.0f;
+    float roadHeight(const RoadSpline& r, const SplinePath::Closest& c) const;
     std::shared_ptr<const Tile> tile(int tx, int tz) const;
     std::shared_ptr<const Tile> generateTile(int tx, int tz) const;
     /// Tile and local sample index holding grid sample (i, j) (clamped).
@@ -295,6 +327,7 @@ private:
     glm::vec3 m_centre;
     std::vector<TerrainBiome> m_biomes;
     std::vector<Stamp> m_stamps;
+    std::vector<RoadSpline> m_roads;
     TerrainEdits m_edits;
     int m_half = 0; ///< centre sample index (edit coordinates)
     uint64_t m_uid; ///< tells thread-local lookup caches apart
@@ -409,6 +442,9 @@ public:
 
 private:
     std::shared_ptr<TerrainData> generate(bool quiet = false) const;
+    /// Compares the scene's road splines with the last look: true (and the
+    /// area to re-shape) if any was added, edited, moved or removed.
+    bool roadsChanged(glm::vec4& area);
     Json editState() const; ///< own fields + position + stamps: rebuild when it changes
     void rebuild();         ///< new data snapshot; meshes and colliders follow
     void updateMaterials(); ///< one material per LOD level (morph range), sharing the look
@@ -434,6 +470,8 @@ private:
     uint64_t m_editsVersion = 0;
     bool m_editsReplaced = false; ///< loaded / cleared / undone: rebuild everything
     glm::vec4 m_editArea{1e30f, 1e30f, -1e30f, -1e30f}; ///< brushed since the last rebuild
+    /// Road splines as last seen: object id -> (terrainState(), bounds).
+    std::unordered_map<uint64_t, std::pair<std::string, glm::vec4>> m_roads;
     struct Change {
         uint64_t version;
         bool editsOnly;

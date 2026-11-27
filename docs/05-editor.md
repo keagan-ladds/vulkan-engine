@@ -117,7 +117,9 @@ Load with `ve::SceneSerializer::load(scene, "scenes/x.json")`.
 
 ### Splines
 **Create > Spline** makes a short spline in front of the camera and starts
-point editing. Select any object with a `Spline` component; its curve is drawn
+point editing: a plain Spline, or a preset with what follows it (Fence,
+Powerline: `SplineInstancer`; Road, Path: `TerrainSpline`; each with a
+vegetation corridor; docs/06-world.md "Splines"). Select any object with a `Spline` component; its curve is drawn
 in the viewport. Press **Tab** (or the inspector's **Edit points**) to edit:
 
 | Input | Does |

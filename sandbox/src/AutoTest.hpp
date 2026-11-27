@@ -59,6 +59,8 @@ public:
     int foliageAt(const glm::vec3& p, float radius) const;
     int m_foliageOnSite = 0, m_foliageDuring = 0;
     glm::vec3 m_exclusionAt{0.0f};
+    uint64_t m_roadTerrainVersion = 0; // terrain version before the footpath point moved
+    bool m_roadMoved = false;
     ve::ObjectRef<> m_exclusionObject;
     uint32_t m_frames = 0, m_stepFrame = 0; // frames: steps that need the preview to settle
     glm::vec3 m_site{0.0f};

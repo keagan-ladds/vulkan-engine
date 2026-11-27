@@ -45,6 +45,7 @@
 #include <ve/world/Foliage.hpp>
 #include <ve/world/LodModel.hpp>
 #include <ve/world/SplineInstancer.hpp>
+#include <ve/world/TerrainSpline.hpp>
 #include <ve/world/Terrain.hpp>
 #include <ve/world/Vegetation.hpp>
 #include <vfx/DayNight.hpp>
@@ -271,6 +272,44 @@ void AutoTest::update(float dt)
                 (power && power->items().size() >= 6 && power->cableCount() == 3 * (power->items().size() - 1) ? " (yes)" : " NO") +
                 "; trees in its corridor " + std::to_string(inside) + (inside == 0 ? " (yes)" : " NO") + ", beside it " + std::to_string(beside));
         }
+        // Roads (TerrainSpline "Dirt road"): flat across its width, painted with
+        // its biome, no trees on it. Then a footpath point moves: the terrain
+        // should re-shape only around the path (checked in step 1).
+        {
+            ve::TerrainSpline* road = nullptr;
+            ve::TerrainSpline* path = nullptr;
+            for (const auto& o : scene().objects())
+                if (auto* ts = dynamic_cast<ve::TerrainSpline*>(o.get()); ts && !ts->isDestroyed()) {
+                    if (ts->name() == "Dirt road") road = ts;
+                    if (ts->name() == "Footpath") path = ts;
+                }
+            auto* terrain = ve::Terrain::find(scene());
+            float worstTilt = 0.0f, minBiome = 1.0f;
+            int trees = 0, samples = 0;
+            if (road && terrain) {
+                const auto rp = road->getComponent<ve::Spline>()->path();
+                for (float d = 15.0f; d < rp->length() - 15.0f; d += 25.0f, ++samples) {
+                    const auto s = rp->at(d);
+                    const glm::vec3 right = glm::normalize(glm::vec3(-s.tangent.z, 0.0f, s.tangent.x));
+                    const glm::vec3 l = s.position - right * 2.0f, r = s.position + right * 2.0f;
+                    const float hc = terrain->height(s.position.x, s.position.z);
+                    worstTilt = std::max({worstTilt, std::abs(terrain->height(l.x, l.z) - hc), std::abs(terrain->height(r.x, r.z) - hc)});
+                    minBiome = std::min(minBiome, terrain->biomeWeight("Camp", s.position.x, s.position.z));
+                    trees += foliageAt(s.position, 5.0f);
+                }
+            }
+            log("roads: dirt road sampled " + std::to_string(samples) + "x, flat across (worst " + std::to_string(worstTilt) + " m): " +
+                (samples > 5 && worstTilt < 0.08f ? "yes" : "NO") + ", painted (min weight " + std::to_string(minBiome) + "): " +
+                (minBiome > 0.9f ? "yes" : "NO") + ", trees on it " + std::to_string(trees) + (trees == 0 ? " (yes)" : " NO"));
+            if (path && terrain) {
+                m_roadTerrainVersion = terrain->version();
+                auto* sp = path->getComponent<ve::Spline>();
+                ve::SplinePoint last = sp->points().back();
+                last.position.z += 12.0f;
+                sp->setPoint(sp->points().size() - 1, last);
+                m_roadMoved = true;
+            }
+        }
         // Physics: ray straight down onto the terrain, player standing, crates resting.
         const glm::vec3 above(layout::kCamp.x + 3.0f, 200.0f, layout::kCamp.y + 3.0f);
         if (auto hit = physics().raycast(above, {0, -1, 0}, 400.0f)) {
@@ -405,6 +444,15 @@ void AutoTest::update(float dt)
             ve::DataAssets::set("materials/thatch.material", edited);
         }
     } else if (m_step == 1 && !m_inTrigger && m_t > 3.3f) {
+        if (m_roadMoved) {
+            // The footpath point moved in step 0: a local re-shape, not a full rebuild.
+            m_roadMoved = false;
+            glm::vec4 area;
+            auto* terrain = ve::Terrain::find(scene());
+            const bool local = terrain && terrain->changedOnlyIn(m_roadTerrainVersion, area);
+            log(std::string("roads: moving a path point re-shaped only the land around it: ") + (local ? "yes" : "NO") + " (" +
+                std::to_string(int(area.z - area.x)) + " x " + std::to_string(int(area.w - area.y)) + " m)");
+        }
         // The thrown rock is away: stand in the trigger box for a moment.
         if (auto* p = localPlayer(scene())) p->teleport(m_triggerFeet, 0.0f);
         ve::QueryFilter f;
