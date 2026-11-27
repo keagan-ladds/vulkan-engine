@@ -76,6 +76,99 @@ Export glTF (`.glb` / `.gltf`, +Y up) with one object per level:
 - The log says what was found, e.g. `FoliageType 'Plants': 1 variant(s) from
   plant.glb, 3 level(s) + impostor, 1 authored collider(s)`.
 
+## Splines: fences, powerlines, roads
+
+A `Spline` component (scene/Spline.hpp; editing: docs/05-editor.md
+"Splines") is the path; what follows it is another component or object on
+the same GameObject:
+
+- **`SplineInstancer`** (world/SplineInstancer.hpp; Create > Spline > Fence /
+  Powerline): a mesh repeated along the path, as GPU instances with the
+  model's LOD chain, impostor and variants (picked at random per item).
+  - Items every `spacing` m (`fitEnds` lands them on both ends), or one per
+    control point (`atPoints`: poles exactly where you put them).
+  - Items are dropped onto the terrain (`followGround`) and stand upright unless
+    `tiltWithGround`. Their axes are +X along the path, +Y up, +Z to the right;
+    `offset`, `yaw`, `randomYaw`, `scaleRange` and `jitter` vary them.
+  - Cables or rails: `cableAttach` lists points in the item's local space;
+    each gets a tube from every item to the next. `cableSag` is the sag at
+    mid-span as a fraction of the span (0 for rails, about 0.03 for powerlines).
+  - `collision` gives each item a static box collider (from LOD0's bounds).
+  - Everything rebuilds when the spline, the fields or the terrain change,
+    live while you drag points in the editor.
+- **`TerrainSpline`** (world/TerrainSpline.hpp; Create > Spline > Road /
+  Path): a road, track, path or riverbed. The terrain applies every road after
+  its generator, stamps and brush edits, in scene order (later roads win where
+  they cross):
+  - The ground is made flat across `width` (times each point's width
+    factor) and blends back into the land over `falloff`: the embankments.
+  - Height: with `followGround` (default) the ground under the road, smoothed
+    along it over `smoothing` m, so point heights don't matter; off, the
+    spline's own height (ramps, causeways, cuttings). `heightOffset` sinks or
+    raises it (a riverbed: negative, with a wide falloff).
+  - `biome` paints a terrain biome under it (blending out over `biomeFalloff`).
+  - `material` lays a surface mesh over it (UV u across, v along every
+    `uvLength` m) for edges sharper than the terrain's 2 m samples.
+  - Editing a road re-shapes only the land around it, like a brush stroke:
+    sample tiles, LOD meshes, colliders and nearby foliage / grass. Things
+    standing on the ground (spline instancers) follow. Navmeshes don't:
+    call `NavMeshSurface::rebuild(area)`.
+  - The editor draws the road's width and falloff (orange) and any vegetation
+    corridor (green) around the selected spline.
+- **Keeping vegetation off the line:** `FoliageExclusion` with `spline` on is
+  a corridor `width` metres wide (times each point's width factor) along the
+  object's spline. `foliage` / `grass` choose what it clears (grass thins out
+  over `falloff`). The Fence preset clears trees 3 m wide and keeps the grass;
+  the Powerline preset clears a 14 m corridor of trees. Like every exclusion,
+  moving it re-places only the vegetation around it.
+
+### Sub-biomes: variations inside a biome
+
+A biome decides the ground and what grows there. A **sub-biome**
+(`TerrainSubBiome`, the Terrain's `subBiomes`) varies that inside an area
+without replacing the biome: under powerlines it is still savanna, but no
+trees grow and the grass is kept short. Define it once on the Terrain:
+
+```json
+"subBiomes": [{"name": "Powerline corridor", "foliage": 0, "layers": "Rocks:1, Boulders:1, Bushes:0.3",
+               "grass": 1, "grassHeight": 0.45}]
+```
+
+- `foliage` multiplies every foliage layer's density inside; `layers` gives
+  per-layer factors that win over it (FoliageType object names).
+- `grass` / `grassHeight` multiply grass density and height.
+- **Laying it:** a `TerrainMask` component names the sub-biome. On an object
+  with a Spline it is a corridor `width` wide (the powerline's); without, a
+  circle of `radius` (a clearing). Both fade out over `falloff`, scaled by
+  `strength`. Several masks can lay the same sub-biome; overlapping
+  sub-biomes multiply.
+- Foliage and grass `biomes` rules can also name a sub-biome:
+  `"Savannah:1, Powerline corridor:-1"` (its weight, 0..1).
+- Moving or editing a mask refreshes only the vegetation around it.
+- The editor draws a mask's corridor or circle in purple. The Terrain logs a
+  mask naming a sub-biome it doesn't define.
+
+![Powerline corridor sub-biome](screenshots/spline_powerline_subbiome.png)
+
+This is the overlay half of a terrain workflow: biomes come from rules
+(height, slope, noise) and painting; sub-biomes come from areas laid on top.
+Rule-driven sub-biomes (by slope, height or distance to water: scree under
+cliffs, reeds at shores) would fit the same definitions as another source of
+weights.
+
+Savanna: a paddock fence east of the camp (a closed spline, posts and two
+rails), a powerline from the south-east to the camp, a dirt road west from
+the camp (5 m, painted "Camp" earth, a `materials/dirt_road.material` surface,
+trees cleared 14 m wide and grass 7 m) and a footpath north towards the swamp.
+![Dirt road](screenshots/spline_road.png)
+
+The powerline lays the "Powerline corridor" sub-biome (16 m wide): no trees,
+a few bushes, rocks kept, grass at 45 % height. The autotest checks the posts,
+rails and cables, that the corridor holds no trees (while the land beside it
+does), keeps its rocks and halves the grass, that the road is flat across
+and painted with no trees, and that moving a footpath point re-shapes only
+the land around it.
+
 ## Design notes
 
 **Terrain.**

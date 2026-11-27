@@ -109,6 +109,13 @@ glm::vec4 changedArea(const std::vector<FoliageExclusionShape>& a, const std::ve
 FoliageExclusionShape FoliageExclusion::shape() const
 {
     FoliageExclusionShape e;
+    if (spline) {
+        if (Spline* s = gameObject().getComponent<Spline>()) {
+            e.path = s->path();
+            e.halfWidth = std::max(width, 0.0f) * 0.5f;
+            return e;
+        }
+    }
     const Transform& t = transform();
     const glm::vec3 c = t.transformPoint(glm::vec3(offset.x, 0.0f, offset.y));
     e.center = {c.x, c.z};
@@ -184,10 +191,15 @@ std::vector<std::pair<int, float>> parseBiomeWeights(const std::string& spec, co
 {
     std::vector<std::pair<int, float>> out;
     for (const auto& [name, value] : parseNameValues(spec)) {
-        const int index = name == "*" ? -1 : terrain.biomeIndex(name);
+        int index = name == "*" ? -1 : terrain.biomeIndex(name);
         if (index < 0 && name != "*") {
-            log::warnOnce(owner + ": the terrain has no biome '" + name + "'");
-            continue;
+            // A sub-biome's name: its weight (index -2 - sub-biome).
+            const int sub = terrain.subBiomeIndex(name);
+            if (sub < 0) {
+                log::warnOnce(owner + ": the terrain has no biome or sub-biome '" + name + "'");
+                continue;
+            }
+            index = -2 - sub;
         }
         out.push_back({index, value});
     }
@@ -198,7 +210,8 @@ float biomeDensity(const std::vector<std::pair<int, float>>& weights, const Terr
 {
     if (weights.empty()) return 1.0f;
     float d = 0.0f;
-    for (const auto& [biome, k] : weights) d += biome < 0 ? k : k * terrain.biomeWeight(biome, p.x, p.y);
+    for (const auto& [biome, k] : weights)
+        d += biome == -1 ? k : biome < -1 ? k * terrain.subBiomeWeight(-2 - biome, p.x, p.y) : k * terrain.biomeWeight(biome, p.x, p.y);
     return std::clamp(d, 0.0f, 1.0f);
 }
 
@@ -536,7 +549,7 @@ void Foliage::rebuild()
         l.spacing = std::max(l.spacing, 0.1f);
         l.maxScale = std::max(l.maxScale, l.minScale);
         if (l.seed == 0) l.seed = nameSeed(layerName);
-        const LayerDensity density{parseBiomeWeights(t->biomes, *td, "FoliageType '" + layerName + "'"), t->biomeThreshold};
+        const LayerDensity density{parseBiomeWeights(t->biomes, *td, "FoliageType '" + layerName + "'"), t->biomeThreshold, layerName};
         l.density = makeDensity(td, density);
         for (const auto& [other, radius] : parseNameValues(t->avoid)) {
             const int index = layerIndex(other);
@@ -613,10 +626,11 @@ FoliageWorld Foliage::makeWorld(const std::shared_ptr<const TerrainData>& td) co
 
 std::function<float(const FoliageSample&)> Foliage::makeDensity(const std::shared_ptr<const TerrainData>& td, const LayerDensity& d)
 {
-    if (d.weights.empty() && d.threshold <= 0.0f) return {};
-    return [td, weights = d.weights, threshold = d.threshold](const FoliageSample& s) {
+    if (d.weights.empty() && d.threshold <= 0.0f && !td->hasSubBiomeAreas()) return {};
+    return [td, weights = d.weights, threshold = d.threshold, layer = d.layer](const FoliageSample& s) {
         const float v = biomeDensity(weights, *td, s.position);
-        return threshold > 0.0f ? (v >= threshold ? 1.0f : 0.0f) : v;
+        // Sub-biomes (powerline corridors...) scale what the biome rules allow.
+        return (threshold > 0.0f ? (v >= threshold ? 1.0f : 0.0f) : v) * td->foliageFactor(layer, s.position);
     };
 }
 
@@ -768,11 +782,13 @@ std::function<glm::vec4(glm::vec2)> GrassLayer::makeMask(const std::shared_ptr<c
         if (c.patchFrequency > 0.0f)
             density *= std::clamp(noise::fbm(p * c.patchFrequency, 2, 61 + s) * c.patchContrast - c.patchOffset, 0.0f, 1.0f);
         for (const Exclusion& e : exclusions) density *= glm::smoothstep(0.0f, e.falloff, e.shape.distance(p));
+        const glm::vec2 sub = td->grassFactors(p); // sub-biomes: thinner / shorter grass
+        density *= sub.x;
         if (density <= 0.0f) return glm::vec4(0.0f);
         const float colorMix = c.colorFrequency > 0.0f ? noise::fbm(p * c.colorFrequency, 3, 31 + s) : 0.5f;
         const float heightScale =
             c.heightFrequency > 0.0f ? glm::mix(1.0f - c.heightVariation, 1.0f, noise::fbm(p * c.heightFrequency, 2, 13 + s)) : 1.0f;
-        return glm::vec4(density, colorMix, heightScale, 0.0f);
+        return glm::vec4(density, colorMix, heightScale * sub.y, 0.0f);
     };
 }
 
@@ -1081,6 +1097,8 @@ void registerVegetationTypes(TypeRegistry& r)
 
     r.add<FoliageExclusion>("FoliageExclusion", [](TypeBuilder<FoliageExclusion>& t) {
         t.field("box", &FoliageExclusion::box).tooltip("a box (size, turning with the object) instead of a circle (radius)");
+        t.field("spline", &FoliageExclusion::spline).tooltip("a corridor along this object's Spline (width): roads, fences, powerlines");
+        t.field("width", &FoliageExclusion::width).range(0.0f, 1000.0f).speed(0.05f).tooltip("spline: full corridor width (m)");
         t.field("size", &FoliageExclusion::size).tooltip("box: full extents along the object's local x and z");
         t.field("offset", &FoliageExclusion::offset).tooltip("centre in the object's local x, z");
         t.category("World");

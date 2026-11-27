@@ -89,6 +89,10 @@ float biomeDensity(const std::vector<std::pair<int, float>>& weights, const Terr
 class FoliageExclusion : public Component {
 public:
     bool box = false;              ///< false: a circle of `radius`
+    /// A corridor along the Spline on this object instead (`width` wide, x each
+    /// point's width factor): roads, fences, powerlines. Wins over box / radius.
+    bool spline = false;
+    float width = 6.0f;            ///< spline: full width of the corridor (m).
     float radius = 3.0f;           ///< Circle radius (m).
     glm::vec2 size{4.0f, 4.0f};    ///< box: full extents along the object's local x and z
     glm::vec2 offset{0.0f};        ///< box / circle centre in the object's local x, z
@@ -165,6 +169,8 @@ public:
     void loadState(const Json& in) override;
     void start() override;
     void update(float dt) override;
+    /// The layers' names, in FoliageSystem layer order (index = layer).
+    const std::vector<std::string>& layerNames() const { return m_layerNames; }
 
     float edgeMargin = 45.0f;            ///< keep this far inside the terrain's edges
     float cellSize = 64.0f;              ///< Streaming cell size (m); see FoliageSettings.
@@ -186,6 +192,7 @@ private:
     struct LayerDensity { // to rebind a layer's density to a new terrain snapshot
         std::vector<std::pair<int, float>> weights;
         float threshold = 0.0f;
+        std::string layer; ///< its name (sub-biomes' per-layer factors)
     };
     std::string state() const; ///< what needs a rebuild (exclusions are handled incrementally)
     void rebuild();

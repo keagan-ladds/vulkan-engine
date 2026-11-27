@@ -35,7 +35,9 @@ class BuildPiece : public ve::GameObject {
 public:
     // (Appended only: prefabs store the index.) Door / Window are fittings: they
     // snap into a WallDoor / WallWindow opening, turning to match it.
-    enum class Kind { Foundation, Floor, Wall, WallDoor, WallWindow, Railing, Post, Beam, RoofMetal, RoofThatch, Stairs, Fence, Door, Window };
+    // Generator / LampPost / FuelBarrel: power (Power.hpp).
+    enum class Kind { Foundation, Floor, Wall, WallDoor, WallWindow, Railing, Post, Beam, RoofMetal, RoofThatch, Stairs, Fence, Door, Window,
+                      Generator, LampPost, FuelBarrel };
     enum class Material { Mud, Plaster, Timber, Stone };
 
     BuildPiece() : GameObject("Piece") {}
@@ -110,6 +112,7 @@ public:
     glm::quat previewRotation() const { return m_rot; }
     bool previewValid() const { return m_preview.valid(); }
     bool previewSnapped() const { return m_snapped; }
+    bool previewNeedsPower() const { return m_noPower; } // blocked: no generator reaches the spot
     glm::vec3 previewPosition() const { return m_pos; }
 
 private:
@@ -131,6 +134,7 @@ private:
     glm::quat m_rot{1, 0, 0, 0};
     bool m_snapped = false;
     bool m_aimHit = false;
+    bool m_noPower = false; // a lamp outside every generator's reach
     std::optional<glm::vec3> m_aimOverride;
     // UI.
     void buildMenu();

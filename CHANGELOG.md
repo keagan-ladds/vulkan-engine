@@ -42,6 +42,61 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Installable engine package**: `cmake --install <build> --component
+  VulkanEngine --prefix <dir>` makes a relocatable package (headers, static
+  libraries, vecook, compiled shaders + GLSL includes, a
+  `find_package(VulkanEngine)` config with `ve_setup_game()`). The game
+  template uses a package when `CMAKE_PREFIX_PATH` points at one, else builds
+  the engine from `VE_ENGINE_DIR`. Engine and bundled libraries get a `d`
+  suffix in Debug builds. Windows CI builds the template against MSVC and
+  MinGW packages and uploads the MSVC Release package.
+- **Prefab icons** (`ui::prefabIcon`, `ui/PrefabIcon.hpp`): menu pictures of
+  any prefab, rendered from its meshes with their materials and textures in a
+  private scene. A hand-made `<prefab>.png` wins, else the cooked icon
+  (`<cache>/<prefab>.veicon`, assets/IconCook.hpp: `vecook` renders them for
+  prefabs with an `"icon"` section, which also sets the view), else rendered at
+  load and cached. `ui::renderIconPixels` / `iconParts` draw meshes with
+  materials. Packaging ships icon prefabs and their cooked icons
+  (`Cooker::shipSource`). The sandbox build menu uses them (and gains a hut
+  made from the textured rondavel model).
+- **`<game> --cook`**: vecook's code is now `ve::cookToolMain(argc, argv)`
+  (`ve/app/CookTool.hpp`); a game's `main` can pass `--cook [options]` to it
+  (the template's does), so cooking and packaging see the game's types.
+  Cookers can report files they can't cook here (`Cooker::unsupportedHere`):
+  vecook lists them as "left to the game". `Engine::registerTypes()` for
+  tools that read scene / prefab data without an Engine.
+- **Finding things near a point**: `Scene::findNearest<T>(p, maxDistance,
+  filter, horizontal)`, `Scene::forEachWithin<T>(p, radius, fn)`,
+  `Scene::findNearestWithTag`, `Scene::forEachActive<T>` (T: a component type
+  or a GameObject class). The sandbox uses them for power: generators, lamp
+  posts that need one nearby to be built, fuel barrels that fill the nearest.
+- **Splines** (`ve::Spline`, `scene/Spline.hpp`): smooth curves through
+  control points (centripetal Catmull-Rom) with a width factor per point;
+  `path()` gives a world-space `SplinePath` (length, `at(distance)`,
+  grid-accelerated `closest()`, side of the path). Editor: Create > Spline,
+  point editing in the viewport (Tab; drag, Ctrl+click to add / insert,
+  Delete), snap to ground, undo.
+- **Fences, powerlines and props along splines** (`ve::SplineInstancer`,
+  `world/SplineInstancer.hpp`): a mesh repeated along a spline (spacing or one
+  per control point, dropped onto the terrain, random yaw / scale / jitter,
+  LOD chain + impostor, optional box colliders), with sagging cables or
+  straight rails between items. `FoliageExclusion::spline` clears a corridor of
+  trees and / or grass along a spline. Editor: Create > Spline > Fence /
+  Powerline.
+- **Roads and paths** (`ve::TerrainSpline`, `world/TerrainSpline.hpp`): flatten
+  the terrain across their width with embankments (following the smoothed
+  ground or the spline's height), paint a biome, and optionally lay a surface
+  mesh with a material. Editing one re-shapes only the land around it.
+  `TerrainData`'s constructor takes the road splines (new trailing
+  parameter). Editor: Create > Spline > Road / Path; the selected spline shows
+  its road width and vegetation corridors.
+- **Sub-biomes** (`TerrainSubBiome`, Terrain `subBiomes`; laid by the
+  `TerrainMask` component along a spline or in a circle): variations inside
+  whatever biome is there: foliage density (all layers or per layer), grass
+  density and height. Foliage / grass biome rules accept sub-biome names.
+  `TerrainData` gains `subBiomeWeight`, `foliageFactor`, `grassFactors`;
+  `TerrainData`'s constructor takes `TerrainOverlays` (roads + sub-biome
+  masks) as its last parameter. `Foliage::layerNames()`.
 - **Blender: VE Painted materials export with the model.** Installed as an
   add-on, `tools/blender/ve_painted_node_group.py` writes the `.material` file
   of every VE Painted material a glTF export includes (into the `assets`

@@ -7,12 +7,25 @@
 //   auto& empty  = scene.spawn("Empty");            // plain GameObject
 //   scene.forEach<PointLight>([](PointLight& l) { l.intensity *= 0.5f; });
 //   GameObject* boss = scene.find("Boss");
+//
+// Spatial lookups by type (a component type or a GameObject class), measured
+// from the objects' world positions; inactive and destroyed ones are skipped:
+//   auto* gen = scene.findNearest<Generator>(pos, 30.0f);                 // null if none within 30 m
+//   auto* fueled = scene.findNearest<Generator>(pos, 30.0f, [](Generator& g) { return g.fuel > 0; });
+//   scene.forEachWithin<Lamp>(pos, 20.0f, [](Lamp& l, float distance) { ... });
+//   GameObject* well = scene.findNearestWithTag("water", pos, 50.0f);
+// They scan that type's objects (fine for hundreds or a few thousand); for
+// many thousands of simple things use a ProxySet (gameplay/ProxySet.hpp).
 // =============================================================================
 
 #include "ve/scene/GameObject.hpp"
 
+#include <glm/glm.hpp>
+
 #include <functional>
+#include <limits>
 #include <memory>
+#include <type_traits>
 #include <string>
 #include <string_view>
 #include <typeindex>
@@ -84,6 +97,72 @@ public:
             }
         }
     }
+    // ---- Spatial lookups (see the top of this file) ----
+    /// Calls fn(T&) for every live, active T: a component type (via the
+    /// per-type registry, like forEach) or a GameObject class (subclasses too).
+    template <class T, class F>
+    void forEachActive(F&& fn) const
+    {
+        if constexpr (std::is_base_of_v<Component, T>) {
+            forEach<T>([&](T& c) {
+                if (c.isActive() && !c.gameObject().isDestroyed()) fn(c);
+            });
+        } else {
+            static_assert(std::is_base_of_v<GameObject, T>, "T must be a Component or a GameObject class");
+            for (const auto* list : {&m_objects, &m_pending})
+                for (size_t i = 0; i < list->size(); ++i) { // (fn may spawn: index loop)
+                    GameObject* o = (*list)[i].get();
+                    if (o->isDestroyed() || !o->activeInHierarchy()) continue;
+                    if (auto* t = dynamic_cast<T*>(o)) fn(*t);
+                }
+        }
+    }
+    /// Where a T is: its object's world position (components: their object's).
+    template <class T>
+    static glm::vec3 positionOf(const T& t)
+    {
+        if constexpr (std::is_base_of_v<Component, T>) return t.gameObject().transform().position();
+        else return t.transform().position();
+    }
+    /// The nearest live, active T to `p` within `maxDistance` (m) that passes
+    /// `filter` (bool(T&); omit for all), or null.
+    /// @param horizontal measure in the XZ plane only (ignore height differences).
+    template <class T, class Filter = std::nullptr_t>
+    T* findNearest(const glm::vec3& p, float maxDistance = std::numeric_limits<float>::infinity(), Filter filter = nullptr,
+                   bool horizontal = false) const
+    {
+        T* best = nullptr;
+        float bestDist = maxDistance;
+        forEachActive<T>([&](T& t) {
+            const float d = distanceTo(p, positionOf(t), horizontal);
+            if (d > bestDist) return;
+            if constexpr (!std::is_same_v<Filter, std::nullptr_t>)
+                if (!filter(t)) return;
+            best = &t;
+            bestDist = d;
+        });
+        return best;
+    }
+    /// Calls fn(T&, float distance) for every live, active T within `radius` (m)
+    /// of `p`, unordered. @param horizontal as in findNearest.
+    template <class T, class F>
+    void forEachWithin(const glm::vec3& p, float radius, F&& fn, bool horizontal = false) const
+    {
+        forEachActive<T>([&](T& t) {
+            const float d = distanceTo(p, positionOf(t), horizontal);
+            if (d <= radius) fn(t, d);
+        });
+    }
+    /// The nearest live, active object with `tag` within `maxDistance` (m) of `p`, or null.
+    GameObject* findNearestWithTag(std::string_view tag, const glm::vec3& p,
+                                   float maxDistance = std::numeric_limits<float>::infinity(), bool horizontal = false) const;
+    /// Distance between two points, in 3D or (horizontal) in the XZ plane.
+    static float distanceTo(const glm::vec3& a, const glm::vec3& b, bool horizontal)
+    {
+        const glm::vec3 d = b - a;
+        return horizontal ? glm::length(glm::vec2(d.x, d.z)) : glm::length(d);
+    }
+
     /// Every object that has joined the update loop (objects spawned this frame are added at the start of the next).
     const std::vector<std::unique_ptr<GameObject>>& objects() const { return m_objects; }
     /// Number of objects, including ones spawned this frame.

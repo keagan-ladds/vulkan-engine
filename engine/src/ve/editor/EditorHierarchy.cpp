@@ -219,6 +219,60 @@ void Editor::drawCreateMenu()
                    {"components", Json::array({{{"type", "DecalProjector"}}})}};
             createObject(j, nullptr, "Create Decal");
         }
+        if (ImGui::BeginMenu("Spline")) {
+            // A short straight spline on the ground in front of the camera, ready
+            // to edit (Ctrl+click adds points); presets add what follows it.
+            auto make = [&](const char* type, const char* name, Json fields, Json extra, float halfLength) {
+                const glm::vec3 p = placementPoint(*m_engine, view);
+                Json comps = Json::array({{{"type", "Spline"},
+                                           {"fields", {{"points", Json::array({{-halfLength, 0.0f, 0.0f, 1.0f}, {halfLength, 0.0f, 0.0f, 1.0f}})}}}}});
+                for (Json& c : extra) comps.push_back(std::move(c));
+                Json j{{"type", type}, {"name", name}, {"position", {p.x, p.y, p.z}}, {"components", comps}};
+                if (!fields.is_null()) j["fields"] = std::move(fields);
+                if (GameObject* o = createObject(j, nullptr, std::string("Create ") + name)) {
+                    select(o);
+                    m_splineEdit = true;
+                    m_splinePoint = 1;
+                }
+            };
+            if (ImGui::MenuItem("Spline")) make("GameObject", "Spline", Json(), Json::array(), 5.0f);
+            if (ImGui::MenuItem("Fence")) {
+                // Posts every 2.5 m with two straight rails; trees cleared 3 m wide (pick the post mesh in the inspector).
+                make("SplineInstancer", "Fence",
+                     {{"spacing", 2.5f}, {"collision", true}, {"cableAttach", "0,1.0,0; 0,0.55,0"}, {"cableRadius", 0.04f},
+                      {"cableColor", {0.30f, 0.21f, 0.13f}}},
+                     Json::array({{{"type", "FoliageExclusion"},
+                                   {"fields", {{"spline", true}, {"width", 3.0f}, {"falloff", 0.5f}, {"foliage", true}, {"grass", false}}}}}),
+                     10.0f);
+            }
+            if (ImGui::MenuItem("Powerline")) {
+                // Poles every ~45 m, three sagging cables; a 14 m corridor without trees.
+                make("SplineInstancer", "Powerline",
+                     {{"spacing", 45.0f}, {"cableAttach", "0,8.65,-1.0; 0,8.65,0; 0,8.65,1.0"}, {"cableSag", 0.03f}, {"cableRadius", 0.012f},
+                      {"viewDistance", 2500.0f}},
+                     Json::array({{{"type", "FoliageExclusion"},
+                                   {"fields", {{"spline", true}, {"width", 14.0f}, {"falloff", 2.0f}, {"foliage", true}, {"grass", false}}}}}),
+                     45.0f);
+            }
+            if (ImGui::MenuItem("Road")) {
+                // A 6 m road: flattened land with 6 m embankments; trees cleared 16 m wide,
+                // grass 8 m (pick a biome to paint, and / or a surface material, in the inspector).
+                make("TerrainSpline", "Road", {{"width", 6.0f}, {"falloff", 6.0f}},
+                     Json::array({{{"type", "FoliageExclusion"},
+                                   {"fields", {{"spline", true}, {"width", 16.0f}, {"falloff", 1.0f}, {"foliage", true}, {"grass", false}}}},
+                                  {{"type", "FoliageExclusion"},
+                                   {"fields", {{"spline", true}, {"width", 8.0f}, {"falloff", 1.5f}, {"foliage", false}, {"grass", true}}}}}),
+                     20.0f);
+            }
+            if (ImGui::MenuItem("Path")) {
+                // A 2 m footpath following the ground: gentle shaping, grass worn away.
+                make("TerrainSpline", "Path", {{"width", 2.0f}, {"falloff", 2.0f}, {"smoothing", 8.0f}},
+                     Json::array({{{"type", "FoliageExclusion"},
+                                   {"fields", {{"spline", true}, {"width", 3.0f}, {"falloff", 1.0f}, {"foliage", true}, {"grass", true}}}}}),
+                     10.0f);
+            }
+            ImGui::EndMenu();
+        }
         if (ImGui::BeginMenu("Audio")) {
             if (ImGui::MenuItem("Audio source")) newObject("GameObject", "Audio Source", Json::array({{{"type", "AudioSource"}}}));
             if (ImGui::MenuItem("Audio zone"))

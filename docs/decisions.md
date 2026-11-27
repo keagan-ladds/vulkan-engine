@@ -76,7 +76,7 @@ The sandbox's world is generated in code, and its files (textures, glTF, WAV) ar
 produced by `tools/generate_assets.py`. **Why:** no licensing questions, small
 repo, and the importers are still exercised on real files.
 
-### D12. Games consume the engine via `add_subdirectory` (no install/package step)
+### D12. Games consume the engine via `add_subdirectory` (no install/package step; see D37 for packages)
 **Chosen:** a game's CMakeLists adds the engine checkout as a subdirectory and
 calls `ve_setup_game()`. Outputs land in the game's build folder.
 **Alternatives:** installed CMake package (`find_package(vulkan-engine)`), or a git submodule/FetchContent.
@@ -453,3 +453,45 @@ be made once, before shipping, with the same renderer that draws them.
 **Cost:** vecook needs a Vulkan device and a display for those models
 (`xvfb-run` on servers); a material change recooks the models whose impostors
 use it; code-built meshes still bake at load.
+
+### D36. Splines are a component; what follows them is separate; sub-biomes are overlays (2026-11)
+**Decision:** `Spline` (scene) only holds points and builds an immutable,
+shareable world-space `SplinePath` (sampled polyline + segment grid). Things
+built on it are separate: `SplineInstancer` (props and cables),
+`TerrainSpline` (roads: applied by the Terrain after its generator and
+edits), `FoliageExclusion::spline` (vegetation corridors), `TerrainMask`
+(sub-biomes). Road and mask edits are area-limited terrain changes, like brush
+strokes. Sub-biomes are named overlays defined on the Terrain that scale
+foliage / grass inside whatever biome is there; they never take a biome's
+place.
+**Alternatives:** one "road tool" object doing everything (fences and
+powerlines would each need their own copy of the curve logic); roads as brush
+edits baked into the heightfield (no re-editing the curve later); sub-biomes
+as ordinary biomes (a powerline corridor would replace savanna's ground and
+plant list, and every foliage rule would have to know about it); masks
+painted into a texture (fixed resolution and size; areas follow their
+splines and stay editable).
+**Why:** one curve type for every path-like thing; the terrain stays
+procedural and re-editable; a sub-biome is defined once and affects every
+layer without touching each FoliageType. **Cost:** closest-point queries per
+terrain sample / foliage candidate near roads and masks (a grid keeps them
+cheap); navmeshes are not rebuilt automatically after road edits.
+
+### D37. Engine packages: static libraries + headers, installed with CMake (2026-11)
+**Decision:** `cmake --install <build> --component VulkanEngine --prefix <dir>`
+installs a relocatable package: public headers (not `*Internal.hpp`), the
+third-party headers they use (glm, nlohmann/json, VMA, Dear ImGui; SDL2 when
+built from source), every static library the engine links, `vecook`, the
+compiled shaders and the GLSL includes, and a `find_package(VulkanEngine)`
+config with `ve_setup_game()`. Games keep building from source when no
+package is found (D12 still works). Headers stay next to their sources; the
+install step picks them.
+**Alternatives:** DLLs (export macros on the whole API, one compiler and C
+runtime across the boundary, STL / templates across DLL lines: fragile for a
+C++ engine); moving headers to an `include/` folder first (clearer, but a
+large move that isn't needed to package); CPack zips (can come later on top
+of the same install rules).
+**Why:** games stop compiling the engine and can pin a binary engine
+version; static linking keeps a shipped game a single executable. **Cost:** a
+package per compiler (MSVC vs MinGW) and build type (Debug libraries carry a
+`d` suffix, so both fit in one folder).

@@ -24,6 +24,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,7 @@ class Engine;
 class GameObject;
 class Component;
 class PickingPass;
+class Spline;
 struct FieldInfo;
 
 /// The in-engine scene editor (F2): hierarchy, inspector, gizmos, asset
@@ -153,6 +155,14 @@ private:
     /// Terrain brush in the viewport (true = the tool owns the mouse this frame).
     bool terrainBrush(Terrain& terrain, const ViewProjector& view, DebugDraw& dd, glm::vec2 mouse);
 
+    /// EditorSpline.cpp: spline point editing.
+    /// Where the mouse ray meets the ground: terrain or a (non-terrain) collider, whichever is nearer.
+    std::optional<glm::vec3> groundUnder(const ViewProjector& view, glm::vec2 mouse) const;
+    /// Draws the selected spline; while editing points, handles the mouse (true = it owns the mouse).
+    bool splineViewport(Spline& spline, const ViewProjector& view, DebugDraw& dd, glm::vec2 mouse);
+    void drawSplineTools(Spline& spline); ///< inspector: edit mode, selected point, tools
+    void removeSelectedSplinePoint(Spline& spline);
+
     Engine* m_engine = nullptr;
     Mode m_mode = Mode::Off;
     Mode m_pendingMode = Mode::Off;
@@ -169,6 +179,13 @@ private:
     PickingPass* m_picking = nullptr;
     glm::vec2 m_pressPos{0.0f};
     bool m_pressInViewport = false;
+
+    bool m_splineEdit = false;  ///< editing the selected spline's points (no move gizmo)
+    bool m_splineSnap = true;   ///< dragged / added points land on the ground
+    bool m_splineDragging = false;
+    int m_splinePoint = -1;     ///< selected point, -1 = none
+    glm::vec2 m_splineDragMouse{0.0f};
+    float m_splineDragY = 0.0f;
 
     int m_terrainTool = -1; ///< Terrain::Brush::Mode, -1 = off
     Terrain::Brush m_brush;

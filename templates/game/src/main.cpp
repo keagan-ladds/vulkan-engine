@@ -21,6 +21,7 @@
 #include "SunController.hpp"
 #include "World.hpp"
 
+#include <ve/app/CookTool.hpp>
 #include <ve/ve.hpp>
 #include <vfx/Atmosphere.hpp>
 #include <vfx/DepthOfField.hpp>
@@ -30,11 +31,18 @@
 #include <vfx/Vfx.hpp>
 
 #include <algorithm>
+#include <string>
 #include <cstdlib>
 #include <iostream>
 
-int main()
+int main(int argc, char** argv)
 {
+    // `mygame --cook [vecook options]`: cook / check / package with this
+    // game's types registered (prefab icons of game objects need them).
+    if (argc > 1 && std::string(argv[1]) == "--cook") {
+        argv[1] = argv[0];
+        return ve::cookToolMain(argc - 1, argv + 1);
+    }
     try {
         ve::EngineConfig config;
         config.title = "My Game";

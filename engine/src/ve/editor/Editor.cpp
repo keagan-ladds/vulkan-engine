@@ -14,6 +14,7 @@
 #include "ve/editor/EditorInternal.hpp"
 #include "ve/editor/PickingPass.hpp"
 #include "ve/render/Renderer.hpp"
+#include "ve/scene/Spline.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Prefab.hpp"
 #include "ve/scene/Scene.hpp"
@@ -163,8 +164,19 @@ void Editor::handleShortcuts()
         if (ImGui::IsKeyPressed(ImGuiKey_W)) m_gizmoOptions.mode = GizmoMode::Translate;
         if (ImGui::IsKeyPressed(ImGuiKey_E)) m_gizmoOptions.mode = GizmoMode::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) m_gizmoOptions.mode = GizmoMode::Scale;
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) select(nullptr);
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete) && sel) deleteObject(*sel);
+        Spline* spline = sel ? sel->getComponent<Spline>() : nullptr;
+        if (spline && ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+            m_splineEdit = !m_splineEdit;
+            m_splineDragging = false;
+        }
+        if (spline && m_splineEdit) {
+            // Editing points: Esc stops editing, Delete removes the point (not the object).
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) m_splineEdit = false;
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete)) removeSelectedSplinePoint(*spline);
+        } else {
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) select(nullptr);
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete) && sel) deleteObject(*sel);
+        }
         GameObject* cam = camera();
         if (ImGui::IsKeyPressed(ImGuiKey_F) && sel && cam) {
             AABB b;

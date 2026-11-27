@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "object": {
+    "type": "BuildPiece",
+    "name": "Generator",
+    "active": true,
+    "position": [
+      0,
+      0,
+      0
+    ],
+    "rotation": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "scale": [
+      1,
+      1,
+      1
+    ],
+    "fields": {
+      "kind": 14,
+      "material": 0
+    },
+    "components": [
+      {
+        "type": "Generator",
+        "enabled": true,
+        "fields": {
+          "powerRadius": 16.0,
+          "fuel": 0.0,
+          "maxFuel": 60.0,
+          "burnPerMinute": 0.5
+        }
+      }
+    ]
+  },
+  "icon": {
+    "size": 192,
+    "yaw": 35.0,
+    "pitch": 22.0,
+    "key": "kit-1"
+  }
+}

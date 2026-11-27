@@ -25,7 +25,10 @@
 #include "ve/scene/SceneSerializer.hpp"
 #include "ve/ui/UiLayer.hpp"
 #include "ve/world/Terrain.hpp"
+#include "ve/ui/PrefabIcon.hpp"
 #include "ve/world/LodModel.hpp"
+#include "ve/world/SplineInstancer.hpp"
+#include "ve/world/TerrainSpline.hpp"
 #include "ve/world/Vegetation.hpp"
 
 #include <SDL.h>
@@ -68,7 +71,10 @@ void registerAllTypes()
     registerAudioTypes(r);
     registerTerrainTypes(r);
     registerVegetationTypes(r);
+    registerSplineInstancerTypes(r);
+    registerTerrainSplineTypes(r);
     registerModelLodGenerator(); // the model cooker's LOD / impostor step (world/LodModel.hpp)
+    ui::registerPrefabIconBaker(); // the icon cooker's renderer (ui/PrefabIcon.hpp)
     registerAssetTypes(r); // MaterialAsset (.material files)
 }
 } // namespace
@@ -235,6 +241,11 @@ void Engine::benchFrame(float cpuMs)
     for (const Profiler::Zone& z : Profiler::get().zones())
         log::info("[bench] cpu {}{:<28} {:8.3f} ms", std::string(size_t(z.depth) * 2, ' '), z.name, z.avgMs);
     quit();
+}
+
+void Engine::registerTypes()
+{
+    registerAllTypes();
 }
 
 Engine::~Engine()

@@ -42,6 +42,33 @@ To update: read the changelog entries since your version, then
 rebuild, and fix any deprecation warnings (deprecated APIs keep working for
 one minor version).
 
+## Use a prebuilt engine (no engine source)
+
+Instead of building the engine with your game, install it once as a package
+(headers, static libraries, `vecook`, shaders and CMake files) and point
+your game at it. From an engine checkout:
+
+```bash
+cmake --preset release && cmake --build --preset release
+cmake --install build-release --component VulkanEngine --prefix ~/sdk/vulkan-engine-0.1.0
+```
+
+(Install a Debug build into the same folder too and Debug games link the
+Debug libraries. Windows CI uploads an MSVC Release package with every run:
+the `vulkan-engine-msvc-release` artifact.) Then configure your game with
+the package; this template uses one when it finds one, else
+`VE_ENGINE_DIR`:
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=~/sdk/vulkan-engine-0.1.0
+```
+
+Your game never compiles the engine, and `build/bin/vecook` comes from the
+package. Use the same compiler the package was built with (MSVC and MinGW
+GCC libraries don't mix) and the Vulkan SDK (your shaders are compiled with
+its glslc). Upgrading the engine = installing a newer package and pointing
+`CMAKE_PREFIX_PATH` at it.
+
 ## Layout
 
 ```

@@ -147,6 +147,27 @@ public:
 go.addComponent<Spin>().speed = 3.0f;
 ```
 
+### Find things near a point
+
+`ve::Scene` finds objects of a type (a component type or a GameObject class)
+by distance from their world positions. Inactive and destroyed objects are
+skipped:
+
+```cpp
+auto* gen = scene().findNearest<Generator>(pos, 30.0f);              // nearest within 30 m, or null
+auto* fueled = scene().findNearest<Generator>(pos, 30.0f, [](Generator& g) { return g.fuel > 0; },
+                                              /*horizontal*/ true);  // + a filter, ignoring height
+scene().forEachWithin<Lamp>(pos, 20.0f, [](Lamp& l, float distance) { l.flicker(distance); });
+GameObject* well = scene().findNearestWithTag("water", pos, 50.0f);
+```
+
+They scan that type's objects, which is fine for hundreds or a few thousand.
+Many thousands of simple things belong in a `ProxySet` (its `query` /
+`nearest` use a grid). Rules about what may be near what stay in the game:
+the sandbox's `Generator::covering` asks for the nearest generator whose own
+`powerRadius` reaches a point (a filter on findNearest), and the build tool
+blocks a lamp post without one.
+
 ### Custom material with its own shader
 
 1. Write `mything.vert` and `mything.frag` in your game's `shaders/` folder.
@@ -285,6 +306,27 @@ overlays to triplanar** button in the panel. Damage brush alphas for painting we
 and concrete damage (edge chips, flakes, scratches, spalls, pitting, cracks,
 crumble) are in `tools/blender/brushes/` (made by
 `tools/blender/make_damage_brushes.py`; its header says how to set them up).
+
+### Splines: paths through the world
+`ve::Spline` (scene/Spline.hpp) is a smooth curve through control points (in
+the object's local space; the curve passes through every point). Lay them in
+the editor (Create > Spline, docs/05-editor.md "Splines") or from code:
+
+```cpp
+auto& s = obj.addComponent<ve::Spline>();
+s.setPoints({{{0, 0, 0}}, {{20, 0, 5}, 2.0f}, {{40, 0, 0}}});  // position, width factor
+auto path = s.path();                        // world space, cached; shared_ptr: safe to keep on another thread
+for (float d = 0; d < path->length(); d += 5.0f) {
+    auto p = path->at(d);                    // position, tangent (unit), width, distance
+    spawnPost(p.position, p.tangent);
+}
+auto c = path->closest(pos, 10.0f);          // nearest within 10 m (horizontal); c.separation = inf if none
+if (c.separation < 3.0f && c.side > 0.0f) { /* within 3 m, on the right-hand side */ }
+```
+
+Something that follows a spline polls `spline.version()` and rebuilds when it
+changes (points edited, the object moved). `closest()` uses a grid of the
+path's segments, so querying many points (terrain samples) stays cheap.
 
 ### Decals: bullet holes, puddles, cracks
 
@@ -642,6 +684,12 @@ if (placePressed && preview.valid()) ve::prefab::instantiate(scene(), piecePath,
 - Rebuild the navmesh around placed / removed pieces (`NavMeshSurface::rebuild`).
 - Roofs: eaves (low edge) on wall tops; a roof whose slope cuts through a
   side wall is (correctly) blocked.
+- Game rules on top of the fit (Savanna's power pieces, sandbox/src/Power.hpp):
+  a lamp post is only valid where a generator's `powerRadius` reaches
+  (`Builder::updatePreview` asks `Generator::covering`, which uses
+  `Scene::findNearest`; the panel says "needs a generator nearby"); a fuel
+  barrel placed within 4 m of a generator pours its 20 litres in and is gone
+  (done when placed, not in `start()`, so loading a save doesn't pour twice).
 
 ### Seeing what's going on: debug drawing
 
@@ -765,8 +813,22 @@ b.onClick = [this] { resume(); };
   with `root().find(name)` and `click()` them like a player would.
 - Live values: `Label::bind` / `ProgressBar::bind` instead of updating
   every frame by hand.
-- Item / piece pictures: bake them once at load (`ui::bakeIcon` from the
-  mesh data; a load step) and keep the `shared_ptr<Texture>`.
+- Item / piece pictures of prefabs: `ui::prefabIcon("prefabs/x.prefab")`
+  (ui/PrefabIcon.hpp). It uses a hand-made `x.prefab.png` if there is one,
+  else the cooked icon, else renders the prefab now (its meshes with their
+  materials and textures, in a private scene) and caches it in the cook cache
+  for the next run. `vecook` renders them ahead of time for prefabs with an
+  `"icon"` section, which also sets the view:
+  `"icon": {"size": 192, "yaw": 35, "pitch": 22, "padding": 0.06, "key": "v2"}`.
+  Change `key` when code that builds the prefab's meshes changes; edits to the
+  prefab, its model, textures or material files re-render it by themselves.
+  Prefabs made of the game's own types (Savanna's `BuildPiece`) can only be
+  rendered by the game: cook them with `build/bin/<game> --cook` (the same
+  options as vecook: `--check`, `--package`...; the game template's `main`
+  passes it to `ve::cookToolMain`). Plain `vecook` lists them as "left to the
+  game", and the game renders and caches them when they're first shown.
+  Pictures of plain mesh data (no prefab): `ui::bakeIcon(renderer, meshData)`
+  (vertex colours only).
 - A title screen over the real world: spawn a high-priority camera, hold
   the time of day, hide the HUD, and drop the camera when play starts
   (Savanna's `MainMenu`).

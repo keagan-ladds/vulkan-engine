@@ -25,6 +25,7 @@
 #include "Stress.hpp"
 #include "Vegetation.hpp"
 
+#include <ve/app/CookTool.hpp>
 #include <ve/debug/Debug.hpp>
 #include <ve/editor/Editor.hpp>
 #include <ve/world/Terrain.hpp>
@@ -517,8 +518,14 @@ bool reloadWithSave(ve::Engine& engine, const std::string& slot)
 
 } // namespace savanna
 
-int main()
+int main(int argc, char** argv)
 {
+    // `savanna --cook [vecook options]`: cook / check / package with this
+    // game's types registered (prefab icons of game objects need them).
+    if (argc > 1 && std::string(argv[1]) == "--cook") {
+        argv[1] = argv[0];
+        return ve::cookToolMain(argc - 1, argv + 1);
+    }
     try {
         ve::EngineConfig config;
         config.title = "Savanna - vulkan-engine test scene";

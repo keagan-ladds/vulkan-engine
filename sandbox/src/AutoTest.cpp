@@ -7,6 +7,7 @@
 #include "MainMenu.hpp"
 #include "Pickups.hpp"
 #include "Player.hpp"
+#include "Power.hpp"
 #include "Props.hpp"
 #include "SavannaLayout.hpp"
 #include "Villager.hpp"
@@ -37,17 +38,24 @@
 #include <ve/render/Texture.hpp>
 #include <ve/scene/MeshComponents.hpp>
 #include <ve/scene/SaveGame.hpp>
+#include <ve/scene/SceneSerializer.hpp>
+#include <ve/scene/Spline.hpp>
 #include <ve/scene/Scene.hpp>
 #include <ve/assets/ModelData.hpp>
 #include <ve/render/Impostor.hpp>
 #include <ve/world/Foliage.hpp>
 #include <ve/world/LodModel.hpp>
+#include <ve/world/SplineInstancer.hpp>
+#include <ve/world/TerrainSpline.hpp>
+#include <ve/assets/IconCook.hpp>
+#include <ve/ui/PrefabIcon.hpp>
 #include <ve/world/Terrain.hpp>
 #include <ve/world/Vegetation.hpp>
 #include <vfx/DayNight.hpp>
 #include <vfx/Weather.hpp>
 
 #include <cmath>
+#include <set>
 #include <cstdio>
 #include <functional>
 #include <stdexcept>
@@ -208,6 +216,163 @@ void AutoTest::update(float dt)
             probe.destroy();
             m_destroyProbe = &scene().spawn<SpawnOnDestroy>();
         }
+        // Splines: a straight two-point spline is a 10 m line; a closed square
+        // of points makes a smooth loop; closest() / side; scene file round trip.
+        {
+            ve::GameObject& line = scene().spawn("SplineProbe");
+            line.transform().setPosition({100.0f, 5.0f, 100.0f});
+            auto& sp = line.addComponent<ve::Spline>();
+            line.persistent = sp.persistent = true; // (code-made objects aren't saved otherwise)
+            sp.setPoints({{{-5.0f, 0.0f, 0.0f}, 1.0f}, {{5.0f, 0.0f, 0.0f}, 3.0f}});
+            const auto path = sp.path();
+            const auto mid = path->at(path->length() * 0.5f);
+            const auto c = path->closest({100.0f, 5.0f, 102.0f}, 5.0f); // 2 m along +Z of the middle
+            const bool lineOk = std::abs(path->length() - 10.0f) < 0.01f && glm::length(mid.position - glm::vec3(100, 5, 100)) < 0.01f &&
+                                std::abs(mid.width - 2.0f) < 0.01f && std::abs(c.separation - 2.0f) < 0.01f && c.side > 0.0f;
+            const uint64_t v0 = sp.version();
+            line.transform().setPosition({110.0f, 5.0f, 100.0f});
+            const bool movedOk = sp.version() != v0 && std::abs(sp.path()->samples().front().position.x - 105.0f) < 0.01f;
+            ve::GameObject& ring = scene().spawn("SplineLoop");
+            auto& lp = ring.addComponent<ve::Spline>();
+            lp.setPoints({{{10, 0, 0}}, {{0, 0, 10}}, {{-10, 0, 0}}, {{0, 0, -10}}});
+            lp.setClosed(true);
+            const float ringLen = lp.path()->length(); // between the square's 56.6 and the circle's 62.8
+            const ve::Json saved = ve::SceneSerializer::serializeObject(line);
+            ve::GameObject* copy = ve::SceneSerializer::createObject(scene(), saved, nullptr, true);
+            auto* cs = copy ? copy->getComponent<ve::Spline>() : nullptr;
+            const bool roundTrip = cs && cs->points().size() == 2 && std::abs(cs->points()[1].width - 3.0f) < 1e-4f &&
+                                   std::abs(cs->path()->length() - 10.0f) < 0.01f;
+            log(std::string("splines: line length / middle / width / closest: ") + (lineOk ? "yes" : "NO") + ", follows its object: " +
+                (movedOk ? "yes" : "NO") + ", closed loop " + std::to_string(int(ringLen)) + " m" +
+                (ringLen > 58.0f && ringLen < 64.0f ? " (smooth: yes)" : " NO") + ", scene file round trip: " + (roundTrip ? "yes" : "NO"));
+            line.destroy();
+            ring.destroy();
+            if (copy) copy->destroy();
+        }
+        // Things along splines (scene: "Paddock fence", "Powerline"): posts and
+        // poles placed with rails / cables, and no trees in the powerline's
+        // 14 m corridor (FoliageExclusion on the spline) while there are beside it.
+        {
+            ve::SplineInstancer* fence = nullptr;
+            ve::SplineInstancer* power = nullptr;
+            for (const auto& o : scene().objects())
+                if (auto* si = dynamic_cast<ve::SplineInstancer*>(o.get()); si && !si->isDestroyed()) {
+                    if (si->name() == "Paddock fence") fence = si;
+                    if (si->name() == "Powerline") power = si;
+                }
+            // The powerline lays the "Powerline corridor" sub-biome (TerrainMask):
+            // still savanna, but no trees (rocks stay, a few bushes) and grass at 45 % height.
+            int inside = 0, beside = 0, rocksInside = 0;
+            float grassHeight = 1.0f, corridorWeight = 0.0f;
+            auto* foliage = scene().findFirst<ve::Foliage>();
+            auto treesAt = [&](const glm::vec3& p, float r, bool rocks) {
+                int n = 0;
+                if (!foliage || !foliage->system()) return 0;
+                static const std::set<std::string> trees{"Baobabs", "Acacias", "Fever trees", "Jungle trees", "Palms", "Quiver trees",
+                                                         "Test trees (glTF)"};
+                const auto& names = foliage->layerNames();
+                for (uint32_t l = 0; l < foliage->system()->layerCount() && l < names.size(); ++l)
+                    if (rocks ? names[l] == "Rocks" || names[l] == "Boulders" : trees.count(names[l]) > 0)
+                        n += int(foliage->system()->query(l, {p.x, p.z}, r).size());
+                return n;
+            };
+            if (power) {
+                const auto path = power->getComponent<ve::Spline>()->path();
+                auto td = ve::Terrain::find(scene()) ? ve::Terrain::find(scene())->data() : nullptr;
+                for (float d = 10.0f; d < path->length(); d += 12.0f) {
+                    const auto s = path->at(d);
+                    const glm::vec3 right = glm::normalize(glm::vec3(-s.tangent.z, 0.0f, s.tangent.x));
+                    inside += treesAt(s.position, 6.0f, false);
+                    rocksInside += treesAt(s.position, 6.0f, true);
+                    beside += treesAt(s.position + right * 30.0f, 6.0f, false) + treesAt(s.position - right * 30.0f, 6.0f, false);
+                    if (td) {
+                        const int sub = td->subBiomeIndex("Powerline corridor");
+                        corridorWeight = std::max(corridorWeight, sub >= 0 ? td->subBiomeWeight(sub, s.position.x, s.position.z) : 0.0f);
+                        grassHeight = std::min(grassHeight, td->grassFactors({s.position.x, s.position.z}).y);
+                    }
+                }
+            }
+            log("spline instancer: fence posts " + std::to_string(fence ? fence->items().size() : 0) + ", rails " +
+                std::to_string(fence ? fence->cableCount() : 0) + (fence && fence->items().size() > 20 && fence->cableCount() == 2 * fence->items().size() ? " (yes)" : " NO") +
+                "; powerline poles " + std::to_string(power ? power->items().size() : 0) + ", cables " + std::to_string(power ? power->cableCount() : 0) +
+                (power && power->items().size() >= 6 && power->cableCount() == 3 * (power->items().size() - 1) ? " (yes)" : " NO") +
+                "; trees in its corridor " + std::to_string(inside) + (inside == 0 ? " (yes)" : " NO") + ", beside it " + std::to_string(beside) +
+                "; sub-biome there: " + (corridorWeight > 0.99f ? "yes" : "NO") + ", grass height x" + std::to_string(grassHeight) +
+                (std::abs(grassHeight - 0.45f) < 0.01f ? " (yes)" : " NO") + ", rocks kept " + std::to_string(rocksInside));
+        }
+        // Prefab icons (ui::prefabIcon): every build piece has one, rendered from
+        // its prefab or loaded cooked; the hut's (a textured glTF model) is in the
+        // cook cache with its model as a dependency, covered and in colour.
+        {
+            size_t withIcon = 0, total = 0;
+            if (auto* builder = scene().findFirst<Builder>())
+                for (const auto& e : builder->catalogue()) {
+                    ++total;
+                    withIcon += e.icon ? 1 : 0;
+                }
+            const auto& st = ve::ui::prefabIconStats();
+            const std::string hut = "prefabs/building/rondavel_hut.prefab";
+            nlohmann::json stamp;
+            uint32_t size = 0;
+            std::vector<uint8_t> px;
+            const bool cached = ve::readCookedIcon(ve::cookedIconPath(assets().cooking().cacheDir, hut), &stamp, &size, &px);
+            size_t covered = 0;
+            float lo = 1.0f, hi = 0.0f;
+            for (size_t i = 0; i + 3 < px.size(); i += 4) {
+                if (px[i + 3] < 128) continue;
+                ++covered;
+                const float lum = (px[i] * 0.3f + px[i + 1] * 0.59f + px[i + 2] * 0.11f) / 255.0f;
+                lo = std::min(lo, lum);
+                hi = std::max(hi, lum);
+            }
+            bool modelDep = false;
+            for (const auto& d : stamp.value("dependencies", nlohmann::json::array()))
+                modelDep = modelDep || d.value("path", std::string()).find("rondavel.gltf") != std::string::npos;
+            const float coverage = px.empty() ? 0.0f : float(covered) / float(px.size() / 4);
+            log("icons: " + std::to_string(withIcon) + " of " + std::to_string(total) + " build pieces have one" +
+                (withIcon == total && total > 0 ? " (yes)" : " NO") + " (" + std::to_string(st.rendered) + " rendered, " +
+                std::to_string(st.cooked) + " cooked, " + std::to_string(st.handMade) + " hand-made); hut icon cached: " + (cached ? "yes" : "NO") +
+                ", covers " + std::to_string(int(coverage * 100.0f)) + " %" + (coverage > 0.2f ? " (yes)" : " NO") + ", shaded / textured: " +
+                (hi - lo > 0.25f ? "yes" : "NO") + ", depends on its model: " + (modelDep ? "yes" : "NO"));
+        }
+        // Roads (TerrainSpline "Dirt road"): flat across its width, painted with
+        // its biome, no trees on it. Then a footpath point moves: the terrain
+        // should re-shape only around the path (checked in step 1).
+        {
+            ve::TerrainSpline* road = nullptr;
+            ve::TerrainSpline* path = nullptr;
+            for (const auto& o : scene().objects())
+                if (auto* ts = dynamic_cast<ve::TerrainSpline*>(o.get()); ts && !ts->isDestroyed()) {
+                    if (ts->name() == "Dirt road") road = ts;
+                    if (ts->name() == "Footpath") path = ts;
+                }
+            auto* terrain = ve::Terrain::find(scene());
+            float worstTilt = 0.0f, minBiome = 1.0f;
+            int trees = 0, samples = 0;
+            if (road && terrain) {
+                const auto rp = road->getComponent<ve::Spline>()->path();
+                for (float d = 15.0f; d < rp->length() - 15.0f; d += 25.0f, ++samples) {
+                    const auto s = rp->at(d);
+                    const glm::vec3 right = glm::normalize(glm::vec3(-s.tangent.z, 0.0f, s.tangent.x));
+                    const glm::vec3 l = s.position - right * 2.0f, r = s.position + right * 2.0f;
+                    const float hc = terrain->height(s.position.x, s.position.z);
+                    worstTilt = std::max({worstTilt, std::abs(terrain->height(l.x, l.z) - hc), std::abs(terrain->height(r.x, r.z) - hc)});
+                    minBiome = std::min(minBiome, terrain->biomeWeight("Camp", s.position.x, s.position.z));
+                    trees += foliageAt(s.position, 5.0f);
+                }
+            }
+            log("roads: dirt road sampled " + std::to_string(samples) + "x, flat across (worst " + std::to_string(worstTilt) + " m): " +
+                (samples > 5 && worstTilt < 0.08f ? "yes" : "NO") + ", painted (min weight " + std::to_string(minBiome) + "): " +
+                (minBiome > 0.9f ? "yes" : "NO") + ", trees on it " + std::to_string(trees) + (trees == 0 ? " (yes)" : " NO"));
+            if (path && terrain) {
+                m_roadTerrainVersion = terrain->version();
+                auto* sp = path->getComponent<ve::Spline>();
+                ve::SplinePoint last = sp->points().back();
+                last.position.z += 12.0f;
+                sp->setPoint(sp->points().size() - 1, last);
+                m_roadMoved = true;
+            }
+        }
         // Physics: ray straight down onto the terrain, player standing, crates resting.
         const glm::vec3 above(layout::kCamp.x + 3.0f, 200.0f, layout::kCamp.y + 3.0f);
         if (auto hit = physics().raycast(above, {0, -1, 0}, 400.0f)) {
@@ -342,6 +507,15 @@ void AutoTest::update(float dt)
             ve::DataAssets::set("materials/thatch.material", edited);
         }
     } else if (m_step == 1 && !m_inTrigger && m_t > 3.3f) {
+        if (m_roadMoved) {
+            // The footpath point moved in step 0: a local re-shape, not a full rebuild.
+            m_roadMoved = false;
+            glm::vec4 area(0.0f); // (no terrain: stays empty)
+            auto* terrain = ve::Terrain::find(scene());
+            const bool local = terrain && terrain->changedOnlyIn(m_roadTerrainVersion, area);
+            log(std::string("roads: moving a path point re-shaped only the land around it: ") + (local ? "yes" : "NO") + " (" +
+                std::to_string(int(area.z - area.x)) + " x " + std::to_string(int(area.w - area.y)) + " m)");
+        }
         // The thrown rock is away: stand in the trigger box for a moment.
         if (auto* p = localPlayer(scene())) p->teleport(m_triggerFeet, 0.0f);
         ve::QueryFilter f;
@@ -958,10 +1132,69 @@ void AutoTest::update(float dt)
             break;
         }
         case 42: {
-            log("build: ... and " + std::to_string(foliageAt(m_exclusionAt, 0.3f)) + " after removing it");
-            m_t = 0.0f;
-            m_stepFrame = m_frames;
-            ++m_step;
+            // Power (Power.hpp, on ve::Scene::findNearest): a generator, a lamp out of
+            // its reach (blocked) and in it (placed, dark: no fuel), a fuel barrel set
+            // down by the generator (poured in, gone), then the lamp lights up.
+            auto pieceIndex = [&](const std::string& name) {
+                for (size_t i = 0; i < b->catalogue().size(); ++i)
+                    if (b->catalogue()[i].name == name) return int(i);
+                return 0;
+            };
+            auto aimAt = [&](const std::string& piece, const glm::vec3& at) {
+                b->setActive(true);
+                b->select(pieceIndex(piece));
+                b->setYawDegrees(0.0f);
+                b->setAimOverride(at);
+                m_t = 0.0f;
+                m_stepFrame = m_frames;
+            };
+            auto ground = [&](float dx, float dz) { return groundAt(glm::vec2(m_powerSite.x + dx, m_powerSite.z + dz)); };
+            auto* gen = m_generator.get(scene()) ? m_generator.get(scene())->getComponent<Generator>() : nullptr;
+            auto* lamp = m_lamp.get(scene()) ? m_lamp.get(scene())->getComponent<PoweredLight>() : nullptr;
+            switch (m_power++) {
+            case 0:
+                log("build: ... and " + std::to_string(foliageAt(m_exclusionAt, 0.3f)) + " after removing it");
+                m_powerSite = groundAt(layout::kCamp + glm::vec2(-6.0f, -18.0f));
+                aimAt("Generator", m_powerSite);
+                break;
+            case 1:
+                placeLog("generator", b->previewPosition());
+                if (!m_built.empty() && m_built.back().get(scene()) && m_built.back().get(scene())->getComponent<Generator>()) m_generator = m_built.back();
+                aimAt("Lamp post", ground(26.0f, 0.0f)); // beyond its 16 m
+                break;
+            case 2:
+                m_lampFarBlocked = !b->previewValid() && b->previewNeedsPower();
+                aimAt("Lamp post", ground(9.0f, 0.0f));
+                break;
+            case 3:
+                placeLog("lamp post 9 m from the generator", b->previewPosition());
+                // (Its PoweredLight is added when the piece starts, next frame: recognise it by kind.)
+                if (!m_built.empty())
+                    if (auto* piece = BuildPiece::of(m_built.back().get(scene())); piece && piece->kind == BuildPiece::Kind::LampPost)
+                        m_lamp = m_built.back();
+                aimAt("Fuel barrel", ground(1.8f, 1.6f));
+                break;
+            case 4: {
+                m_lampLitBefore = lamp && lamp->lit();
+                const float before = gen ? gen->fuel : -1.0f;
+                ve::GameObject* barrel = b->place(); // (null: it poured itself in and is gone)
+                m_barrelPoured = (!barrel || barrel->isDestroyed()) && gen && gen->fuel > before + 19.0f;
+                m_t = 0.0f;
+                m_stepFrame = m_frames;
+                break;
+            }
+            default:
+                log(std::string("power: generator placed: ") + (gen ? "yes" : "NO") + ", lamp out of its reach blocked: " +
+                    (m_lampFarBlocked ? "yes" : "NO") + ", lamp in reach placed: " + (lamp ? "yes" : "NO") + ", dark without fuel: " +
+                    (lamp && !m_lampLitBefore ? "yes" : "NO") + ", barrel poured in and gone: " + (m_barrelPoured ? "yes" : "NO") +
+                    " (fuel " + std::to_string(gen ? gen->fuel : -1.0f) + " l), lamp lit now: " + (lamp && lamp->lit() ? "yes" : "NO"));
+                b->setAimOverride(std::nullopt);
+                b->setActive(false);
+                m_t = 0.0f;
+                m_stepFrame = m_frames;
+                ++m_step;
+                break;
+            }
             break;
         }
         case 43: {
@@ -995,6 +1228,9 @@ void AutoTest::update(float dt)
         bool doorOpen = false;
         scene().forEach<DoorHinge>([&](DoorHinge& h) { doorOpen = doorOpen || h.open(); });
         log(std::string("build: the door is still open after loading: ") + (doorOpen ? "yes" : "NO"));
+        float fuel = 0.0f;
+        scene().forEach<Generator>([&](Generator& g) { fuel += g.fuel; });
+        log("power: the generator's fuel after loading: " + std::to_string(fuel) + " l" + (fuel > 15.0f ? " (yes)" : " NO"));
         ve::save::remove("buildtest");
         // Look at the little house for the screenshot.
         if (!s_expect.pieces.empty()) {

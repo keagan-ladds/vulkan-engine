@@ -156,6 +156,21 @@ void Scene::reindex(GameObject* obj, uint64_t oldId)
     m_byId[obj->id()] = obj;
 }
 
+GameObject* Scene::findNearestWithTag(std::string_view tag, const glm::vec3& p, float maxDistance, bool horizontal) const
+{
+    GameObject* best = nullptr;
+    float bestDist = maxDistance;
+    forEachWithTag(tag, [&](GameObject& o) {
+        if (!o.activeInHierarchy()) return;
+        const float d = distanceTo(p, o.transform().position(), horizontal);
+        if (d <= bestDist) {
+            best = &o;
+            bestDist = d;
+        }
+    });
+    return best;
+}
+
 std::vector<GameObject*> Scene::findAllWithTag(const std::string& tag) const
 {
     std::vector<GameObject*> result;

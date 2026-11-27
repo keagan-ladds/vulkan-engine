@@ -4,6 +4,7 @@
 #include "ve/editor/Editor.hpp"
 
 #include "ve/editor/EditorInternal.hpp"
+#include "ve/scene/Spline.hpp"
 #include "ve/scene/Components.hpp"
 #include "ve/scene/Scene.hpp"
 #include "ve/scene/SceneSerializer.hpp"
@@ -275,6 +276,7 @@ void Editor::drawInspector()
                 bool changed = false;
                 for (const FieldInfo& f : ct->fields) changed |= drawField(f, &c, sel);
                 if (changed && ct->onChanged) ct->onChanged(&c);
+                if (auto* spline = dynamic_cast<Spline*>(&c)) drawSplineTools(*spline);
             } else {
                 ImGui::TextDisabled("Not registered: no editable fields.");
             }
