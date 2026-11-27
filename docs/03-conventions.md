@@ -65,6 +65,8 @@ codebase's state; `--list <header>` every gap in one header. Needs Doxygen
 
 ### Start a new game (without touching the engine)
 
+Step by step, on a prebuilt engine package: [10-getting-started.md](10-getting-started.md).
+
 Copy `templates/game` out of the repo and build it with
 `-DVE_ENGINE_DIR=/path/to/vulkan-engine` (details in `templates/game/README.md`).
 Its CMakeLists is just:
