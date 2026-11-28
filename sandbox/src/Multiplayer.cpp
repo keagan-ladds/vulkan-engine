@@ -240,8 +240,8 @@ NetTest::NetTest(bool host) : GameObject("NetTest"), m_host(host)
     if (host) {
         n.config.historySeconds = 10.0f; // (software rendering here: round trips of seconds)
         // A request that can be refused: negative numbers are.
-        n.on("nettest.ask", [this](net::PeerId, net::Reader& r) {
-            if (r.read<int32_t>() < 0) net().reject("negative");
+        n.on("nettest.ask", [&n](net::PeerId, net::Reader& r) {
+            if (r.read<int32_t>() < 0) n.reject("negative");
         }, net::From::Clients);
         // Only the host may send this one: a client asking must not run it here.
         n.on("nettest.hostonly", [this](net::PeerId, net::Reader&) { m_hostOnlyRan = true; }, net::From::Host);
