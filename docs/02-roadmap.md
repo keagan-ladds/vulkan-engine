@@ -7,14 +7,20 @@ verification workflow.
 
 Legend: `[x]` done · `[ ]` todo · `[~]` partially done (see note)
 
-## Status snapshot (2026-11-20)
+## Status snapshot (2026-11-28)
 
 Phases 0–13 are done, as are F2 (animation), most of F3, F5 tooling and the
 engine side of F4 (interaction, save games, loading screens, gamepad,
 profiler, navmesh + agents, prefabs, snap / placement, game UI), plus the
 Savanna building kit, menus and inventory. Multiplayer (F6) has its
 foundation: host-authoritative sessions, object replication and requests;
-Savanna players see each other and build together.
+Savanna players see each other and build together. Since 11-20: spot
+lights, model cooking (`.vemodel`, offline LODs / impostors), splines (fences,
+powerlines, roads, sub-biomes), spatial lookups, prefab icons, an installable
+engine package, a getting-started guide, and the engine side of N2 / N3
+(player ids, requests with answers, generic replication, interest
+management, delta snapshots, lag compensation, a network simulator, server
+mode; D38). `ve::Inventory` moved out of the engine into the game.
 
 - Zero Vulkan validation messages through the autotest (which also covers
   save / load, navigation and building) and the editor test.
@@ -26,9 +32,9 @@ Savanna players see each other and build together.
   warnings fixed, generic code moved into the engine (`buildLodChain`, `ve::env`, `ve::math`, config files) and game tuning out
   of it.
 
-Next up: F6 N2 (gameplay through the host: interactions, pickups,
-villagers, doors) alongside game-side F4 (animal AI, crafting, building
-follow-ups, combat). New gameplay should be written host-authoritative from
+Next up: Savanna's side of N2 (chopping / picking, doors, villagers,
+inventories per player through the host, on the new mechanisms) alongside
+game-side F4 (animal AI, crafting, building follow-ups, combat). New gameplay should be written host-authoritative from
 the start (see conventions, "Multiplayer-ready gameplay"). Also see
 [Known issues](#known-issues--tech-debt).
 
