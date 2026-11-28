@@ -634,8 +634,10 @@ void NetTest::clientStep(float)
         next();
         break;
     case 9: // the host kicks us when it's done
+        if (m_disconnect.empty()) m_receivedBytes = n.bandwidth().received; // (gone with the session)
         if (m_disconnect.empty() && m_t < 120.0f) break;
         log("the host sent us off: " + std::string(yes(m_hostDone && m_disconnect.rfind("Kicked", 0) == 0)) + " ('" + m_disconnect + "')");
+        log("bandwidth: received " + std::to_string(m_receivedBytes / 1024) + " KB from the host in all");
         engine().quit();
         next();
         break;

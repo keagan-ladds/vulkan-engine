@@ -110,6 +110,7 @@ private:
     glm::vec3 m_crateAt{0.0f}, m_far{0.0f};
     std::string m_clip;
     float m_wait = 0.0f;
+    uint64_t m_receivedBytes = 0;
 };
 
 } // namespace savanna
