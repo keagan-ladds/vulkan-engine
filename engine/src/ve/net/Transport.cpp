@@ -51,6 +51,7 @@ struct Transport::Impl {
         ConnectionId connection;
         Channel channel;
         std::vector<uint8_t> bytes;
+        bool disconnect = false; ///< not a packet: close the connection (after what was queued before it)
     };
     /// Our own counters (ENet resets its byte counts every second).
     struct Counters {
@@ -92,7 +93,7 @@ struct Transport::Impl {
             due = std::max(due, last);
             last = due;
         }
-        Delayed d{due, c, channel, {bytes.begin(), bytes.end()}};
+        Delayed d{due, c, channel, {bytes.begin(), bytes.end()}, false};
         auto at = std::upper_bound(delayed.begin(), delayed.end(), due, [](double t, const Delayed& e) { return t < e.due; });
         delayed.insert(at, std::move(d));
     }
@@ -102,6 +103,10 @@ struct Transport::Impl {
         while (!delayed.empty() && delayed.front().due <= t) {
             Delayed d = std::move(delayed.front());
             delayed.pop_front();
+            if (d.disconnect) {
+                if (auto it = peers.find(d.connection); it != peers.end()) enet_peer_disconnect_later(it->second, 0);
+                continue;
+            }
             sendNow(d.connection, d.channel, d.bytes);
         }
     }
@@ -170,6 +175,13 @@ void Transport::disconnect(ConnectionId c)
 {
     auto it = m->peers.find(c);
     if (it == m->peers.end()) return;
+    // Simulating latency: packets for it may still be held back; close after them.
+    if (auto last = m->lastReliableDue.find(c); m->sim.active() && last != m->lastReliableDue.end() && last->second > nowSeconds()) {
+        Impl::Delayed d{last->second, c, Channel::Reliable, {}, true};
+        auto at = std::upper_bound(m->delayed.begin(), m->delayed.end(), d.due, [](double t, const Impl::Delayed& e) { return t < e.due; });
+        m->delayed.insert(at, std::move(d));
+        return;
+    }
     enet_peer_disconnect_later(it->second, 0);
 }
 
