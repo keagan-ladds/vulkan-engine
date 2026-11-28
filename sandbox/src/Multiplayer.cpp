@@ -351,6 +351,11 @@ void NetTest::hostStep(float)
         ve::save::writePlayer("nettest", p.playerId, {{"visits", visits}});
         const int readBack = ve::save::readPlayer("nettest", p.playerId).value_or(ve::Json::object()).value("visits", 0);
         n.setPlayerObject(p.id, theirs);
+        // A host-owned villager: it slides along a line now (lag compensation), dances later.
+        if (ve::GameObject* dancer = n.spawn("prefabs/net/test_dancer.prefab", ground(site + glm::vec2(-6.0f, -10.0f)))) {
+            m_dancer = dancer->id();
+            m_seen = dancer->transform().position();
+        }
         log(std::string("player id '") + p.playerId + "': " + yes(idOk) + ", their save data kept per player id: " + yes(readBack == visits) +
             " (visit " + std::to_string(visits) + "), player object " + yes(n.playerObject(p.id) == theirs));
         next();
@@ -364,23 +369,19 @@ void NetTest::hostStep(float)
             requestPiece("prefabs/building/foundation_stone.prefab", site + glm::vec2(2.0f, 0.0f));
             log("placed piece B while they watch");
         }
-        // Lag compensation: our avatar where the client saw it (a moment ago).
-        PlayerAvatar* ours = mp ? mp->avatarOf(net::kServer) : nullptr;
-        if (m_t > 6.0f && !m_rewound && ours && client != net::kEveryone) {
+        // Lag compensation: the villager slides along +X at 1.5 m/s; where did the client see it?
+        ve::GameObject* mover = scene().findById(m_dancer);
+        if (mover) mover->transform().setPosition(m_seen + glm::vec3(1.5f * m_t, 0.0f, 0.0f));
+        if (m_t > 6.0f && !m_rewound && mover && client != net::kEveryone) {
             m_rewound = true;
-            const glm::vec3 now = ours->transform().position();
+            const glm::vec3 now = mover->transform().position();
             glm::vec3 then = now;
-            n.rewind(client, [&] { then = ours->transform().position(); });
+            n.rewind(client, [&] { then = mover->transform().position(); });
             const double ago = n.clock() - n.viewTime(client);
-            auto* nt = ours->getComponent<net::NetworkTransform>();
-            glm::vec3 p1(0.0f), p2(0.0f);
-            glm::quat q;
-            const bool h1 = nt && nt->poseAt(n.clock() - 0.3, p1, q), h2 = nt && nt->poseAt(n.clock() - 100.0, p2, q);
-            log("lag compensation history: 0.3 s ago " + std::string(yes(h1)) + " " + std::to_string(glm::distance(p1, now)) + " m away, oldest " +
-                yes(h2) + " " + std::to_string(glm::distance(p2, now)) + " m away");
-            log("lag compensation: rewound our avatar " + std::to_string(glm::distance(now, then)) + " m back to " +
-                std::to_string(int(ago * 1000.0)) + " ms ago; moved back after: " + yes(glm::distance(ours->transform().position(), now) < 1e-4f) +
-                "; " + yes(glm::distance(now, then) > 0.01f && ago > 0.09));
+            const bool back = then.x < now.x - 0.01f && then.x >= m_seen.x - 0.01f && std::abs(then.z - now.z) < 0.01f;
+            log("lag compensation: rewound the sliding villager " + std::to_string(now.x - then.x) + " m back along its path to where they saw it " +
+                std::to_string(int(ago * 1000.0)) + " ms ago: " + yes(back && ago > 0.09) + "; put back after: " +
+                yes(glm::distance(mover->transform().position(), now) < 1e-4f));
         }
         if (m_t > 12.0f) next();
         break;
@@ -408,7 +409,7 @@ void NetTest::hostStep(float)
         // Things for them to watch: a crate that falls (dynamic here, follows
         // there), a villager whose Animator is replicated, a tree we remove.
         if (ve::GameObject* crate = n.spawn("prefabs/net/test_crate.prefab", p + glm::vec3(3.0f, 4.0f, 0.0f))) m_crate = crate->id();
-        if (ve::GameObject* dancer = n.spawn("prefabs/net/test_dancer.prefab", ground(glm::vec2(p.x - 3.0f, p.z + 2.0f)))) m_dancer = dancer->id();
+        if (ve::GameObject* dancer = scene().findById(m_dancer)) dancer->transform().setPosition(ground(glm::vec2(p.x - 3.0f, p.z + 2.0f)));
         if (auto* f = scene().findFirst<ve::Foliage>(); f && f->system()) {
             for (uint32_t layer = 0; layer < f->layerNames().size() && !m_foliage; ++layer)
                 if (auto inst = f->system()->nearest(layer, glm::vec2(p.x, p.z), 80.0f)) {
@@ -416,7 +417,8 @@ void NetTest::hostStep(float)
                     m_foliage = inst->id.packed();
                 }
         }
-        log(std::string("spawned a crate ") + yes(m_crate != 0) + ", a dancer " + yes(m_dancer != 0) + ", removed a tree " + yes(m_foliage != 0));
+        log(std::string("spawned a crate ") + yes(m_crate != 0) + ", the dancer is here " + yes(scene().findById(m_dancer)) + ", removed a tree " +
+            yes(m_foliage != 0));
         next();
         break;
     }
