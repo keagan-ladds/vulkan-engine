@@ -1,11 +1,12 @@
 #pragma once
 
 // =============================================================================
-// Inventory - stacks of items in a fixed number of slots (backpacks, chests,
-// hotbars). The engine keeps the bookkeeping; the game decides what the items
-// are, how many stack, how they look and what the screen is like.
+// ItemStacks (game side) - stacks of items in a fixed number of slots
+// (backpacks, chests, hotbars): the bookkeeping behind Savanna's Inventory.
+// What the items are, how many stack and the screen are in Inventory.*.
+// (Once ve::Inventory: inventories are game rules, so they live in the game.)
 //
-//   ve::Inventory bag(24, [](const std::string& item) { return item == "arrow" ? 64 : 10; });
+//   savanna::ItemStacks bag(24, [](const std::string& item) { return item == "arrow" ? 64 : 10; });
 //   const int left = bag.add("arrow", 100);  // 0: two stacks (64 + 36)
 //   bag.move(0, 5);                          // merge into slot 5, or swap
 //   game["bag"] = bag.save();                // [{"item": "arrow", "count": 64}, null, ...]
@@ -19,13 +20,13 @@
 #include <string>
 #include <vector>
 
-namespace ve {
+namespace savanna {
 
 using Json = nlohmann::json;
 
 /// A grid of item stacks (items by name), e.g. a backpack or a chest. Plain
 /// data: no UI, no GameObject; save it with toJson / fromJson.
-class Inventory {
+class ItemStacks {
 public:
     /// Items the max-stack function doesn't know about (or with none set).
     static constexpr int kDefaultMaxStack = 99;
@@ -39,7 +40,7 @@ public:
     using MaxStack = std::function<int(const std::string& item)>;
 
     /// An inventory with `slotCount` empty slots; `maxStack` says how many of an item fit in a slot (none: kDefaultMaxStack).
-    explicit Inventory(int slotCount, MaxStack maxStack = {});
+    explicit ItemStacks(int slotCount, MaxStack maxStack = {});
 
     std::vector<Stack> slots; ///< always slotCount long
 
@@ -62,4 +63,4 @@ private:
     MaxStack m_maxStack;
 };
 
-} // namespace ve
+} // namespace savanna

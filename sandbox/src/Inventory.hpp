@@ -6,7 +6,8 @@
 // tooltips and a details panel. Item icons are baked from small meshes
 // (ve::ui::bakeIcon) when the screen is first built.
 
-#include <ve/gameplay/Inventory.hpp>
+#include "ItemStacks.hpp"
+
 #include <ve/render/Mesh.hpp>
 #include <ve/scene/Reflection.hpp>
 #include <ve/ui/Gui.hpp>
@@ -31,9 +32,9 @@ void bakeItemIcons(); // all of them, once (needs the renderer)
 // baked from it, and pickups lying in the world use it scaled down (Pickups.hpp).
 ve::MeshData itemMesh(const std::string& id);
 
-// The player's inventory: the engine's container (ve/gameplay/Inventory.hpp)
+// The player's inventory: the item stacks (ItemStacks.hpp)
 // with Savanna's slot count and the item types' stack limits.
-class Inventory : public ve::Inventory {
+class Inventory : public ItemStacks {
 public:
     static constexpr int kSlots = 24;
     Inventory();

@@ -11,6 +11,11 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 ## [Unreleased]
 
 ### Breaking
+- **`ve::Inventory` is gone from the engine.** Inventories are game rules
+  (slots, stacking, what an item is), and the engine shouldn't decide them.
+  The same class lives on in the sandbox as `savanna::ItemStacks`
+  (`sandbox/src/ItemStacks.*`). Migration: copy those two files into your
+  game (or write your own), and drop `#include <ve/gameplay/Inventory.hpp>`.
 - **Material extra slots end at params 10 / textures 14.** The standard
   layout now uses params[11] and textures[15] for translucency, so a material
   file's `"params"` / `"textures"` entries for those slots are ignored (with

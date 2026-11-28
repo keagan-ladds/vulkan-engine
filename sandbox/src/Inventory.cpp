@@ -109,7 +109,7 @@ void bakeItemIcons()
 // -----------------------------------------------------------------------------
 
 Inventory::Inventory()
-    : ve::Inventory(kSlots, [](const std::string& item) {
+    : ItemStacks(kSlots, [](const std::string& item) {
           const ItemType* t = itemType(item);
           return t ? t->maxStack : kDefaultMaxStack;
       })

@@ -757,12 +757,6 @@ stores nothing per blade.
   the difference to them. Scene files keep entries in a hidden `entries`
   field. Not yet: painting entries in the editor, network replication.
 
-- **Inventory** (`ve/gameplay/Inventory.hpp`). `ve::Inventory`: a fixed number
-  of slots of `{item, count}` with stacking (per-item max stack from a
-  callback, `kDefaultMaxStack` otherwise), add / remove / count / move-or-swap
-  and JSON save / load. Item definitions, icons and the inventory screen are
-  the game's (Savanna's `Inventory.*`).
-
 - **Prefabs** (`ve/scene/Prefab.hpp`). A `.prefab` file is JSON holding an
   object (type, fields, persistent components, children) at the origin.
   `prefab::instantiate` creates an instance: children's ids are derived from
@@ -1228,7 +1222,7 @@ Optional add-ons built only on public engine APIs:
 | `Pickups.*` | About 3,500 stones and sticks in one `ve::ProxySet` (deterministic scatter), promoted near the player into `Interactable` pickups that go into the inventory |
 | `Villager.*` | Navmesh agents with animation: Idle / Walk crossfades, a "Wave" layer on the right arm (greeting the player), footstep events of the Walk clip (sounds by surface), FootIK on slopes, a "Villagers" debug-draw channel |
 | `Multiplayer.*` | On `ve/net`: host / join from `SAVANNA_NET`, player avatars (NetworkObject + NetworkTransform + replicated name), the host's world snapshot without its own player, clock / weather sync, `NetTest` (two-process test, `tools/nettest.sh`); building requests live in `Building.cpp` |
-| `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop; the container itself is the engine's `ve::Inventory`) |
+| `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop; the container is `ItemStacks.*`) |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |
 

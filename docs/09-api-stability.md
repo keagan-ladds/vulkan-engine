@@ -33,7 +33,7 @@ use these, and they're what game code should use.
 | Physics | `Rigidbody`, `Collider`, `CharacterController`, joints, collision layers / surfaces, `PhysicsWorld` queries |
 | Rendering for games | `MeshRenderer` (incl. `isStatic` / `refresh`), `Camera`, lights, `StandardMaterial`, custom materials and passes (`RenderPass`, `FullscreenPass`), `InstanceGroup`, `ve::buildLodChain`, `RendererSettings` |
 | Assets | `AssetManager` loads, `ModelInstance` (incl. marker nodes), `PrimitiveRenderer` |
-| Gameplay helpers | `Interactable` / `Interactor`, placement (`SnapPoint`, `PlacementBox`, `PlacementPreview`, `findSnap`), `Inventory`, `ProxySet` (single-player behaviour) |
+| Gameplay helpers | `Interactable` / `Interactor`, placement (`SnapPoint`, `PlacementBox`, `PlacementPreview`, `findSnap`), `ProxySet` (single-player behaviour) |
 | Animation, audio, UI | `Animator`, IK components, `AudioSource` / buses / zones / music / ambience, `ve::ui` |
 | World | `Terrain`, foliage layers, grass, `FoliageExclusion` |
 | Effects | `vfx::addDefaultEffects` and the effect passes' settings |

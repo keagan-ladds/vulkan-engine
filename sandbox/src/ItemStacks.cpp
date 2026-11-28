@@ -1,18 +1,18 @@
-#include "ve/gameplay/Inventory.hpp"
+#include "ItemStacks.hpp"
 
 #include <algorithm>
 #include <utility>
 
-namespace ve {
+namespace savanna {
 
-Inventory::Inventory(int slotCount, MaxStack maxStack) : slots(size_t(std::max(slotCount, 0))), m_maxStack(std::move(maxStack)) {}
+ItemStacks::ItemStacks(int slotCount, MaxStack maxStack) : slots(size_t(std::max(slotCount, 0))), m_maxStack(std::move(maxStack)) {}
 
-int Inventory::maxStack(const std::string& item) const
+int ItemStacks::maxStack(const std::string& item) const
 {
     return m_maxStack ? m_maxStack(item) : kDefaultMaxStack;
 }
 
-int Inventory::add(const std::string& item, int count)
+int ItemStacks::add(const std::string& item, int count)
 {
     const int limit = maxStack(item);
     for (Stack& s : slots) // top up existing stacks first
@@ -30,7 +30,7 @@ int Inventory::add(const std::string& item, int count)
     return count;
 }
 
-int Inventory::remove(const std::string& item, int count)
+int ItemStacks::remove(const std::string& item, int count)
 {
     int taken = 0;
     for (auto it = slots.rbegin(); it != slots.rend() && taken < count; ++it)
@@ -43,7 +43,7 @@ int Inventory::remove(const std::string& item, int count)
     return taken;
 }
 
-int Inventory::count(const std::string& item) const
+int ItemStacks::count(const std::string& item) const
 {
     int n = 0;
     for (const Stack& s : slots)
@@ -51,7 +51,7 @@ int Inventory::count(const std::string& item) const
     return n;
 }
 
-void Inventory::move(int from, int to)
+void ItemStacks::move(int from, int to)
 {
     if (from == to || from < 0 || to < 0 || from >= size() || to >= size() || slots[size_t(from)].item.empty()) return;
     Stack& a = slots[size_t(from)];
@@ -66,19 +66,19 @@ void Inventory::move(int from, int to)
     }
 }
 
-void Inventory::clear()
+void ItemStacks::clear()
 {
     std::fill(slots.begin(), slots.end(), Stack{});
 }
 
-Json Inventory::save() const
+Json ItemStacks::save() const
 {
     Json j = Json::array();
     for (const Stack& s : slots) j.push_back(s.item.empty() ? Json(nullptr) : Json{{"item", s.item}, {"count", s.count}});
     return j;
 }
 
-void Inventory::load(const Json& j)
+void ItemStacks::load(const Json& j)
 {
     clear();
     if (!j.is_array()) return;
@@ -86,4 +86,4 @@ void Inventory::load(const Json& j)
         if (j[i].is_object()) slots[i] = {j[i].value("item", std::string()), j[i].value("count", 0)};
 }
 
-} // namespace ve
+} // namespace savanna

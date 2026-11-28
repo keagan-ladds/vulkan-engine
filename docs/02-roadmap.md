@@ -23,8 +23,7 @@ Savanna players see each other and build together.
   dangling-pointer fixes (UI handlers, editor camera, component removal,
   weather, interactor, foliage focus, sandbox player refs), a network authority
   hole closed, per-frame allocations / scans removed, Clang + GCC Release
-  warnings fixed, generic code moved into the engine (`ve::Inventory`,
-  `buildLodChain`, `ve::env`, `ve::math`, config files) and game tuning out
+  warnings fixed, generic code moved into the engine (`buildLodChain`, `ve::env`, `ve::math`, config files) and game tuning out
   of it.
 
 Next up: F6 N2 (gameplay through the host: interactions, pickups,
