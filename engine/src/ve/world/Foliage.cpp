@@ -791,6 +791,7 @@ void FoliageSystem::setState(FoliageInstanceId id, uint32_t newState)
     const uint32_t oldState = prev != m_overrides.end() ? prev->second : 0;
     if (newState == 0) m_overrides.erase(id.packed());
     else m_overrides[id.packed()] = newState;
+    if (oldState != newState) ++m_overrideRevision;
     if (oldState != newState && !m_stateListeners.empty()) {
         Instance inst;
         if (makeInstance(id.layer, id.gx, id.gz, &inst)) {
@@ -857,11 +858,17 @@ std::vector<std::pair<uint64_t, uint32_t>> FoliageSystem::overrides() const
 
 void FoliageSystem::setOverrides(const std::vector<std::pair<uint64_t, uint32_t>>& states)
 {
-    // Back to the generated world, then apply the given changes.
-    std::vector<uint64_t> changed;
-    for (const auto& [k, s] : m_overrides) changed.push_back(k);
-    for (uint64_t k : changed) setState(FoliageInstanceId::unpack(k), 0);
-    for (const auto& [k, s] : states) setState(FoliageInstanceId::unpack(k), s);
+    // To exactly the given changes: instances not in the list go back to the
+    // generated world. Only instances whose state differs are touched.
+    std::unordered_map<uint64_t, uint32_t> wanted;
+    wanted.reserve(states.size());
+    for (const auto& [k, st] : states) wanted[k] = st;
+    std::vector<uint64_t> back;
+    for (const auto& [k, st] : m_overrides)
+        if (!wanted.count(k)) back.push_back(k);
+    for (uint64_t k : back) setState(FoliageInstanceId::unpack(k), 0);
+    for (const auto& [k, st] : wanted)
+        if (state(FoliageInstanceId::unpack(k)) != st) setState(FoliageInstanceId::unpack(k), st);
 }
 
 GameObject* FoliageSystem::promoted(FoliageInstanceId id) const

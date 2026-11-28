@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "object": {
+    "type": "GameObject",
+    "name": "Net test crate",
+    "active": true,
+    "position": [0, 0, 0],
+    "rotation": [0, 0, 0, 1],
+    "scale": [1, 1, 1],
+    "components": [
+      {"type": "NetworkObject", "enabled": true, "fields": {"despawnWithOwner": false, "relevanceRadius": 60.0}},
+      {"type": "NetworkTransform", "enabled": true, "fields": {"sendRate": 20, "interpolationDelay": 0.1, "teleportDistance": 15}},
+      {"type": "Rigidbody", "enabled": true, "fields": {"type": 2, "shape": 1, "shapeSize": [0.8, 0.8, 0.8], "mass": 15.0}}
+    ]
+  }
+}

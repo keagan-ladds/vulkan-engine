@@ -495,3 +495,27 @@ of the same install rules).
 version; static linking keeps a shipped game a single executable. **Cost:** a
 package per compiler (MSVC vs MinGW) and build type (Debug libraries carry a
 `d` suffix, so both fit in one folder).
+
+### D38. Networking: the engine gives mechanisms, never gameplay rules (2026-11)
+**Decision:** the engine's multiplayer support stops at mechanisms any game
+needs whatever its rules: identity (stable player ids, player objects,
+per-player save files), requests with answers (`reject`, `From`, a request
+budget), generic replication (transforms with bodies that follow, Animator
+playback, any `Saveable`'s state as JSON patches), interest management by
+distance, per-client delta-encoded snapshots, lag-compensation history, a
+bad-network simulator and a server mode. What a request means, who may do
+it, reach distances, what a player's character holds and inventories are
+the game's. `ve::Inventory` left the engine for the same reason (it lives on
+as Savanna's `ItemStacks`).
+**Alternatives:** engine-side gameplay replication (inventories per player,
+pickups, doors, combat) as ready-made systems; a full ECS-style replication
+graph with per-field serializers.
+**Why:** a different game mode (a shooter, a builder, a race) shouldn't need
+engine changes; every gameplay-shaped API in the engine ends up encoding one
+game's rules. Replicating `Saveable` state reuses what save games already
+cover (late joiners already get the same data through the save capture), so
+engine systems (Foliage, Terrain) and game objects replicate with no extra
+code. **Cost:** JSON patches are bigger than hand-written deltas (fine for
+world changes, not for per-frame state: that's what NetReplicated is for);
+interest management hides movement and state but not existence (objects are
+spawned on every machine); the server mode still needs a Vulkan device.

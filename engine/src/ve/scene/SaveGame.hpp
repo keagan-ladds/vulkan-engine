@@ -48,6 +48,10 @@ public:
     virtual void saveState(Json& out) const = 0;
     /// Restores the state saveState() wrote (`in` is that JSON; fields may be missing in older saves).
     virtual void loadState(const Json& in) = 0;
+    /// A number that changes whenever saveState()'s output may have changed,
+    /// so watchers (network replication of save state) only look then.
+    /// 0 = not tracked: they compare saveState() output now and then instead.
+    virtual uint64_t saveRevision() const { return 0; }
 };
 
 namespace save {
@@ -65,7 +69,19 @@ void apply(Scene& scene, const Json& save);
 bool write(const std::string& slot, const Json& save);
 std::optional<Json> read(const std::string& slot);
 std::vector<SlotInfo> slots(); ///< newest first
-bool remove(const std::string& slot);
+bool remove(const std::string& slot); ///< deletes the slot and its players' files
+
+/// Per-player data of a save slot (multiplayer: the host keeps each player's
+/// character, keyed by their stable Network player id), stored next to the
+/// slot (`<folder>/players/<slot>/<player id>.json`), never in slots().
+/// What goes in it is the game's: position, health, inventory...
+///   ve::save::writePlayer("world-1", peerInfo.playerId, {{"health", 80}});
+///   if (auto me = ve::save::readPlayer("world-1", id)) health = (*me)["health"];
+bool writePlayer(const std::string& slot, const std::string& playerId, const Json& data);
+/// A player's data in a slot (nullopt if they have none or it's damaged).
+std::optional<Json> readPlayer(const std::string& slot, const std::string& playerId);
+/// The player ids that have data in a slot (sorted).
+std::vector<std::string> players(const std::string& slot);
 
 /// capture + the game's own data + write; read + apply, returning the game's data.
 bool saveGame(Scene& scene, const std::string& slot, const Json& gameData = Json::object());

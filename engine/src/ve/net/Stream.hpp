@@ -18,7 +18,9 @@
 #include <glm/gtc/quaternion.hpp>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <span>
@@ -70,6 +72,8 @@ public:
     /// Rotation in 7 bytes: the largest component is dropped and rebuilt,
     /// the other three as 16-bit fixed point (error ~0.0001).
     void writeRotation(const glm::quat& q);
+    /// A signed number as a varint (zigzag: small magnitudes either side of 0 take 1-2 bytes).
+    void writeSigned(int64_t v) { writeVarint((uint64_t(v) << 1) ^ uint64_t(v >> 63)); }
 
     /// Appends another writer's bytes.
     void append(const Writer& other) { m_data.insert(m_data.end(), other.m_data.begin(), other.m_data.end()); }
@@ -140,6 +144,12 @@ public:
     }
     /// Reads a rotation written with Writer::writeRotation.
     glm::quat readRotation();
+    /// Reads a number written with Writer::writeSigned.
+    int64_t readSigned()
+    {
+        const uint64_t v = readVarint();
+        return int64_t(v >> 1) ^ -int64_t(v & 1);
+    }
 
     /// Whether a read ran past the end or hit malformed data.
     bool failed() const { return m_failed; }
@@ -192,6 +202,44 @@ inline glm::quat Reader::readRotation()
     if (largest > 3) {
         m_failed = true;
         return {1, 0, 0, 0};
+    }
+    c[largest] = std::sqrt(std::max(0.0f, 1.0f - sum));
+    return glm::normalize(glm::quat(c[3], c[0], c[1], c[2]));
+}
+
+/// A rotation in 32 bits (the largest component dropped, the other three as
+/// 10-bit fixed point; error under 0.002 rad): network snapshots.
+inline uint32_t packRotation(const glm::quat& qIn)
+{
+    const glm::quat q = glm::normalize(qIn);
+    const float c[4] = {q.x, q.y, q.z, q.w};
+    uint32_t largest = 0;
+    for (uint32_t i = 1; i < 4; ++i)
+        if (std::abs(c[i]) > std::abs(c[largest])) largest = i;
+    const float sign = c[largest] < 0.0f ? -1.0f : 1.0f;
+    uint32_t bits = largest;
+    int shift = 2;
+    for (uint32_t i = 0; i < 4; ++i) {
+        if (i == largest) continue;
+        const float v = glm::clamp(c[i] * sign / 0.70710678f, -1.0f, 1.0f); // the others are <= 1/sqrt(2)
+        bits |= uint32_t(std::lround((v * 0.5f + 0.5f) * 1023.0f)) << shift;
+        shift += 10;
+    }
+    return bits;
+}
+
+/// The rotation packRotation packed.
+inline glm::quat unpackRotation(uint32_t bits)
+{
+    const uint32_t largest = bits & 3u;
+    float c[4] = {};
+    float sum = 0.0f;
+    int shift = 2;
+    for (uint32_t i = 0; i < 4; ++i) {
+        if (i == largest) continue;
+        c[i] = (float((bits >> shift) & 1023u) / 1023.0f * 2.0f - 1.0f) * 0.70710678f;
+        sum += c[i] * c[i];
+        shift += 10;
     }
     c[largest] = std::sqrt(std::max(0.0f, 1.0f - sum));
     return glm::normalize(glm::quat(c[3], c[0], c[1], c[2]));

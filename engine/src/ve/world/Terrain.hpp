@@ -423,6 +423,8 @@ class Terrain : public GameObject, public TerrainShape, public TerrainLook, publ
 public:
     /// Save games: runtime edits (brushes applied by the game).
     void saveState(Json& out) const override { out["edits"] = editsJson(); }
+    /// Changes with every rebuild (brush edits included): see Saveable::saveRevision.
+    uint64_t saveRevision() const override { return m_version + 1; }
     void loadState(const Json& in) override
     {
         if (in.contains("edits")) setEditsJson(in["edits"]);

@@ -517,6 +517,7 @@ void Foliage::rebuild()
     sys.runInEditor = true;
     sys.setParent(this, true);
     m_system = &sys;
+    ++m_systemBuilds;
     m_exclusions = exclusionShapes(scene());
     for (const FoliageExclusionShape& e : m_exclusions) sys.addExclusion(e);
 
@@ -597,9 +598,17 @@ void Foliage::saveState(Json& out) const
 {
     Json list = Json::array();
     const FoliageSystem* sys = system();
-    const auto overrides = sys ? sys->overrides() : m_pendingOverrides;
+    auto overrides = sys ? sys->overrides() : m_pendingOverrides;
+    std::sort(overrides.begin(), overrides.end()); // (stable output: replication sends differences)
     for (const auto& [id, state] : overrides) list.push_back({id, state});
     out["overrides"] = std::move(list);
+}
+
+uint64_t Foliage::saveRevision() const
+{
+    // (+ a count of rebuilds: a new system starts its own count again)
+    const FoliageSystem* sys = system();
+    return (sys ? sys->overrideRevision() : 0) + (uint64_t(m_systemBuilds) << 40) + 1;
 }
 
 void Foliage::loadState(const Json& in)

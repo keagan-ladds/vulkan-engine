@@ -114,6 +114,12 @@ public:
     const std::string& current(int layer) const;
     /// Seconds into the clip playing on `layer`.
     float time(int layer) const;
+    /// Whether the clip playing on `layer` loops (true if none).
+    bool looping(int layer) const;
+    /// The playback rate the clip on `layer` was started with (play's clipSpeed; 1 if none).
+    float clipSpeed(int layer) const;
+    /// The weight `layer` is fading towards (setLayerWeight's target).
+    float layerWeightTarget(int layer) const;
     /// Whether a non-looping clip on `layer` reached its end.
     bool finished(int layer) const;
 

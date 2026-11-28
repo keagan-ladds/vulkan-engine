@@ -80,6 +80,15 @@ struct EngineConfig {
     int maxFixedStepsPerFrame = 5; ///< avoids the "spiral of death" after a hitch
     bool enableAudio = true;  ///< Start the audio device (off: sounds are silent no-ops, e.g. for servers or tests).
     bool enableEditor = true; ///< F2 opens the in-engine scene editor (docs/05-editor.md)
+    /// Dedicated server (env VE_SERVER=1): no window shown, no audio, no
+    /// editor, frames capped at serverTickRate, and the renderer only draws a
+    /// small offscreen frame about once a second (that keeps its uploads and
+    /// cleanup going). Still needs a Vulkan driver: a software one (lavapipe)
+    /// works on machines without a GPU. Gameplay, physics and the network run
+    /// as usual; Engine::isServer() tells game code to skip what's only for
+    /// players (menus, HUD, a local character).
+    bool server = false;
+    float serverTickRate = 30.0f; ///< Frames per second in server mode.
     /// Extra asset / shader folders (relative to the executable or absolute).
     /// `<exe>`/assets and `<exe>`/shaders are always searched.
     std::vector<std::filesystem::path> assetPaths;
@@ -121,6 +130,8 @@ public:
 
     /// Runs the frame loop: returns when quit() is called or the window closes.
     void run();
+    /// Running as a dedicated server (EngineConfig::server or VE_SERVER=1).
+    bool isServer() const { return m_server; }
     /// Asks the frame loop to stop; run() returns after the current frame.
     void quit();
     /// Runs at shutdown after the scene is gone, before the renderer: release
@@ -230,6 +241,9 @@ public:
 
 private:
     std::vector<std::function<void()>> m_atShutdown;
+    bool m_server = false;          ///< isServer()
+    bool wantsRender();             ///< false on most server frames
+    double m_lastServerRender = -1e9; ///< server mode: when the last keep-alive frame was drawn
     bool m_interactiveEdit = false;
     double m_interactiveEditEnded = -1e9; ///< seconds (steady clock) when the last drag ended
     void pollEvents();

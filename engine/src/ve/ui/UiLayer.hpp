@@ -11,6 +11,11 @@
 
 #include "ve/render/RenderGraph.hpp"
 
+#include <functional>
+#include <string>
+#include <utility>
+#include <vector>
+
 union SDL_Event;
 
 namespace ve {
@@ -35,6 +40,10 @@ public:
     void endFrameIfNotRendered();
 
     bool debugOverlay = false;  ///< Show the F1 overlay.
+    /// Adds a collapsible section to the F1 overlay (after the built-in ones):
+    /// `draw` makes ImGui calls. Modules the ui module can't see (network...)
+    /// add theirs this way.
+    void addOverlaySection(const std::string& title, std::function<void()> draw);
     /// ImGui wants the keyboard (a text field is active): gameplay shouldn't read keys.
     bool wantsKeyboard() const;
     /// ImGui wants the mouse (pointer over a window): gameplay shouldn't read the mouse.
@@ -45,6 +54,7 @@ private:
     Engine* m_engine = nullptr;
     bool m_initialized = false;
     bool m_rendered = false;
+    std::vector<std::pair<std::string, std::function<void()>>> m_sections; ///< addOverlaySection
     float m_frameTimes[120]{};
     int m_frameTimeIndex = 0;
 };

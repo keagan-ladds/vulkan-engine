@@ -261,10 +261,39 @@ std::vector<SlotInfo> slots()
     return out;
 }
 
+namespace {
+// <folder>/players/<slot>/<player id>.json
+std::filesystem::path playersFolder(const std::string& slot)
+{
+    return folder() / "players" / slotPath(slot).stem();
+}
+} // namespace
+
 bool remove(const std::string& slot)
 {
     std::error_code ec;
+    std::filesystem::remove_all(playersFolder(slot), ec);
     return std::filesystem::remove(slotPath(slot), ec);
+}
+
+bool writePlayer(const std::string& slot, const std::string& playerId, const Json& data)
+{
+    return writeJsonAtomic(playersFolder(slot) / (safeName(playerId, "player") + ".json"), data);
+}
+
+std::optional<Json> readPlayer(const std::string& slot, const std::string& playerId)
+{
+    return readJson(playersFolder(slot) / (safeName(playerId, "player") + ".json"), "Player '" + playerId + "' of save '" + slot + "'");
+}
+
+std::vector<std::string> players(const std::string& slot)
+{
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(playersFolder(slot), ec))
+        if (e.is_regular_file() && e.path().extension() == ".json") out.push_back(e.path().stem().string());
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 bool saveGame(Scene& scene, const std::string& slot, const Json& gameData)

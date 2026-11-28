@@ -32,6 +32,7 @@
 #include "ve/world/Vegetation.hpp"
 
 #include <SDL.h>
+#include <imgui.h>
 
 #include <algorithm>
 #include <thread>
@@ -134,6 +135,44 @@ AudioSystem& EngineAccess::audio() { return Engine::get().audio(); }
 PhysicsWorld& EngineAccess::physics() { return Engine::get().physics(); }
 net::Network& EngineAccess::net() { return Engine::get().net(); }
 
+namespace {
+// F1 > Network: the session, everyone in it, traffic.
+void drawNetworkOverlay(net::Network& n)
+{
+    static const char* kRoles[] = {"offline", "host", "client"};
+    ImGui::Text("Role: %s   peer %u   player id %s", kRoles[int(n.role())], n.localPeer(), n.localPlayerId().c_str());
+    if (!n.online()) return;
+    const net::Network::Bandwidth& b = n.bandwidth();
+    ImGui::Text("Traffic: %.1f KB/s out, %.1f KB/s in   (%.1f / %.1f MB in all)", b.sentPerSecond / 1024.0f, b.receivedPerSecond / 1024.0f,
+                double(b.sent) / (1024.0 * 1024.0), double(b.received) / (1024.0 * 1024.0));
+    if (b.droppedRequests) ImGui::TextColored({1.0f, 0.6f, 0.3f, 1.0f}, "Requests dropped (over budget): %u", b.droppedRequests);
+    const net::Transport::Simulation& sim = n.transport().simulation();
+    if (sim.active()) ImGui::TextColored({1.0f, 0.8f, 0.3f, 1.0f}, "Simulating %u ms (+0..%u) latency, %.0f%% loss", sim.latencyMs, sim.jitterMs, sim.loss * 100.0f);
+    if (ImGui::BeginTable("##peers", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Peer");
+        ImGui::TableSetupColumn("Name");
+        ImGui::TableSetupColumn("ms");
+        ImGui::TableSetupColumn("KB/s out");
+        ImGui::TableSetupColumn("KB/s in");
+        ImGui::TableHeadersRow();
+        for (const net::Network::PeerInfo& p : n.peers()) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("%u%s", p.id, p.id == n.localPeer() ? " (us)" : "");
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(p.name.c_str());
+            ImGui::TableNextColumn();
+            ImGui::Text("%u", p.roundTripMs);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", p.sentPerSecond / 1024.0f);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.1f", p.receivedPerSecond / 1024.0f);
+        }
+        ImGui::EndTable();
+    }
+}
+} // namespace
+
 Engine::Engine(const EngineConfig& config) : m_config(config)
 {
     if (g_engine) throw std::runtime_error("Only one ve::Engine may exist");
@@ -162,17 +201,27 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
 
     RendererSettings rs = config.renderer;
     if (const char* h = std::getenv("VE_HEADLESS"); h && h[0] == '1') rs.headless = true;
+    m_server = config.server || (std::getenv("VE_SERVER") && std::getenv("VE_SERVER")[0] == '1');
+    if (m_server) {
+        // A dedicated server: nothing to look at or listen to.
+        rs.headless = true;
+        m_config.enableAudio = false;
+        m_config.enableEditor = false;
+        m_config.width = std::min(m_config.width, 320);
+        m_config.height = std::min(m_config.height, 180);
+        log::info("Engine: dedicated server mode ({:.0f} ticks per second)", m_config.serverTickRate);
+    }
     if (const char* a = std::getenv("VE_ASYNC_PIPELINES"); a && *a) rs.asyncPipelines = a[0] != '0';
     // VE_FIXED_DT=0.016667: every frame advances time by this much, however long it
     // took (headless tests on slow software rendering see real-time motion per frame).
     if (const char* f = std::getenv("VE_FIXED_DT"); f && *f) m_fixedFrameDt = std::strtof(f, nullptr);
     // Hidden until the first frame is drawn (run()).
-    m_window = std::make_unique<Window>(config.title, config.width, config.height, true);
+    m_window = std::make_unique<Window>(config.title, m_config.width, m_config.height, true);
     m_renderer = std::make_unique<Renderer>();
     m_renderer->init(*m_window, rs, config.validation, shaderDirs);
     registerSkinnedMeshes(m_renderer->skinning()); // the renderer's skinning pass finds anim's SkinnedMeshRenderers
     m_audio = std::make_unique<AudioSystem>();
-    if (config.enableAudio) m_audio->init();
+    if (m_config.enableAudio) m_audio->init();
     m_physics = std::make_unique<PhysicsWorld>();
     m_net = std::make_unique<net::Network>(*this);
     m_physics->init();
@@ -191,9 +240,10 @@ Engine::Engine(const EngineConfig& config) : m_config(config)
     }
     m_ui = std::make_unique<UiLayer>();
     m_ui->init(*this);
+    m_ui->addOverlaySection("Network", [this] { drawNetworkOverlay(*m_net); });
     m_scene = std::make_unique<Scene>();
     registerAllTypes(); // reflection: scene files + editor
-    if (config.enableEditor) {
+    if (m_config.enableEditor) {
         m_editor = std::make_unique<Editor>();
         m_editor->init(*this);
     }
@@ -348,6 +398,10 @@ void Engine::run()
         }
         if (m_bench && !loadingFrame) benchFrame(std::chrono::duration<float, std::milli>(Clock::now() - now).count());
         ++m_time.frameCount;
+        if (m_server) { // (a server ticks at a steady rate instead of as fast as it can draw)
+            const auto next = now + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / std::max(1.0f, m_config.serverTickRate)));
+            std::this_thread::sleep_until(next);
+        }
     }
 
     m_renderer->device().waitIdle();
@@ -529,7 +583,7 @@ void Engine::tickLoading()
     m_loadingScene->update(m_time.unscaledDeltaTime);
     m_loadingScene->lateUpdate(m_time.unscaledDeltaTime);
     m_loadingScene->onGui();
-    m_renderer->render(*m_loadingScene, m_time);
+    if (wantsRender()) m_renderer->render(*m_loadingScene, m_time);
     m_ui->endFrameIfNotRendered();
     m_loadingScene->flushDestroyed();
     m_scene->flushDestroyed();
@@ -542,6 +596,15 @@ void Engine::tickLoading()
     // on the loading workers (software renderers and weak CPUs especially).
     const auto frameTime = std::chrono::steady_clock::now() - frameStart;
     if (frameTime < std::chrono::milliseconds(33)) std::this_thread::sleep_for(std::chrono::milliseconds(33) - frameTime);
+}
+
+bool Engine::wantsRender()
+{
+    if (!m_server) return true;
+    // Server: a keep-alive frame about once a second (uploads, deferred deletes).
+    if (m_time.realTime - m_lastServerRender < 1.0) return false;
+    m_lastServerRender = m_time.realTime;
+    return true;
 }
 
 void Engine::tickFrame()
@@ -631,7 +694,7 @@ void Engine::tickFrame()
         VE_PROFILE("Audio");
         m_audio->update(m_time.unscaledDeltaTime);
     }
-    {
+    if (wantsRender()) {
         VE_PROFILE("Render");
         m_renderer->render(*m_scene, m_time);
     }

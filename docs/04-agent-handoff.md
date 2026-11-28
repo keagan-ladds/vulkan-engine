@@ -66,7 +66,7 @@ All of these run with Vulkan validation on in Debug builds. Any
 |---|---|
 | Header documentation | `python3 tools/check_docs.py --changed` (headers this branch touched; exit 1 if anything is undocumented), `python3 tools/check_docs.py` (whole codebase), `cmake --build build --target docs` (HTML reference in `build/docs/html`). Needs `doxygen` |
 | Smoke test (pickup, weather, exits by itself) | `cd build/bin && SAVANNA_AUTOTEST=1 ./savanna` → `[autotest]` lines, exit code 0 |
-| Multiplayer (host + client processes) | `tools/nettest.sh build-release/bin /tmp/net` → `[nettest host]` / `[nettest client]` lines, exit 0; screenshots `net-host.png`, `net-client.png` |
+| Multiplayer (host + client processes) | `tools/nettest.sh build-release/bin /tmp/net` → `[nettest host]` / `[nettest client]` lines (building, avatars, player ids, per-player saves, replies, `From`, bodies that follow, NetworkAnimator, foliage save state, interest, lag compensation, request budget, bandwidth, kick), exit 0; screenshots `net-host.png`, `net-client.png`. Also with `NETTEST_SIM="latency=80,jitter=20,loss=0.05"` (bad network) and `NETTEST_SERVER=1` (host as dedicated server) |
 | Title screen | `VE_HEADLESS=1 SAVANNA_MENU=1 VE_CAPTURE=title.png VE_CAPTURE_FRAME=60 VE_BENCH=4,62 ./savanna` |
 | Specific view | `SAVANNA_TIME=21.3 SAVANNA_WEATHER=3 SAVANNA_POSE=36,4,22,60,-8 SAVANNA_DEBUG=1 ./savanna` |
 | Performance | `SAVANNA_DEBUG=1` → F1 overlay shows FPS, total GPU ms and **per-pass GPU ms** |

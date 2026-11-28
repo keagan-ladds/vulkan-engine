@@ -437,7 +437,7 @@ Engine provides mechanisms, the game (Savanna here) the rules and content.
 - [x] Interaction (engine): `ve::Interactable` + `ve::Interactor` (eye ray, then view cone with line of sight; focus / prompt / use); Savanna's trees, berry bushes and sunstones use it, its HUD shows the prompt; the autotest chops and collects through it
 - [x] Navmesh (engine): `NavMeshSurface` (tiled Recast build from terrain + static colliders + foliage colliders on worker threads, loading task, rebuilds around chopped trees, optional streaming around the camera), queries (paths, nearest / random points, raycast), `NavAgent` (Detour crowd: path following + avoidance). Savanna: villagers idle / wander / follow the player when asked (game-side state machine)
 - [ ] Animal AI (herds grazing, fleeing the player) on the same agents, in the game
-- [x] Inventory (game): item types with baked icons, 24-slot stacks (add / remove / move / merge), saved with the game; inventory screen (Tab / I, drag & drop, details)
+- [x] Inventory (game; `ItemStacks`, no longer in the engine): item types with baked icons, 24-slot stacks (add / remove / move / merge), saved with the game; inventory screen (Tab / I, drag & drop, details)
 - [ ] Crafting (game; recipes as data files)
 - [x] Grid/snap building (engine: prefabs, `SnapPoint` + `findSnap`, grid helpers, `PlacementBox` + `fits`, `PlacementPreview` ghost, save games keep spawned prefab instances; editor snaps on drag. Savanna: 12-kind kit (foundation, floor, mud / plaster walls, door, window, post, beam, metal / thatch roofs, stairs, railing, fence) as prefabs, build mode B, navmesh rebuilds; autotest builds, saves, reloads)
 - [x] Foliage exclusions on building pieces: `FoliageExclusion` boxes (turn with the object), applied incrementally while playing (foliage re-places nearby cells keeping states, grass re-bakes in the background); Savanna's foundation and stairs prefabs carry one
@@ -463,21 +463,35 @@ and ask the host for everything else (decision D19).
 - [x] Savanna: `SAVANNA_NET=host` / `join:<address>`, player avatars (villager model, walk / idle from speed, replicated name), building through the host (`build.place` / `build.remove`, navmesh rebuilt everywhere), host clock and weather sent to clients
 - [x] Test: `tools/nettest.sh` runs a host and a client process headless over localhost: snapshot (piece placed before joining), live spawns, interpolated avatar movement, a client build request, the client leaving (its avatar despawned)
 
-**N2 — Gameplay through the host**
-- [ ] Interactions as requests: chopping / picking (foliage overrides replicated), sunstones, doors (`DoorHinge` as NetReplicated), throwing rocks (host-simulated physics)
-- [ ] Villagers / animals: simulated on the host, NetworkTransform + animation state for clients
-- [ ] Inventories per player (the host keeps each player's; saved per player id)
-- [ ] Save games in a hosted world: the host saves, players keep their characters (a character file per player)
+**N2 — Gameplay through the host** (engine side ✅; game side in progress)
+
+Engine mechanisms (generic: no gameplay rules in the engine, decision D38):
+- [x] Stable player ids (`Network::playerId`, remembered per user), `PeerInfo::playerId`, `findPlayer`; a second connection with the same id is refused
+- [x] Per-player save data next to a slot (`save::writePlayer` / `readPlayer` / `players`)
+- [x] Player objects per peer (`setPlayerObject`, replicated) and `withinReach` / `viewpoint` for validating requests
+- [x] Requests with answers (`toServer(name, payload, reply)`, `reject(reason)`): predict, undo if refused
+- [x] Who may send what (`on(name, fn, From::Clients / Host)`), a per-client request budget (`Config::maxRequestsPerSecond`), `kick`
+- [x] `onPeersChanged` on every machine (player lists)
+- [x] Dynamic bodies follow the owner kinematically on other machines (thrown things simulated by their owner, usually the host)
+- [x] `NetworkAnimator`: Animator playback (clips per layer, looping, speeds, layer weights) from the owner
+- [x] Save state replication: any `Saveable` on a `NetworkObject` with `replicateSaveState` (Foliage's chopped trees, Terrain edits, game objects) as JSON patches when it changes (`saveRevision()`)
+
+Savanna (game rules on top):
+- [x] Foliage changes made on the host reach everyone (the Foliage object replicates its save state)
+- [ ] Chopping / picking requested by clients (`tree.chop` through the host, with prediction), sunstones, doors (`DoorHinge` as NetReplicated), throwing rocks (host-simulated physics)
+- [ ] Villagers / animals simulated on the host (NetworkTransform + NetworkAnimator)
+- [ ] Inventories per player (the host keeps each player's by player id; `save::writePlayer`)
+- [ ] Save games in a hosted world: the host saves, players keep their characters
 - [x] Menu: Host game / Join game (name, address, port fields), connection status in the panel
 - [ ] Connection errors / players joining in the HUD, player list (Tab), joining from a played title world (reload first)
-- [ ] The host validates requests (piece fits, reach, materials)
+- [ ] The host validates requests (piece fits, reach, materials) with `withinReach` / `reject`
 
 **N3 — Quality**
-- [ ] Interest management: only send what's near each player (big worlds), per-object send priority
-- [ ] Delta-compressed snapshots instead of whole transforms; bandwidth stats in F1
-- [ ] Client-side prediction for actions with latency (placing, hitting), lag compensation for combat
-- [ ] Dedicated server build (headless, no window / GPU), NAT punch-through or relay, Steam / platform sessions
-- [ ] Network conditions simulator (latency / loss) for tests
+- [x] Interest management: `relevanceRadius` per object (or `Config::relevanceRadius`) around each client's camera / player object; catch-up on re-entry. Not yet: priorities, hiding objects' existence
+- [x] Snapshots per client delta-encoded against the last acknowledged pose (mm, 32-bit rotations, unchanged poses not sent); bandwidth in F1 > Network
+- [x] Lag compensation primitives: pose history, `viewTime(peer)`, `rewind(peer, fn)`. Not yet: client-side prediction of movement other than requests
+- [x] Dedicated server mode (`EngineConfig::server`, VE_SERVER=1: headless, no audio / editor, fixed tick rate). Not yet: running without a Vulkan device, NAT punch-through / relay, Steam / platform sessions
+- [x] Network conditions simulator (`VE_NET_SIM`, `NETTEST_SIM` for tools/nettest.sh)
 
 ### F7 — Engine follow-ups (debugging, physics, animation, UI)
 - [x] Debug drawing (`ve/debug`): lines / shapes / labels from anywhere, depth-tested over the final image with faint hidden parts, durations, channels in F1 (physics colliders, terrain, characters, navmesh, nav agents; games add their own). Savanna: "Villagers" channel, `SAVANNA_DRAW`

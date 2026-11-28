@@ -11,6 +11,9 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
 ## [Unreleased]
 
 ### Breaking
+- **Network protocol changed** (player ids in the hello, snapshots, replies):
+  hosts and clients must run the same engine version. `Transport::Stats`
+  byte counts are now real totals per connection (ENet's reset every second).
 - **`ve::Inventory` is gone from the engine.** Inventories are game rules
   (slots, stacking, what an item is), and the engine shouldn't decide them.
   The same class lives on in the sandbox as `savanna::ItemStacks`
@@ -60,6 +63,28 @@ purpose: see "Pin an engine version" in [templates/game/README.md](templates/gam
   vegetation already placed, rather than rebuilt after loading.
 
 ### Added
+- **Multiplayer mechanisms (N2 / N3, engine side).** All generic: the game
+  keeps every rule (docs/decisions.md D38, conventions "Multiplayer-ready
+  gameplay").
+  - Stable player ids (`Network::playerId`, `PeerInfo::playerId`,
+    `findPlayer`), per-player save files (`save::writePlayer` /
+    `readPlayer` / `players`), player objects (`setPlayerObject`,
+    `withinReach`, `viewpoint`), `kick`, `onPeersChanged`.
+  - Requests with answers: `toServer(name, payload, reply)` and `reject()`
+    in the host's handler (predict, undo if refused); `on(name, fn, From)`
+    says who may send a message; a per-client request budget
+    (`Config::maxRequestsPerSecond`).
+  - Replication: dynamic bodies follow kinematically where they aren't
+    owned; `NetworkAnimator` (ve/net/NetworkAnimator.hpp); any `Saveable`'s
+    state with `NetworkObject::replicateSaveState` (JSON patches;
+    `Saveable::saveRevision()`; Foliage and Terrain implement it).
+  - Interest management (`relevanceRadius`), per-client snapshots
+    delta-encoded against acknowledged poses, `Network::bandwidth()`,
+    F1 > Network, lag compensation (`poseAt`, `viewTime`, `rewind`), a
+    bad-network simulator (`VE_NET_SIM`, `Transport::Simulation`), dedicated
+    server mode (`EngineConfig::server`, `VE_SERVER=1`, `Engine::isServer()`).
+  - `Animator::looping` / `clipSpeed` / `layerWeightTarget`,
+    `UiLayer::addOverlaySection`, `FoliageSystem::overrideRevision`.
 - **Material translucency** (leaves, paper, cloth): `"translucency"`,
   `"translucencyColor"`, `"translucencyTexture"` in material files,
   `StandardMaterial::setTranslucency` / `setTranslucencyTexture`. Light

@@ -243,7 +243,14 @@ void UiLayer::drawDebugOverlay()
             node(*o);
         }
     }
+    for (const auto& [title, draw] : m_sections)
+        if (ImGui::CollapsingHeader(title.c_str())) draw();
     ImGui::End();
+}
+
+void UiLayer::addOverlaySection(const std::string& title, std::function<void()> draw)
+{
+    m_sections.emplace_back(title, std::move(draw));
 }
 
 void UiPass::declare(PassBuilder& b)

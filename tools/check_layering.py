@@ -29,7 +29,7 @@ ALLOWED = {
     "physics": {"core", "render", "scene"},
     "anim": {"core", "render", "scene", "physics"},
     "gameplay": {"core", "render", "scene", "physics"},
-    "net": {"core", "scene"},
+    "net": {"core", "scene", "physics", "anim"},  # (bodies follow replicated poses; NetworkAnimator)
     "world": {"core", "gfx", "render", "scene", "assets", "physics"},
     "nav": {"core", "render", "scene", "physics", "world"},
     "assets": {"core", "gfx", "render", "scene", "anim", "physics", "audio"},

@@ -40,9 +40,22 @@ public:
     /// Connection statistics.
     struct Stats {
         uint32_t roundTripMs = 0;  ///< Latency in milliseconds.
-        uint64_t bytesSent = 0;      ///< Total bytes sent.
-        uint64_t bytesReceived = 0;  ///< Total bytes received.
+        uint64_t bytesSent = 0;      ///< Payload bytes sent on this connection since it opened.
+        uint64_t bytesReceived = 0;  ///< Payload bytes received on this connection since it opened.
+        uint64_t packetsSent = 0;     ///< Packets sent since it opened.
+        uint64_t packetsReceived = 0; ///< Packets received since it opened.
         float packetLoss = 0.0f; ///< 0..1
+    };
+    /// Bad network conditions, for testing (everything this machine sends is
+    /// affected; set it on both ends for a round trip). All zero = off.
+    /// Reliable messages are only delayed (they still arrive, in order);
+    /// unreliable ones can also be lost or arrive out of order.
+    struct Simulation {
+        uint32_t latencyMs = 0; ///< Added to every packet sent, one way (milliseconds).
+        uint32_t jitterMs = 0;  ///< Plus a random 0..jitterMs (milliseconds).
+        float loss = 0.0f;      ///< Chance (0..1) that an unreliable packet is dropped.
+        /// Whether any of it is on.
+        bool active() const { return latencyMs > 0 || jitterMs > 0 || loss > 0.0f; }
     };
 
     Transport();
@@ -66,6 +79,12 @@ public:
     void flush(); ///< push queued packets out now (they also go on the next poll)
     /// Statistics of one connection.
     Stats stats(ConnectionId c) const;
+    /// Turns the bad-network simulation on (or off with a default Simulation).
+    void simulate(const Simulation& sim);
+    /// The simulation in effect.
+    const Simulation& simulation() const;
+    /// Parses "latency=100,jitter=20,loss=0.05" (milliseconds, 0..1; any subset): VE_NET_SIM.
+    static Simulation parseSimulation(const std::string& spec);
 
 private:
     struct Impl;

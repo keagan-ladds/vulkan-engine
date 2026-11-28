@@ -148,6 +148,23 @@ const std::string& Animator::current(int layer) const
     return st.empty() || st.back().fadeRate < 0.0f ? none : st.back().clip->name;
 }
 
+bool Animator::looping(int layer) const
+{
+    if (layer < 0 || layer >= int(m_layers.size()) || m_layers[size_t(layer)].states.empty()) return true;
+    return m_layers[size_t(layer)].states.back().loop;
+}
+
+float Animator::clipSpeed(int layer) const
+{
+    if (layer < 0 || layer >= int(m_layers.size()) || m_layers[size_t(layer)].states.empty()) return 1.0f;
+    return m_layers[size_t(layer)].states.back().speed;
+}
+
+float Animator::layerWeightTarget(int layer) const
+{
+    return layer < 0 || layer >= int(m_layers.size()) ? 0.0f : m_layers[size_t(layer)].target;
+}
+
 float Animator::time() const
 {
     return time(0);

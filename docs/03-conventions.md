@@ -775,41 +775,73 @@ ve::debug::sphere(hit.point, 0.2f, ve::debug::kRed, {.duration = 3.0f}); // stay
 ### Multiplayer-ready gameplay
 
 Write gameplay as if a host were always there (offline *is* a host with
-nobody connected), and multiplayer mostly works:
+nobody connected), and multiplayer mostly works. The engine gives
+mechanisms (who's who, requests and answers, replication, bandwidth); every
+rule (what a request means, who may do it, what a player is) is the game's.
 
 ```cpp
-// Anything that changes the shared world: ask the authority.
+// Anything that changes the shared world: ask the authority, optionally
+// predicting the result and undoing it if the host says no.
 void Chest::onUse() {
     ve::net::Writer w; w.write(id());
-    net().toServer("chest.open", w);          // offline / host: runs right now
+    m_open = true;                                    // predicted
+    net().toServer("chest.open", w, [this](bool ok, const std::string& why) {
+        if (!ok) m_open = false;                      // refused: undo
+    });                                               // offline / host: answered right away
 }
-// Registered once (constructor / start), runs on the host only:
+// Registered once (constructor), runs on the host only (From::Clients):
 net().on("chest.open", [this](ve::net::PeerId from, ve::net::Reader& r) {
     auto id = r.read<uint64_t>();  if (r.failed()) return;   // check what clients send
-    ... validate (reach, permission) ...
-    m_open = true;  netObject->markDirty();    // replicate (NetReplicated)
-});
+    if (!net().withinReach(from, transform().position(), 3.0f)) return net().reject("too far");
+    m_open = true;  netObject->markDirty();                  // replicate (NetReplicated)
+}, ve::net::From::Clients);
 ```
 
 - **Who changes what:** the host changes the world; a player's machine
   changes only what it owns (its character). Clients never call
   `spawn` / `despawn` / `destroy()` on shared objects: they ask.
+- **Who may send what:** `on(name, fn, From::Clients)` for requests,
+  `From::Host` for host -> client messages (a client can't make the host run
+  those). Each client has a request budget (`Config::maxRequestsPerSecond`).
 - **New things in the world:** `net().spawn(prefab, ...)` instead of
   `prefab::instantiate`; removing: `net().despawn(obj)` instead of
   `destroy()`. Both work offline.
-- **State others must see:** `NetReplicated` + `markDirty()` (a door's open
-  flag, an avatar's name); moving things: `NetworkTransform`. Ordinary
-  per-machine visuals (particles, sounds, UI) stay local; trigger them from
-  the replicated state or a `toClients` event.
+- **State others must see:**
+  - `NetReplicated` + `markDirty()` (a door's open flag, an avatar's name);
+  - moving things: `NetworkTransform` (a dynamic body on a machine that
+    doesn't own it turns kinematic and follows);
+  - animation: `NetworkAnimator` (the owner plays clips, everyone sees them);
+  - anything already `Saveable` (Foliage's chopped trees, Terrain edits,
+    your own): `NetworkObject::replicateSaveState`, and the host's changes
+    go out as JSON patches. Give it a `saveRevision()` so it's only looked
+    at when it changes.
+  Ordinary per-machine visuals (particles, sounds, UI) stay local; trigger
+  them from the replicated state or a `toClients` event.
+- **Players:** `PeerId` is per session; `PeerInfo::playerId` is the same
+  every time a player joins (`Network::playerId`, or a random one remembered
+  in the save folder). Keep a player's character by it:
+  `save::writePlayer(slot, playerId, json)` / `readPlayer`. The host can set
+  each peer's player object (`setPlayerObject`): `withinReach` validates
+  against it, and interest management uses it when a client reports no camera.
 - **Player-specific vs world:** the world snapshot is a save capture, so
   per-player things (the local Player, inventory) must be left out of it
   (Savanna's `worldSnapshot` drops the "name:Player" state).
+- **Big worlds:** `relevanceRadius` on a NetworkObject (or
+  `Config::relevanceRadius` for all) sends its movement and state only to
+  players whose camera is that close; they catch up when they come near.
+  Movement is delta-encoded per client against what it acknowledged.
+- **Hit tests with lag:** on the host, `net().rewind(shooter, [&] { ... })`
+  puts every NetworkTransform where that player saw it, for the hit test
+  (transforms only; physics bodies stay put); `poseAt(time)` for one object.
 - **Handlers:** register in the constructor of an object that exists before
   messages can arrive (messages waiting for a loading screen are handled at
   the top of the next frame, before `start()`); `off()` them in
-  `onDestroy()`.
-- Test with `tools/nettest.sh build-release/bin <out>` (host + client
-  processes on one machine).
+  `onDestroy()`. `onPeersChanged` (every machine) for player lists.
+- **Testing:** `tools/nettest.sh build-release/bin <out>` runs a host and a
+  client on one machine; `NETTEST_SIM="latency=80,jitter=20,loss=0.05"` over
+  a bad network (`VE_NET_SIM` in any run), `NETTEST_SERVER=1` with the host
+  as a dedicated server (`VE_SERVER=1` / `EngineConfig::server`). F1 >
+  Network shows peers, round trips and bytes per second.
 
 ### Game UI: HUD, menus, inventories
 

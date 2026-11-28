@@ -167,6 +167,8 @@ public:
     /// Save games: every instance whose state changed (chopped trees, picked bushes).
     void saveState(Json& out) const override;
     void loadState(const Json& in) override;
+    /// Changes when an instance's state does (see Saveable::saveRevision).
+    uint64_t saveRevision() const override;
     void start() override;
     void update(float dt) override;
     /// The layers' names, in FoliageSystem layer order (index = layer).
@@ -204,6 +206,7 @@ private:
     ObjectRef<FoliageSystem> m_system; ///< a hidden child (the editor could still delete it)
     std::vector<std::pair<uint64_t, uint32_t>> m_pendingOverrides; ///< loaded before the system existed
     bool m_hasPendingOverrides = false;
+    uint64_t m_systemBuilds = 0; ///< saveRevision: systems built so far
     std::vector<std::string> m_layerNames;
     std::vector<LayerDensity> m_densities; ///< per system layer
     std::string m_state;

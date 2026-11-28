@@ -12,9 +12,12 @@
 //     "build.remove" requests), so pieces appear for everyone.
 //   - The host's clock and weather are sent to clients every couple of seconds.
 //
+//   - Foliage changes (chopped trees, picked bushes) made on the host reach
+//     everyone: the Foliage object replicates its save state.
+//
 // Start one with SAVANNA_NET=host[:port] or SAVANNA_NET=join:<address>[:port]
 // (SAVANNA_NAME=<player name>). Known gaps (roadmap): villagers, doors,
-// harvesting and pickups still run on each machine on their own.
+// pickups and clients' own harvesting still run on each machine on their own.
 
 #include <ve/net/Network.hpp>
 #include <ve/scene/GameObject.hpp>
@@ -66,18 +69,23 @@ private:
     float m_clockTimer = 0.0f;
 };
 
-// SAVANNA_NETTEST=host / client: a scripted two-process session (sandbox/tools/nettest.sh).
+// SAVANNA_NETTEST=host / client: a scripted two-process session (tools/nettest.sh).
+// Besides building and avatars it checks the engine's session mechanisms:
+// player ids, per-player saves, requests with replies (accepted / refused),
+// who may send what (From), physics bodies following the host, a
+// NetworkAnimator, foliage changes replicated as save state, interest
+// management, lag compensation, the request budget, bandwidth numbers and kick.
 class NetTest : public ve::GameObject {
 public:
-    explicit NetTest(bool host) : GameObject("NetTest"), m_host(host)
-    {
-        if (!host) net().on("nettest.done", [this](ve::net::PeerId, ve::net::Reader&) { m_hostDone = true; });
-    }
+    explicit NetTest(bool host);
     void update(float dt) override;
+    void onDestroy() override;
 
 private:
     int pieces() const;
     void log(const std::string& s) const;
+    void hostStep(float dt);
+    void clientStep(float dt);
     bool m_host;
     int m_step = 0;
     float m_t = 0.0f, m_total = 0.0f;
@@ -85,6 +93,23 @@ private:
     float m_moved = 0.0f;
     bool m_shot = false;
     bool m_hostDone = false;
+    // Host
+    bool m_rewound = false;
+    bool m_hostOnlyRan = false;
+    bool m_clientDone = false;
+    int m_floods = 0;
+    uint64_t m_crate = 0, m_dancer = 0, m_foliage = 0;
+    glm::vec3 m_near{0.0f};
+    // Client
+    int m_replies = 0;
+    bool m_accepted = false, m_refused = false;
+    std::string m_refusal;
+    int m_peerChanges = 0;
+    std::string m_disconnect;
+    bool m_checkArrived = false, m_farArrived = false, m_nearArrived = false;
+    glm::vec3 m_crateAt{0.0f}, m_far{0.0f};
+    std::string m_clip;
+    float m_wait = 0.0f;
 };
 
 } // namespace savanna

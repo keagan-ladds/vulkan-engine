@@ -867,9 +867,54 @@ GameObject / Component) is the session: offline by default, `host(port)` or
   in saves, owners, state and transforms. The client applies the snapshot
   in `onJoined` (default `save::apply`), possibly after rebuilding the level
   (messages wait while loading).
+- **Identity:** each player sends a stable `playerId` with its hello (the
+  game's, or a random one kept in the save folder's `network` config); the
+  host refuses a second connection with the same id. `PeerInfo` carries it,
+  `findPlayer(id)` maps back to the session's PeerId, and
+  `save::writePlayer` / `readPlayer` keep per-player data next to a slot.
+  The host may set each peer's player object (replicated to everyone).
+- **Requests:** `toServer(name, payload, reply)` gets an answer (`kRequest`
+  -> `kReply`): accepted unless the handler called `reject(reason)`, or
+  refused when nobody handles it, the sender's budget
+  (`Config::maxRequestsPerSecond`, a token bucket) ran out or the
+  connection dropped. `on(name, fn, From)` limits who may send a message.
+  `kick(peer, reason)`.
+- **Snapshots (host -> clients):** each flush the host builds, per client,
+  packets of the NetworkTransform objects relevant to it (`kSnapshot`, one
+  UDP datagram each): positions in millimetres, as differences from the
+  last pose that client acknowledged (`kView` carries its newest packet
+  number and its camera position), rotations in 32 bits and only when they
+  changed; acknowledged unchanged poses aren't sent. Client-owned objects
+  reach the host as before (`kTransform`) and go to the others in their
+  snapshots. Interest management: an object with a `relevanceRadius` goes
+  only to clients whose camera (or player object) is within it; coming back
+  in range sends its state at once.
+- **Dynamic bodies** on a machine that doesn't own them become kinematic
+  (they follow the samples and still push), and dynamic again when owned.
+- **Save state replication:** NetworkObjects with `replicateSaveState`
+  (host-owned) have their Saveable parts watched (`saveRevision()`, or
+  compared once a second when it's 0); a change goes to every client as a
+  JSON patch (`json::diff`), or whole when that's smaller. Clients keep a
+  mirror, patch it and `loadState` it; a patch that doesn't apply asks for
+  the whole state (`kSaveRequest`). The joining snapshot is taken right
+  after pending changes went out, so everyone starts from the same state.
+- **Lag compensation:** the host keeps `Config::historySeconds` of poses per
+  NetworkTransform; `viewTime(peer)` = now - half the round trip - the
+  interpolation delay; `rewind(peer, fn)` moves transforms there for `fn`.
+- **Traffic:** the transport counts bytes and packets per connection (ENet
+  resets its own counters every second); `bandwidth()` and
+  `PeerInfo::sentPerSecond` / `receivedPerSecond`, shown in F1 > Network
+  (an overlay section the app module adds: `UiLayer::addOverlaySection`).
+  `Transport::Simulation` (VE_NET_SIM) delays every packet sent, adds
+  jitter and drops unreliable ones (reliable ones keep their order).
+- **Dedicated server:** `EngineConfig::server` / VE_SERVER=1: headless, no
+  audio or editor, `serverTickRate` frames per second, and a keep-alive
+  render about once a second. It still creates a Vulkan device (lavapipe
+  works without a GPU); a renderer-less engine is a bigger change.
 - **Messages:** one byte type + payload (`ve/net/Stream.hpp`); spawns, state,
   requests reliable and ordered; transforms unreliable. The transport
-  (`ve/net/Transport.hpp`, ENet) is internal to the engine.
+  (`ve/net/Transport.hpp`, ENet) is internal to the engine. The module
+  depends on `physics` (bodies that follow) and `anim` (NetworkAnimator).
 
 ## 6. Physics
 
@@ -1221,7 +1266,7 @@ Optional add-ons built only on public engine APIs:
 | `SceneLookup.hpp`, `Footsteps.hpp` | Cached by-id lookups (`localPlayer`, `findCached<T>`: no per-frame scene scans or name lookups), footstep sound by surface for the player and villagers |
 | `Pickups.*` | About 3,500 stones and sticks in one `ve::ProxySet` (deterministic scatter), promoted near the player into `Interactable` pickups that go into the inventory |
 | `Villager.*` | Navmesh agents with animation: Idle / Walk crossfades, a "Wave" layer on the right arm (greeting the player), footstep events of the Walk clip (sounds by surface), FootIK on slopes, a "Villagers" debug-draw channel |
-| `Multiplayer.*` | On `ve/net`: host / join from `SAVANNA_NET`, player avatars (NetworkObject + NetworkTransform + replicated name), the host's world snapshot without its own player, clock / weather sync, `NetTest` (two-process test, `tools/nettest.sh`); building requests live in `Building.cpp` |
+| `Multiplayer.*` | On `ve/net`: host / join from `SAVANNA_NET`, player avatars (NetworkObject + NetworkTransform + replicated name), the host's world snapshot without its own player, clock / weather sync, foliage changes replicated as save state, `NetTest` (two-process test of the session mechanisms, `tools/nettest.sh`); building requests live in `Building.cpp` |
 | `MainMenu.*`, `GameUi.*`, `Inventory.*` | The game's UI on `ve/ui`: a theme (fonts in `assets/fonts`, colours, builders); title screen over the live world at sunset (own camera, held clock), pause menu, load / settings / controls panels; inventory (items with baked icons, slots, drag & drop; the container is `ItemStacks.*`) |
 | `assets/scenes/savanna.json` | The level (edit with F2): a 4 km Terrain + biomes (savannah, swamp, desert, jungle, camp, rocky) + stamps, Water, Weather, DayNight, Foliage (11 FoliageTypes) + GrassLayers (grass, reeds, jungle grass, dune grass with the sandbox's `grass.frag`), campfire, huts (ModelInstance, one with `hiddenNodes: Door`) + AudioZones + FoliageExclusions, torches, crates (PrimitiveRenderer + Rigidbody), reed screens, sunstones, ambience, PlayerStart |
 | `main.cpp` | Wiring: effects, glTF instancing with mesh colliders, crate pyramid (dynamic bodies), weather, test hooks |

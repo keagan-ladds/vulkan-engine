@@ -303,7 +303,9 @@ public:
     const std::string& stateName(uint32_t layer, uint32_t state) const; ///< The name of a layer's state ("" for 0).
     /// Every changed instance as (id.packed(), state): store it in a save game, give it back after loading.
     std::vector<std::pair<uint64_t, uint32_t>> overrides() const;
-    void setOverrides(const std::vector<std::pair<uint64_t, uint32_t>>& states); ///< Restores what overrides() returned.
+    void setOverrides(const std::vector<std::pair<uint64_t, uint32_t>>& states); ///< Restores what overrides() returned (touches only instances that differ).
+    /// Bumps whenever an instance's state changes (save games / replication watch it).
+    uint64_t overrideRevision() const { return m_overrideRevision; }
     /// The GameObject standing in for an instance while it's promoted (else null).
     GameObject* promoted(FoliageInstanceId id) const;
 
@@ -410,6 +412,7 @@ private:
     std::vector<FoliageExclusionShape> m_exclusions;
     std::unordered_map<uint64_t, Cell> m_cells;
     std::unordered_map<uint64_t, uint32_t> m_overrides; ///< instance id -> state (main thread only)
+    uint64_t m_overrideRevision = 0; ///< overrideRevision()
     std::vector<FoliageInstanceId> m_promoted;          ///< instances currently stood in for by GameObjects
     std::vector<std::pair<uint32_t, StateListener>> m_stateListeners;
     uint32_t m_nextListener = 1;
