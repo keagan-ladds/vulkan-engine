@@ -238,6 +238,7 @@ NetTest::NetTest(bool host) : GameObject("NetTest"), m_host(host)
 {
     net::Network& n = net();
     if (host) {
+        n.config.historySeconds = 10.0f; // (software rendering here: round trips of seconds)
         // A request that can be refused: negative numbers are.
         n.on("nettest.ask", [this](net::PeerId, net::Reader& r) {
             if (r.read<int32_t>() < 0) net().reject("negative");
@@ -371,6 +372,12 @@ void NetTest::hostStep(float)
             glm::vec3 then = now;
             n.rewind(client, [&] { then = ours->transform().position(); });
             const double ago = n.clock() - n.viewTime(client);
+            auto* nt = ours->getComponent<net::NetworkTransform>();
+            glm::vec3 p1(0.0f), p2(0.0f);
+            glm::quat q;
+            const bool h1 = nt && nt->poseAt(n.clock() - 0.3, p1, q), h2 = nt && nt->poseAt(n.clock() - 100.0, p2, q);
+            log("lag compensation history: 0.3 s ago " + std::string(yes(h1)) + " " + std::to_string(glm::distance(p1, now)) + " m away, oldest " +
+                yes(h2) + " " + std::to_string(glm::distance(p2, now)) + " m away");
             log("lag compensation: rewound our avatar " + std::to_string(glm::distance(now, then)) + " m back to " +
                 std::to_string(int(ago * 1000.0)) + " ms ago; moved back after: " + yes(glm::distance(ours->transform().position(), now) < 1e-4f) +
                 "; " + yes(glm::distance(now, then) > 0.01f && ago > 0.09));
